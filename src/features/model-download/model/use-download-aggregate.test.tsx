@@ -28,6 +28,9 @@ function makeQuantEntry(
 	return {
 		modelId,
 		quantization,
+		phase: paused ? "paused" : "downloading",
+		requestId: "test-request",
+		revision: 1,
 		progress,
 		downloadedBytes: 0,
 		totalBytes: 0,

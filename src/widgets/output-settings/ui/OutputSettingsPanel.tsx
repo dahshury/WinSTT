@@ -4,8 +4,6 @@ import {
 	FileScriptIcon,
 	HeadphonesIcon,
 	KeyboardIcon,
-	SubtitleIcon,
-	Txt01Icon,
 	VolumeMinusIcon,
 } from "@hugeicons/core-free-icons";
 import { type ReactNode, useState } from "react";
@@ -32,10 +30,17 @@ import {
 } from "@/features/recording-sound";
 import { outputDeviceRoutingSupported } from "@/shared/lib/web-audio";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { MultiCombobox } from "@/shared/ui/language-multi-combobox";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
+import {
+	resolveSelectedFormats,
+	transcriptionFormatsEqual,
+	type FileTranscriptionFormat,
+} from "../lib/transcription-formats";
 
 const REDUCTION_STEPS = [0, 20, 40, 60, 80, 100] as const;
 // Selecting a non-default playback device happens in the renderer via
@@ -67,9 +72,15 @@ function muteLevel(settings: GeneralSettings | undefined): number {
 	return settings?.systemAudioReductionWhileDictating ?? 0;
 }
 
-const TRANSCRIPTION_FORMAT_OPTIONS: readonly SwitcherOption<"txt" | "srt">[] = [
-	{ value: "txt", label: "TXT", icon: Txt01Icon },
-	{ value: "srt", label: "SRT", icon: SubtitleIcon },
+const TRANSCRIPTION_FORMAT_OPTIONS: readonly {
+	id: FileTranscriptionFormat;
+	label: string;
+}[] = [
+	{ id: "txt", label: "TXT" },
+	{ id: "srt", label: "SRT" },
+	{ id: "vtt", label: "VTT" },
+	{ id: "json", label: "JSON" },
+	{ id: "csv", label: "CSV" },
 ] as const;
 
 interface PasteBehaviorSectionProps {
@@ -350,7 +361,12 @@ export function OutputSettingsPanel(): ReactNode {
 			icon: KeyboardIcon,
 		},
 	];
-	const transcriptionFormat = general?.fileTranscriptionFormat ?? "txt";
+	const selectedTranscriptionFormats = resolveSelectedFormats(
+		general ?? DEFAULT_SETTINGS.general,
+	);
+	const defaultTranscriptionFormats = resolveSelectedFormats(
+		DEFAULT_SETTINGS.general,
+	);
 
 	const enableWordByWordPasting = () => {
 		updateLlmDictation({ enabled: false });
@@ -413,25 +429,41 @@ export function OutputSettingsPanel(): ReactNode {
 					title={tg("fileTranscription")}
 				>
 					<SettingField
-						defaultValue={DEFAULT_SETTINGS.general.fileTranscriptionFormat}
+						isDefault={transcriptionFormatsEqual(
+							selectedTranscriptionFormats,
+							defaultTranscriptionFormats,
+						)}
 						label={tg("fileTranscriptionFormat")}
 						layout="row"
 						onReset={() =>
 							updateGeneral({
-								fileTranscriptionFormat:
-									DEFAULT_SETTINGS.general.fileTranscriptionFormat,
+								fileTranscriptionFormats: defaultTranscriptionFormats,
 							})
 						}
 						tooltip={tg("fileTranscriptionFormatTooltip")}
-						value={transcriptionFormat}
+						value={selectedTranscriptionFormats}
 					>
-						<Switcher
-							className="w-52"
-							fullWidth
-							onChange={(v) => updateGeneral({ fileTranscriptionFormat: v })}
-							options={TRANSCRIPTION_FORMAT_OPTIONS}
-							value={transcriptionFormat}
-						/>
+						<ElevatedSurface className="w-52" inline>
+							<MultiCombobox
+								ariaLabel={tg("fileTranscriptionFormat")}
+								emptyLabel={tc("noResults")}
+								onChange={(formats) => {
+									// Every transcription needs at least one export. Ignore an
+									// attempt to remove the final checked format.
+									if (formats.length > 0) {
+										updateGeneral({ fileTranscriptionFormats: formats });
+									}
+								}}
+								options={TRANSCRIPTION_FORMAT_OPTIONS}
+								placeholder={tg("fileTranscriptionFormatCaption")}
+								removeLabel={(format) =>
+									tm("languageRemove", { language: format })
+								}
+								selectedCountLabel={(count) => `${count}+`}
+								selectedHeading={tm("languageSelectedHeading")}
+								value={selectedTranscriptionFormats}
+							/>
+						</ElevatedSurface>
 					</SettingField>
 				</SettingSection>
 			</div>

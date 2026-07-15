@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import { act, renderHook } from "@testing-library/react";
+import * as realTtsCatalog from "@/entities/tts-catalog";
 
 type ProgressPayload = {
 	downloadedBytes: number;
@@ -64,6 +65,7 @@ function useTtsSwapStore<T>(selector: (state: typeof ttsSwapState) => T): T {
 useTtsSwapStore.getState = () => ttsSwapState;
 
 mock.module("@/entities/tts-catalog", () => ({
+	...realTtsCatalog,
 	useTtsModelStateStore,
 	useTtsSwapStore,
 }));

@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use crate::audio_toolkit::vad::{SileroVad, VAD_FRAME_SAMPLES, VoiceActivityDetector};
 
-use super::{TranscribeOptions, Transcriber, WordResult};
+use super::{Segment, TranscribeOptions, Transcriber, Transcription, WordResult};
 
 const SR: usize = 16_000;
 const MAX_RETAINED_SILENCE: usize = SR * 200 / 1000;
@@ -709,7 +709,7 @@ pub fn vad_segment_decode_with_mask(
         let txt = engine
             .transcribe(&compacted[s..e], &o)
             .map_err(|err| {
-                log::warn!(
+                log::debug!(
                     "[stt][{request_id}][vad-segment] chunk_failed index={} start_ms={} end_ms={} error={err}",
                     idx + 1,
                     s * 1000 / SR,
@@ -828,6 +828,114 @@ pub fn vad_segment_align_words(
         }));
     }
     Ok(out)
+}
+
+/// File-transcription decode that preserves the original media timeline.
+///
+/// Unlike the dictation long-form path, this never compacts silence. Each VAD
+/// chunk is decoded independently and engine-provided segment/word timestamps
+/// are shifted by the chunk's position in the source audio. Engines without
+/// timestamp output still yield one real-time segment per chunk.
+pub fn vad_segment_decode_transcription(
+    engine: &mut dyn Transcriber,
+    audio: &[f32],
+    max_chunk_s: f32,
+    vad: &mut SileroVad,
+    opts: &TranscribeOptions,
+    request_id: &str,
+) -> super::SttResult<Transcription> {
+    let max_chunk = (max_chunk_s * SR as f32) as usize;
+    if audio.len() <= max_chunk {
+        return engine
+            .transcribe(audio, opts)
+            .map(|result| ensure_timed_result(result, 0, audio.len()));
+    }
+
+    let mask = speech_mask(vad, audio);
+    let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+    if raw.is_empty() {
+        return engine
+            .transcribe(audio, opts)
+            .map(|result| ensure_timed_result(result, 0, audio.len()));
+    }
+
+    let pad = SR * 30 / 1000;
+    let min_speech = (SR * 250 / 1000).saturating_sub(2 * pad);
+    let merged = merge_segments(
+        &raw,
+        audio.len(),
+        max_chunk.saturating_sub(2 * pad),
+        min_speech,
+        max_chunk,
+        pad,
+    );
+    let merged = coalesce_short_chunks(merged, max_chunk, MIN_DECODE_CHUNK);
+    if merged.is_empty() {
+        return engine
+            .transcribe(audio, opts)
+            .map(|result| ensure_timed_result(result, 0, audio.len()));
+    }
+
+    let mut text_parts = Vec::new();
+    let mut segments = Vec::new();
+    let mut words = Vec::new();
+    let total_chunks = merged.len();
+    for (index, (start, end)) in merged.into_iter().enumerate() {
+        let (start, end) = if end.saturating_sub(start) < MIN_DECODE_CHUNK {
+            expand_short_chunk(start, end, audio.len(), MIN_DECODE_CHUNK)
+        } else {
+            (start, end)
+        };
+        log::debug!(
+            "[stt][{request_id}][file-segment] chunk_start index={} total={} start_ms={} end_ms={}",
+            index + 1,
+            total_chunks,
+            start * 1000 / SR,
+            end * 1000 / SR,
+        );
+        let result = ensure_timed_result(engine.transcribe(&audio[start..end], opts)?, start, end);
+        if !result.text.trim().is_empty() {
+            text_parts.push(result.text.trim().to_string());
+        }
+        segments.extend(result.segments.unwrap_or_default());
+        words.extend(result.words.unwrap_or_default());
+    }
+
+    Ok(Transcription {
+        text: text_parts.join(" "),
+        segments: Some(segments),
+        words: Some(words),
+    })
+}
+
+fn ensure_timed_result(
+    mut result: Transcription,
+    source_start: usize,
+    source_end: usize,
+) -> Transcription {
+    let offset = source_start as f32 / SR as f32;
+    let chunk_end = source_end as f32 / SR as f32;
+    let mut segments = result.segments.take().unwrap_or_default();
+    if segments.is_empty() {
+        segments.push(Segment {
+            start: offset,
+            end: chunk_end,
+            text: result.text.clone(),
+        });
+    } else {
+        for segment in &mut segments {
+            segment.start += offset;
+            segment.end += offset;
+        }
+    }
+    let mut words = result.words.take().unwrap_or_default();
+    for word in &mut words {
+        word.start += offset;
+        word.end += offset;
+    }
+    result.segments = Some(segments);
+    result.words = Some(words);
+    result
 }
 
 #[cfg(test)]
@@ -1184,5 +1292,48 @@ mod tests {
         // Empty sides → the other side.
         assert_eq!(merge_word_overlap("", "gamma"), "gamma");
         assert_eq!(merge_word_overlap("alpha", ""), "alpha");
+    }
+
+    #[test]
+    fn decode_segments_offsets_engine_timings_into_original_timeline() {
+        let result = ensure_timed_result(
+            Transcription {
+                text: "timed".into(),
+                segments: Some(vec![Segment {
+                    start: 0.25,
+                    end: 1.0,
+                    text: "timed".into(),
+                }]),
+                words: Some(vec![WordResult {
+                    text: "timed".into(),
+                    start: 0.3,
+                    end: 0.8,
+                }]),
+            },
+            SR,
+            SR * 3,
+        );
+
+        assert_eq!(result.segments.unwrap()[0].start, 1.25);
+        assert_eq!(result.words.unwrap()[0].end, 1.8);
+    }
+
+    #[test]
+    fn non_timestamp_engine_yields_one_segment_for_its_source_chunk() {
+        let result = ensure_timed_result(
+            Transcription {
+                text: "chunk text".into(),
+                ..Default::default()
+            },
+            SR * 2,
+            SR * 5,
+        );
+        let segments = result.segments.unwrap();
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start, 2.0);
+        assert_eq!(segments[0].end, 5.0);
+        assert_eq!(segments[0].text, "chunk text");
+        assert!(result.words.unwrap().is_empty());
     }
 }

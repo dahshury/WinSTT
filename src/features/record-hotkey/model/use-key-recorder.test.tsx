@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { useKeyRecorder } from "./use-key-recorder";
 
 const originalApi = window.nativeBridge;

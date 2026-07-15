@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { commands } from "@/bindings";
 import {
-	_resetOptimisticSwapForTests,
 	type ModelInfo,
 	useCatalogStore,
 	useModelStateStore,
@@ -15,6 +15,7 @@ import { useCloudKeyAutoRevert } from "./use-cloud-key-auto-revert";
 // Shrink the revert debounce so the timer fires within waitFor's budget; the
 // no-revert assertions wait a few multiples of this to prove nothing fired.
 const FAST_DEBOUNCE_MS = 5;
+const originalSwitchModel = commands.sttSwitchModel;
 
 interface Overrides {
 	dictationProvider?: "ollama" | "openrouter" | "apple-intelligence";
@@ -79,19 +80,23 @@ function model(id: string): ModelInfo {
 }
 
 beforeEach(() => {
+	commands.sttSwitchModel = (async (request) =>
+		({
+			status: "completed",
+			requestId: request.requestId,
+		}) as never) satisfies typeof commands.sttSwitchModel;
 	// A single local model in the catalog so the STT revert resolves to "tiny".
 	useCatalogStore.setState({ models: [model("tiny")], isLoaded: true });
 	useModelStateStore.setState({ statesById: {} });
 	useRevertNoticeStore.setState({ notices: [] });
 	useModelSwapStore.getState().clear("main");
-	_resetOptimisticSwapForTests();
 	seed({ model: "tiny" });
 });
 
 afterEach(() => {
 	cleanup();
+	commands.sttSwitchModel = originalSwitchModel;
 	useModelSwapStore.getState().clear("main");
-	_resetOptimisticSwapForTests();
 	useRevertNoticeStore.setState({ notices: [] });
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
 });
@@ -137,10 +142,12 @@ describe("useCloudKeyAutoRevert", () => {
 			seed({ openrouterKey: "", model: "openrouter:openai/whisper-1" }),
 		);
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+			expect(useModelSwapStore.getState().activeMain).toBe("tiny");
 		});
-		// beginSwap opened the in-flight chip toward the local target.
-		expect(useModelSwapStore.getState().activeMain).toBe("tiny");
+		// Settings remain untouched until the backend broadcasts its commit.
+		expect(useSettingsStore.getState().settings.model.model).toBe(
+			"openrouter:openai/whisper-1",
+		);
 		expect(
 			useRevertNoticeStore.getState().notices.map((n) => n.provider),
 		).toEqual(["openrouter"]);
@@ -178,9 +185,11 @@ describe("useCloudKeyAutoRevert", () => {
 		seed({ openrouterKey: "", model: "openrouter:openai/whisper-1" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+			expect(useModelSwapStore.getState().activeMain).toBe("tiny");
 		});
-		expect(useModelSwapStore.getState().activeMain).toBe("tiny");
+		expect(useSettingsStore.getState().settings.model.model).toBe(
+			"openrouter:openai/whisper-1",
+		);
 		// Silent repair — the user didn't just remove a key, so no toast.
 		expect(useRevertNoticeStore.getState().notices).toHaveLength(0);
 	});

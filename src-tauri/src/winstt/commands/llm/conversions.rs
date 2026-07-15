@@ -18,6 +18,7 @@ pub(super) fn to_llm_level(level: SettingsLevel) -> LlmPresetLevel {
         SettingsLevel::Light => LlmPresetLevel::Light,
         SettingsLevel::Medium => LlmPresetLevel::Medium,
         SettingsLevel::High => LlmPresetLevel::High,
+        SettingsLevel::Caveman => LlmPresetLevel::Caveman,
     }
 }
 
@@ -36,7 +37,7 @@ pub(super) fn to_llm_key(key: SettingsPresetKey) -> LlmPresetKey {
     }
 }
 
-pub(super) fn to_llm_preset(p: &SettingsPreset) -> LlmPresetEntry {
+pub(crate) fn to_llm_preset(p: &SettingsPreset) -> LlmPresetEntry {
     LlmPresetEntry::Builtin {
         key: to_llm_key(p.key),
         level: p.level.map(to_llm_level),
@@ -44,7 +45,7 @@ pub(super) fn to_llm_preset(p: &SettingsPreset) -> LlmPresetEntry {
     }
 }
 
-pub(super) fn to_llm_custom(
+pub(crate) fn to_llm_custom(
     m: &crate::winstt::settings_schema::CustomModifier,
 ) -> llm::CustomModifier {
     llm::CustomModifier {
@@ -57,7 +58,7 @@ pub(super) fn to_llm_custom(
     }
 }
 
-pub(super) fn to_llm_effort(e: SettingsEffort) -> LlmEffort {
+pub(crate) fn to_llm_effort(e: SettingsEffort) -> LlmEffort {
     match e {
         SettingsEffort::Off => LlmEffort::Off,
         SettingsEffort::Low => LlmEffort::Low,
@@ -86,7 +87,7 @@ pub(super) fn openrouter_reasoning_value(e: SettingsEffort) -> &'static str {
     }
 }
 
-pub(super) fn openrouter_options(base: &LlmFeatureBase) -> llm::OpenRouterRequestOptions {
+pub(crate) fn openrouter_options(base: &LlmFeatureBase) -> llm::OpenRouterRequestOptions {
     llm::OpenRouterRequestOptions {
         reasoning_effort: Some(openrouter_reasoning_value(base.reasoning_effort).to_string()),
         verbosity: Some(openrouter_effort_value(base.verbosity).to_string()),

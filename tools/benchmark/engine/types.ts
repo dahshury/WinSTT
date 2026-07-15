@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from "@/widgets/model-picker/config/model-selector-options";
+import type { ReasoningEffort } from "@/shared/ui/model-picker/config/model-selector-options";
 
 import type { Provider } from "../../lib/postprocess/clients";
 import type {

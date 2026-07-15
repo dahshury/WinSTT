@@ -86,6 +86,23 @@ function isTranslatable(raw: string): boolean {
 
 type Comment = { value: string; loc: { start: { line: number } } };
 
+interface AstNode {
+	readonly [key: string]: unknown;
+	readonly loc?: {
+		readonly start: { readonly column: number; readonly line: number };
+	} | null;
+	readonly type: string;
+}
+
+function isAstNode(value: unknown): value is AstNode {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"type" in value &&
+		typeof value.type === "string"
+	);
+}
+
 /** Build the set of line numbers where the rule is suppressed by comments. */
 function disabledLines(comments: Comment[], totalLines: number): Set<number> {
 	const RULE = "i18next/no-literal-string";
@@ -134,14 +151,16 @@ function disabledLines(comments: Comment[], totalLines: number): Set<number> {
 	return disabled;
 }
 
-function jsxName(node: any): string {
-	if (!node) return "";
-	if (node.type === "JSXIdentifier") return node.name;
-	if (node.type === "JSXMemberExpression") {
-		return `${jsxName(node.object)}.${jsxName(node.property)}`;
+function jsxName(value: unknown): string {
+	if (!isAstNode(value)) return "";
+	if (value.type === "JSXIdentifier") {
+		return typeof value["name"] === "string" ? value["name"] : "";
 	}
-	if (node.type === "JSXNamespacedName") {
-		return `${jsxName(node.namespace)}:${jsxName(node.name)}`;
+	if (value.type === "JSXMemberExpression") {
+		return `${jsxName(value["object"])}.${jsxName(value["property"])}`;
+	}
+	if (value.type === "JSXNamespacedName") {
+		return `${jsxName(value["namespace"])}:${jsxName(value["name"])}`;
 	}
 	return "";
 }
@@ -161,50 +180,64 @@ const SKIP_KEYS = new Set([
 
 function scanFile(file: string, rel: string): Violation[] {
 	const code = fs.readFileSync(file, "utf8");
-	let ast: any;
+	let ast: ReturnType<typeof parse>;
 	try {
 		ast = parse(code, {
 			sourceType: "module",
 			plugins: ["jsx", "typescript", "decorators-legacy"],
 			errorRecovery: true,
 		});
-	} catch (err) {
-		throw new Error(`parse failed: ${rel}: ${(err as Error).message}`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`parse failed: ${rel}: ${message}`);
 	}
 	const totalLines = code.split("\n").length;
-	const disabled = disabledLines((ast.comments ?? []) as Comment[], totalLines);
+	const comments: Comment[] = (ast.comments ?? []).flatMap((comment) =>
+		comment.loc
+			? [
+					{
+						value: comment.value,
+						loc: { start: { line: comment.loc.start.line } },
+					},
+				]
+			: [],
+	);
+	const disabled = disabledLines(comments, totalLines);
 	const found: Violation[] = [];
 
 	// Manual walk carrying JSX-element ancestry so <Trans> children are exempt.
-	const walk = (node: any, insideTrans: boolean) => {
-		if (!node || typeof node.type !== "string") return;
+	const walk = (value: unknown, insideTrans: boolean) => {
+		if (!isAstNode(value)) return;
+		const node = value;
 		if (node.type === "JSXText") {
 			if (insideTrans) return;
 			const line = node.loc?.start?.line ?? 0;
 			if (disabled.has(line)) return;
-			if (!isTranslatable(node.value)) return;
+			const text = node["value"];
+			if (typeof text !== "string" || !isTranslatable(text)) return;
 			found.push({
 				file: rel,
 				line,
 				column: (node.loc?.start?.column ?? 0) + 1,
-				text: node.value.replace(/\s+/g, " ").trim().slice(0, 80),
+				text: text.replace(/\s+/g, " ").trim().slice(0, 80),
 			});
 			return;
 		}
 		let nextTrans = insideTrans;
 		if (node.type === "JSXElement") {
-			const name = jsxName(node.openingElement?.name);
+			const openingElement = node["openingElement"];
+			const name = isAstNode(openingElement)
+				? jsxName(openingElement["name"])
+				: "";
 			// `Trans` or any `*.Trans` (e.g. namespaced re-export).
 			if (name === "Trans" || name.endsWith(".Trans")) nextTrans = true;
 		}
 		for (const key of Object.keys(node)) {
 			if (SKIP_KEYS.has(key)) continue;
-			const val = (node as any)[key];
+			const val = node[key];
 			if (Array.isArray(val)) {
-				for (const c of val) {
-					if (c && typeof c.type === "string") walk(c, nextTrans);
-				}
-			} else if (val && typeof val.type === "string") {
+				for (const child of val) walk(child, nextTrans);
+			} else {
 				walk(val, nextTrans);
 			}
 		}
@@ -223,8 +256,8 @@ function main() {
 			.replace(/\\/g, "/");
 		try {
 			violations.push(...scanFile(file, rel));
-		} catch (err) {
-			parseErrors.push((err as Error).message);
+		} catch (error) {
+			parseErrors.push(error instanceof Error ? error.message : String(error));
 		}
 	}
 

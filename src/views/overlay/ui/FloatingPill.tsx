@@ -8,7 +8,7 @@ import {
 	getProcessingStartedAt,
 	ThinkingIndicator,
 } from "@/shared/ui/thinking-indicator";
-import { CancelButton } from "./overlay-shell";
+import { CancelButton, SkipPostProcessingButton } from "./overlay-shell";
 import {
 	BUBBLE_SHADOW,
 	breatheVariants,
@@ -194,7 +194,7 @@ function FloatingMorphSurface({
 						</div>
 					) : isProcessing ? (
 						<div
-							className="inline-flex max-w-[calc(100vw-24px)] items-center justify-center px-3 py-2 align-top"
+							className="inline-flex max-w-[calc(100vw-24px)] flex-col items-center justify-center gap-2 px-3 py-2 align-top"
 							data-overlay-transform-content={
 								processingKind === "transform" ? "true" : undefined
 							}
@@ -205,6 +205,9 @@ function FloatingMorphSurface({
 								startedAt={processingStartedAt}
 								{...processingWordProps}
 							/>
+							{processingKind === "dictation" && isThinking ? (
+								<SkipPostProcessingButton />
+							) : null}
 						</div>
 					) : (
 						<>

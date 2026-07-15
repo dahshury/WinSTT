@@ -128,10 +128,7 @@ function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
 }
 
 /**
- * Top-level settings keys whose value is an OBJECT section (spreadable). The
- * tree also carries one scalar — `schemaVersion` (finding #20) — which is not a
- * patchable section; constraining `patchSection` to object-valued keys makes
- * passing it a compile error instead of a TS2698 spread failure.
+ * Top-level settings keys whose value is an object section.
  */
 type ObjectSectionKey = {
 	[K in keyof AppSettingsOutput]: AppSettingsOutput[K] extends object
@@ -182,6 +179,9 @@ interface SettingsState {
 		patch: Partial<AppSettingsOutput["llm"]["dictation"]>,
 	) => void;
 	updateLlmPostProcessing: (patch: LlmPostProcessingPatch) => void;
+	updateLlmAppProfiles: (
+		rules: AppSettingsOutput["llm"]["appProfiles"]["rules"],
+	) => void;
 	/**
 	 * Patches top-level shared fields on `settings.llm` (endpoint, openrouterApiKey).
 	 * For per-feature config use `updateLlmDictation` / `updateLlmTransforms`.
@@ -250,6 +250,16 @@ export const useSettingsStore = create<SettingsState>()(
 			updateLlmSettings: (patch) =>
 				set((state) => ({
 					settings: patchSection(state.settings, "llm", patch),
+				})),
+			updateLlmAppProfiles: (rules) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						llm: {
+							...state.settings.llm,
+							appProfiles: { ...state.settings.llm.appProfiles, rules },
+						},
+					},
 				})),
 			updateLlmDictation: (patch) =>
 				set((state) => {

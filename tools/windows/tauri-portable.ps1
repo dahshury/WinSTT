@@ -37,9 +37,9 @@ if ($RuntimeDlls.Count -eq 0) {
     throw "No staged runtime DLLs in $RuntimeDir - run tools\windows\tauri-build.ps1 first"
 }
 
-$Resources = Join-Path $ReleaseDir "resources"
+$Resources = Join-Path $RepoRoot "src-tauri\resources"
 if (-not (Test-Path -LiteralPath $Resources)) {
-    throw "Missing release resources directory: $Resources"
+    throw "Missing source resources directory: $Resources"
 }
 
 $NsisDir = Join-Path $ReleaseDir "bundle\nsis"
@@ -61,14 +61,27 @@ Copy-Item -LiteralPath $NsisExe.FullName -Destination $PortableExe -Force
 foreach ($Dll in $RuntimeDlls) {
     Copy-Item -LiteralPath $Dll.FullName -Destination (Join-Path $PortableDir $Dll.Name) -Force
 }
-Copy-Item -LiteralPath $Resources -Destination (Join-Path $PortableDir "resources") -Recurse -Force
-# Context-awareness sidecar (staged by tauri-build.ps1; resolved as $RESOURCE/binaries/winstt-context.exe).
-$Sidecar = Join-Path $RepoRoot "src-tauri\binaries\winstt-context.exe"
+# Mirror the explicit resource set in tauri.windows.conf.json. Copying the whole
+# target/release/resources directory can resurrect stale files from older builds.
+$PortableResources = Join-Path $PortableDir "resources"
+New-Item -ItemType Directory -Path $PortableResources -Force | Out-Null
+foreach ($Png in Get-ChildItem -LiteralPath $Resources -Filter "*.png" -File) {
+    Copy-Item -LiteralPath $Png.FullName -Destination (Join-Path $PortableResources $Png.Name) -Force
+}
+foreach ($Wav in @("recording_sound_default.wav", "error_sound.wav", "marimba_start.wav")) {
+    $Source = Join-Path $Resources $Wav
+    if (-not (Test-Path -LiteralPath $Source)) {
+        throw "Missing packaged sound resource: $Source"
+    }
+    Copy-Item -LiteralPath $Source -Destination (Join-Path $PortableResources $Wav) -Force
+}
+Copy-Item -LiteralPath (Join-Path $Resources "models") -Destination (Join-Path $PortableResources "models") -Recurse -Force
+# Context-awareness Cargo bin (built by tauri-build.ps1 and resolved beside WinSTT.exe).
+$Sidecar = Join-Path $ReleaseDir "winstt_context.exe"
 if (-not (Test-Path -LiteralPath $Sidecar)) {
     throw "Missing context sidecar: $Sidecar - run tools\windows\tauri-build.ps1 first"
 }
-New-Item -ItemType Directory -Path (Join-Path $PortableDir "binaries") -Force | Out-Null
-Copy-Item -LiteralPath $Sidecar -Destination (Join-Path $PortableDir "binaries\winstt-context.exe") -Force
+Copy-Item -LiteralPath $Sidecar -Destination (Join-Path $PortableDir "winstt_context.exe") -Force
 Set-Content -LiteralPath (Join-Path $PortableDir "portable") -Value "WinSTT Portable Mode" -NoNewline -Encoding ASCII
 New-Item -ItemType Directory -Path (Join-Path $PortableDir "Data") -Force | Out-Null
 

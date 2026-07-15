@@ -3,9 +3,7 @@
 // statically import every plugin at module top (keeps the cold path lean). Window
 // ops drive the current Tauri window. Both are dynamic-import based.
 //
-// Extracted from native-bridge-adapter.ts (behavior-preserving move). The thin
-// route table re-uses `callPlugin` / `windowOp` and the `PluginTarget` / `WindowOp`
-// unions in its `Route` discriminated union.
+// Shared plugin/window operations used directly by renderer domain wrappers.
 
 import { commands } from "@/bindings";
 import {

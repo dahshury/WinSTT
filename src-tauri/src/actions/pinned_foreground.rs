@@ -20,26 +20,21 @@
 
 use std::sync::Mutex;
 
+use crate::foreground_window::ForegroundWindow as PinnedForeground;
 use once_cell::sync::Lazy;
 
 /// The foreground window pinned at recording start. `None` before the first
 /// dictation, or after an explicit clear. HWND is stored as its raw pointer value
 /// (`isize`) plus the owning process id so a recycled HWND (same numeric handle,
 /// different process) is rejected at validation time.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct PinnedForeground {
-    pub(super) hwnd_raw: isize,
-    pub(super) process_id: u32,
-}
-
 static PINNED: Lazy<Mutex<Option<PinnedForeground>>> = Lazy::new(|| Mutex::new(None));
 
 /// Pin the current foreground window as the dictation target. Call at recording
 /// start (`TranscribeAction::start`), BEFORE any overlay work can steal focus, so
 /// the pinned HWND is the user's app — not our overlay. On non-Windows there is no
 /// UIA sidecar, so this stores `None` and context capture stays foreground-less.
-pub(super) fn pin() {
-    let pinned = current_foreground();
+pub(super) fn pin() -> Option<u64> {
+    let pinned = PinnedForeground::current();
     match pinned {
         Some(fg) => log::debug!(
             "context: pinned foreground hwnd={:#x} pid={} at recording start",
@@ -51,6 +46,7 @@ pub(super) fn pin() {
     *PINNED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = pinned;
+    pinned.map(|foreground| foreground.hwnd_raw as u64)
 }
 
 /// Drop the pin (start failure / cancellation). A stale pin is harmless — it is
@@ -77,7 +73,7 @@ pub(super) fn validated_hwnd() -> Option<u64> {
     let pinned = (*PINNED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner))?;
-    if validate(pinned) {
+    if pinned.is_valid() {
         Some(pinned.hwnd_raw as u64)
     } else {
         log::debug!(
@@ -89,61 +85,19 @@ pub(super) fn validated_hwnd() -> Option<u64> {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn current_foreground() -> Option<PinnedForeground> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-    // SAFETY: reads the current foreground HWND only; no ownership transfer.
-    let hwnd = unsafe { GetForegroundWindow() };
-    let raw = hwnd.0 as isize;
-    if raw == 0 {
-        return None;
-    }
-    let mut process_id = 0u32;
-    // SAFETY: `hwnd` is the handle returned by GetForegroundWindow and
-    // `process_id` is a valid out pointer for the duration of the call.
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-    }
-    if process_id == 0 {
-        return None;
-    }
-    Some(PinnedForeground {
-        hwnd_raw: raw,
-        process_id,
-    })
-}
-
-#[cfg(not(target_os = "windows"))]
-fn current_foreground() -> Option<PinnedForeground> {
-    None
-}
-
-/// True when the pinned window still exists AND still belongs to the process it
-/// belonged to when pinned. Mirrors `preview::restore_foreground`'s validation:
-/// `IsWindow` guards against a destroyed window; the PID re-check guards against a
-/// numeric HWND value that Windows recycled to a brand-new window in another
-/// process while the decode ran.
-#[cfg(target_os = "windows")]
-fn validate(pinned: PinnedForeground) -> bool {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
-
-    let hwnd = HWND(pinned.hwnd_raw as *mut core::ffi::c_void);
-    // SAFETY: validates the raw HWND before any use; only reads window/process
-    // metadata, never transfers ownership or focus.
-    unsafe {
-        if !IsWindow(Some(hwnd)).as_bool() {
-            return false;
+/// Restore the recording-start target after a mouse click activates the overlay.
+/// The Alt+S path leaves focus alone; this is only needed for the clickable pill
+/// action so the eventual raw-text paste still lands in the dictation target.
+pub(super) fn restore_focus() {
+    #[cfg(target_os = "windows")]
+    {
+        let pinned = *PINNED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(foreground) = pinned.filter(|foreground| foreground.is_valid()) {
+            crate::winstt::commands::preview::restore_foreground(foreground);
         }
-        let mut process_id = 0u32;
-        let thread = GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-        thread != 0 && process_id == pinned.process_id
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn validate(_pinned: PinnedForeground) -> bool {
-    false
 }
 
 #[cfg(test)]

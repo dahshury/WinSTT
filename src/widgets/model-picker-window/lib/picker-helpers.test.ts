@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 import * as realBindings from "@/shared/api/ipc-client";
-import * as realPicker from "@/widgets/model-picker";
 
 // picker-helpers pulls `ipcSend` (for `close()`) and a couple of pure helpers
 // from the model-picker barrel. bun's `mock.module` is process-GLOBAL and
@@ -13,7 +12,6 @@ mock.module("@/shared/api/ipc-client", () => ({
 	...realBindings,
 	ipcSend: () => undefined,
 }));
-mock.module("@/widgets/model-picker", () => ({ ...realPicker }));
 
 const {
 	DEFAULT_MODEL_PICKER_MODE,
@@ -58,6 +56,17 @@ describe("normalizeDetachedModelPickerMode", () => {
 				feature: "transforms",
 			}),
 		).toEqual({ kind: "llm-ollama", feature: "transforms" });
+		expect(
+			normalizeDetachedModelPickerMode({
+				kind: "llm-ollama",
+				feature: "dictation",
+				target: "enable-on-install",
+			}),
+		).toEqual({
+			enableOnInstall: true,
+			kind: "llm-ollama",
+			feature: "dictation",
+		});
 		expect(
 			normalizeDetachedModelPickerMode({
 				kind: "llm-openrouter",

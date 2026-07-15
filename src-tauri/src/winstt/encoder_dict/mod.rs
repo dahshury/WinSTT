@@ -53,11 +53,11 @@ fn lock_engine<'a>(
     context: &str,
 ) -> Option<MutexGuard<'a, Option<EncoderDict>>> {
     let started = Instant::now();
-    log::info!("[encoder-dict] lock_start context={context}");
+    log::debug!("[encoder-dict] lock_start context={context}");
     loop {
         match cell.try_lock() {
             Ok(guard) => {
-                log::info!(
+                log::debug!(
                     "[encoder-dict] lock_complete context={context} duration_ms={}",
                     started.elapsed().as_millis()
                 );
@@ -155,7 +155,7 @@ pub fn update_idle_unload_timeout(timeout: crate::settings::ModelUnloadTimeout) 
     ENCODER_IDLE_SECS.store(secs, Ordering::Release);
     if secs == 0 {
         clear_loaded();
-        log::info!("[encoder-dict] session dropped (immediate unload policy)");
+        log::debug!("[encoder-dict] session dropped (immediate unload policy)");
     }
 }
 
@@ -179,7 +179,7 @@ pub fn start_idle_watcher() {
             let idle_ms = now_ms().saturating_sub(ENCODER_LAST_USED_MS.load(Ordering::Acquire));
             if idle_unload_due(secs, idle_ms) {
                 clear_loaded();
-                log::info!("[encoder-dict] session dropped (idle timeout {secs}s)");
+                log::debug!("[encoder-dict] session dropped (idle timeout {secs}s)");
             }
         }
     });
@@ -204,7 +204,7 @@ pub fn preload_blocking(app: &AppHandle) {
             Ok(mut e) => {
                 e.warm();
                 *guard = Some(e);
-                log::info!("[encoder-dict] model preloaded + warmed");
+                log::debug!("[encoder-dict] model preloaded and warmed");
             }
             Err(e) => log::warn!("[encoder-dict] preload failed, skipping: {e}"),
         }
@@ -244,7 +244,7 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
         .dictionary_context_chars
         .clamp(DEFAULT_CONTEXT_BYTES as i64, MAX_CONTEXT_BYTES) as usize;
     touch_encoder_used();
-    log::info!(
+    log::debug!(
         "[encoder-dict] correction_start chars={} terms={}",
         text.chars().count(),
         terms.len()
@@ -266,10 +266,10 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
         };
         if guard.is_none() {
             let load_started = Instant::now();
-            log::info!("[encoder-dict] load_start");
+            log::debug!("[encoder-dict] load_start");
             match EncoderDict::load(&model_path, &tok_path) {
                 Ok(e) => {
-                    log::info!(
+                    log::debug!(
                         "[encoder-dict] load_complete duration_ms={}",
                         load_started.elapsed().as_millis()
                     );
@@ -284,9 +284,9 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
         match guard.as_mut() {
             Some(e) => {
                 let infer_started = Instant::now();
-                log::info!("[encoder-dict] infer_start");
+                log::debug!("[encoder-dict] infer_start");
                 let corrected = e.correct(&text_owned, &index, context_bytes);
-                log::info!(
+                log::debug!(
                     "[encoder-dict] infer_complete duration_ms={} changed={} total_blocking_ms={}",
                     infer_started.elapsed().as_millis(),
                     corrected != text_owned,
@@ -301,7 +301,7 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
     let result =
         match tokio::time::timeout(Duration::from_millis(CORRECTION_TIMEOUT_MS), task).await {
             Ok(Ok(corrected)) => {
-                log::info!(
+                log::debug!(
                     "[encoder-dict] correction_complete duration_ms={} changed={}",
                     correction_started.elapsed().as_millis(),
                     corrected != fallback

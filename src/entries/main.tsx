@@ -7,7 +7,7 @@ import "@/app/styles/globals.css";
 import { installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { MainPage } from "@/views/main";
 
-installWebviewDiag("main");
+installWebviewDiag("main", { deferEntryBeacon: true });
 
 // Each the reference window has its own root because each window is its own
 // HTML document — there is no shared layout shell, no router. The wrapper

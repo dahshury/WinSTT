@@ -3,7 +3,7 @@ use crate::input::{self, EnigoState};
 use crate::settings::TypingTool;
 use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod, get_settings};
 use enigo::{Direction, Enigo, Key, Keyboard};
-use log::{info, warn};
+use log::{debug, warn};
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::{MutexGuard, TryLockError};
@@ -28,12 +28,14 @@ fn lock_enigo<'a>(
     context: &str,
 ) -> Result<MutexGuard<'a, Enigo>, ClipboardError> {
     let started = Instant::now();
-    info!("[clipboard] enigo_lock_start context={context}");
+    debug!("[clipboard] enigo_lock_start context={context}");
     loop {
         match enigo_state.0.try_lock() {
             Ok(guard) => {
                 let elapsed_ms = started.elapsed().as_millis();
-                info!("[clipboard] enigo_lock_complete context={context} duration_ms={elapsed_ms}");
+                debug!(
+                    "[clipboard] enigo_lock_complete context={context} duration_ms={elapsed_ms}"
+                );
                 warn_if_slow_paste_phase("enigo_lock", elapsed_ms);
                 return Ok(guard);
             }
@@ -94,19 +96,19 @@ fn paste_via_clipboard(
     paste_delay_ms: u64,
 ) -> Result<(), ClipboardError> {
     let total_started = Instant::now();
-    info!(
+    debug!(
         "[clipboard] paste_via_clipboard_start method={paste_method:?} chars={} delay_ms={paste_delay_ms}",
         text.chars().count()
     );
     let clipboard = app_handle.clipboard();
     let phase_started = Instant::now();
-    info!("[clipboard] snapshot_original_start");
+    debug!("[clipboard] snapshot_original_start");
     // Full-fidelity snapshot (raw formats on Windows, text+image elsewhere) so a
     // copied image / file list survives the sandwich — a text-only save used to
     // "restore" an empty string over anything that wasn't plain text.
     let snapshot = crate::clipboard_snapshot::capture(app_handle);
     let elapsed_ms = phase_started.elapsed().as_millis();
-    info!(
+    debug!(
         "[clipboard] snapshot_original_complete duration_ms={elapsed_ms} {}",
         snapshot.describe()
     );
@@ -115,13 +117,13 @@ fn paste_via_clipboard(
     // Write text to clipboard first
     // On Wayland, prefer wl-copy for better compatibility (especially with umlauts)
     let phase_started = Instant::now();
-    info!(
+    debug!(
         "[clipboard] write_text_start chars={}",
         text.chars().count()
     );
     #[cfg(target_os = "linux")]
     let write_result = if is_wayland() && command_available("wl-copy") {
-        info!("Using wl-copy for clipboard write on Wayland");
+        debug!("Using wl-copy for clipboard write on Wayland");
         write_clipboard_via_wl_copy(text)
     } else {
         clipboard
@@ -136,14 +138,14 @@ fn paste_via_clipboard(
 
     write_result?;
     let elapsed_ms = phase_started.elapsed().as_millis();
-    info!("[clipboard] write_text_complete duration_ms={elapsed_ms}");
+    debug!("[clipboard] write_text_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("write_text", elapsed_ms);
 
     std::thread::sleep(Duration::from_millis(paste_delay_ms));
 
     // Send paste key combo
     let phase_started = Instant::now();
-    info!("[clipboard] key_combo_start method={paste_method:?}");
+    debug!("[clipboard] key_combo_start method={paste_method:?}");
     #[cfg(target_os = "linux")]
     let key_combo_sent = try_send_key_combo_linux(paste_method)?;
 
@@ -168,21 +170,21 @@ fn paste_via_clipboard(
         }
     }
     let elapsed_ms = phase_started.elapsed().as_millis();
-    info!("[clipboard] key_combo_complete duration_ms={elapsed_ms}");
+    debug!("[clipboard] key_combo_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("key_combo", elapsed_ms);
 
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Restore original clipboard content (full snapshot, incl. non-text formats).
     let phase_started = Instant::now();
-    info!("[clipboard] restore_original_start {}", snapshot.describe());
+    debug!("[clipboard] restore_original_start {}", snapshot.describe());
     crate::clipboard_snapshot::restore(app_handle, &snapshot);
     let elapsed_ms = phase_started.elapsed().as_millis();
-    info!("[clipboard] restore_original_complete duration_ms={elapsed_ms}");
+    debug!("[clipboard] restore_original_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("restore_original", elapsed_ms);
 
     let total_elapsed_ms = total_started.elapsed().as_millis();
-    info!("[clipboard] paste_via_clipboard_complete duration_ms={total_elapsed_ms}");
+    debug!("[clipboard] paste_via_clipboard_complete duration_ms={total_elapsed_ms}");
     warn_if_slow_paste_phase("paste_via_clipboard", total_elapsed_ms);
 
     Ok(())
@@ -196,29 +198,29 @@ fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, Clipboar
         // Wayland: prefer wtype (but not on KDE), then dotool, then ydotool
         // Note: wtype doesn't work on KDE (no zwp_virtual_keyboard_manager_v1 support)
         if !is_kde_wayland() && command_available("wtype") {
-            info!("Using wtype for key combo");
+            debug!("Using wtype for key combo");
             send_key_combo_via_wtype(paste_method)?;
             return Ok(true);
         }
         if command_available("dotool") {
-            info!("Using dotool for key combo");
+            debug!("Using dotool for key combo");
             send_key_combo_via_dotool(paste_method)?;
             return Ok(true);
         }
         if command_available("ydotool") {
-            info!("Using ydotool for key combo");
+            debug!("Using ydotool for key combo");
             send_key_combo_via_ydotool(paste_method)?;
             return Ok(true);
         }
     } else {
         // X11: prefer xdotool, then ydotool
         if command_available("xdotool") {
-            info!("Using xdotool for key combo");
+            debug!("Using xdotool for key combo");
             send_key_combo_via_xdotool(paste_method)?;
             return Ok(true);
         }
         if command_available("ydotool") {
-            info!("Using ydotool for key combo");
+            debug!("Using ydotool for key combo");
             send_key_combo_via_ydotool(paste_method)?;
             return Ok(true);
         }
@@ -235,27 +237,27 @@ fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<boo
     if preferred_tool != TypingTool::Auto {
         return match preferred_tool {
             TypingTool::Wtype if command_available("wtype") => {
-                info!("Using user-specified wtype");
+                debug!("Using user-specified wtype");
                 type_text_via_wtype(text)?;
                 Ok(true)
             }
             TypingTool::Kwtype if command_available("kwtype") => {
-                info!("Using user-specified kwtype");
+                debug!("Using user-specified kwtype");
                 type_text_via_kwtype(text)?;
                 Ok(true)
             }
             TypingTool::Dotool if command_available("dotool") => {
-                info!("Using user-specified dotool");
+                debug!("Using user-specified dotool");
                 type_text_via_dotool(text)?;
                 Ok(true)
             }
             TypingTool::Ydotool if command_available("ydotool") => {
-                info!("Using user-specified ydotool");
+                debug!("Using user-specified ydotool");
                 type_text_via_ydotool(text)?;
                 Ok(true)
             }
             TypingTool::Xdotool if command_available("xdotool") => {
-                info!("Using user-specified xdotool");
+                debug!("Using user-specified xdotool");
                 type_text_via_xdotool(text)?;
                 Ok(true)
             }
@@ -270,36 +272,36 @@ fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<boo
     if is_wayland() {
         // KDE Wayland: prefer kwtype (uses KDE Fake Input protocol, supports umlauts)
         if is_kde_wayland() && command_available("kwtype") {
-            info!("Using kwtype for direct text input on KDE Wayland");
+            debug!("Using kwtype for direct text input on KDE Wayland");
             type_text_via_kwtype(text)?;
             return Ok(true);
         }
         // Wayland: prefer wtype, then dotool, then ydotool
         // Note: wtype doesn't work on KDE (no zwp_virtual_keyboard_manager_v1 support)
         if !is_kde_wayland() && command_available("wtype") {
-            info!("Using wtype for direct text input");
+            debug!("Using wtype for direct text input");
             type_text_via_wtype(text)?;
             return Ok(true);
         }
         if command_available("dotool") {
-            info!("Using dotool for direct text input");
+            debug!("Using dotool for direct text input");
             type_text_via_dotool(text)?;
             return Ok(true);
         }
         if command_available("ydotool") {
-            info!("Using ydotool for direct text input");
+            debug!("Using ydotool for direct text input");
             type_text_via_ydotool(text)?;
             return Ok(true);
         }
     } else {
         // X11: prefer xdotool, then ydotool
         if command_available("xdotool") {
-            info!("Using xdotool for direct text input");
+            debug!("Using xdotool for direct text input");
             type_text_via_xdotool(text)?;
             return Ok(true);
         }
         if command_available("ydotool") {
-            info!("Using ydotool for direct text input");
+            debug!("Using ydotool for direct text input");
             type_text_via_ydotool(text)?;
             return Ok(true);
         }
@@ -568,7 +570,7 @@ fn paste_direct(
         if try_direct_typing_linux(text, typing_tool)? {
             return Ok(());
         }
-        info!("Falling back to enigo for direct text input");
+        debug!("Falling back to enigo for direct text input");
     }
 
     input::paste_text_direct(enigo, text).map_err(ClipboardError::Input)
@@ -586,7 +588,7 @@ fn paste_streaming_direct(
         if backspace_chars == 0 && try_direct_typing_linux(text, typing_tool)? {
             return Ok(());
         }
-        info!("Falling back to enigo for streaming text input");
+        debug!("Falling back to enigo for streaming text input");
     }
 
     input::edit_text_streaming(enigo, backspace_chars, text).map_err(ClipboardError::Input)
@@ -672,7 +674,7 @@ fn paste_streaming_edit_inner(
 
     let settings = get_settings(&app_handle);
     if settings.paste_method == PasteMethod::None {
-        info!("PasteMethod::None selected - skipping streaming paste action");
+        debug!("PasteMethod::None selected - skipping streaming paste action");
         return Ok(());
     }
 
@@ -817,17 +819,17 @@ fn paste_inner(
         text
     };
 
-    info!(
+    debug!(
         "Using paste method: {:?}, delay: {}ms",
         paste_method, paste_delay_ms
     );
-    info!(
+    debug!(
         "[clipboard] paste_start method={paste_method:?} chars={} replace_mode={replace_mode} select_all_first={select_all_first}",
         text.chars().count()
     );
 
     if paste_method == PasteMethod::None {
-        info!("PasteMethod::None selected - skipping paste action");
+        debug!("PasteMethod::None selected - skipping paste action");
         return Ok(());
     }
 
@@ -839,10 +841,10 @@ fn paste_inner(
 
     if select_all_first {
         let phase_started = Instant::now();
-        info!("[clipboard] select_all_start");
+        debug!("[clipboard] select_all_start");
         input::send_select_all(&mut enigo).map_err(ClipboardError::Input)?;
         let elapsed_ms = phase_started.elapsed().as_millis();
-        info!("[clipboard] select_all_complete duration_ms={elapsed_ms}");
+        debug!("[clipboard] select_all_complete duration_ms={elapsed_ms}");
         warn_if_slow_paste_phase("select_all", elapsed_ms);
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -852,7 +854,7 @@ fn paste_inner(
         PasteMethod::None => unreachable!("PasteMethod::None returned before input synthesis"),
         PasteMethod::Direct => {
             let phase_started = Instant::now();
-            info!(
+            debug!(
                 "[clipboard] direct_paste_start chars={}",
                 text.chars().count()
             );
@@ -863,7 +865,7 @@ fn paste_inner(
                 settings.typing_tool,
             )?;
             let elapsed_ms = phase_started.elapsed().as_millis();
-            info!("[clipboard] direct_paste_complete duration_ms={elapsed_ms}");
+            debug!("[clipboard] direct_paste_complete duration_ms={elapsed_ms}");
             warn_if_slow_paste_phase("direct_paste", elapsed_ms);
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
@@ -888,13 +890,13 @@ fn paste_inner(
     if !replace_mode && should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         let phase_started = Instant::now();
-        info!(
+        debug!(
             "[clipboard] auto_submit_start key={:?}",
             settings.auto_submit_key
         );
         send_return_key(&mut enigo, settings.auto_submit_key)?;
         let elapsed_ms = phase_started.elapsed().as_millis();
-        info!("[clipboard] auto_submit_complete duration_ms={elapsed_ms}");
+        debug!("[clipboard] auto_submit_complete duration_ms={elapsed_ms}");
         warn_if_slow_paste_phase("auto_submit", elapsed_ms);
     }
 
@@ -902,7 +904,7 @@ fn paste_inner(
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         let clipboard = app_handle.clipboard();
         let phase_started = Instant::now();
-        info!(
+        debug!(
             "[clipboard] copy_to_clipboard_start chars={}",
             text.chars().count()
         );
@@ -910,12 +912,12 @@ fn paste_inner(
             ClipboardError::Clipboard(format!("Failed to copy to clipboard: {}", e))
         })?;
         let elapsed_ms = phase_started.elapsed().as_millis();
-        info!("[clipboard] copy_to_clipboard_complete duration_ms={elapsed_ms}");
+        debug!("[clipboard] copy_to_clipboard_complete duration_ms={elapsed_ms}");
         warn_if_slow_paste_phase("copy_to_clipboard", elapsed_ms);
     }
 
     let elapsed_ms = paste_started.elapsed().as_millis();
-    info!("[clipboard] paste_complete duration_ms={elapsed_ms}");
+    debug!("[clipboard] paste_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("paste", elapsed_ms);
 
     Ok(())

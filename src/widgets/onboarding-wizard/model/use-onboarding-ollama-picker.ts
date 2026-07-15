@@ -8,7 +8,7 @@ import {
 import { useModelStateStore } from "@/entities/model-catalog";
 import type { OllamaPullProgress } from "@/shared/api/models";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
-import type { OllamaModelSelectorProps } from "@/widgets/model-picker";
+import type { OllamaModelSelectorProps } from "@/features/llm-model-picker";
 
 /**
  * Wires the shared Ollama catalog / library / system-info stores into the props

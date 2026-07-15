@@ -515,6 +515,12 @@ impl TranscriptionManager {
         self.model_lifecycle.is_warm(model_id)
     }
 
+    /// Authoritative warm-state read for command responses. Cloud models have no local kernel
+    /// warmup and are ready as soon as their route is selected.
+    pub fn is_model_warm_for(&self, model_id: &str) -> bool {
+        self.backend.route_of(model_id) == BackendRoute::Cloud || self.is_model_warm(model_id)
+    }
+
     fn mark_model_warmed_if_current(&self, model_id: &str) {
         if self.backend.route_of(model_id) == BackendRoute::Cloud || !self.is_model_loaded() {
             return;
@@ -541,6 +547,20 @@ impl TranscriptionManager {
     pub fn is_model_loaded(&self) -> bool {
         let engine = self.lock_engine();
         engine.is_some()
+    }
+
+    /// Whether model weights are currently being resolved/built. Exposed to the
+    /// runtime snapshot so renderers can distinguish a usable shell from a
+    /// speech engine that is still coming online.
+    pub fn is_model_loading(&self) -> bool {
+        *self.lock_is_loading()
+    }
+
+    /// Whether the loaded engine is paying its one-time kernel warmup cost.
+    /// Real dictation may preempt this work, but the UI should still describe
+    /// the engine as preparing until the background warmup settles.
+    pub fn is_model_warming(&self) -> bool {
+        self.warming.load(Ordering::Acquire)
     }
 
     fn is_model_ready_for(&self, model_id: &str) -> bool {

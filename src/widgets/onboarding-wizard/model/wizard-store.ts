@@ -32,10 +32,10 @@ interface OnboardingWizardState {
 	resetProgress: () => void;
 	setCloudSttReady: (ready: boolean) => void;
 	setMicTestPassed: (passed: boolean) => void;
-	// The local STT model choice itself lives in `settings.model`: the onboarding
-	// step opens the SAME detached picker Settings uses, which persists + swaps
-	// the model. The wizard store only tracks whether that model is downloaded
-	// (the Next-button gate).
+	// The local STT model choice itself lives in `settings.model` — on a fresh
+	// install that's the "tiny" schema default, which the onboarding step offers
+	// as a single starter download (no picker). The wizard store only tracks
+	// whether that model is downloaded (the Next-button gate).
 	setSttModelReady: (ready: boolean) => void;
 	sttModelReady: boolean;
 	setTrack: (track: OnboardingTrack) => void;

@@ -36,7 +36,7 @@ afterEach(cleanup);
 
 describe("GpuModelBreakdown", () => {
 	test("renders all four section headings and the live usage header", () => {
-		renderBreakdown([
+		const { container } = renderBreakdown([
 			{ key: "stt", rows: [] },
 			{ key: "tts", rows: [] },
 			{ key: "dictionary", rows: [] },
@@ -48,6 +48,13 @@ describe("GpuModelBreakdown", () => {
 		expect(screen.getByText("Post-processing")).toBeDefined();
 		// Header reuses the {size} VRAM template with a "used / total" size.
 		expect(screen.getByText(/6\.0 GB \/ 24\.0 GB VRAM/)).toBeDefined();
+		const fill = container.querySelector<HTMLElement>(
+			'[data-slot="footprint-resource-fill"]',
+		);
+		expect(fill?.style.width).toBe("25%");
+		// Opening snapshots paint at their final width instead of visibly
+		// transitioning from the hidden window's older sample.
+		expect(fill?.className).not.toContain("transition");
 	});
 
 	test("shows the VRAM memory tag plus a distinct disk figure for an STT model", () => {

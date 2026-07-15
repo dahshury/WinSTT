@@ -73,16 +73,12 @@ describe("model native formatting policy", () => {
 		expect(getModelNativeFormatting(model({ family: "whisper" }))).toEqual({
 			basicPunctuationCasing: true,
 			fillerRepeatCleanup: false,
-			quoteCommands: false,
-			spokenPunctuationCommands: false,
-			spokenSymbolCommands: false,
+			spokenCommands: false,
 		});
 		expect(getModelNativeFormatting(model({ family: "dolphin" }))).toEqual({
 			basicPunctuationCasing: false,
 			fillerRepeatCleanup: false,
-			quoteCommands: false,
-			spokenPunctuationCommands: false,
-			spokenSymbolCommands: false,
+			spokenCommands: false,
 		});
 	});
 });

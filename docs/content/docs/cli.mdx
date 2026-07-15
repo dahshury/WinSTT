@@ -1,11 +1,11 @@
 ---
-title: Command-Line Flags
-description: The flags the WinSTT app accepts at launch, and the developer-only benchmark binaries for STT/TTS.
+title: Command-Line and Headless Transcription
+description: Launch flags, headless file transcription and benchmarking, and developer-only STT/TTS harnesses.
 ---
 
-WinSTT is a single native executable. It accepts a small set of launch flags, and because it
-runs single-instance, three of them are **forwarded to an already-running instance** — which
-makes them useful targets for OS-level keyboard shortcuts or automation.
+WinSTT is a single native executable. It supports desktop launch controls, actions forwarded to an
+already-running instance, and a headless file-transcription path for scripts and reproducible
+benchmarks.
 
 ```bash
 WinSTT [OPTIONS]
@@ -13,14 +13,14 @@ WinSTT [OPTIONS]
 
 <StatGrid>
   <Stat value="1" label="Native executable" />
-  <Stat value="7" label="Launch flags" />
+  <Stat value="0" label="Webviews in headless mode" />
   <Stat value="3" label="Forwarded to the running instance" />
 </StatGrid>
 
 <Callout type="info" title="Most config lives in the UI, not the CLI">
-  The model, language, device, VAD, realtime, wake words, and TTS are all configured in the
-  [Settings UI](/docs/settings) and persisted. The flags below only control startup behavior and
-  the three forwarded actions you can wire to a shortcut.
+  Interactive dictation settings still live in the [Settings UI](/docs/settings). Headless file
+  transcription selects its model and device explicitly and does not change those persisted
+  settings.
 </Callout>
 
 ## App flags
@@ -43,6 +43,53 @@ WinSTT [OPTIONS]
   `--toggle-post-process`, or `--cancel` doesn't open a second window — it hands the flag to the
   instance that's already running. Bind a global shortcut (or a stream-deck button, or a script)
   to `WinSTT.exe --toggle-transcription` to start/stop dictation from anywhere.
+</Callout>
+
+## Headless file transcription
+
+`--transcribe-file` exits after printing the transcript and timing data. It initializes only the
+media decoder, model resolver, ONNX Runtime sessions, and (for long audio) the segmentation VAD.
+It does **not** create the Tauri app, webviews, tray, microphone capture, clipboard/paste path,
+global shortcuts, or desktop background managers.
+
+```bash
+WinSTT --transcribe-file recording.wav
+WinSTT --transcribe-file interview.mp3 --model small --device cpu
+WinSTT --transcribe-file sample.flac --device directml --warm --repeat 3 --json
+WinSTT --transcribe-file sample.wav --cold --repeat 3
+```
+
+<ModelTable
+  head={["Flag", "What it does"]}
+  rows={[
+    ["--transcribe-file <PATH>", "Decode and transcribe WAV, MP3, MP4, AAC, FLAC, OGG, or Vorbis media, then exit."],
+    ["--model <ID>", "Select an embedded catalog id. Defaults to tiny.en."],
+    ["--device <DEVICE>", "Select auto, cpu, directml, cuda, coreml, rocm, openvino, or webgpu. Uncompiled providers fail explicitly."],
+    ["--repeat <N>", "Run N measured decode passes. The loaded engine is reused unless --cold is set."],
+    ["--warm", "Run the production-style one-second-silence kernel warmup after each model load and report its duration."],
+    ["--cold", "Destroy and rebuild ONNX sessions before every repeated pass. This measures provider/kernel-cold launches; it does not flush the operating-system disk cache."],
+    ["--json", "Emit one machine-readable result containing transcript and all measurements."],
+    ["--list-models", "Print catalog ids, engine families, repositories, parameter counts, and quantizations, then exit."],
+    ["--list-devices", "Print the execution providers compiled into this build and the provider selected by auto, then exit."],
+  ]}
+/>
+
+The resolver checks the Hugging Face cache first. If the requested model is absent, the headless
+route downloads it before constructing ONNX sessions. Quantization uses the same RAM/VRAM-aware
+automatic policy and the same per-engine provider overrides as desktop dictation.
+
+### Benchmark output
+
+Each run reports session load time, optional warmup time, decode time, real-time factor (`RTF =
+decode seconds / audio seconds`), active ONNX execution providers, current resident memory, and the
+transcript. The top-level result also reports media-decode time, model-resolution time, audio
+duration, selected model/quantization/device, and peak resident memory. On Windows, peak resident
+memory comes from the operating system's process peak working set; other platforms report the
+highest sampled resident set.
+
+<Callout type="info" title="Use a release build for performance measurements">
+  Debug builds include compiler instrumentation and are not representative. Run benchmarks against
+  a packaged build or `cargo run --release -- --transcribe-file ...` from `src-tauri/`.
 </Callout>
 
 ## Developer Benchmark Binaries

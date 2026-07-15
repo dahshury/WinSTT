@@ -74,10 +74,8 @@ pub(crate) fn apply_deterministic_formatting(text: &str, ws: &WinsttSettings) ->
     let basic_enabled = ws.quality.format_basic_punctuation_casing
         && !model_has_native_basic_formatting(&ws.model.model);
     if !(basic_enabled
-        || ws.quality.format_quote_commands
-        || ws.quality.format_filler_repeat_cleanup
-        || ws.quality.format_spoken_punctuation_commands
-        || ws.quality.format_spoken_symbol_commands)
+        || ws.quality.format_spoken_commands
+        || ws.quality.format_filler_repeat_cleanup)
     {
         return text.to_string();
     }
@@ -86,17 +84,13 @@ pub(crate) fn apply_deterministic_formatting(text: &str, ws: &WinsttSettings) ->
     if out.is_empty() {
         return out;
     }
-    if ws.quality.format_quote_commands {
+    if ws.quality.format_spoken_commands {
         out = apply_quote_commands(&out);
+        out = apply_spoken_symbol_commands(&out);
+        out = apply_spoken_punctuation_commands(&out);
     }
     if ws.quality.format_filler_repeat_cleanup {
         out = collapse_repeated_words(FILLER_RE.replace_all(&out, "").as_ref());
-    }
-    if ws.quality.format_spoken_punctuation_commands {
-        out = apply_spoken_punctuation_commands(&out);
-    }
-    if ws.quality.format_spoken_symbol_commands {
-        out = apply_spoken_symbol_commands(&out);
     }
     if basic_enabled {
         out = apply_basic_punctuation_casing(&out);
@@ -254,7 +248,7 @@ mod tests {
     #[test]
     fn explicit_quote_commands_become_literal_quotes() {
         let mut ws = settings_for("dolphin-base-ctc");
-        ws.quality.format_quote_commands = true;
+        ws.quality.format_spoken_commands = true;
         assert_eq!(
             apply_deterministic_formatting("click quote Save changes unquote", &ws),
             "click \"Save changes\""
@@ -273,7 +267,7 @@ mod tests {
     #[test]
     fn spoken_punctuation_commands_become_symbols_and_lines() {
         let mut ws = settings_for("dolphin-base-ctc");
-        ws.quality.format_spoken_punctuation_commands = true;
+        ws.quality.format_spoken_commands = true;
         assert_eq!(
             apply_deterministic_formatting("hello comma world new line done period", &ws),
             "hello, world\ndone."
@@ -283,7 +277,7 @@ mod tests {
     #[test]
     fn technical_symbol_commands_cover_flags_email_domains_and_paths() {
         let mut ws = settings_for("dolphin-base-ctc");
-        ws.quality.format_spoken_symbol_commands = true;
+        ws.quality.format_spoken_commands = true;
         assert_eq!(
             apply_deterministic_formatting(
                 "npm install dash dash save email john dot smith at example dot com open example dot com slash docs slash usr slash local C colon backslash Users backslash Sam",

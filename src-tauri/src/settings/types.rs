@@ -1,5 +1,4 @@
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::HashMap;
 
@@ -7,7 +6,7 @@ use std::collections::HashMap;
 // against this module, so the private default fns must be in scope here.
 use super::defaults::*;
 
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
@@ -15,51 +14,6 @@ pub enum LogLevel {
     Info,
     Warn,
     Error,
-}
-
-// Custom deserializer to handle both old numeric format (1-5) and new string format ("trace", "debug", etc.)
-impl<'de> Deserialize<'de> for LogLevel {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct LogLevelVisitor;
-
-        impl<'de> Visitor<'de> for LogLevelVisitor {
-            type Value = LogLevel;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a string or integer representing log level")
-            }
-
-            fn visit_str<E: de::Error>(self, value: &str) -> Result<LogLevel, E> {
-                match value.to_lowercase().as_str() {
-                    "trace" => Ok(LogLevel::Trace),
-                    "debug" => Ok(LogLevel::Debug),
-                    "info" => Ok(LogLevel::Info),
-                    "warn" => Ok(LogLevel::Warn),
-                    "error" => Ok(LogLevel::Error),
-                    _ => Err(E::unknown_variant(
-                        value,
-                        &["trace", "debug", "info", "warn", "error"],
-                    )),
-                }
-            }
-
-            fn visit_u64<E: de::Error>(self, value: u64) -> Result<LogLevel, E> {
-                match value {
-                    1 => Ok(LogLevel::Trace),
-                    2 => Ok(LogLevel::Debug),
-                    3 => Ok(LogLevel::Info),
-                    4 => Ok(LogLevel::Warn),
-                    5 => Ok(LogLevel::Error),
-                    _ => Err(E::invalid_value(de::Unexpected::Unsigned(value), &"1-5")),
-                }
-            }
-        }
-
-        deserializer.deserialize_any(LogLevelVisitor)
-    }
 }
 
 impl From<LogLevel> for tauri_plugin_log::LogLevel {
@@ -85,9 +39,7 @@ pub struct ShortcutBinding {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
-// Renderer-canonical timeout type is WinSTT `settings_schema::ModelUnloadTimeout`;
-// suffix this inherited one's TS export to break the bindings.ts collision.
-#[specta(rename = "ModelUnloadTimeoutLegacy")]
+#[specta(rename = "CoreModelUnloadTimeout")]
 pub enum ModelUnloadTimeout {
     Never,
     Immediately,
@@ -119,9 +71,7 @@ pub enum ClipboardHandling {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
-// Renderer-canonical is WinSTT `settings_schema::AutoSubmitKey`; suffix this
-// inherited one's TS export to break the bindings.ts collision.
-#[specta(rename = "AutoSubmitKeyLegacy")]
+#[specta(rename = "CoreAutoSubmitKey")]
 pub enum AutoSubmitKey {
     Enter,
     CtrlEnter,
@@ -262,27 +212,11 @@ impl Default for TypingTool {
     }
 }
 
-#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum WhisperAcceleratorSetting {
     Auto,
     Cpu,
-}
-
-// Tolerant deserialization: legacy on-disk configs may still carry the removed
-// "gpu" value (or any other unknown string). Map anything that is not an exact
-// known variant to `Auto` instead of erroring, so old settings keep loading.
-impl<'de> Deserialize<'de> for WhisperAcceleratorSetting {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Ok(match raw.as_str() {
-            "cpu" => WhisperAcceleratorSetting::Cpu,
-            _ => WhisperAcceleratorSetting::Auto,
-        })
-    }
 }
 
 impl Default for WhisperAcceleratorSetting {
@@ -312,21 +246,8 @@ impl Default for OrtAcceleratorSetting {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
-    // NOTE: the legacy `push_to_talk` bool was removed — the recording mode
-    // (ptt / toggle / listen / wakeword) is owned by `WinsttSettings.general.recording_mode`,
-    // which the BACKEND reads in shortcut/handler.rs to decide dispatch. The field had no
-    // live reader. `#[serde(default)]` on the remaining fields means an older
-    // settings_store.json that still carries `"push_to_talk"` deserializes fine (the unknown
-    // key is ignored).
     #[serde(default = "default_update_checks_enabled")]
     pub update_checks_enabled: bool,
-    // NOTE: the legacy `selected_model` / `translate_to_english` / `selected_language` /
-    // `overlay_position` / `model_unload_timeout` fields were removed — each is fully owned by a
-    // canonical `WinsttSettings` field the backend actually reads (`model.model` /
-    // `model.translate_target_language` / `model.language` / `general.overlay_position` /
-    // `global.model_unload_timeout`); the `core` copies had NO reader (only a write-only sync for
-    // the timeout). `#[serde(default)]` on the remaining fields means an older store still carrying
-    // those keys deserializes fine (the unknown keys are ignored).
     #[serde(default)]
     pub selected_microphone: Option<String>,
     #[serde(default)]
@@ -345,11 +266,6 @@ pub struct AppSettings {
     pub auto_submit: bool,
     #[serde(default)]
     pub auto_submit_key: AutoSubmitKey,
-    // NOTE: the legacy `post_process_*` fields (enabled/provider catalog/API
-    // keys/models/prompts) were removed with the legacy post-processing path —
-    // LLM post-processing is configured solely via `WinsttSettings.llm`. Older
-    // stores that still carry those keys deserialize fine (unknown keys are
-    // ignored).
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]

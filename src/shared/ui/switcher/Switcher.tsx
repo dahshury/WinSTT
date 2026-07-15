@@ -37,8 +37,10 @@ export interface SwitcherProps<T extends string = string> {
 	options: readonly SwitcherOption<T>[];
 	/** "sm" renders a compact, short segment (18px line-box) for inline use
 	 *  inside a text row — e.g. the modifier Low/Medium/High tier — so the row
-	 *  height matches sibling rows that have no switcher. Defaults to "md". */
-	size?: "md" | "sm";
+	 *  height matches sibling rows that have no switcher. "xs" keeps the same
+	 *  height with tighter horizontal padding/icons for four-option inline rows.
+	 *  Defaults to "md". */
+	size?: "md" | "sm" | "xs";
 	value: T;
 }
 

@@ -20,7 +20,7 @@ describe("settings defaults: Rust↔zod parity", () => {
 
 		// The fixture is already the renderer-facing surface: the Rust exporter
 		// strips `core` (the backend-only embedded AppSettings view — bindings,
-		// paste/clipboard, legacy post_process_*, accelerators, tray/debug
+		// paste/clipboard, accelerators, tray/debug
 		// toggles) which zod never models. So `core` is not present in the
 		// fixture and nothing extra needs excluding here; this asserts exactly the
 		// shared surface both schemas must agree on.

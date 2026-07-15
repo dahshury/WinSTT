@@ -45,8 +45,19 @@ export function diagBeacon(label: string, message: string): void {
  * Install global error forwarders for a window. Call once at the top of the
  * window entry, before other module work, so import/render failures are captured.
  */
-export function installWebviewDiag(label: string): void {
-	report(label, "info", "entry script start");
+export function installWebviewDiag(
+	label: string,
+	options: { deferEntryBeacon?: boolean } = {},
+): void {
+	if (options.deferEntryBeacon) {
+		window.requestAnimationFrame(() => {
+			window.requestAnimationFrame(() => {
+				report(label, "info", "entry script start");
+			});
+		});
+	} else {
+		report(label, "info", "entry script start");
+	}
 
 	window.addEventListener("error", (e) => {
 		if (isBenignWebviewErrorMessage(e.message)) {

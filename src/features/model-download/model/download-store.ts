@@ -1,16 +1,16 @@
 import { create } from "zustand";
 import type { DownloadProgressPayload as IpcDownloadProgressPayload } from "@/shared/api/ipc-client";
 import {
+	cancelModelDownloadQuant as ipcCancelModelDownloadQuant,
 	cancelDownload as ipcCancelDownload,
 	deleteModelCache as ipcDeleteModelCache,
 	deleteModelQuantization as ipcDeleteModelQuantization,
 	pauseModelDownload as ipcPauseModelDownload,
 	predownloadModelQuant as ipcPredownloadModelQuant,
 	resumeModelDownload as ipcResumeModelDownload,
+	type SttModelLifecycleSnapshot,
 } from "@/shared/api/ipc-client";
 import {
-	mergeProgressIntoSnapshot,
-	mergeSeedIntoSnapshot,
 	monotonicPercent,
 	percentFromFraction,
 	type QuantDownloadSeed,
@@ -38,9 +38,15 @@ export interface QuantDownloadState {
 	modelId: string;
 	owner?: SttDownloadOwner;
 	paused: boolean;
+	phase: Extract<
+		SttModelLifecycleSnapshot["phase"],
+		"queued" | "downloading" | "paused" | "verifying" | "installing"
+	>;
 	/** 0–100, null = indeterminate (first event hasn't landed yet). */
 	progress: number | null;
 	quantization: string;
+	requestId: string;
+	revision: number;
 	speedBps: number;
 	totalBytes: number;
 }
@@ -57,6 +63,8 @@ function ownerPatch(owner: SttDownloadOwner | undefined) {
 }
 
 interface DownloadState {
+	/** Apply one backend-authoritative lifecycle frame. Lower/equal revisions are ignored. */
+	applyLifecycleSnapshot: (snapshot: SttModelLifecycleSnapshot) => void;
 	cancelDownload: () => void;
 	cancelled: boolean;
 	/** Per-quant cancel — drops the in-flight download for one variant
@@ -75,18 +83,6 @@ interface DownloadState {
 	/** Pause the in-flight per-quant download. .partial files are
 	 *  preserved on disk; resume picks up via HTTP Range. */
 	pauseQuantDownload: (modelId: string, quantization: string) => void;
-	/** Mark a quant entry as paused locally (for instant UI feedback —
-	 *  the server confirms via the next download event). Also the handler for
-	 *  the server's ``stt:model-download-paused`` broadcast, so EVERY window
-	 *  (not just the one that clicked pause) leaves the downloading state. */
-	pauseQuantEntry: (modelId: string, quantization: string) => void;
-	/** Clear the paused flag on an existing quant entry WITHOUT touching the
-	 *  server — the inverse of {@link pauseQuantEntry}. Driven by the server's
-	 *  ``stt:model-download-start`` re-emit on resume so windows that only
-	 *  observed the download (and got the pause broadcast) re-enter the
-	 *  downloading state when bytes start flowing again. No-op when the entry
-	 *  is absent or already active. */
-	resumeQuantEntry: (modelId: string, quantization: string) => void;
 	/** Kick off a byte-level pause/resume capable download for one
 	 *  ``(modelId, quantization)`` tuple. Distinct from the legacy
 	 *  "switch model + restart server" flow — this fetches into the HF
@@ -104,6 +100,10 @@ interface DownloadState {
 	 *  on the badge without subscribing to the legacy ``modelName`` /
 	 *  ``progress`` fields (which only track ONE download at a time). */
 	quantDownloads: Record<string, QuantDownloadState>;
+	/** Last authoritative snapshot for every model/quant, including terminal activation states. */
+	lifecycles: Record<string, SttModelLifecycleSnapshot>;
+	/** UI-only provenance; never used to infer lifecycle phase or progress. */
+	quantOwners: Record<string, SttDownloadOwner>;
 	/** Resume the in-flight per-quant download. Server re-runs the worker
 	 *  which skips already-cached files. */
 	resumeQuantDownload: (
@@ -115,16 +115,6 @@ interface DownloadState {
 	setDownloadComplete: (cancelled?: boolean) => void;
 	setDownloadProgress: (payload: DownloadProgressPayload) => void;
 	setDownloadStart: (model: string) => void;
-	/** Mark a quant entry as cleared from the live map — called when the
-	 *  server emits download_complete for it. The entry is dropped regardless of
-	 *  whether the download finished or was cancelled. */
-	setQuantDownloadComplete: (modelId: string, quantization: string) => void;
-	/** Update or insert the per-quant snapshot on a chunk event. */
-	setQuantDownloadProgress: (
-		modelId: string,
-		quantization: string,
-		payload: DownloadProgressPayload,
-	) => void;
 	speedBps: number;
 	totalBytes: number;
 }
@@ -151,6 +141,52 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 	etaSeconds: 0,
 	cancelled: false,
 	quantDownloads: {},
+	lifecycles: {},
+	quantOwners: {},
+	applyLifecycleSnapshot: (snapshot) => {
+		set((state) => {
+			const key = quantKey(snapshot.modelId, snapshot.quantization);
+			const previous = state.lifecycles[key];
+			if (previous && previous.revision >= snapshot.revision) {
+				return state;
+			}
+			const lifecycles = { ...state.lifecycles, [key]: snapshot };
+			const quantDownloads = { ...state.quantDownloads };
+			if (
+				snapshot.phase === "queued" ||
+				snapshot.phase === "downloading" ||
+				snapshot.phase === "paused" ||
+				snapshot.phase === "verifying" ||
+				snapshot.phase === "installing"
+			) {
+				const progress =
+					snapshot.totalBytes > 0
+						? Math.min(
+								100,
+								Math.round(
+									(snapshot.downloadedBytes / snapshot.totalBytes) * 100,
+								),
+							)
+						: null;
+				quantDownloads[key] = {
+					modelId: snapshot.modelId,
+					quantization: snapshot.quantization,
+					...ownerPatch(state.quantOwners[key]),
+					phase: snapshot.phase,
+					requestId: snapshot.requestId,
+					revision: snapshot.revision,
+					downloadedBytes: snapshot.downloadedBytes,
+					totalBytes: snapshot.totalBytes,
+					speedBps: snapshot.speedBps,
+					progress,
+					paused: snapshot.phase === "paused",
+				};
+			} else {
+				delete quantDownloads[key];
+			}
+			return { lifecycles, quantDownloads };
+		});
+	},
 	setDownloadStart: (model) =>
 		set({
 			isDownloading: true,
@@ -214,8 +250,13 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		// download snapshot disagree.
 		set((s) => {
 			const next = { ...s.quantDownloads };
-			delete next[quantKey(modelId, quantization)];
-			return { quantDownloads: next };
+			const lifecycles = { ...s.lifecycles };
+			const quantOwners = { ...s.quantOwners };
+			const key = quantKey(modelId, quantization);
+			delete next[key];
+			delete lifecycles[key];
+			delete quantOwners[key];
+			return { quantDownloads: next, lifecycles, quantOwners };
 		});
 		void ipcDeleteModelQuantization(modelId, quantization).catch((e) =>
 			console.error("model quant delete failed", e),
@@ -225,28 +266,16 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		modelId: string,
 		quantization: string,
 		owner?: SttDownloadOwner,
-		seed?: QuantDownloadSeed,
+		_seed?: QuantDownloadSeed,
 	) => {
-		// Seed the entry so the badge flips to "downloading" instantly
-		// rather than waiting for the first server progress event.
-		set((s) => {
-			const key = quantKey(modelId, quantization);
-			const existing = s.quantDownloads[key];
-			const resolvedOwner = owner ?? existing?.owner;
-			return {
-				quantDownloads: {
-					...s.quantDownloads,
-					[key]: {
-						modelId,
-						quantization,
-						...ownerPatch(resolvedOwner),
-						...mergeSeedIntoSnapshot(existing, seed),
-						speedBps: existing?.speedBps ?? 0,
-						paused: false,
-					},
+		if (owner !== undefined) {
+			set((state) => ({
+				quantOwners: {
+					...state.quantOwners,
+					[quantKey(modelId, quantization)]: owner,
 				},
-			};
-		});
+			}));
+		}
 		void ipcPredownloadModelQuant(modelId, quantization).catch((e) =>
 			console.error("model quant predownload failed", e),
 		);
@@ -256,116 +285,28 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			console.error("model download pause failed", e),
 		);
 	},
-	pauseQuantEntry: (modelId: string, quantization: string) => {
-		set((s) => {
-			const key = quantKey(modelId, quantization);
-			const entry = s.quantDownloads[key];
-			if (!entry || entry.paused) {
-				return s;
-			}
-			return {
-				quantDownloads: {
-					...s.quantDownloads,
-					[key]: { ...entry, paused: true },
-				},
-			};
-		});
-	},
-	resumeQuantEntry: (modelId: string, quantization: string) => {
-		set((s) => {
-			const key = quantKey(modelId, quantization);
-			const entry = s.quantDownloads[key];
-			if (!entry?.paused) {
-				return s;
-			}
-			return {
-				quantDownloads: {
-					...s.quantDownloads,
-					[key]: { ...entry, paused: false },
-				},
-			};
-		});
-	},
 	resumeQuantDownload: (
 		modelId: string,
 		quantization: string,
 		owner?: SttDownloadOwner,
-		seed?: QuantDownloadSeed,
+		_seed?: QuantDownloadSeed,
 	) => {
-		set((s) => {
-			const key = quantKey(modelId, quantization);
-			const entry = s.quantDownloads[key];
-			if (!entry) {
-				if (owner === undefined && seed === undefined) {
-					return s;
-				}
-				return {
-					quantDownloads: {
-						...s.quantDownloads,
-						[key]: {
-							modelId,
-							quantization,
-							...ownerPatch(owner),
-							...mergeSeedIntoSnapshot(undefined, seed),
-							speedBps: 0,
-							paused: false,
-						},
-					},
-				};
-			}
-			const resolvedOwner = owner ?? entry.owner;
-			return {
-				quantDownloads: {
-					...s.quantDownloads,
-					[key]: {
-						...entry,
-						...ownerPatch(resolvedOwner),
-						...mergeSeedIntoSnapshot(entry, seed),
-						paused: false,
-					},
+		if (owner !== undefined) {
+			set((state) => ({
+				quantOwners: {
+					...state.quantOwners,
+					[quantKey(modelId, quantization)]: owner,
 				},
-			};
-		});
+			}));
+		}
 		void ipcResumeModelDownload(modelId, quantization).catch((e) =>
 			console.error("model download resume failed", e),
 		);
 	},
 	cancelQuantDownload: (modelId: string, quantization: string) => {
-		set((s) => {
-			const next = { ...s.quantDownloads };
-			delete next[quantKey(modelId, quantization)];
-			return { quantDownloads: next };
-		});
-		void ipcDeleteModelQuantization(modelId, quantization).catch((e) =>
-			console.error("model quant cancel/discard failed", e),
+		void ipcCancelModelDownloadQuant(modelId, quantization).catch((e) =>
+			console.error("model quant cancel failed", e),
 		);
-	},
-	setQuantDownloadProgress: (modelId, quantization, payload) => {
-		set((s) => {
-			const key = quantKey(modelId, quantization);
-			const entry = s.quantDownloads[key];
-			const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
-			return {
-				quantDownloads: {
-					...s.quantDownloads,
-					[key]: {
-						modelId,
-						quantization,
-						...ownerPatch(entry?.owner),
-						...mergeProgressIntoSnapshot(entry, merged),
-						speedBps: merged.speedBps,
-						paused: entry?.paused ?? false,
-					},
-				},
-			};
-		});
-	},
-	setQuantDownloadComplete: (modelId, quantization) => {
-		set((s) => {
-			const next = { ...s.quantDownloads };
-			delete next[quantKey(modelId, quantization)];
-			return { quantDownloads: next };
-		});
 	},
 }));
 

@@ -6,7 +6,7 @@ import { useTranslations } from "use-intl";
 import {
 	type SettingsWarning,
 	useSettingsHydrationStore,
-} from "@/features/update-settings";
+} from "@/entities/setting";
 import { ToastDismissButton, ToastShell } from "@/shared/ui/toast";
 
 /**

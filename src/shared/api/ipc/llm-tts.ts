@@ -9,15 +9,15 @@ import {
 	type VoiceCatalogPayload,
 } from "@/bindings";
 import type { CustomModifier, PresetEntry } from "@/shared/lib/preset-prompts";
-import { IPC } from "../ipc-channels";
+import { NATIVE_EVENTS as IPC } from "../native-events";
 import {
 	commandOrDefault,
-	hasNativeBridge,
+	hasNativeRuntime,
 	noop,
 	on,
 	onCast,
 	onTyped,
-} from "../ipc-transport";
+} from "../native-boundary";
 import type {
 	LlmWarmupStatus,
 	OllamaDeleteResult,
@@ -196,7 +196,7 @@ export const runLlmPreview = async (
 	feature: "dictation" | "transforms",
 	config?: LlmPreviewConfig,
 ): Promise<string> => {
-	if (!hasNativeBridge()) {
+	if (!hasNativeRuntime()) {
 		return text;
 	}
 	// CRITICAL-REJECT semantics preserved: the playground must SURFACE provider
@@ -286,8 +286,7 @@ function unwrapResult<T>(result: Result<T, string>): T {
  * OpenRouter pricing is refined from `JsonValue` to `OpenRouterPricing`.
  * Runtime shapes are identical (serde emits `null` for `None`; `null` and
  * absent read the same through the optional-chaining consumers use), so this
- * is the ONE visible seam where that trust lives — the channel-based
- * transport used to apply the same cast invisibly inside `invokeOrDefault<T>`.
+ * is the ONE visible seam where that trust lives at the generated-command edge.
  */
 function asDomain<T>(payload: unknown): T {
 	return payload as T;
@@ -809,7 +808,7 @@ export const onTtsInstallResumed = (callback: () => void): (() => void) =>
 export const onLlmCatalog = (
 	callback: (models: OllamaModel[]) => void,
 ): (() => void) => {
-	if (!hasNativeBridge()) {
+	if (!hasNativeRuntime()) {
 		return noop;
 	}
 	return onTyped(

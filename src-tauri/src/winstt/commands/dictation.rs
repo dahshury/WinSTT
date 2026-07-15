@@ -1,14 +1,12 @@
 // Main window dictation core (overlay + PTT + live transcription).
 // Reference: frontend/src/shared/api/ipc-client.ts
-// (sttSetParameter / sttGetParameter / sttCallMethod / sttReloadModel wrappers).
+// (sttSetParameter / sttGetParameter / sttCallMethod wrappers).
 //
 // The STT dictation-core command seam the reused renderer drives. WinSTT's renderer
 // never talks to the recorder directly — it goes through three generic primitives:
 //   - sttSetParameter(parameter, value)  → STT_SET_PARAMETER  → winstt_set_parameter
 //   - sttGetParameter(parameter)         → STT_GET_PARAMETER  → winstt_get_parameter
-//   - sttCallMethod(method, args)        → STT_CALL_METHOD    → winstt_call_method
-//   - sttReloadModel(kind, name)         → STT_RELOAD_MODEL   → set_winstt_model
-// (the adapter ROUTE map in native-bridge-adapter.ts encodes exactly these names).
+//   - sttCallMethod(method, args)        → winstt_call_method
 //
 // This file ALSO centralizes the STT lifecycle/level *event* emitters (the MISSING
 // set flagged for WU-3): recording-start/stop, vad-start/stop, transcription-start,
@@ -52,7 +50,7 @@ const DICTATION_BINDING: &str = "transcribe";
 /// the renderer's fire-and-forget `send()` never errors.
 ///
 /// Every persisted setting is owned SOLELY by `WinsttSettings` (written via
-/// `winstt_set_settings`, read straight from there by the STT pipeline): `language` /
+/// `winstt_patch_settings`, read straight from there by the STT pipeline): `language` /
 /// `translate_target_language` / `custom_words` / `initial_prompt` from the STT config, and
 /// `model_unload_timeout_seconds` whose on-save handler (`apply_model_runtime_settings`)
 /// mirrors the value into the `AppSettings` shadow AND warms/reloads the model. So this
@@ -83,7 +81,7 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
         // Every other AllowedParameter (model/quant/prompt/vad knobs + the
         // WinsttSettings-owned `language`/`translate_target_language`/`custom_words`/
         // `model_unload_timeout_seconds`) is owned by its subsystem slice or persisted
-        // canonically via `winstt_set_settings`; accept silently so the renderer's
+        // canonically via `winstt_patch_settings`; accept silently so the renderer's
         // send() is a no-fail fire-and-forget (the reference's set_parameter was also
         // best-effort).
         _ => {}
@@ -91,8 +89,8 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
 }
 
 /// `winstt_get_parameter` — the few readbacks the renderer issues (e.g. recorder
-/// state). Returns `null` for unknown keys (the renderer's `invokeOrDefault`
-/// supplies its declared fallback).
+/// state). Returns `null` for unknown keys (the renderer's typed wrapper supplies
+/// its declared fallback).
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_get_parameter(app: AppHandle, parameter: String) -> serde_json::Value {
@@ -199,31 +197,6 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
     );
 }
 
-// ── STT_RELOAD_MODEL ────────────────────────────────────────────────────────────
-
-/// `set_winstt_model` — request a (main | realtime) model reload. The reused
-/// renderer's `sttReloadModel(kind, name, quantization?)` sends `{ kind, name, quantization }`. The actual engine
-/// swap is WU-4 (lib_wiring §7, internal to TranscriptionManager); for WU-3 this
-/// kicks `initiate_model_load` so the main-model reload path is live, and
-/// returns a structural ack. Realtime-kind reloads are owned by 04_*.
-#[tauri::command]
-#[specta::specta]
-pub fn set_winstt_model(app: AppHandle, kind: String, name: String, quantization: Option<String>) {
-    if kind == "realtime" {
-        // Realtime worker model rebuild — owned by the realtime slice.
-        return;
-    }
-    // Drive the FULL swap lifecycle (started → load → completed/failed + runtime-info push) so the
-    // picker's "Switching…" chip resolves and a FAILED load surfaces as `stt:model-swap-failed`
-    // (rollback + toast) instead of being swallowed → the renderer silently adopting runtime "tiny".
-    crate::winstt::commands::swap_events::perform_model_swap_with_quantization(
-        &app,
-        &kind,
-        &name,
-        quantization.as_deref(),
-    );
-}
-
 // ── STT lifecycle / level EVENT emitters (MISSING set — WU-3) ───────────────────
 //
 // Plain string events in WinSTT's byte-identical IPC shape. The renderer's
@@ -231,7 +204,7 @@ pub fn set_winstt_model(app: AppHandle, kind: String, name: String, quantization
 // onAudioLevel → `{level}`, onTranscriptionStart → `{audioBase64}`, onConnectionChange
 // → `{connected}`, onServerStatus → `{status}`; the no-payload events
 // (recording-start/stop, vad-start/stop, no-audio-detected, transcription-failed,
-// session-aborted) carry nothing. Event NAMES match the adapter ROUTE map.
+// session-aborted) carry nothing. Event names match the renderer constants.
 
 /// A thin facade so the core emit sites (coordinator / audio consumer / VAD
 /// loop) have ONE typed entrypoint instead of scattered raw `app.emit("stt:...")`.
@@ -243,7 +216,7 @@ impl SttEvents {
     /// `stt:recording-start` — a new recording cycle began. The renderer wipes the
     /// realtime/ephemeral state and arms `isRecordingActive` (the overlay pill gate).
     pub fn recording_start(app: &AppHandle) {
-        log::info!("[stt] emit stt:recording-start (visualizer arm)");
+        log::debug!("[stt] emit stt:recording-start (visualizer arm)");
         // Ducking is sequenced by `TranscribeAction::start` (duck_then_play_recording_chime):
         // background audio is ducked BEFORE the chime plays, and the chime — played in
         // WinSTT's own protected process — is never attenuated.
@@ -257,7 +230,7 @@ impl SttEvents {
     /// indicator, so the pulse reflects real capture rather than the keypress (which fires
     /// before WASAPI has finished opening an asleep device).
     pub fn capture_active(app: &AppHandle) {
-        log::info!("[stt] emit stt:capture-active (mic live)");
+        log::debug!("[stt] emit stt:capture-active (mic live)");
         let _ = app.emit("stt:capture-active", ());
     }
 
@@ -413,6 +386,7 @@ impl SttEvents {
 pub fn winstt_emit_ready(app: AppHandle) {
     let _ = read_settings(&app); // touch settings so a corrupt blob surfaces early
     crate::splash::mark_renderer_boot_done(&app);
+    crate::schedule_stt_boot_warmup_after_renderer_ready(&app);
     SttEvents::connection_change(&app, true);
     SttEvents::server_status(&app, "running");
 }

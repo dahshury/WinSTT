@@ -35,7 +35,10 @@ const HEADROOM_FLOOR_BYTES = 1_000_000_000;
 // the behavior of Ollama's own CPU-fallback heuristic.
 const CPU_RAM_USABLE_FRACTION = 0.7;
 
-function requiredRuntimeBytes(sizeBytes: number): number {
+/** Estimated runtime bytes an Ollama model consumes: GGUF file size + KV-cache
+ * / activation headroom. Exported so the model-suggestion engine budgets Ollama
+ * tags with the same formula this warning-chip assessment uses. */
+export function ollamaRequiredRuntimeBytes(sizeBytes: number): number {
 	return Math.round(sizeBytes * HEADROOM_FACTOR + HEADROOM_FLOOR_BYTES);
 }
 
@@ -148,5 +151,5 @@ export function assessOllamaFit(
 	if (sizeBytes <= 0 || systemInfo === null) {
 		return unknownAssessment(sizeBytes);
 	}
-	return assessOnHost(requiredRuntimeBytes(sizeBytes), systemInfo);
+	return assessOnHost(ollamaRequiredRuntimeBytes(sizeBytes), systemInfo);
 }

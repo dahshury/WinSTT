@@ -7,7 +7,7 @@ import {
 	screen,
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { useSettingsHydrationStore } from "@/features/update-settings";
+import { useSettingsHydrationStore } from "@/entities/setting";
 import { SettingsHydrationErrorNotice } from "./SettingsHydrationErrorNotice";
 
 afterEach(() => {

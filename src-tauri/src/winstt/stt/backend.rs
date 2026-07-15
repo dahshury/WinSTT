@@ -40,9 +40,11 @@ use crate::winstt::audio_conditioning::peak_normalize;
 use crate::winstt::stt::formatting::apply_deterministic_formatting;
 use crate::winstt::stt::vad_segment::{
     VAD_COMPACT_MIN_S, compact_for_transcription, compact_for_transcription_mask,
-    vad_segment_decode_with_mask,
+    vad_segment_decode_transcription, vad_segment_decode_with_mask,
 };
-use crate::winstt::stt::{EngineConfig, EngineKind, TranscribeOptions, Transcriber};
+use crate::winstt::stt::{
+    EngineConfig, EngineKind, Segment, TranscribeOptions, Transcriber, Transcription,
+};
 use anyhow::Result;
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -235,6 +237,8 @@ pub trait SttBackend: Send + Sync {
         app: &AppHandle,
         model_id: &str,
         quantization_override: Option<&str>,
+        device_override: Option<crate::winstt::settings_schema::DeviceType>,
+        realtime_model_override: Option<&str>,
     ) -> Result<ResolvedSpec>;
 
     /// PHASE 2 of a catalog load: build the engine from a [`ResolvedSpec`]. The core calls this
@@ -260,6 +264,17 @@ pub trait SttBackend: Send + Sync {
         speech_mask: Option<&[bool]>,
         request_id: &str,
     ) -> Result<String>;
+
+    /// Decode a media file while retaining segment/word timings in the source timeline.
+    /// This is intentionally separate from [`Self::decode`] so the latency-sensitive
+    /// dictation path keeps its silence-compaction behavior unchanged.
+    fn decode_file(
+        &self,
+        app: &AppHandle,
+        engine: &mut dyn Transcriber,
+        audio: &[f32],
+        request_id: &str,
+    ) -> Result<Transcription>;
 
     /// One realtime live-preview decode (RAW text, no post-processing) on the winstt-arm engine.
     /// Returns `None` on engine error. Peak-normalizes the input. Called from inside the core's
@@ -378,6 +393,8 @@ impl SttBackend for WinsttSttBackend {
         app: &AppHandle,
         model_id: &str,
         quantization_override: Option<&str>,
+        device_override: Option<crate::winstt::settings_schema::DeviceType>,
+        realtime_model_override: Option<&str>,
     ) -> Result<ResolvedSpec> {
         use crate::winstt::stt::resolver::{self, ResolveRequest};
         use crate::winstt::stt::{self, Quantization};
@@ -397,7 +414,7 @@ impl SttBackend for WinsttSttBackend {
         let settings = crate::winstt::settings_store::read_settings_raw(app);
 
         // device → primary accelerator (CPU vs the shipped GPU flavor)
-        let primary = stt::resolve_accelerator(settings.model.device);
+        let primary = stt::resolve_accelerator(device_override.unwrap_or(settings.model.device));
 
         // requested quant from settings. The empty string `""` now means EXPLICIT fp32 (the
         // unsuffixed base export → Quantization::Default); the literal `"auto"` is the RAM/VRAM-aware
@@ -496,8 +513,8 @@ impl SttBackend for WinsttSttBackend {
             && providers.first() == Some(&stt::Accelerator::Cpu)
             && stt::cohere_export_dml_safe(&resolved)
         {
-            log::info!(
-                "[stt] cohere export '{model_id}' is MultiHeadAttention-free — restoring DirectML EP"
+            log::debug!(
+                "[stt] cohere export '{model_id}' is MultiHeadAttention-free; restoring DirectML EP"
             );
             providers = stt::providers_for_accelerator(primary);
         }
@@ -514,8 +531,9 @@ impl SttBackend for WinsttSttBackend {
             let t = s.trim();
             (!t.is_empty()).then(|| t.to_string())
         };
-        let realtime_id =
-            crate::winstt::catalog::canonical_model_id(&settings.model.realtime_model);
+        let realtime_id = crate::winstt::catalog::canonical_model_id(
+            realtime_model_override.unwrap_or(&settings.model.realtime_model),
+        );
         let language = if model_id == realtime_id {
             nonblank(&settings.model.realtime_language)
         } else if settings.model.auto_detect_language {
@@ -581,7 +599,7 @@ impl SttBackend for WinsttSttBackend {
             audio_samples: audio.len(),
         };
 
-        log::info!(
+        log::debug!(
             "[stt][{request_id}] local_decode_start model='{model_id}' kind={kind_label} providers='{providers}' audio_samples={} audio_ms={}",
             audio.len(),
             samples_to_ms(audio.len())
@@ -665,7 +683,7 @@ impl SttBackend for WinsttSttBackend {
                 normalize_started.elapsed(),
                 SLOW_BACKEND_SETUP_PHASE_MS,
             );
-            log::info!(
+            log::debug!(
                 "[stt][{request_id}] {phase}_start model='{model_id}' kind={kind_label} samples={} audio_ms={} final_silence_pad_ms={}",
                 decode_input.len(),
                 samples_to_ms(decode_input.len()),
@@ -678,12 +696,12 @@ impl SttBackend for WinsttSttBackend {
                 .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e));
             let elapsed = phase_started.elapsed();
             match &result {
-                Ok(text) => log::info!(
+                Ok(text) => log::debug!(
                     "[stt][{request_id}] {phase}_complete duration_ms={} output_chars={}",
                     elapsed.as_millis(),
                     text.chars().count()
                 ),
-                Err(err) => log::warn!(
+                Err(err) => log::debug!(
                     "[stt][{request_id}] {phase}_failed duration_ms={} error={err}",
                     elapsed.as_millis()
                 ),
@@ -703,7 +721,7 @@ impl SttBackend for WinsttSttBackend {
             audio_len,
             max_chunk_s,
         );
-        log::info!(
+        log::debug!(
             "[stt][{request_id}] local_decode_route model='{model_id}' kind={kind_label} path={} input_samples={} input_audio_ms={} vad_compact_min_s={VAD_COMPACT_MIN_S} max_chunk_s={max_chunk_s:.1} has_mask={has_mask}",
             if mask_short_path {
                 "mask_compact"
@@ -735,7 +753,7 @@ impl SttBackend for WinsttSttBackend {
             } else {
                 Cow::Owned(ensure_min_decode_len(compacted.into_owned(), kind))
             };
-            log::info!(
+            log::debug!(
                 "[stt][{request_id}] mask_compact_start model='{model_id}' kind={kind_label} input_audio_ms={} compacted_audio_ms={} decode_audio_ms={} final_silence_pad_ms={}",
                 samples_to_ms(conditioned.len()),
                 samples_to_ms(compacted_len),
@@ -753,12 +771,12 @@ impl SttBackend for WinsttSttBackend {
                 .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e));
             let elapsed = phase_started.elapsed();
             match &result {
-                Ok(text) => log::info!(
+                Ok(text) => log::debug!(
                     "[stt][{request_id}] mask_compact_complete duration_ms={} output_chars={}",
                     elapsed.as_millis(),
                     text.chars().count()
                 ),
-                Err(err) => log::warn!(
+                Err(err) => log::debug!(
                     "[stt][{request_id}] mask_compact_failed duration_ms={} error={err}",
                     elapsed.as_millis()
                 ),
@@ -777,7 +795,7 @@ impl SttBackend for WinsttSttBackend {
             // very first long-form / no-mask compaction pays the ONNX session build.
             let segment_outcome = with_segmentation_vad(app, |vad| {
                 let vad_build_elapsed = vad_build_started.elapsed();
-                log::info!(
+                log::debug!(
                     "[stt][{request_id}] vad_build_complete duration_ms={}",
                     vad_build_elapsed.as_millis()
                 );
@@ -798,7 +816,7 @@ impl SttBackend for WinsttSttBackend {
                     SLOW_BACKEND_SETUP_PHASE_MS,
                 );
                 let vad_segment_started = Instant::now();
-                log::info!(
+                log::debug!(
                     "[stt][{request_id}] vad_segment_start model='{model_id}' kind={kind_label} max_chunk_s={max_chunk_s:.1} audio_ms={} has_mask={has_mask}",
                     samples_to_ms(conditioned.len())
                 );
@@ -818,12 +836,12 @@ impl SttBackend for WinsttSttBackend {
                 .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e));
                 let vad_segment_elapsed = vad_segment_started.elapsed();
                 match &result {
-                    Ok(text) => log::info!(
+                    Ok(text) => log::debug!(
                         "[stt][{request_id}] vad_segment_complete duration_ms={} output_chars={}",
                         vad_segment_elapsed.as_millis(),
                         text.chars().count()
                     ),
-                    Err(err) => log::warn!(
+                    Err(err) => log::debug!(
                         "[stt][{request_id}] vad_segment_failed duration_ms={} error={err}",
                         vad_segment_elapsed.as_millis()
                     ),
@@ -867,12 +885,88 @@ impl SttBackend for WinsttSttBackend {
             postprocess_started.elapsed(),
             SLOW_BACKEND_SETUP_PHASE_MS,
         );
-        log::info!(
+        log::debug!(
             "[stt][{request_id}] local_decode_complete duration_ms={} output_chars={}",
             decode_started.elapsed().as_millis(),
             final_text.chars().count()
         );
         Ok(final_text)
+    }
+
+    fn decode_file(
+        &self,
+        app: &AppHandle,
+        engine: &mut dyn Transcriber,
+        audio: &[f32],
+        request_id: &str,
+    ) -> Result<Transcription> {
+        let ws = crate::winstt::settings_store::read_settings_raw(app);
+        let initial_prompt_text = {
+            let prompt = ws.model.initial_prompt.trim();
+            (!prompt.is_empty()).then(|| prompt.to_string())
+        };
+        let (language, mut language_candidates) = model_language_options(&ws.model);
+        if language.is_none()
+            && language_candidates.is_empty()
+            && crate::winstt::catalog::find(&ws.model.model)
+                .is_some_and(|entry| matches!(entry.family, crate::winstt::catalog::Family::Cohere))
+        {
+            language_candidates =
+                crate::winstt::commands::catalog_data::languages_for(&ws.model.model);
+        }
+        let translate_target = ws.model.translate_target_language.trim();
+        let opts = TranscribeOptions {
+            language,
+            language_candidates,
+            translate: !translate_target.is_empty(),
+            translate_target_language: (!translate_target.is_empty())
+                .then(|| translate_target.to_string()),
+            initial_prompt_text,
+            return_timestamps: true,
+            return_word_timestamps: engine.supports_word_timestamps(),
+            ..Default::default()
+        };
+        let conditioned = peak_normalize(audio);
+        let max_chunk_s = engine.kind().max_chunk_seconds();
+        let segmented = with_segmentation_vad(app, |vad| {
+            vad_segment_decode_transcription(
+                engine,
+                &conditioned,
+                max_chunk_s,
+                vad,
+                &opts,
+                request_id,
+            )
+        });
+        let mut result = match segmented {
+            Ok(result) => result
+                .map_err(|error| anyhow::anyhow!("WinSTT file transcription failed: {error}"))?,
+            Err(error) => {
+                log::warn!(
+                    "[stt][{request_id}] file timestamp VAD unavailable ({error}); using one timed decode"
+                );
+                let mut result = engine.transcribe(&conditioned, &opts).map_err(|error| {
+                    anyhow::anyhow!("WinSTT file transcription failed: {error}")
+                })?;
+                if result.segments.as_ref().is_none_or(Vec::is_empty) {
+                    result.segments = Some(vec![Segment {
+                        start: 0.0,
+                        end: audio.len() as f32 / STT_SAMPLE_RATE as f32,
+                        text: result.text.clone(),
+                    }]);
+                }
+                result.words.get_or_insert_default();
+                result
+            }
+        };
+
+        result.text = winstt_postprocess(&result.text, &ws);
+        if let Some(segments) = &mut result.segments {
+            for segment in segments {
+                segment.text = winstt_postprocess(&segment.text, &ws);
+            }
+        }
+        Ok(result)
     }
 
     fn decode_realtime(
@@ -1252,7 +1346,7 @@ mod tests {
             auto_added: None,
             replacement: None,
         });
-        ws.quality.format_spoken_punctuation_commands = true;
+        ws.quality.format_spoken_commands = true;
         ws
     }
 

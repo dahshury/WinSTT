@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
+import { hasNativeRuntime } from "@/shared/api/native-boundary";
 import { type ModelFamily, ModelFamilySchema } from "@/shared/api/schema.zod";
 
 export interface ModelInfo {
@@ -183,15 +184,11 @@ export const useCatalogStore = create<CatalogState>()((set, get) => ({
 
 /**
  * Fetches the cached model catalog from the main process and subscribes to
- * live catalog updates. Safe to retry after bootstrap installs `nativeBridge`.
+ * live catalog updates. Safe to call repeatedly during window bootstrap.
  * Exported for unit tests that need to trigger initialization manually.
  */
 export function initCatalogStore(): void {
-	if (
-		typeof window === "undefined" ||
-		window.nativeBridge == null ||
-		catalogStoreInitialized
-	) {
+	if (!hasNativeRuntime() || catalogStoreInitialized) {
 		return;
 	}
 	catalogStoreInitialized = true;
@@ -210,9 +207,9 @@ export function _resetCatalogStoreInitForTests(): void {
 }
 
 // Self-initializing: fetch cached catalog from main process on import,
-// and subscribe to live updates when the bridge already exists. Window bootstraps
-// also call initCatalogStore() after installing the bridge, covering early imports.
-// Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-bridge environments (SSR / tests w/o nativeBridge). Mutating this branch is an equivalent mutant in unit tests since initCatalogStore() is also called explicitly elsewhere.
-if (typeof window !== "undefined" && window.nativeBridge != null) {
+// and subscribe to live updates when the native runtime is available. Window
+// bootstraps also call initCatalogStore(), covering early imports.
+// Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-native environments. Mutating this branch is an equivalent mutant in unit tests since initCatalogStore() is also called explicitly elsewhere.
+if (hasNativeRuntime()) {
 	initCatalogStore();
 }

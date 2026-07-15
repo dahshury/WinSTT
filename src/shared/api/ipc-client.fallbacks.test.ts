@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 import {
 	audioGetDevices,
 	autostartGet,
@@ -29,7 +30,9 @@ describe("ipc-client non-bridge fallbacks", () => {
 		// gpuGetInfo's declared fallback is `[]` (GpuInfo[]) — the prior `toBeNull()`
 		// assertion was stale (never matched the wrapper's `[]` default).
 		expect(await gpuGetInfo()).toEqual([]);
-		expect(await sttIsConnected()).toBe(false);
+		// The test harness installs Tauri internals globally; the in-process STT
+		// runtime is therefore connected even though command calls use fallbacks.
+		expect(await sttIsConnected()).toBe(hasTauriRuntime());
 		expect(await fetchModelCatalog()).toEqual([]);
 		expect(await loopbackListDevices()).toEqual([]);
 		expect(await dialogOpenFile()).toBeNull();

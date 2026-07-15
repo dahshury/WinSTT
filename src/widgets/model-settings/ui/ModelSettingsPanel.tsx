@@ -17,6 +17,7 @@ import { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { isQuantDownloading } from "@/features/model-download";
+import { useSttSuggestions } from "@/features/suggested-models";
 import { resolveRealtimeLanguageGuardPatch } from "@/features/realtime-preview-fallback";
 import { useModelSwapController } from "@/features/swap-model";
 import type { OnnxQuantization } from "@/shared/config/defaults";
@@ -265,6 +266,15 @@ function useModelSettingsPanelRender() {
 		settings,
 		statesById,
 	});
+	// Suggested (spec-based recommender) verdicts for the STT pickers hosted
+	// here — same threading pattern as `getFitAssessment`. `undefined` until
+	// system info arrives, which keeps the pickers' Suggested filter inert.
+	const getSuggestion = useSttSuggestions({
+		models: catalogModels,
+		statesById,
+		sourceLanguageSelection: settings,
+		mainModel: selectedInfo,
+	});
 
 	const { showDevice, showLanguage, showLifetime } =
 		resolveModelControlVisibility(
@@ -312,7 +322,6 @@ function useModelSettingsPanelRender() {
 		deviceValue,
 		getModel,
 		statesById,
-		update,
 		isQuantDownloading,
 		() => useFileTranscriptionStore.getState().queueActive,
 	);
@@ -417,6 +426,7 @@ function useModelSettingsPanelRender() {
 				disabledTooltip={isListenMode ? listenModeMainModelTooltip : undefined}
 				downloadProgress={mainDownloadProgress}
 				getFitAssessment={getFitAssessment}
+				getSuggestion={getSuggestion}
 				handleModelChange={controller.handleModelChange}
 				isSwapping={mainSwapping}
 				languageAutoDetect={languageAutoDetect}
@@ -451,6 +461,7 @@ function useModelSettingsPanelRender() {
 				toggleDisabledTooltip={realtimeToggleDisabledTooltip}
 				downloadProgress={realtimeDownloadProgress}
 				getFitAssessment={getFitAssessment}
+				getSuggestion={getSuggestion}
 				handleRealtimeModelChange={handleRealtimePick}
 				isSwapping={realtimeSwapping}
 				realtimeSlotLockedToMain={realtimeSlotLockedToMain}

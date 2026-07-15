@@ -1,4 +1,5 @@
 import {
+	AiBrain02Icon,
 	AiCloud01Icon,
 	AiComputerIcon,
 	AppleIcon,
@@ -127,6 +128,7 @@ const LEVEL_LABEL_KEY = {
 	light: "levelLight",
 	medium: "levelMedium",
 	high: "levelHigh",
+	caveman: "levelCaveman",
 } as const satisfies Record<PresetLevel, string>;
 
 // Signal-bar icons that climb with intensity so the level switcher reads at a
@@ -138,6 +140,7 @@ const LEVEL_ICONS: Readonly<Record<PresetLevel, IconSvgElement>> = {
 	light: SignalLow02Icon,
 	medium: SignalMedium02Icon,
 	high: SignalFull02Icon,
+	caveman: AiBrain02Icon,
 };
 
 export const DEFAULT_LEVEL: PresetLevel = "medium";

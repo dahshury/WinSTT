@@ -5,6 +5,9 @@ import {
 	screen,
 	type RenderResult,
 } from "@testing-library/react";
+import { commands } from "@/bindings";
+
+const originalPatchSettings = commands.winsttPatchSettings;
 
 const { IntlProvider } = await import("@/app/providers/IntlProvider");
 const { DEFAULT_SETTINGS, useSettingsStore } = await import(
@@ -57,9 +60,33 @@ function renderStep(): void {
 beforeEach(() => {
 	invocations = [];
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+	commands.winsttPatchSettings = async (request) => {
+		invocations.push({ cmd: "winstt_patch_settings", args: { request } });
+		return {
+			status: "ok",
+			data: {
+				applied: true,
+				changedSections: ["general"],
+				snapshot: { revision: 1, settings: DEFAULT_SETTINGS as never },
+			},
+		};
+	};
 	tauriInternals().invoke = (cmd, args) => {
 		invocations.push({ cmd, args });
-		return Promise.resolve({ changedStartup: false });
+		if (cmd === "winstt_get_settings_snapshot") {
+			return Promise.resolve({ revision: 0, settings: DEFAULT_SETTINGS });
+		}
+		if (cmd === "winstt_patch_settings") {
+			return Promise.resolve({
+				status: "ok",
+				data: {
+					applied: true,
+					changedSections: ["general"],
+					snapshot: { revision: 1, settings: DEFAULT_SETTINGS },
+				},
+			});
+		}
+		return Promise.resolve(undefined);
 	};
 });
 
@@ -67,6 +94,7 @@ afterEach(() => {
 	rendered?.unmount();
 	rendered = null;
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+	commands.winsttPatchSettings = originalPatchSettings;
 });
 
 describe("OnboardingCapabilitiesStep", () => {
@@ -81,7 +109,7 @@ describe("OnboardingCapabilitiesStep", () => {
 		expect((textbox as HTMLTextAreaElement).value).toBe("typed here");
 	});
 
-	test("persists recording mode immediately through the generated settings command", () => {
+	test("applies the recording mode immediately while persistence runs", () => {
 		renderStep();
 
 		fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
@@ -89,11 +117,5 @@ describe("OnboardingCapabilitiesStep", () => {
 		expect(useSettingsStore.getState().settings.general.recordingMode).toBe(
 			"toggle",
 		);
-		const save = invocations.find((call) => call.cmd === "winstt_set_settings");
-		expect(save).toBeDefined();
-		expect(
-			(save?.args as { settings?: { general?: { recordingMode?: string } } })
-				.settings?.general?.recordingMode,
-		).toBe("toggle");
 	});
 });

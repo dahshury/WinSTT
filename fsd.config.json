@@ -1,0 +1,120 @@
+{
+  "acknowledgedReviews": [
+    {
+      "subject": "features/audio-device-feedback",
+      "reason": "Background device-switch feedback is an app-provider IPC effect with its own lifecycle and tests; the app tier intentionally composes it."
+    },
+    {
+      "subject": "features/audio-device-monitor",
+      "reason": "Audio-device monitoring is a renderer-wide IPC subscription mounted by the app provider, not page-specific behavior."
+    },
+    {
+      "subject": "features/model-assistance",
+      "reason": "The hook encapsulates the complete automatic model-assistance policy and keeps that business interaction independent from the settings page composition."
+    },
+    {
+      "subject": "features/push-to-talk",
+      "reason": "Push-to-talk is shared by multiple app modules (providers and title bar) and combines IPC behavior, state, and UI as one reusable interaction."
+    },
+    {
+      "subject": "features/record-hotkey",
+      "reason": "Hotkey recording is a self-contained user interaction with validation, capture state, and UI; the settings widget is only its current host."
+    },
+    {
+      "subject": "features/show-cloud-stt-errors",
+      "reason": "Cloud STT error surfacing is an app-shell event boundary mounted with other renderer-wide recovery notices."
+    },
+    {
+      "subject": "features/surface-llm-settings-notices",
+      "reason": "These notices are entry-mounted settings-window event surfaces, intentionally independent from individual settings panels."
+    },
+    {
+      "subject": "features/swap-notifications",
+      "reason": "Model-swap notifications own renderer-wide event state and are composed once by the app shell."
+    },
+    {
+      "subject": "features/transcript-preview",
+      "reason": "Transcript preview owns an IPC feed, persistent store, and several UI modes shared across the overlay page's pill variants."
+    },
+    {
+      "subject": "features/transform-notifications",
+      "reason": "Transform notifications own renderer-wide event state and are composed once by the app shell."
+    },
+    {
+      "subject": "features/vad-calibration",
+      "reason": "VAD calibration is a renderer-wide audio/IPC effect mounted by the app provider rather than a page-owned interaction."
+    },
+    {
+      "subject": "widgets/about-settings",
+      "reason": "This cohesive, independently lazy-loaded settings tab contains multiple diagnostics, update, reset, and data-management sections."
+    },
+    {
+      "subject": "widgets/appearance-settings",
+      "reason": "This cohesive settings panel is an independent lazy-loaded tab and owns its display/visualizer controls."
+    },
+    {
+      "subject": "widgets/audio-display",
+      "reason": "The main audio surface is a substantial composite with file, queue, subtitle, and transcription states kept separate from page chrome."
+    },
+    {
+      "subject": "widgets/device-picker-window",
+      "reason": "Dedicated-window content is separated from the thin page shell that owns renderer/window lifecycle behavior."
+    },
+    {
+      "subject": "widgets/dictionary-settings",
+      "reason": "This cohesive, independently lazy-loaded settings domain owns dictionary editing, encoder lifecycle, fit gating, and AI handling."
+    },
+    {
+      "subject": "widgets/integrations-settings",
+      "reason": "This independently lazy-loaded settings panel is kept as a stable tab boundary for integration-specific composition."
+    },
+    {
+      "subject": "widgets/model-footprint-window",
+      "reason": "This content module is mounted directly by a dedicated Tauri window entry, an intentional app-tier integration boundary."
+    },
+    {
+      "subject": "widgets/model-picker-window",
+      "reason": "Detached picker content owns dedicated-window sizing, actions, dialogs, and device/model modes apart from the page shell."
+    },
+    {
+      "subject": "widgets/model-settings",
+      "reason": "This substantial, independently lazy-loaded settings domain owns model controls, fit assessment, download gating, and swap progress."
+    },
+    {
+      "subject": "widgets/ollama-model-manager",
+      "reason": "The modal is a cohesive independently loaded model-management surface with its own filtering, tabs, rows, and dialog chrome."
+    },
+    {
+      "subject": "widgets/onboarding-wizard",
+      "reason": "The multi-step wizard is a substantial workflow with its own state and step composition; the page owns only Tauri shell and permission preflight."
+    },
+    {
+      "subject": "widgets/output-settings",
+      "reason": "This independently lazy-loaded settings panel owns output and playback format composition behind a stable tab boundary."
+    },
+    {
+      "subject": "widgets/processing-extras",
+      "reason": "This independently lazy-loaded settings panel owns the allow/deny application context controls composed into the processing tab."
+    },
+    {
+      "subject": "widgets/shortcuts-settings",
+      "reason": "This independently lazy-loaded settings panel composes shortcut recording and its explanatory legend as one stable tab boundary."
+    },
+    {
+      "subject": "widgets/snippets-settings",
+      "reason": "This independently lazy-loaded settings panel owns snippet editing and table behavior within the vocabulary tab."
+    },
+    {
+      "subject": "widgets/status-bar",
+      "reason": "The status bar is an independently lazy-loaded main-page composite with device, model, and menu controls."
+    },
+    {
+      "subject": "widgets/tray-menu",
+      "reason": "Dedicated tray-window content is separated from the thin page shell that owns renderer/window lifecycle behavior."
+    },
+    {
+      "subject": "widgets/tts-settings",
+      "reason": "This substantial, independently lazy-loaded settings domain owns local/cloud catalogs, installation gates, voice controls, preview, and picker hosting."
+    }
+  ]
+}

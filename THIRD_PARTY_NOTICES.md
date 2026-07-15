@@ -390,6 +390,12 @@ following attribution is included in the application's "About" screen and here:
 
 For full license terms see <https://hugeicons.com/license>.
 
+### PrismML Bonsai logo
+
+The PrismML Bonsai mark displayed in the local LLM catalogue is sourced from
+the Apache-2.0-licensed Bonsai 27B model repository. PrismML and Bonsai are
+trademarks of their respective owner. <https://huggingface.co/prism-ml/Bonsai-27B-gguf>
+
 ### Audio (recording-start / -stop SFX)
 
 User-selectable recording sounds shipped in `src-tauri/resources/*.wav`

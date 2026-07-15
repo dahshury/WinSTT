@@ -7,7 +7,7 @@
 //        general.onboardedAt    = <now ms>
 //        general.onboardedTrack = "" | "local" | "cloud"
 //      These three live in `winstt::settings_schema::GeneralSettings` and are
-//      DELIBERATELY excluded from the renderer's `winstt_set_settings` patch
+//      DELIBERATELY excluded from the renderer's `winstt_patch_settings` patch
 //      path (`preserve_main_owned_general`), so the wizard's own
 //      `useSyncSettings` round-trips can't write them — only this command can.
 //   2. Hide the onboarding window and show + focus `main` (the window transition).

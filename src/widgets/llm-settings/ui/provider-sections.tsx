@@ -1,10 +1,11 @@
-import {
-	type computeModelExclusionConfig,
-	OllamaModelSelector,
-	OpenRouterModelSelector,
-} from "@/widgets/model-picker";
+import { OllamaModelSelector } from "@/features/llm-model-picker";
+import { OpenRouterModelSelector } from "@/features/select-cloud-stt-model";
+import type { computeModelExclusionConfig } from "@/shared/ui/model-picker/lib/model-exclusion";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
+import {
+	type LlmModelPickerFeature,
+	openLlmModelPickerAtRect,
+} from "@/shared/api/model-picker-window";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	ollamaLlmSelectorUiStorageKey,
@@ -17,6 +18,7 @@ import {
 	ollamaThinkingMode,
 	RECOMMENDED_OLLAMA_MODELS,
 } from "@/entities/llm-catalog";
+import { useOllamaSuggestions } from "@/features/suggested-models";
 import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
 import { OllamaThinkingControl } from "./OllamaThinkingControl";
 import type {
@@ -29,27 +31,6 @@ import type {
 	TranslateFn,
 	Verbosity,
 } from "./types";
-
-type LlmFeature = "dictation" | "transforms";
-
-function openDetachedLlmPicker(
-	rect: DOMRect,
-	payload:
-		| { feature: LlmFeature; pickerKind: "llm-ollama" }
-		| {
-				feature: LlmFeature;
-				pickerKind: "llm-openrouter";
-				pickerTarget: "fallback" | "primary";
-		  },
-): void {
-	openModelPickerAtRect(rect, {
-		pickerKind: payload.pickerKind,
-		pickerFeature: payload.feature,
-		...("pickerTarget" in payload
-			? { pickerTarget: payload.pickerTarget }
-			: {}),
-	});
-}
 
 /** Shared error banner used by both Ollama and OpenRouter sections.
  *  Null-renders on empty message so callers can pass their error state
@@ -143,8 +124,8 @@ interface OllamaSectionProps {
 	 *  block. Off in the Playground (which has room to breathe). */
 	dense?: boolean | undefined;
 	enabled: boolean;
-	feature?: LlmFeature | undefined;
-	librarySearch: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"];
+	feature?: LlmModelPickerFeature | undefined;
+	librarySearch: import("@/features/llm-model-picker").OllamaModelSelectorProps["librarySearch"];
 	model: string;
 	ollamaError: string | null;
 	ollamaModels: readonly OllamaModel[];
@@ -183,6 +164,10 @@ function OllamaSection(props: OllamaSectionProps) {
 		thinkingEffort,
 	} = props;
 	const selectedModel = ollamaModels.find((m) => m.name === model);
+	// Suggested (spec-based recommender) verdict for the inline picker (the
+	// detached window wires its own in PickerBody). `undefined` until system
+	// info arrives — the picker treats that as "no verdict" (chip hidden).
+	const suggestions = useOllamaSuggestions();
 	// One control per behaviour: GPT-OSS gets Low/Medium/High (it can't stop
 	// reasoning, so there is no Off), hybrid models get a plain On/Off toggle
 	// (levels are no-ops on the wire), and dedicated reasoning models get a
@@ -216,7 +201,7 @@ function OllamaSection(props: OllamaSectionProps) {
 					onOpenDetached={
 						feature
 							? (rect) =>
-									openDetachedLlmPicker(rect, {
+									openLlmModelPickerAtRect(rect, {
 										feature,
 										pickerKind: "llm-ollama",
 									})
@@ -239,6 +224,7 @@ function OllamaSection(props: OllamaSectionProps) {
 					placeholder={ollamaScanning ? tc("scanning") : t("selectModel")}
 					pulls={pullBundle.pulls}
 					recommendedModels={RECOMMENDED_OLLAMA_MODELS}
+					suggestions={suggestions}
 					swap={swap}
 					systemFit={pullBundle.getFit}
 					uiStorageKey={
@@ -282,7 +268,7 @@ function OllamaSection(props: OllamaSectionProps) {
 interface OpenRouterSectionProps {
 	apiKeyMissing: boolean;
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
-	feature?: LlmFeature | undefined;
+	feature?: LlmModelPickerFeature | undefined;
 	maxOutputTokens: number | null;
 	onMaxOutputTokensChange: (value: number | null) => void;
 	onReasoningEffortChange: (value: ReasoningEffort) => void;
@@ -339,7 +325,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						onOpenDetached={
 							feature
 								? (rect) =>
-										openDetachedLlmPicker(rect, {
+										openLlmModelPickerAtRect(rect, {
 											feature,
 											pickerKind: "llm-openrouter",
 											pickerTarget: "primary",
@@ -375,7 +361,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						onOpenDetached={
 							feature
 								? (rect) =>
-										openDetachedLlmPicker(rect, {
+										openLlmModelPickerAtRect(rect, {
 											feature,
 											pickerKind: "llm-openrouter",
 											pickerTarget: "fallback",
@@ -419,8 +405,8 @@ interface ProviderSectionArgs {
 	dense?: boolean | undefined;
 	fallbackExclusion: ReturnType<typeof computeModelExclusionConfig>;
 	featureSnapshot: LlmFeatureDraft;
-	feature?: LlmFeature | undefined;
-	librarySearch: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"];
+	feature?: LlmModelPickerFeature | undefined;
+	librarySearch: import("@/features/llm-model-picker").OllamaModelSelectorProps["librarySearch"];
 	ollamaCatalog: OllamaCatalogState;
 	ollamaPullBundle: OllamaPullBundle;
 	ollamaReachable: boolean | null;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import {
 	type TtsModelState,
@@ -22,6 +22,13 @@ export interface TtsInstallGate {
 	installError: string | null;
 	/** Current install phase, or null when idle / ready. */
 	installPhase: TtsInstallPhase | null;
+	/** Lock the section NOW, before the backend's first `tts:install-status`
+	 *  ping lands. Call alongside any local-enable commit made outside this
+	 *  gate (e.g. the cached-fallback-model enable) so the toggle never shows
+	 *  a ready-looking ON during the IPC round-trip. Self-releasing: a real
+	 *  ping replaces it; a safety timeout clears it when no warm-up ever
+	 *  reports (already-warm engine / onboarding holds warm-up back). */
+	markWarmupPending: () => void;
 	/** Re-trigger init_tts after a failure — clears the banner and re-runs warm-up. */
 	retryInstall: () => void;
 }
@@ -141,6 +148,17 @@ export function buildTtsEnablePatch(
 		: { enabled: true, hotkey: defaultHotkey };
 }
 
+/**
+ * How long an OPTIMISTIC pending lock (set at toggle time, before any backend
+ * ping) may live without the backend confirming a warm-up is actually running.
+ * The first `tts:install-status` ping is emitted at the very start of
+ * `warm_up`, so it normally lands well under a second; the timeout only fires
+ * when the backend never starts one at all (engine already warm from a
+ * flip-off-flip-on race, or onboarding holding warm-ups back) — without it the
+ * toggle would stay locked forever. Mirrors the 15 s unload safety bound.
+ */
+const WARMUP_PING_TIMEOUT_MS = 10_000;
+
 const selectTtsHotkey = (
 	s: ReturnType<typeof useSettingsStore.getState>,
 ): string => s.settings.tts?.hotkey ?? "";
@@ -163,7 +181,9 @@ const selectTtsModel = (
  * stays here so the section can show download/extraction progress after the
  * toggle commits.
  */
-export function useTtsInstallGate(): TtsInstallGate {
+export function useTtsInstallGate(
+	warmupPingTimeoutMs: number = WARMUP_PING_TIMEOUT_MS,
+): TtsInstallGate {
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 	const currentHotkey = useSettingsStore(selectTtsHotkey);
 	const model = useSettingsStore(selectTtsModel);
@@ -173,6 +193,33 @@ export function useTtsInstallGate(): TtsInstallGate {
 		null,
 	);
 	const [installError, setInstallError] = useState<string | null>(null);
+
+	// Safety timer for the OPTIMISTIC pending lock. Only refs are touched, so
+	// the [] -dep effects below can safely close over the first-render instance.
+	const warmupTimerRef = useRef<number | null>(null);
+	const clearWarmupTimer = (): void => {
+		if (warmupTimerRef.current !== null) {
+			window.clearTimeout(warmupTimerRef.current);
+			warmupTimerRef.current = null;
+		}
+	};
+	useEffect(() => clearWarmupTimer, []);
+
+	const markWarmupPending = (): void => {
+		clearWarmupTimer();
+		// "unknown" = warming, phase not yet reported. The section locks on any
+		// non-null phase, the banner's label builders render "" for it, and the
+		// enabled-reconciler already skips while a phase is in flight.
+		setInstallPhase("unknown");
+		setInstallError(null);
+		warmupTimerRef.current = window.setTimeout(() => {
+			warmupTimerRef.current = null;
+			// A real ping cancels this timer, so firing means the backend never
+			// reported a warm-up — release the lock instead of holding it forever.
+			// The functional guard keeps a same-tick real phase untouched.
+			setInstallPhase((prev) => (prev === "unknown" ? null : prev));
+		}, warmupPingTimeoutMs);
+	};
 
 	const enablePatch = (): Partial<{ enabled: true; hotkey: string }> =>
 		buildTtsEnablePatch(currentHotkey, DEFAULT_SETTINGS.tts.hotkey);
@@ -184,6 +231,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 	useEffect(
 		() =>
 			onTtsInstallStatus(({ phase }) => {
+				clearWarmupTimer();
 				setInstallPhase(projectInstallPhase(phase));
 				setInstallError(null);
 			}),
@@ -201,6 +249,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 		() =>
 			onTtsModelDownloadComplete(({ cancelled }) => {
 				if (cancelled) {
+					clearWarmupTimer();
 					setInstallPhase(null);
 				}
 			}),
@@ -213,6 +262,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 	useEffect(
 		() =>
 			onTtsInstallFailed(({ reason }) => {
+				clearWarmupTimer();
 				setInstallPhase(null);
 				setInstallError(reason);
 			}),
@@ -226,12 +276,17 @@ export function useTtsInstallGate(): TtsInstallGate {
 			// selector; its commit (download-complete / pick) flips `enabled`.
 			if (isTtsModelCached(statesById[model])) {
 				update(enablePatch());
+				// Lock in the same click: the backend's first install-status ping
+				// only lands after an IPC round-trip, and until it does the toggle
+				// used to sit ON and interactive as if the voice were ready.
+				markWarmupPending();
 				return;
 			}
 			useTtsModelPickerStore.getState().openFor(true);
 		},
 		disable: () => {
 			update({ enabled: false });
+			clearWarmupTimer();
 			setInstallPhase(null);
 		},
 	};
@@ -252,6 +307,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 		installPhase,
 		installError,
 		handleEnabledToggle,
+		markWarmupPending,
 		retryInstall,
 	};
 }

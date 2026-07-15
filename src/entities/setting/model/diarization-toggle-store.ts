@@ -5,6 +5,7 @@ import {
 	onDiarizationToggleFailed,
 	onDiarizationToggleStarted,
 } from "@/shared/api/ipc-client";
+import { hasNativeRuntime } from "@/shared/api/native-boundary";
 import { useSettingsStore } from "./settings-store";
 
 /**
@@ -70,6 +71,6 @@ export function initDiarizationToggleStore(): () => void {
 	};
 }
 
-if (typeof window !== "undefined" && window.nativeBridge != null) {
+if (hasNativeRuntime()) {
 	initDiarizationToggleStore();
 }

@@ -8,6 +8,8 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 import { performFeatureToggle } from "../lib/llm-settings-panel-test-helpers";
 import { useLlmSettingsPanel } from "../model/use-llm-settings-panel";
+import { useAppProfileIndicatorStore } from "../model/use-app-profile-indicator";
+import { AppProfileRulesSection } from "./AppProfileRulesSection";
 import {
 	FeatureBlock,
 	useOllamaUnloadTracker,
@@ -23,6 +25,7 @@ import { PlaygroundModal } from "./playground-modal";
 export function LlmSettingsPanel() {
 	const model = useLlmSettingsPanel();
 	const [playgroundOpen, setPlaygroundOpen] = useState(false);
+	const activeRule = useAppProfileIndicatorStore((state) => state.current);
 	const isListenMode = useSettingsStore(
 		(s) => (s.settings.general?.recordingMode ?? "ptt") === "listen",
 	);
@@ -139,6 +142,14 @@ export function LlmSettingsPanel() {
 				headerAction={
 					<div className="flex flex-wrap items-center justify-end gap-2">
 						{playgroundButton}
+						{activeRule ? (
+							<span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-accent text-caption">
+								{t("appProfileIndicator", {
+									app: activeRule.appExe,
+									configuration: activeRule.configurationName,
+								})}
+							</span>
+						) : null}
 						<PostProcessingProfilesCombobox
 							disabled={headerControlsDisabled}
 							snapshot={dictation}
@@ -210,6 +221,9 @@ export function LlmSettingsPanel() {
 							update={updatePostProcessing}
 						/>
 					</FeatureBlock>
+					<AppProfileRulesSection
+						enabled={effectivePostProcessingEnabled && !warmTracker.isWarming}
+					/>
 				</div>
 			</SettingSection>
 

@@ -5,9 +5,9 @@
 //   • `transforms:applied` → { before, after, source }
 //   • `transforms:failed`  → { reason }
 //
-// The adapter (native-bridge-adapter.ts) routes:
-//   IPC.TRANSFORMS_APPLY   → command `apply_transform`           (no args; selection + paste internal)
-//   IPC.TRANSFORMS_PREVIEW → command `apply_transform_preview`   ({ text, feature, config })
+// The renderer calls the generated commands directly:
+//   `apply_transform`         (no args; selection + paste internal)
+//   `apply_transform_preview` ({ text, feature, config })
 //   IPC.TRANSFORMS_APPLIED → event   `transforms:applied`
 //   IPC.TRANSFORMS_FAILED  → event   `transforms:failed`
 //
@@ -113,7 +113,7 @@ impl TransformSource {
 
 /// Returned by `apply_transform` and mirrored on the `transforms:applied` event.
 /// Field shape matches the renderer's `TransformApplyResult` exactly so the
-/// `invokeOrDefault` round-trip + the toast's `onTransformApplied` reshape are
+/// generated-command round-trip + the toast's `onTransformApplied` reshape are
 /// both identities.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -163,11 +163,7 @@ fn preview_system_prompt(
     let vocab = llm_commands::build_vocab(settings);
     let mut prompt = llm::build_dictation_system_prompt_for_model(presets, "", &vocab, tier_model);
     if preview_requires_visible_change(presets) {
-        prompt.push_str(
-            "\n\nPlayground preview: Non-neutral tone/modifier instructions are active. \
-             Apply them visibly. Do not return the input verbatim unless the input is empty \
-             or pure noise.",
-        );
+        prompt.push_str("\n\nPreview: apply active operations visibly to nonempty input.");
     }
     prompt
 }
@@ -532,7 +528,7 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
 /// + the `transforms.hotkey` global-hotkey path). Delegates to
 /// [`run_transform_pipeline`] so the command and the hotkey are byte-identical.
 ///
-/// NEVER throws past this layer — the renderer's `invokeOrDefault` would mask it
+/// NEVER throws past this layer — the renderer's tolerant command wrapper would mask it
 /// and the toast would never fire.
 #[tauri::command]
 #[specta::specta]
@@ -766,7 +762,7 @@ pub async fn apply_transform_preview(
         }
     };
     let final_out = finalize_preview_answer(&settings, &out);
-    log::info!(
+    log::debug!(
         "[llm-preview] feature={feature} provider={} model='{}' active_modifier={} input_chars={} output_chars={} unchanged={} elapsed_ms={}",
         provider_label(provider),
         if preview_model.trim().is_empty() {
@@ -884,10 +880,10 @@ mod tests {
         let presets = transforms_presets(&settings.llm.dictation.presets, &[]);
         let prompt = preview_system_prompt(&settings, &presets, None);
 
-        assert!(prompt.contains("How to interpret the dictation"));
-        assert!(prompt.contains("An INSTRUCTION aimed at you"));
-        assert!(prompt.contains("Output only the transformed text"));
-        assert!(prompt.contains("Non-neutral tone/modifier instructions are active"));
+        assert!(prompt.contains("Interpret first:"));
+        assert!(prompt.contains("INSTRUCTION aimed at you"));
+        assert!(prompt.contains("Return JSON with only `text`"));
+        assert!(prompt.contains("Preview: apply active operations visibly"));
     }
 
     #[test]
@@ -901,7 +897,7 @@ mod tests {
         let prompt = preview_system_prompt(&settings, &presets, None);
 
         assert!(preview_requires_visible_change(&presets));
-        assert!(prompt.contains("Non-neutral tone/modifier instructions are active"));
+        assert!(prompt.contains("Preview: apply active operations visibly"));
     }
 
     #[test]
@@ -913,11 +909,11 @@ mod tests {
         }];
         let dictation = preview_user_prompt("dictation", &plain_presets, "hello");
         assert!(dictation.contains("Dictation:\nhello"));
-        assert!(dictation.contains("interpretation rules in the system prompt"));
+        assert!(dictation.contains("CONTENT vs INSTRUCTION"));
 
         let transforms = preview_user_prompt("transforms", &plain_presets, "hello");
-        assert!(transforms.contains("Text:\nhello"));
-        assert!(transforms.contains("Apply the system instructions above"));
+        assert!(transforms.contains("TEXT:\nhello"));
+        assert!(transforms.contains("Apply system operations"));
 
         let translate_presets = vec![LlmPresetEntry::Builtin {
             key: LlmPresetKey::Translate,
@@ -925,8 +921,8 @@ mod tests {
             target_lang: Some("Arabic".to_string()),
         }];
         let translation = preview_user_prompt("dictation", &translate_presets, "hello");
-        assert!(translation.contains("translate the following text into Arabic"));
-        assert!(translation.contains("Text to translate:\nhello"));
+        assert!(translation.contains("Translate into Arabic"));
+        assert!(translation.contains("TEXT:\nhello"));
     }
 
     #[test]

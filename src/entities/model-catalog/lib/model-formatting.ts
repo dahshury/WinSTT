@@ -3,9 +3,7 @@ import type { ModelInfo } from "../model/catalog-store";
 export interface ModelNativeFormatting {
 	basicPunctuationCasing: boolean;
 	fillerRepeatCleanup: boolean;
-	quoteCommands: boolean;
-	spokenPunctuationCommands: boolean;
-	spokenSymbolCommands: boolean;
+	spokenCommands: boolean;
 }
 
 export type ModelNativeFormattingKey = keyof ModelNativeFormatting;
@@ -13,9 +11,7 @@ export type ModelNativeFormattingKey = keyof ModelNativeFormatting;
 const NO_NATIVE_FORMATTING = {
 	basicPunctuationCasing: false,
 	fillerRepeatCleanup: false,
-	quoteCommands: false,
-	spokenPunctuationCommands: false,
-	spokenSymbolCommands: false,
+	spokenCommands: false,
 } as const satisfies ModelNativeFormatting;
 
 /**

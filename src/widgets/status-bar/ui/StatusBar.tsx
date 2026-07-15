@@ -5,7 +5,7 @@ import { Mic01Icon } from "@hugeicons/core-free-icons";
 // not dragged into the `main` window's chunk — StatusBar only needs these two
 // helpers, and the barrel re-export would otherwise pull the whole
 // model-picker package into the main entry.
-import { variantDisplayName } from "@/widgets/model-picker/stt/lib/family-helpers";
+import { variantDisplayName } from "@/entities/model-catalog";
 import { useTranslations } from "use-intl";
 import {
 	applyDeviceSelection,

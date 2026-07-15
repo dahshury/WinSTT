@@ -986,6 +986,75 @@ describe("OverlayPage", () => {
 		);
 	});
 
+	test("shows an explicit Alt+S raw-transcript skip action in the dynamic island", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					overlayMode: "dynamic-island",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: true,
+						model: "llama3",
+					},
+				},
+			},
+		});
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 100,
+		});
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		useVisualizerStore.setState({ isSpeaking: true });
+
+		const { container } = renderOverlay();
+		const skip = container.querySelector(
+			'[data-overlay-skip-post-processing="true"]',
+		);
+		expect(skip).not.toBeNull();
+		expect(skip?.textContent).toContain("Skip Post-processing");
+		expect(skip?.textContent).toContain("Alt+S");
+		expect(skip?.getAttribute("aria-label")).toContain("Alt+S");
+	});
+
+	test("shows the same post-processing skip action in the floating pill", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					overlayMode: "floating-bottom",
+				},
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: true,
+						model: "llama3",
+					},
+				},
+			},
+		});
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 100,
+		});
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		useVisualizerStore.setState({ isSpeaking: true });
+
+		const { container } = renderOverlay();
+		const skip = container.querySelector(
+			'[data-overlay-floating-surface="true"] [data-overlay-skip-post-processing="true"]',
+		);
+		expect(skip).not.toBeNull();
+		expect(skip?.textContent).toContain("Skip Post-processing");
+		expect(skip?.querySelector("kbd")?.textContent).toBe("Alt+S");
+	});
+
 	test("keeps rotating vocabulary enabled in the overlay thinking state", () => {
 		const originalSetInterval = globalThis.setInterval;
 		const intervalDelays: number[] = [];

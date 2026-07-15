@@ -4,12 +4,15 @@ import { commands } from "@/bindings";
 
 const tauriCalls: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
 const originalSettingsCommands = {
-	winsttGetSettings: commands.winsttGetSettings,
-	winsttSetSettings: commands.winsttSetSettings,
+	winsttGetSettingsSnapshot: commands.winsttGetSettingsSnapshot,
+	winsttPatchSettings: commands.winsttPatchSettings,
 };
 import { useConnectionStore } from "@/entities/connection";
-import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
+import {
+	useSettingsHydrationStore,
+	useSettingsStore,
+} from "@/entities/setting";
+import { IPC } from "@test/mocks/legacy-ipc";
 import {
 	appSettingsSchema,
 	type AppSettingsOutput as AppSettings,
@@ -24,7 +27,6 @@ import {
 	sectionsDiffer,
 	useSyncSettings,
 } from "./use-sync-settings";
-import { useSettingsHydrationStore } from "../model/settings-hydration-store";
 
 const asSettings = <T extends object>(s: T): AppSettings =>
 	s as unknown as AppSettings;
@@ -34,6 +36,7 @@ const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 const savedPatches: Partial<AppSettings>[] = [];
 let initialSettings = appSettingsSchema.parse({});
+let settingsRevision = 0;
 
 function recordSave(settings: Partial<AppSettings>): void {
 	savedPatches.push(settings);
@@ -59,7 +62,7 @@ function makeApi() {
 			if (channel === IPC.SETTINGS_SAVE) {
 				const payload = args[0] as { settings?: unknown } | undefined;
 				tauriCalls.push({
-					cmd: "winstt_set_settings",
+					cmd: "winstt_patch_settings",
 					args: { settings: payload?.settings },
 				});
 			}
@@ -80,16 +83,45 @@ function makeApi() {
 
 beforeEach(() => {
 	initialSettings = appSettingsSchema.parse({});
-	commands.winsttGetSettings = async () =>
-		({}) as Awaited<ReturnType<typeof commands.winsttGetSettings>>;
-	commands.winsttSetSettings = async (settings) => {
+	settingsRevision = 0;
+	commands.winsttGetSettingsSnapshot = async () => ({
+		revision: settingsRevision,
+		settings: initialSettings as never,
+	});
+	commands.winsttPatchSettings = async ({ baseRevision, settings }) => {
 		tauriCalls.push({
-			cmd: "winstt_set_settings",
+			cmd: "winstt_patch_settings",
 			args: { settings },
 		});
+		if (baseRevision !== settingsRevision) {
+			return {
+				status: "ok",
+				data: {
+					applied: false,
+					changedSections: [],
+					result: null,
+					snapshot: {
+						revision: settingsRevision,
+						settings: initialSettings as never,
+					},
+				},
+			};
+		}
+		initialSettings = appSettingsSchema.parse({
+			...initialSettings,
+			...settings,
+		});
+		settingsRevision += 1;
 		return {
 			status: "ok",
-			data: { needsRestart: false, changedStartupKeys: [] },
+			data: {
+				applied: true,
+				changedSections: Object.keys(settings),
+				snapshot: {
+					revision: settingsRevision,
+					settings: initialSettings as never,
+				},
+			},
 		};
 	};
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
@@ -102,8 +134,9 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
-	commands.winsttGetSettings = originalSettingsCommands.winsttGetSettings;
-	commands.winsttSetSettings = originalSettingsCommands.winsttSetSettings;
+	commands.winsttGetSettingsSnapshot =
+		originalSettingsCommands.winsttGetSettingsSnapshot;
+	commands.winsttPatchSettings = originalSettingsCommands.winsttPatchSettings;
 	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useSettingsHydrationStore.getState().reset();
@@ -188,29 +221,6 @@ describe("performScheduledSave", () => {
 		const patch = lastSavedPatch();
 		expect(patch).toBeDefined();
 		expect(patch?.general?.recordingMode).toBe("wakeword");
-	});
-
-	test("does not suppress local dictionary migration inside the IPC-load guard", () => {
-		window.nativeBridge = makeApi();
-		const baseline = {
-			...initialSettings,
-			dictionary: [],
-		};
-		const changed = {
-			...baseline,
-			dictionary: [{ id: "local-1", term: "Kubernetes" }],
-		};
-		const latestSettingsRef = { current: changed };
-		const lastSavedRef: { current: AppSettings | undefined } = {
-			current: baseline,
-		};
-		markIpcLoadResolved();
-
-		performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
-
-		const patch = lastSavedPatch();
-		expect(patch).toBeDefined();
-		expect(patch?.dictionary).toEqual([{ id: "local-1", term: "Kubernetes" }]);
 	});
 
 	test("is a no-op when the latest settings match lastSaved (empty patch)", () => {
@@ -305,6 +315,26 @@ describe("useSyncSettings", () => {
 		expect(() => unmount()).not.toThrow();
 	});
 
+	test("does not flush the full local cache when unmounted before backend hydration", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					recordingMode: "toggle",
+				},
+			},
+			isLoaded: true,
+		});
+
+		const { unmount } = renderHook(() => useSyncSettings());
+		unmount();
+
+		expect(
+			tauriCalls.some((call) => call.cmd === "winstt_patch_settings"),
+		).toBe(false);
+	});
+
 	test("settings effect cleanup cancels pending debounce when settings change", async () => {
 		useSettingsStore.setState({ settings: initialSettings, isLoaded: true });
 		const { rerender, unmount } = renderHook(() => useSyncSettings());
@@ -354,13 +384,15 @@ describe("useSyncSettings", () => {
 		// The debounced (300ms) save MUST reach the backend with enabled=true.
 		await waitFor(
 			() => {
-				const saves = tauriCalls.filter((c) => c.cmd === "winstt_set_settings");
+				const saves = tauriCalls.filter(
+					(c) => c.cmd === "winstt_patch_settings",
+				);
 				expect(saves.length).toBeGreaterThan(0);
 			},
 			{ timeout: 1500 },
 		);
 		const saved = tauriCalls
-			.filter((c) => c.cmd === "winstt_set_settings")
+			.filter((c) => c.cmd === "winstt_patch_settings")
 			.at(-1)?.args as
 			| { settings?: { llm?: { dictation?: { enabled?: boolean } } } }
 			| undefined;
@@ -379,7 +411,7 @@ describe("useSyncSettings", () => {
 
 		const enabledValues = (): Array<boolean | undefined> =>
 			tauriCalls
-				.filter((c) => c.cmd === "winstt_set_settings")
+				.filter((c) => c.cmd === "winstt_patch_settings")
 				.map(
 					(c) =>
 						(
@@ -405,5 +437,50 @@ describe("useSyncSettings", () => {
 		await waitFor(() => expect(enabledValues().at(-1)).toBe(false), {
 			timeout: 1500,
 		});
+	});
+
+	test("rebases a stale patch on the authoritative revision and retries once", async () => {
+		useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
+		renderHook(() => useSyncSettings());
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("ready"),
+		);
+
+		const external = {
+			...initialSettings,
+			audio: { ...initialSettings.audio, sileroSensitivity: 0.82 },
+		};
+		const attempts: number[] = [];
+		commands.winsttPatchSettings = async ({ baseRevision, settings }) => {
+			attempts.push(baseRevision);
+			if (attempts.length === 1) {
+				return {
+					status: "ok",
+					data: {
+						applied: false,
+						changedSections: [],
+						result: null,
+						snapshot: { revision: 1, settings: external as never },
+					},
+				};
+			}
+			return {
+				status: "ok",
+				data: {
+					applied: true,
+					changedSections: Object.keys(settings),
+					snapshot: {
+						revision: 2,
+						settings: { ...external, ...settings } as never,
+					},
+				},
+			};
+		};
+
+		_resetIpcLoadTimingForTests();
+		act(() => {
+			useSettingsStore.getState().updateLlmDictation({ enabled: true });
+		});
+		await waitFor(() => expect(attempts).toEqual([0, 1]), { timeout: 1500 });
 	});
 });

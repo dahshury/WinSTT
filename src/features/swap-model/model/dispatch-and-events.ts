@@ -2,11 +2,9 @@ import type { OnnxQuantization } from "@/shared/config/defaults";
 import { isCloudModel, isQuantizationChanging } from "./apply-swap";
 import { reportSwapGateError } from "./download-gate";
 import type {
-	GetModelFn,
 	HandleChangeArgs,
 	ModelSettings,
 	PendingDownload,
-	UpdateModelFn,
 } from "./swap-types";
 
 export function resolveCurrentMainModel(
@@ -127,61 +125,4 @@ export function matchesPending(
 	model: string,
 ): boolean {
 	return current?.modelId === model;
-}
-
-/** Swap-failure categories that are NOT genuine failures and must NOT roll the
- *  picker back:
- *   - ``superseded``: a newer swap took over — IT owns the final model; rolling
- *     back here reverts the picker (and persisted settings) off the model the
- *     winning swap committed (the "switch reverts to the old model" bug).
- *   - ``cancelled``: the user aborted the swap themselves; the picker already
- *     reflects their intent. */
-const NON_ROLLBACK_SWAP_FAILURE_CATEGORIES: ReadonlySet<string> = new Set([
-	"superseded",
-	"cancelled",
-]);
-
-export function handleSwapFailedEvent(
-	kind: "main" | "realtime",
-	category: string,
-	prevMainModelRef: React.MutableRefObject<string | null>,
-	prevRealtimeModelRef: React.MutableRefObject<string | null>,
-	update: UpdateModelFn,
-	getModel: GetModelFn,
-): void {
-	if (NON_ROLLBACK_SWAP_FAILURE_CATEGORIES.has(category)) {
-		return;
-	}
-	const handlers: Record<"main" | "realtime", () => void> = {
-		main: () => rollbackMain(prevMainModelRef, update, getModel),
-		realtime: () => rollbackRealtime(prevRealtimeModelRef, update),
-	};
-	handlers[kind]();
-}
-
-export function rollbackMain(
-	prevMainModelRef: React.MutableRefObject<string | null>,
-	update: UpdateModelFn,
-	getModel: GetModelFn,
-): void {
-	const prev = prevMainModelRef.current;
-	if (prev === null) {
-		return;
-	}
-	// Only roll back to a model the catalog can still resolve; a vanished id
-	// isn't a valid selection to restore.
-	if (getModel(prev)) {
-		update({ model: prev });
-	}
-}
-
-export function rollbackRealtime(
-	prevRealtimeModelRef: React.MutableRefObject<string | null>,
-	update: UpdateModelFn,
-): void {
-	const prev = prevRealtimeModelRef.current;
-	if (prev === null) {
-		return;
-	}
-	update({ realtimeModel: prev });
 }

@@ -30,7 +30,7 @@ export interface SyncDeps {
 }
 
 // NOTE: `global.modelUnloadTimeout` is NOT pushed here via `set_parameter`. It is
-// persisted canonically via `winstt_set_settings` (the `settingsSave` debounced write);
+// persisted canonically via `winstt_patch_settings` (the `settingsSave` debounced write);
 // the backend's on-save handler (`apply_model_runtime_settings` →
 // `sync_core_model_unload_timeout`) mirrors it into the `AppSettings` shadow AND
 // warms/reloads the model. The former `set_parameter("model_unload_timeout_seconds")`
@@ -77,11 +77,8 @@ export function syncModelParams(
 		isInitial,
 	);
 	// Intentionally NOT syncing `model.model` via set_parameter: every model
-	// change in the UI goes through `sttReloadModel` (stt:reload-model), which
-	// is the canonical swap path. Mirroring it here would fire a second swap
-	// — the recorder's `model.setter` spawns its own swap thread — and the two
-	// races produce duplicate downloads, duplicate Loading logs, and the
-	// download-cancel/revert dance we saw in production.
+	// activation goes through the backend-owned `stt_switch_model` transaction.
+	// Mirroring it here would create a second load owner.
 	//
 	// The four knobs below used to live in STARTUP_ONLY_KEYS_LIST and force
 	// a process kill on every flip. The facade now exposes matching setters
@@ -96,9 +93,8 @@ export function syncModelParams(
 		"onnx_quantization",
 		isInitial,
 	);
-	// `model.translateTargetLanguage` is persisted canonically via `winstt_set_settings`
-	// (the STT pipeline reads `WinsttSettings.model.translate_target_language`). No legacy
-	// `set_parameter` push: that fed an AppSettings-shadow write nothing read.
+	// `model.translateTargetLanguage` is persisted canonically via `winstt_patch_settings`
+	// (the STT pipeline reads `WinsttSettings.model.translate_target_language`).
 	syncInitialPromptStatics(deps, model, prevModel, isInitial);
 }
 
@@ -273,7 +269,7 @@ export function syncDiarizationParams(
 }
 
 // NOTE: the Dictionary (custom words) is NOT synced here. It is persisted canonically
-// via `winstt_set_settings` (the `settingsSave` debounced write), and the dictation
+// via `winstt_patch_settings` (the `settingsSave` debounced write), and the dictation
 // post-processor reads it straight from `WinsttSettings` at transcription time
 // (`ws.dictionary` in `actions/post_process.rs`). The former `update_custom_words` push
 // was a second write path into the AppSettings shadow that nothing read — removed so

@@ -18,6 +18,12 @@ type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
  */
 export type RuntimeInfo = RuntimeInfoPayload;
 
+/** The local STT engine is not yet at its steady ready state. Kept as one
+ * selector so every readiness surface uses exactly the same backend meaning. */
+export function isRuntimeModelPreparing(info: RuntimeInfo | null): boolean {
+	return info?.model_preparing === true;
+}
+
 interface ConnectionState {
 	connectionStatus: ConnectionStatus;
 	/** GPU list returned by `gpu_get_info`. Empty array = no GPU detected. */

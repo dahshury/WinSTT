@@ -1,9 +1,8 @@
-// Settings-modal lifecycle.
+// Main-pill modal lifecycle (Settings and What's New).
 //
-// The settings window is a MODAL CHILD of the main pill: while it is open the pill
-// is input-disabled (`set_main_modal`, in the parent module) so the two read as one
-// window, and closing it re-enables the pill and HIDES (not destroys) the window so
-// re-open keeps the renderer's state.
+// These windows are MODAL CHILDREN of the main pill: while one is open the pill is
+// input-disabled (`set_main_modal`, in the parent module). Closing re-enables the
+// pill and HIDES (not destroys) the child so its renderer can remain warm.
 //
 // There is deliberately NO native window-opacity animation here. The window is
 // opaque (`SUBSTRATE` background) so it shows without a white flash, and any enter
@@ -16,10 +15,9 @@ use tauri::{AppHandle, Manager};
 
 use super::set_main_modal;
 
-/// Close the settings modal: re-enable the owner pill BEFORE hiding the child (the
-/// Win32 modal teardown order, so the pill reactivates immediately), then hide the
-/// window and return focus to the pill.
-pub(super) fn close_settings_window(
+/// Close a modal child of the main pill: re-enable the owner BEFORE hiding the
+/// child (the Win32 modal teardown order), then return focus to the pill.
+pub(super) fn close_main_modal_window(
     app: AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<(), String> {

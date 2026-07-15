@@ -1,15 +1,12 @@
-use log::{debug, warn};
+use log::warn;
 use std::collections::HashMap;
 use tauri::AppHandle;
-use tauri_plugin_store::StoreExt;
 
 use super::defaults::*;
 use super::types::{
     AppSettings, AutoSubmitKey, ClipboardHandling, OrtAcceleratorSetting, PasteMethod,
     ShortcutBinding, WhisperAcceleratorSetting,
 };
-
-pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
 pub fn get_default_settings() -> AppSettings {
     // Source the transcribe default from the schema constant on EVERY platform so
@@ -112,60 +109,8 @@ pub fn get_default_settings() -> AppSettings {
     }
 }
 
-/// Read the LEGACY `settings_store.json` `AppSettings` blob directly, WITHOUT
-/// touching the WinSTT store. Returns `None` when the legacy file is absent or
-/// the `settings` key can't be parsed. Used exactly once by the single-store
-/// migration in `winstt::commands::settings::seed_defaults` to seed the embedded
-/// `WinsttSettings.core` from a pre-migration install. Secrets in the returned
-/// value are plaintext (the legacy store never sealed them); the migration seals
-/// them on write.
-pub fn load_legacy_app_settings(app: &AppHandle) -> Option<AppSettings> {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .ok()?;
-    let value = store.get("settings")?;
-    match serde_json::from_value::<AppSettings>(value) {
-        Ok(mut settings) => {
-            // Backfill any bindings / providers added since the legacy store was last
-            // written so the migrated `core` is complete.
-            let default_settings = get_default_settings();
-            for (key, binding) in default_settings.bindings {
-                settings.bindings.entry(key).or_insert(binding);
-            }
-            Some(settings)
-        }
-        Err(e) => {
-            warn!("Failed to parse legacy settings_store.json: {}", e);
-            None
-        }
-    }
-}
-
 pub fn get_settings(app: &AppHandle) -> AppSettings {
-    // `read_settings` opens the secret fields (incl. the embedded post-process API
-    // keys), so the returned `core` is plaintext — exactly what every legacy reader
-    // expects from the old store.
-    let mut settings = crate::winstt::commands::settings::read_settings(app).core;
-    // Backfill any bindings / providers added since the store was last written so the
-    // returned value is always complete. This is a READ-ONLY backfill: the merge is a
-    // sub-millisecond in-memory HashMap/Vec operation recomputed on each read.
-    //
-    // It used to ALSO persist the backfilled `core` here as a micro-optimization, but
-    // that turned a settings READER into a writer (M7) — fired from the TTS idle
-    // watcher and every other `get_settings` caller, including background threads. A
-    // read-derived whole-`core` write also risks a lost update against a concurrent
-    // legacy setter (H2). Dropping the persist removes both hazards; the only cost is
-    // recomputing this trivial merge per read, which the backfill already did anyway.
-    let default_settings = get_default_settings();
-    for (key, binding) in default_settings.bindings {
-        if let std::collections::hash_map::Entry::Vacant(entry) =
-            settings.bindings.entry(key.clone())
-        {
-            debug!("Adding missing binding: {}", key);
-            entry.insert(binding);
-        }
-    }
-    settings
+    crate::winstt::commands::settings::read_settings(app).core
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
@@ -188,7 +133,7 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
     let bindings = get_bindings(app);
 
     // Fall back to a benign empty binding when `id` is absent from the persisted store
-    // (e.g. a newly-added binding whose default predates the user's settings_store.json).
+    // (for example, a caller requesting an unknown binding id).
     // The previous `.unwrap()` here panicked the whole app at startup in that case.
     bindings
         .get(id)

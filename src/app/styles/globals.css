@@ -784,10 +784,33 @@
 		gap: 0.35rem;
 	}
 
-	.settings-sidebar-separator {
-		width: calc(100% - 1.5rem);
+	/* Uppercase micro-label naming a nav group in the expanded rail. Sits in
+	   the tab column's own inline padding so it left-aligns with tab labels. */
+	.settings-sidebar-group-label {
+		position: relative;
+		padding: 0.95rem 1rem 0.15rem;
+		font-size: 10px;
+		font-weight: 650;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--color-settings-sidebar-tab-text);
+		opacity: 0.66;
+		user-select: none;
+	}
+
+	/* Collapsing only hides the group copy. Keeping the same label box in the
+	   flow prevents every tab below it from jumping vertically. The separator
+	   paints inside that existing slot, so it adds no collapsed-only spacing. */
+	.settings-sidebar-group-label-collapsed {
+		color: transparent;
+	}
+
+	.settings-sidebar-group-label-collapsed::after {
+		content: "";
+		position: absolute;
+		inset-inline: 0.75rem;
+		top: 50%;
 		height: 1px;
-		margin: 0.48rem 0.75rem 0.42rem;
 		background: linear-gradient(
 			90deg,
 			transparent 0%,
@@ -799,17 +822,10 @@
 		box-shadow: 0 1px 0 var(--color-settings-sidebar-separator-shadow);
 	}
 
-	/* Uppercase micro-label naming a nav group in the expanded rail. Sits in
-	   the tab column's own inline padding so it left-aligns with tab labels. */
-	.settings-sidebar-group-label {
-		padding: 0.95rem 1rem 0.15rem;
-		font-size: 10px;
-		font-weight: 650;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--color-settings-sidebar-tab-text);
-		opacity: 0.66;
-		user-select: none;
+	.settings-sidebar-list
+		> [data-settings-search-result]:first-child
+		.settings-sidebar-group-label-collapsed::after {
+		display: none;
 	}
 
 	/* The first row's group label loses the tall top inset — the header above
@@ -867,8 +883,8 @@
 	}
 
 	.settings-sidebar-tab-collapsed {
-		/* Square icon button that fits the 56px collapsed rail (≈40px inner). The
-		   base row's min-height supplies the matching height. */
+		/* Centered icon button for the 56px collapsed rail. The vertical row
+		   metrics remain shared with expanded mode. */
 		width: 2.4rem;
 	}
 }

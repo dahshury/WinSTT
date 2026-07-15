@@ -14,7 +14,15 @@ use tauri::AppHandle;
 use crate::signal_handle;
 
 #[cfg(windows)]
-const WEBVIEW2_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-logging --log-level=3";
+// `CalculateNativeWinOcclusion` is disabled because the detached model-picker
+// is a full-work-area always-on-top TRANSPARENT backdrop: it is not a layered
+// window, so Chromium's native occlusion tracker treats it as fully opaque and
+// marks every webview underneath (settings/main) as occluded — WebView2 then
+// freezes their rendering (videos pause, download progress stops repainting)
+// for as long as the picker is open. With the feature off, covered webviews
+// keep compositing; the app's windows are small and short-lived, so the power
+// cost of skipping occlusion culling is negligible.
+const WEBVIEW2_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-logging --log-level=3";
 
 // Global atomic to store the file log level filter
 // We use u8 to store the log::LevelFilter as a number
@@ -291,12 +299,32 @@ pub(crate) fn ensure_hf_cache_env() {
         return;
     }
     if let Some(profile) = std::env::var_os("USERPROFILE") {
-        let hf_home = std::path::Path::new(&profile)
-            .join(".cache")
-            .join("huggingface");
+        let hf_home = hf_home_from_profile(&profile);
         // SAFETY: called during `run` startup before the Tauri builder creates
         // webview, plugin, or background worker threads.
         unsafe { std::env::set_var("HF_HOME", hf_home) };
+    }
+}
+
+#[cfg(windows)]
+fn hf_home_from_profile(profile: &std::ffi::OsStr) -> std::path::PathBuf {
+    std::path::Path::new(profile)
+        .join(".cache")
+        .join("huggingface")
+}
+
+#[cfg(all(test, windows))]
+mod windows_path_tests {
+    use super::hf_home_from_profile;
+
+    #[test]
+    fn hf_cache_path_preserves_non_ascii_windows_profile() {
+        let profile = std::ffi::OsStr::new(r"C:\Users\Пользователь用户");
+
+        assert_eq!(
+            hf_home_from_profile(profile),
+            std::path::PathBuf::from(r"C:\Users\Пользователь用户\.cache\huggingface")
+        );
     }
 }
 

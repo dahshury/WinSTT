@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
-import { IPC } from "@/shared/api/ipc-channels";
+import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
 import {
 	ipcOn,
 	onFullSentence,

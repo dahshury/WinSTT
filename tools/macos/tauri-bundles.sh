@@ -40,6 +40,19 @@ if [ "$config" != "none" ]; then
   build_args+=(--config "$config")
 fi
 
+# Build the standalone accessibility context reader for the same architecture
+# and declare it as app-bundle content. It remains outside the normal app graph.
+cargo build \
+  --release \
+  --target "$target" \
+  --manifest-path "$repo_root/src-tauri/context-sidecar/Cargo.toml" \
+  --target-dir "$repo_root/src-tauri/target" \
+  --bin winstt_context
+# `resources` changes from the base array to a destination map here, so carry
+# the complete resource set forward rather than silently replacing it.
+sidecar_config='{"bundle":{"resources":{"resources/*.png":"resources/","resources/recording_sound_default.wav":"resources/recording_sound_default.wav","resources/error_sound.wav":"resources/error_sound.wav","resources/marimba_start.wav":"resources/marimba_start.wav","resources/models/*":"resources/models/","target/'"$target"'/release/winstt_context":"./"}}}'
+build_args+=(--config "$sidecar_config")
+
 rm -rf "$bundle_dir/macos" "$bundle_dir/dmg"
 bun run tauri build "${build_args[@]}"
 

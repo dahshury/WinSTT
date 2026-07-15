@@ -9,7 +9,7 @@ function readSettingsEntry(): string {
 }
 
 describe("settings entry bootstrap", () => {
-	test("uses HtmlLang as the shared native bridge bootstrap", () => {
+	test("uses HtmlLang as the shared native runtime bootstrap", () => {
 		const source = readSettingsEntry();
 
 		expect(source).toContain("<HtmlLang />");

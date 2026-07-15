@@ -8,3 +8,19 @@ export {
 	type TtsSwapTransition,
 	useTtsSwapStore,
 } from "./model/tts-swap-store";
+export {
+	buildTtsSearchCorpus,
+	cloningLabel,
+	getEngineConfig,
+	getEngineLabel,
+	getEngineLogoSrc,
+	getEngineMaker,
+	groupModelsByEngine,
+	ttsLanguageMeta,
+	type TtsEngineGroup,
+	type TtsEngineKey,
+	type TtsListGroup,
+	TTS_SORTED_GROUP_VALUE,
+	voiceDesignLabel,
+	withTtsFavoritesGroup,
+} from "./lib/model-presentation";

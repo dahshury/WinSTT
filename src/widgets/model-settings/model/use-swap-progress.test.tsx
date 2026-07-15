@@ -23,6 +23,9 @@ function quantEntry(
 	return {
 		modelId,
 		quantization: "",
+		phase: paused ? "paused" : "downloading",
+		requestId: "test-request",
+		revision: 1,
 		...(owner === undefined ? {} : { owner }),
 		progress,
 		downloadedBytes: 0,

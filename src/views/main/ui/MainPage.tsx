@@ -1,5 +1,6 @@
 import { Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { lazy, Suspense } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
@@ -7,13 +8,24 @@ import { useVisualizerStore } from "@/features/audio-visualizer";
 import { shouldUseListenSurface } from "@/features/listen-mode";
 import { settingsSave } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
+import { useAfterFirstPaint } from "@/shared/lib/use-after-first-paint";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { AudioDisplay } from "@/widgets/audio-display";
-import { StatusBar } from "@/widgets/status-bar";
+
+const StatusBar = lazy(() =>
+	import("@/widgets/status-bar").then((module) => ({
+		default: module.StatusBar,
+	})),
+);
+
+function StatusBarPlaceholder() {
+	return <div aria-hidden="true" className="h-6 shrink-0 bg-surface-2" />;
+}
 
 export function MainPage() {
+	const afterFirstPaint = useAfterFirstPaint();
 	const general = useSettingsStore((s) => s.settings.general);
 	const isListenMode = general?.recordingMode === "listen";
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
@@ -90,7 +102,14 @@ export function MainPage() {
 				</Tooltip>
 			)}
 
-			{!listenSurfaceActive && <StatusBar />}
+			{!listenSurfaceActive &&
+				(afterFirstPaint ? (
+					<Suspense fallback={<StatusBarPlaceholder />}>
+						<StatusBar />
+					</Suspense>
+				) : (
+					<StatusBarPlaceholder />
+				))}
 		</div>
 	);
 }

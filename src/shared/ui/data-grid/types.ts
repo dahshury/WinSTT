@@ -59,6 +59,8 @@ declare module "@tanstack/react-table" {
 	interface ColumnMeta<TData extends RowData, TValue> {
 		label?: string | undefined;
 		cell?: CellOpts | undefined;
+		/** Whether this column receives spare width when the grid stretches. */
+		stretch?: boolean | undefined;
 	}
 
 	interface TableMeta<TData extends RowData> {

@@ -28,16 +28,16 @@ import { ClearableTextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
 
-function RailSeparator() {
-	return <div aria-hidden="true" className="settings-sidebar-separator" />;
-}
-
 export interface SidebarLink {
+	/**
+	 * Retained for callers that still mark the end of a group. Visual boundaries
+	 * are anchored to the next `groupLabel` so their spacing stays invariant.
+	 */
 	groupEnd?: boolean;
 	/**
 	 * Uppercase micro-label rendered above this link in the expanded rail,
-	 * naming the group this link starts. Collapsed mode falls back to the
-	 * hairline separators (`groupEnd`); search results render label-free.
+	 * naming the group this link starts. Collapsed mode preserves this slot as a
+	 * hairline separator; search results render label-free.
 	 */
 	groupLabel?: string;
 	icon: IconSvgElement;
@@ -287,8 +287,8 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 
 			<Tabs.List
 				className={cn(
-					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-y-auto",
-					collapsed ? "items-center px-2 pt-3 pb-6" : "px-4 pt-1 pb-4",
+					"settings-sidebar-list relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto pt-1 pb-4",
+					collapsed ? "items-center px-2" : "px-4",
 				)}
 			>
 				<LazyMotion features={domAnimation} strict>
@@ -355,8 +355,14 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 										key={link.key}
 										reduceMotion={reduceMotion ?? false}
 									>
-										{!(searching || collapsed) && link.groupLabel ? (
-											<div className="settings-sidebar-group-label truncate">
+										{!searching && link.groupLabel ? (
+											<div
+												aria-hidden={collapsed ? true : undefined}
+												className={cn(
+													"settings-sidebar-group-label truncate",
+													collapsed && "settings-sidebar-group-label-collapsed",
+												)}
+											>
 												{link.groupLabel}
 											</div>
 										) : null}
@@ -367,9 +373,6 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 										) : (
 											tab
 										)}
-										{!searching && collapsed && link.groupEnd ? (
-											<RailSeparator />
-										) : null}
 									</SearchResultRow>
 								);
 							})

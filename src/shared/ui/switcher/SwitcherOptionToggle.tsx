@@ -31,8 +31,9 @@ export interface SwitcherOptionToggleProps<T extends string> {
 	option: SwitcherOption<T>;
 	/** "sm" shrinks the segment so an inline switcher (e.g. the modifier
 	 *  Low/Medium/High tier) fits inside a text-row's line-box without growing
-	 *  the row. Defaults to "md" (combobox-height). */
-	size?: "md" | "sm";
+	 *  the row. "xs" keeps that height but reduces horizontal padding, icon,
+	 *  and type size for a four-option row. Defaults to "md". */
+	size?: "md" | "sm" | "xs";
 }
 
 export function SwitcherOptionToggle<T extends string>({
@@ -48,14 +49,17 @@ export function SwitcherOptionToggle<T extends string>({
 	onMouseLeave,
 	size = "md",
 }: SwitcherOptionToggleProps<T>) {
+	const isXs = size === "xs";
 	const isSm = size === "sm";
 	// sm keeps the segment within an 18px line-box (matches text-body-sm's
 	// rendered height) so a modifier row with a level switch stays exactly as
 	// tall as one without; md is the default combobox-height segment.
-	const sizeClass = isSm
-		? "h-[18px] gap-1 px-2 text-[11px]"
-		: "h-8 gap-1.5 px-2.5 text-[13px]";
-	const iconSize = isSm ? 12 : 16;
+	const sizeClass = isXs
+		? "h-[18px] gap-0.5 px-1 text-[10px]"
+		: isSm
+			? "h-[18px] gap-1 px-2 text-[11px]"
+			: "h-8 gap-1.5 px-2.5 text-[13px]";
+	const iconSize = isXs ? 10 : isSm ? 12 : 16;
 	const colored = option.color !== undefined;
 	const style: SwitcherCssVars | undefined = colored
 		? { "--switcher-color": option.color }

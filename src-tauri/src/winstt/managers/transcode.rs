@@ -5,8 +5,6 @@
 // Two concerns live here:
 //   1. Audio decode (symphonia: wav/mp3/mp4/aac/flac/ogg/vorbis) + 16 kHz mono
 //      resample — `decode_audio_to_pcm` and its accumulation helpers.
-//   2. Transcript serialization (txt/srt) — `format_transcript` /
-//      `format_srt_timestamp`.
 
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
@@ -17,39 +15,6 @@ use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 
 use crate::audio_toolkit::audio::FrameResampler;
-use crate::winstt::settings_schema::FileTranscriptionFormat;
-
-// ── Transcript serialization (txt / srt) ─────────────────────────────────────
-
-pub(crate) fn format_transcript(
-    format: FileTranscriptionFormat,
-    text: &str,
-    duration_secs: f64,
-) -> String {
-    match format {
-        FileTranscriptionFormat::Txt => {
-            let mut body = text.trim_end().to_string();
-            body.push('\n');
-            body
-        }
-        FileTranscriptionFormat::Srt => {
-            let end = format_srt_timestamp(duration_secs.max(0.001));
-            format!("1\n00:00:00,000 --> {end}\n{}\n", text.trim())
-        }
-    }
-}
-
-fn format_srt_timestamp(seconds: f64) -> String {
-    let total_ms = (seconds * 1000.0).round().max(1.0) as u64;
-    let ms = total_ms % 1000;
-    let total_seconds = total_ms / 1000;
-    let s = total_seconds % 60;
-    let total_minutes = total_seconds / 60;
-    let m = total_minutes % 60;
-    let h = total_minutes / 60;
-    format!("{h:02}:{m:02}:{s:02},{ms:03}")
-}
-
 // ── Audio decode (symphonia → 16 kHz mono f32) ───────────────────────────────
 
 /// The transcription pipeline (mic, loopback, file) is 16 kHz mono f32 PCM — the
@@ -75,7 +40,7 @@ const RESAMPLE_FRAME_MS: u64 = 30;
 /// with symphonia (wav/mp3/mp4/aac/flac/ogg/vorbis) so no external ffmpeg binary is
 /// required: probe the container, decode every packet of the default audio track,
 /// downmix to mono, then resample to 16 kHz via the project's recording-grade
-/// `FftFixedIn` resampler (`FrameResampler`).
+/// rubato FFT resampler (`FrameResampler`).
 ///
 /// Robust to arbitrary input sample rates and channel layouts. Per-packet
 /// `DecodeError`s are skipped (the stream resyncs on the next packet, matching how

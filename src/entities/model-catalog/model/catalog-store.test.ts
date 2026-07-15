@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { ModelFamilySchema } from "@/shared/api/schema.zod";
 
 // ---------------------------------------------------------------------------
@@ -198,24 +198,6 @@ describe("initCatalogStore", () => {
 		await new Promise((r) => setTimeout(r, 0));
 		// isLoaded remains false because setModels was not called
 		expect(useCatalogStore.getState().isLoaded).toBe(false);
-	});
-
-	test("retries initialization after the native bridge is installed later", async () => {
-		_resetCatalogStoreInitForTests();
-		window.nativeBridge = undefined as unknown as Window["nativeBridge"];
-
-		initCatalogStore();
-		expect(fetchInvokes).toHaveLength(0);
-		expect(onSubscriptions).toHaveLength(0);
-
-		installNativeBridgeStub();
-		catalogPayload = [validRaw];
-		initCatalogStore();
-		await new Promise((r) => setTimeout(r, 0));
-
-		expect(fetchInvokes).toEqual([IPC.STT_GET_MODEL_CATALOG]);
-		expect(onSubscriptions).toEqual([IPC.STT_MODEL_CATALOG]);
-		expect(useCatalogStore.getState().models[0]?.id).toBe("tiny");
 	});
 });
 

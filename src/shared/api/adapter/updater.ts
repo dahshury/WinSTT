@@ -3,8 +3,8 @@
 // and the shared status history. This bridge keeps the legacy IPC shape
 // stable for the renderer.
 //
-// Extracted from native-bridge-adapter.ts (the thin composition/route table
-// re-uses these). Behavior-preserving move — no logic change.
+// Shared updater facade used directly by renderer domain wrappers and runtime
+// update-check subscriptions.
 
 import { commands, type UpdaterCommandResult } from "@/bindings";
 

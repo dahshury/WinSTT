@@ -1,11 +1,21 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.6"
+version = "0.1.3-alpha.7"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
 license = "MIT"
 default-run = "winstt"
+autobins = false
+
+[[bin]]
+name = "winstt"
+path = "src/main.rs"
+
+[workspace]
+members = ["context-sidecar"]
+default-members = ["."]
+resolver = "3"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
@@ -30,7 +40,10 @@ opt-level = 2
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "winstt_app_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# WinSTT ships desktop executables; the app bin consumes an rlib. Tauri's
+# template also lists staticlib/cdylib for mobile FFI, but emitting those unused
+# artifacts makes every Windows dev edit relink the entire native dependency graph.
+crate-type = ["rlib"]
 
 [features]
 default = []
@@ -52,8 +65,6 @@ context-playground = []
 
 [build-dependencies]
 tauri-build = { version = "2.6.2", features = [] }
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 once_cell = "1"
@@ -84,7 +95,7 @@ serde_json = "1"
 semver = "1"
 cpal = "0.17.1"
 anyhow = "1.0.95"
-rubato = "0.16.2"
+rubato = "4.0.0"
 # Real RAM detection for the model-download fitness heuristics (the "RAM: unknown"
 # fix). Already in the dep graph transitively; pinned to the same version.
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
@@ -154,7 +165,6 @@ ferrous-opencc = "0.2.3"
 libloading = "0.8"
 clap = { version = "4", features = ["derive"] }
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
-specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 tauri-plugin-dialog = "2.6"
 
@@ -180,6 +190,7 @@ windows = { version = "0.61.3", features = [
   # across the paste pipeline's clipboard sandwich, not just text.
   "Win32_System_DataExchange",
   "Win32_System_Memory",
+  "Win32_System_Ole",
   "Win32_System_Variant",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",
@@ -252,10 +263,11 @@ dispatch2 = "0.3"
 # to the version atspi requires so the two agree. PipeWire loopback capture uses the
 # pw-record/parec subprocess (no crate).
 [target.'cfg(target_os = "linux")'.dependencies]
-atspi = "0.26"
+atspi = "0.30"
 zbus = "5"
 
 [dev-dependencies]
+specta-typescript = "0.0.9"
 tempfile = "3"
 
 # Lint policy (rust-best-practices ch.2 §2.5). Plain `cargo check` and

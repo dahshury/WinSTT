@@ -1,11 +1,15 @@
 import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
-import { getSettingsStoreState, useSettingsStore } from "@/entities/setting";
+import {
+	getSettingsStoreState,
+	useSettingsHydrationStore,
+	useSettingsStore,
+} from "@/entities/setting";
 import {
 	hasSettingsBackend,
-	onSettingsChanged,
+	onSettingsChangedSnapshot,
 	onSettingsSaveError,
-	settingsLoadStrict,
+	settingsLoadSnapshotStrict,
 	settingsSave,
 	settingsSaveAck,
 	sttRequestDiarizationToggle,
@@ -38,13 +42,12 @@ import {
 	deriveIpcLoadUpdate,
 	isModeChanged,
 	isPrimarySyncWindow,
-	LOCAL_CACHE_COLLECTION_KEYS,
+	mergeBroadcastPreservingUserDirty,
 	scheduleSave,
 	settingsSectionsEqual,
 	shouldSyncOnConnect,
 	treeCarriesNoUserInfo,
 } from "../lib/sync-helpers";
-import { useSettingsHydrationStore } from "../model/settings-hydration-store";
 
 const DEPS: SyncDeps = {
 	sttRequestDiarizationToggle,
@@ -89,6 +92,7 @@ export function useSyncSettings(): void {
 	// the baseline for "what's user-dirty" so a `settings:changed` from another
 	// window can't wipe an unsaved local change the user just made.
 	const lastSavedRef = useRef<AppSettings | undefined>(undefined);
+	const settingsRevisionRef = useRef<number | undefined>(undefined);
 	useEffect(() => {
 		latestSettingsRef.current = settings;
 	}, [settings]);
@@ -109,8 +113,8 @@ export function useSyncSettings(): void {
 			};
 		}
 		setHydrationStatus("loading");
-		settingsLoadStrict()
-			.then((loaded) => {
+		settingsLoadSnapshotStrict()
+			.then(({ revision, settings: loaded }) => {
 				if (cancelled) {
 					return;
 				}
@@ -123,6 +127,7 @@ export function useSyncSettings(): void {
 				hasIpcLoadResolvedRef.current = true;
 				fromIpcLoadRef.current = nextFromIpcLoad;
 				lastSavedRef.current = loaded;
+				settingsRevisionRef.current = revision;
 				markIpcLoadResolved();
 				setSettings(merged);
 				setHydrationStatus("ready");
@@ -169,7 +174,20 @@ export function useSyncSettings(): void {
 	// AND the subsequent `[settings, isLoaded]` cleanup would cancel the
 	// pending save, silently dropping the change.
 	useEffect(() => {
-		const applyBroadcast = (incoming: AppSettings): void => {
+		const applyBroadcast = ({
+			revision,
+			settings: incoming,
+		}: {
+			revision: number;
+			settings: AppSettings;
+		}): void => {
+			if (
+				settingsRevisionRef.current !== undefined &&
+				revision < settingsRevisionRef.current
+			) {
+				return;
+			}
+			settingsRevisionRef.current = revision;
 			const current = getSettingsStoreState().settings;
 			const { decoded, diagnostics, merged, nextFromBroadcast } =
 				deriveBroadcastUpdate(
@@ -201,7 +219,7 @@ export function useSyncSettings(): void {
 			surfaceDecodeDiagnostics(diagnostics);
 			setSettings(merged);
 		};
-		return onSettingsChanged(applyBroadcast);
+		return onSettingsChangedSnapshot(applyBroadcast);
 	}, [setSettings]);
 
 	// Audit #46: surface backend-emitted settings save errors. `onSettingsSaveError`
@@ -331,7 +349,35 @@ export function useSyncSettings(): void {
 			void performScheduledSave(
 				latestSettingsRef,
 				lastSavedRef,
-				settingsSaveAck,
+				async (patch, baseline) => {
+					let ack = await settingsSaveAck(patch, settingsRevisionRef.current);
+					if (!ack.applied) {
+						// Another window committed first. Rebase only the fields that are
+						// still dirty locally onto its authoritative snapshot, then retry
+						// once against the returned revision. A second conflict remains
+						// visibly dirty and is surfaced instead of being overwritten.
+						const current = latestSettingsRef.current;
+						const { merged: rebased } = mergeBroadcastPreservingUserDirty(
+							ack.settings,
+							current,
+							baseline,
+						);
+						settingsRevisionRef.current = ack.revision;
+						const retryPatch = collectChangedSections(rebased, ack.settings);
+						if (!hasAnyKey(retryPatch)) {
+							return ack.settings;
+						}
+						ack = await settingsSaveAck(retryPatch, ack.revision);
+						if (!ack.applied) {
+							settingsRevisionRef.current = ack.revision;
+							throw new Error(
+								"Settings changed concurrently twice; keeping the local edit for retry",
+							);
+						}
+					}
+					settingsRevisionRef.current = ack.revision;
+					return ack.settings;
+				},
 				{
 					// Audit #40: re-arm a save for after the guard window instead of
 					// dropping a save that fired inside the IPC-load reconciliation.
@@ -505,22 +551,6 @@ function patchIncludesRecordingModeChange(
 	return nextMode != null && nextMode !== lastSaved?.general?.recordingMode;
 }
 
-function patchIncludesLocalCollectionMigration(
-	patch: Partial<AppSettings>,
-	lastSaved: AppSettings | undefined,
-): boolean {
-	return LOCAL_CACHE_COLLECTION_KEYS.some((key) => {
-		const next = patch[key];
-		const previous = lastSaved?.[key];
-		return (
-			Array.isArray(next) &&
-			next.length > 0 &&
-			Array.isArray(previous) &&
-			previous.length === 0
-		);
-	});
-}
-
 /**
  * Body of the debounced scheduleSave callback, extracted so the IPC-load
  * guard, the diff-vs-baseline check, and the lastSavedRef advance are
@@ -540,8 +570,7 @@ export interface ScheduledSaveHooks {
 /**
  * True while the IPC-load reconciliation guard should suppress a disk save (a
  * transient revert from `setSettings(loaded)` would otherwise be persisted).
- * Recording-mode changes and local-collection migrations bypass the guard —
- * they are real user intent that must reach disk immediately.
+ * Recording-mode changes bypass the guard because they are immediate user intent.
  */
 function isIpcLoadGuardActive(
 	patch: Partial<AppSettings>,
@@ -549,8 +578,7 @@ function isIpcLoadGuardActive(
 ): boolean {
 	return (
 		Date.now() - recentIpcLoadAt() < SAVE_IPC_LOAD_GUARD_MS &&
-		!patchIncludesRecordingModeChange(patch, lastSaved) &&
-		!patchIncludesLocalCollectionMigration(patch, lastSaved)
+		!patchIncludesRecordingModeChange(patch, lastSaved)
 	);
 }
 
@@ -559,7 +587,9 @@ export async function performScheduledSave(
 	lastSavedRef: { current: AppSettings | undefined },
 	saveSettings: (
 		settings: Partial<AppSettings>,
-	) => void | Promise<void> = settingsSaveAck,
+		baseline: AppSettings | undefined,
+	) => unknown | Promise<unknown> = (settings) =>
+		settingsSaveAck(settings).then((ack) => ack.settings),
 	hooks?: ScheduledSaveHooks,
 ): Promise<void> {
 	const s = latestSettingsRef.current;
@@ -574,11 +604,15 @@ export async function performScheduledSave(
 		return;
 	}
 	try {
-		await saveSettings(patch);
+		const saved = await saveSettings(patch, lastSavedRef.current);
+		const savedSnapshot =
+			saved !== null && typeof saved === "object"
+				? (saved as AppSettings)
+				: undefined;
 		// Audit #46: advance the baseline ONLY on a confirmed successful write.
 		// A rejected save leaves `lastSavedRef` untouched, so the section stays
 		// dirty and is re-diffed (re-sent) on the next change/flush.
-		lastSavedRef.current = s;
+		lastSavedRef.current = savedSnapshot ?? s;
 	} catch (err) {
 		hooks?.onSaveError?.(patch, err);
 	}
@@ -597,6 +631,10 @@ export async function performScheduledSave(
  * the IPC-load guard so a transient boot-time revert isn't persisted on close.
  * Uses the fire-and-forget `settingsSave` (not the ack variant): during
  * `beforeunload`/unmount there's no opportunity to await a backend response.
+ * A missing `lastSavedRef` means backend hydration has not established a
+ * canonical baseline yet. This is the normal React StrictMode probe-unmount
+ * case; flushing the localStorage tree there would post every section and can
+ * overwrite newer backend settings.
  */
 function flushPendingSave(
 	debounceRef: { current: ReturnType<typeof setTimeout> | null },
@@ -606,6 +644,9 @@ function flushPendingSave(
 	if (debounceRef.current) {
 		clearTimeout(debounceRef.current);
 		debounceRef.current = null;
+	}
+	if (!lastSavedRef.current) {
+		return;
 	}
 	const latest = latestSettingsRef.current;
 	const patch = diffAgainstLastSaved(latest, lastSavedRef.current);

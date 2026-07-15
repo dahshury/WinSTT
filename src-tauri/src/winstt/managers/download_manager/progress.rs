@@ -9,6 +9,7 @@ use std::time::Instant;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
+use crate::winstt::commands::model_lifecycle::{self, LifecycleProgress, SttModelLifecyclePhase};
 use crate::winstt::sync_ext::MutexExt;
 
 // ── Aggregate progress across the planned files of one quant download ──────────────────────────
@@ -82,6 +83,7 @@ pub(super) fn emit_model_progress(
     app: &AppHandle,
     model: &str,
     quantization: &str,
+    request_id: &str,
     agg: &ProgressAgg,
     start: Instant,
 ) {
@@ -115,6 +117,23 @@ pub(super) fn emit_model_progress(
             "etaSeconds": eta,
         }),
     );
+    if let Err(error) = model_lifecycle::transition(
+        app,
+        model,
+        quantization,
+        request_id,
+        SttModelLifecyclePhase::Downloading,
+        Some(LifecycleProgress {
+            downloaded_bytes: downloaded,
+            total_bytes: total,
+            speed_bps: speed,
+            eta_seconds: eta,
+            verification_ms: None,
+        }),
+        None,
+    ) {
+        log::debug!("[stt-lifecycle] ignored stale progress for {model}@{quantization}: {error}");
+    }
 }
 
 /// hf-hub `ProgressHandler` for ONE file fetch — routes byte deltas into the shared aggregate AND
@@ -124,6 +143,7 @@ pub(super) struct FileReporter {
     pub(super) app: AppHandle,
     pub(super) model: String,
     pub(super) quantization: String,
+    pub(super) request_id: String,
     /// Repo path of the file this reporter tracks — the single aggregate key all of
     /// this fetch's events fold under (so the HEAD-reported total seeded on `Start`
     /// survives xet events that report `total_bytes=0`).
@@ -138,6 +158,7 @@ impl FileReporter {
             &self.app,
             &self.model,
             &self.quantization,
+            &self.request_id,
             &self.agg,
             self.start,
         );

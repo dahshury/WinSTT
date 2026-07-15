@@ -7,6 +7,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
+import { commands } from "@/bindings";
 import {
 	deleteHistoryRow,
 	effectiveText,
@@ -27,6 +28,10 @@ import {
 } from "@/shared/api/ipc-client";
 import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
 import { cn } from "@/shared/lib/cn";
+import {
+	computeHighlightRanges,
+	type HighlightRange,
+} from "@/shared/lib/fuzzy-score";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useSpeechActivityRef } from "@/shared/lib/use-speech-activity-ref";
 import { useLongPress } from "@/shared/lib/use-long-press";
@@ -34,6 +39,7 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { StaggerReveal } from "@/shared/ui/stagger-reveal";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { HistorySearchInput } from "@/widgets/transcription-history-settings";
 
 function subscribeBroadcasts(callbacks: {
 	onAdded: (entry: HistoryEntry) => void;
@@ -62,7 +68,56 @@ function subscribeBroadcasts(callbacks: {
 
 const PAGE_SIZE = 25;
 
-function LongPressTranscript({ text }: { text: string }) {
+interface HistorySearchResult {
+	hasMore: boolean;
+	transcriptions: Array<{ row: HistoryEntry }>;
+}
+
+type HistorySearchCommand = (
+	query: string,
+	limit: number,
+	offset: number,
+	kinds: string[],
+	dateFrom: number | null,
+	dateTo: number | null,
+) => Promise<
+	| { data: HistorySearchResult; status: "ok" }
+	| { error: string; status: "error" }
+>;
+
+async function searchHistoryPage(
+	query: string,
+	offset: number,
+): Promise<{ entries: HistoryEntry[]; hasMore: boolean }> {
+	const search = (
+		commands as unknown as {
+			historySearch: HistorySearchCommand;
+		}
+	).historySearch;
+	const response = await search(
+		query,
+		PAGE_SIZE,
+		offset,
+		["transcription"],
+		null,
+		null,
+	);
+	if (response.status === "error") {
+		return { entries: [], hasMore: false };
+	}
+	return {
+		entries: response.data.transcriptions.map((hit) => hit.row),
+		hasMore: response.data.hasMore,
+	};
+}
+
+function LongPressTranscript({
+	highlights,
+	text,
+}: {
+	highlights?: HighlightRange[];
+	text: string;
+}) {
 	const [copied, setCopied] = useState(false);
 	const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
@@ -101,6 +156,19 @@ function LongPressTranscript({ text }: { text: string }) {
 		: longPress.pressing
 			? "pressing"
 			: undefined;
+	const highlightedText = highlights?.flatMap((range, index, ranges) => {
+		const previousEnd = index === 0 ? 0 : (ranges[index - 1]?.end ?? 0);
+		return [
+			text.slice(previousEnd, range.start),
+			<mark
+				className="rounded-[2px] bg-accent/25 text-inherit"
+				key={`${range.start}-${range.end}`}
+			>
+				{text.slice(range.start, range.end)}
+			</mark>,
+			...(index === ranges.length - 1 ? [text.slice(range.end)] : []),
+		];
+	});
 
 	return (
 		<div className="relative min-w-0">
@@ -117,7 +185,7 @@ function LongPressTranscript({ text }: { text: string }) {
 				dir="auto"
 				{...longPress.handlers}
 			>
-				{text}
+				{highlightedText ?? text}
 			</p>
 			<span
 				aria-hidden="true"
@@ -146,6 +214,11 @@ export function HistoryPage() {
 
 	const [playingId, setPlayingId] = useState<number | null>(null);
 	const [audioUrl, setAudioUrl] = useState<string | null>(null);
+	const [query, setQuery] = useState("");
+	const [searchEntries, setSearchEntries] = useState<HistoryEntry[]>([]);
+	const [searchHasMore, setSearchHasMore] = useState(false);
+	const [searchLoading, setSearchLoading] = useState(false);
+	const searchRequestSeq = useRef(0);
 	const [animatedEntryIds, setAnimatedEntryIds] = useState<Set<number>>(
 		() => new Set(),
 	);
@@ -190,7 +263,49 @@ export function HistoryPage() {
 		speechActivityRef,
 	]);
 
+	useEffect(() => {
+		const normalizedQuery = query.trim();
+		const seq = ++searchRequestSeq.current;
+		if (!normalizedQuery) {
+			setSearchEntries([]);
+			setSearchHasMore(false);
+			setSearchLoading(false);
+			return;
+		}
+		setSearchLoading(true);
+		searchHistoryPage(normalizedQuery, 0)
+			.catch(() => ({ entries: [], hasMore: false }))
+			.then((page) => {
+				if (searchRequestSeq.current !== seq) {
+					return;
+				}
+				setSearchEntries(page.entries);
+				setSearchHasMore(page.hasMore);
+				setSearchLoading(false);
+			});
+	}, [query]);
+
+	const searching = query.trim().length > 0;
+	const displayedEntries = searching ? searchEntries : entries;
+	const displayedHasMore = searching ? searchHasMore : hasMore;
+	const displayedLoading = searching ? searchLoading : loading;
+
 	const loadNext = (): void => {
+		if (searching) {
+			const seq = searchRequestSeq.current;
+			setSearchLoading(true);
+			searchHistoryPage(query.trim(), searchEntries.length)
+				.catch(() => ({ entries: [], hasMore: false }))
+				.then((page) => {
+					if (searchRequestSeq.current !== seq) {
+						return;
+					}
+					setSearchEntries((current) => [...current, ...page.entries]);
+					setSearchHasMore(page.hasMore);
+					setSearchLoading(false);
+				});
+			return;
+		}
 		setLoading(true);
 		listHistoryPage({ offset: entries.length, limit: PAGE_SIZE }).then(
 			(page) => {
@@ -216,6 +331,9 @@ export function HistoryPage() {
 		deleteHistoryRow(id).then((ok) => {
 			if (ok) {
 				removeRow(id);
+				setSearchEntries((current) =>
+					current.filter((entry) => entry.id !== id),
+				);
 				if (playingId === id) {
 					setPlayingId(null);
 					setAudioUrl(null);
@@ -228,25 +346,39 @@ export function HistoryPage() {
 		toggleHistoryRow(id).then((saved) => {
 			if (saved !== null) {
 				toggleRowInStore(id, saved);
+				setSearchEntries((current) =>
+					current.map((entry) =>
+						entry.id === id ? { ...entry, saved } : entry,
+					),
+				);
 			}
 		});
 	};
 
 	return (
 		<div className="flex h-full flex-col gap-2 p-3">
-			<header>
+			<header className="flex flex-col gap-2">
 				<h1 className="font-semibold text-base">{t("pageTitle")}</h1>
 				<p className="text-foreground-secondary text-xs">
-					{entries.length} {entries.length === 1 ? "entry" : "entries"}
+					{displayedEntries.length}{" "}
+					{displayedEntries.length === 1 ? "entry" : "entries"}
 				</p>
+				<HistorySearchInput
+					count={searchEntries.length}
+					hasMore={searchHasMore}
+					onQueryChange={setQuery}
+				/>
 			</header>
 
 			<ul
 				className="flex flex-1 flex-col gap-2 overflow-y-auto"
 				style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
 			>
-				{entries.map((entry) => {
+				{displayedEntries.map((entry) => {
 					const text = effectiveText(entry);
+					const highlights = searching
+						? computeHighlightRanges(text, query)
+						: undefined;
 					const tagLabel = historyTagLabel(entry.historyTag);
 					const sensitive = hasPrivacyMarkers(entry.privacyMarkers);
 					const animateEntry = animatedEntryIds.has(entry.id);
@@ -322,7 +454,10 @@ export function HistoryPage() {
 										</div>
 									</div>
 								</div>
-								<LongPressTranscript text={text} />
+								<LongPressTranscript
+									{...(highlights ? { highlights } : {})}
+									text={text}
+								/>
 								{playingId === entry.id && audioUrl ? (
 									<audio
 										aria-label="Transcription recording playback"
@@ -342,15 +477,20 @@ export function HistoryPage() {
 						</li>
 					);
 				})}
+				{searching && !searchLoading && displayedEntries.length === 0 ? (
+					<li className="py-8 text-center text-foreground-muted text-sm">
+						{t("searchNoResults")}
+					</li>
+				) : null}
 			</ul>
 
-			{hasMore ? (
+			{displayedHasMore ? (
 				<Button
 					className="self-center px-3 py-1 text-xs"
-					disabled={loading}
+					disabled={displayedLoading}
 					onClick={loadNext}
 				>
-					{loading ? "Loading..." : "Load more"}
+					{displayedLoading ? "Loading..." : "Load more"}
 				</Button>
 			) : null}
 		</div>

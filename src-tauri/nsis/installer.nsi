@@ -18,6 +18,12 @@ ManifestDPIAwareness PerMonitorV2
 !else
   ; Set the compression algorithm. We default to LZMA.
   SetCompressor /SOLID "{{compression}}"
+  ; WinSTT's native payload is large enough to benefit from a wider LZMA
+  ; history window. NSIS defaults to 8 MiB; 64 MiB improves the download size
+  ; while keeping installer memory use modest on every supported machine.
+  !if "{{compression}}" == "lzma"
+    SetCompressorDictSize 64
+  !endif
 !endif
 
 !include MUI2.nsh
@@ -68,6 +74,9 @@ ${StrLoc}
 !define UNINSTALLERSIGNCOMMAND "{{uninstaller_sign_cmd}}"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
+; pyke's static ONNX Runtime x86_64 artifacts target x86-64-v3. AVX2 is the
+; Windows-detectable proxy for that Haswell/Zen-era minimum before winstt.exe runs.
+!define PF_AVX2_INSTRUCTIONS_AVAILABLE 40
 
 Var PassiveMode
 Var UpdateMode
@@ -532,6 +541,15 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
+  !if "${ARCH}" == "x64"
+    System::Call 'kernel32::IsProcessorFeaturePresent(i ${PF_AVX2_INSTRUCTIONS_AVAILABLE}) i .r0'
+    ${If} $0 = 0
+      MessageBox MB_OK|MB_ICONSTOP "${PRODUCTNAME} requires an AVX2-capable processor (Intel Haswell/Broadwell or AMD Zen, or newer). This processor is not supported."
+      SetErrorLevel 1633
+      Quit
+    ${EndIf}
+  !endif
+
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1

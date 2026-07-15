@@ -3,9 +3,10 @@ import {
 	fetchModelsWithState,
 	type ModelStateEntry,
 	onModelCacheChanged,
-	onModelSwapCompleted,
+	onSttModelLifecycle,
 	type SystemInfoEntry,
 } from "@/shared/api/ipc-client";
+import { hasNativeRuntime } from "@/shared/api/native-boundary";
 
 /**
  * Per-model cache + fitness state from the server, keyed by model id.
@@ -15,7 +16,7 @@ import {
  *
  * Refreshed on settings-panel mount via ``fetchModelsWithState``; live
  * updates come through ``stt:model-cache-changed`` (push) and
- * ``stt:model-swap-completed`` (push) so badges flip without polling
+ * terminal ``stt:model-lifecycle`` snapshots so badges flip without polling
  * after a download finishes.
  */
 interface ModelStateStore {
@@ -37,7 +38,7 @@ function toMap(entries: ModelStateEntry[]): Record<string, ModelStateEntry> {
 
 // In-flight refresh promise. Multiple callers (settings panel mount,
 // model-picker window mount, push events from `onModelCacheChanged` /
-// `onModelSwapCompleted`) used to fire parallel IPC round-trips that all
+// lifecycle terminal events) used to fire parallel IPC round-trips that all
 // queued behind the same blocked control-channel handler and timed out
 // together. Sharing a single pending promise collapses bursts into one
 // request without changing the contract — every caller still awaits a
@@ -95,7 +96,7 @@ export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 		if (pendingRefresh) {
 			return pendingRefresh;
 		}
-		if (typeof window !== "undefined" && window.nativeBridge != null) {
+		if (hasNativeRuntime()) {
 			initModelStateStore();
 		}
 		const run = async () => {
@@ -165,14 +166,16 @@ export function initModelStateStore(): () => void {
 		resetRetryCycle();
 		useModelStateStore.getState().refresh();
 	});
-	const unsubSwap = onModelSwapCompleted(() => {
-		// A swap completing implies the new model is cached.
+	const unsubLifecycle = onSttModelLifecycle((snapshot) => {
+		if (snapshot.phase !== "ready" && snapshot.phase !== "active") {
+			return;
+		}
 		resetRetryCycle();
 		useModelStateStore.getState().refresh();
 	});
 	const unsubscribe = () => {
 		unsubCache();
-		unsubSwap();
+		unsubLifecycle();
 		if (unsubscribeModelStateEvents === unsubscribe) {
 			unsubscribeModelStateEvents = null;
 		}

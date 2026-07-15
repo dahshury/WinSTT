@@ -17,10 +17,7 @@ import type { DateRange } from "@/shared/ui/calendar-heatmap";
 // Deep-import the lightweight family logo/maker resolvers (NOT the heavy
 // `@/widgets/model-picker` barrel) so the settings chunk stays lean — same guard
 // `useRuntimeModelBreakdown` uses.
-import {
-	getAuthorLabel,
-	getFamilyConfig,
-} from "@/widgets/model-picker/stt/lib/family-helpers";
+import { getAuthorLabel, getFamilyConfig } from "@/entities/model-catalog";
 import { useHistoryStats } from "../api/use-history-stats";
 import { computeAuthorUsage, type ResolvedAuthor } from "../lib/author-usage";
 import { computeCostAnalytics, type ResolveMaker } from "../lib/cost-analytics";

@@ -1,79 +1,19 @@
-// Pure Settings->LLM type/effort/options conversions and preset composition shared
-// by the runtime path and the playground preview. Stateless mappers extracted
-// verbatim from the transforms module root.
+// Transform-preview conversions and preset composition. Shared settings-to-LLM
+// mappers live in commands::llm::conversions.
 
 use crate::winstt::llm::{
-    self, PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, PresetLevel as LlmPresetLevel,
-    ThinkingEffort as LlmEffort, merge_presets_with_custom_modifiers,
+    self, PresetEntry as LlmPresetEntry, ThinkingEffort as LlmEffort,
+    merge_presets_with_custom_modifiers,
 };
 use crate::winstt::settings_schema::{
-    CustomModifier as SettingsCustomModifier, EffortLevel as SettingsOpenRouterEffort,
-    LlmFeatureBase, LlmProvider, PresetEntry as SettingsPreset, PresetKey as SettingsPresetKey,
-    PresetLevel as SettingsLevel, ThinkingEffort as SettingsEffort, WinsttSettings,
+    CustomModifier as SettingsCustomModifier, LlmProvider, PresetEntry as SettingsPreset,
+    WinsttSettings,
 };
 
+pub(super) use crate::winstt::commands::llm::conversions::{openrouter_options, to_llm_effort};
+use crate::winstt::commands::llm::conversions::{to_llm_custom, to_llm_preset};
+
 use super::LlmPreviewConfig;
-
-// ── settings → prompt-shape conversions (local; llm.rs keeps its own private) ───
-
-fn to_llm_level(level: SettingsLevel) -> LlmPresetLevel {
-    match level {
-        SettingsLevel::Light => LlmPresetLevel::Light,
-        SettingsLevel::Medium => LlmPresetLevel::Medium,
-        SettingsLevel::High => LlmPresetLevel::High,
-    }
-}
-
-fn to_llm_key(key: SettingsPresetKey) -> LlmPresetKey {
-    match key {
-        SettingsPresetKey::Neutral => LlmPresetKey::Neutral,
-        SettingsPresetKey::Formal => LlmPresetKey::Formal,
-        SettingsPresetKey::Friendly => LlmPresetKey::Friendly,
-        SettingsPresetKey::Technical => LlmPresetKey::Technical,
-        SettingsPresetKey::Concise => LlmPresetKey::Concise,
-        SettingsPresetKey::Summarize => LlmPresetKey::Summarize,
-        SettingsPresetKey::Reorder => LlmPresetKey::Reorder,
-        SettingsPresetKey::Restructure => LlmPresetKey::Restructure,
-        SettingsPresetKey::RewordForClarity => LlmPresetKey::RewordForClarity,
-        SettingsPresetKey::Translate => LlmPresetKey::Translate,
-    }
-}
-
-fn to_llm_preset(p: &SettingsPreset) -> LlmPresetEntry {
-    LlmPresetEntry::Builtin {
-        key: to_llm_key(p.key),
-        level: p.level.map(to_llm_level),
-        target_lang: p.target_lang.clone(),
-    }
-}
-
-pub(super) fn to_llm_effort(e: SettingsEffort) -> LlmEffort {
-    match e {
-        SettingsEffort::Off => LlmEffort::Off,
-        SettingsEffort::Low => LlmEffort::Low,
-        SettingsEffort::Medium => LlmEffort::Medium,
-        SettingsEffort::High => LlmEffort::High,
-    }
-}
-
-fn openrouter_effort_value(e: SettingsOpenRouterEffort) -> &'static str {
-    match e {
-        SettingsOpenRouterEffort::Low => "low",
-        SettingsOpenRouterEffort::Medium => "medium",
-        SettingsOpenRouterEffort::High => "high",
-    }
-}
-
-/// Reasoning effort adds an `off` step (disables reasoning) on top of the
-/// verbosity scale. `"off"` becomes `reasoning: { enabled: false }` downstream.
-fn openrouter_reasoning_value(e: SettingsEffort) -> &'static str {
-    match e {
-        SettingsEffort::Off => "off",
-        SettingsEffort::Low => "low",
-        SettingsEffort::Medium => "medium",
-        SettingsEffort::High => "high",
-    }
-}
 
 fn parse_openrouter_effort_value(s: &str) -> String {
     match s {
@@ -85,14 +25,6 @@ fn parse_openrouter_effort_value(s: &str) -> String {
     .to_string()
 }
 
-pub(super) fn openrouter_options(base: &LlmFeatureBase) -> llm::OpenRouterRequestOptions {
-    llm::OpenRouterRequestOptions {
-        reasoning_effort: Some(openrouter_reasoning_value(base.reasoning_effort).to_string()),
-        verbosity: Some(openrouter_effort_value(base.verbosity).to_string()),
-        max_output_tokens: base.max_output_tokens.filter(|v| *v > 0),
-    }
-}
-
 pub(super) fn openrouter_options_from_preview(
     cfg: &LlmPreviewConfig,
 ) -> llm::OpenRouterRequestOptions {
@@ -100,17 +32,6 @@ pub(super) fn openrouter_options_from_preview(
         reasoning_effort: Some(parse_openrouter_effort_value(&cfg.reasoning_effort)),
         verbosity: Some(parse_openrouter_effort_value(&cfg.verbosity)),
         max_output_tokens: cfg.max_output_tokens.filter(|v| *v > 0),
-    }
-}
-
-fn to_llm_custom(m: &SettingsCustomModifier) -> llm::CustomModifier {
-    llm::CustomModifier {
-        id: m.id.clone(),
-        name: m.name.clone(),
-        prompt: m.prompt.clone(),
-        enabled: m.enabled,
-        levels_enabled: m.levels_enabled,
-        level: m.level.map(to_llm_level),
     }
 }
 

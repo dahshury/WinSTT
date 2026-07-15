@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { commands } from "@/bindings";
 import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import {
-	_resetOptimisticSwapForTests,
 	type ModelInfo,
 	useCatalogStore,
 	useModelStateStore,
@@ -12,6 +12,8 @@ import { useTtsModelStateStore } from "@/entities/tts-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { revertSurfacesForOfflineProvider } from "./use-cloud-offline-auto-revert";
 import { useRevertNoticeStore } from "./revert-notice-store";
+
+const originalSwitchModel = commands.sttSwitchModel;
 
 function model(id: string): ModelInfo {
 	return {
@@ -48,13 +50,21 @@ function seed(over: Partial<AppSettingsOutput>): void {
 }
 
 beforeEach(() => {
+	commands.sttSwitchModel = (async (request) =>
+		({
+			status: "completed",
+			requestId: request.requestId,
+		}) as never) satisfies typeof commands.sttSwitchModel;
 	useCatalogStore.setState({ models: [model("tiny")], isLoaded: true });
 	useModelStateStore.setState({ statesById: {} });
 	useTtsModelStateStore.setState({ statesById: {} });
 	useLlmCatalogStore.setState({ models: [], isReachable: false });
 	useRevertNoticeStore.setState({ notices: [] });
 	useModelSwapStore.getState().clear("main");
-	_resetOptimisticSwapForTests();
+});
+
+afterEach(() => {
+	commands.sttSwitchModel = originalSwitchModel;
 });
 
 describe("revertSurfacesForOfflineProvider — STT", () => {
@@ -64,7 +74,10 @@ describe("revertSurfacesForOfflineProvider — STT", () => {
 
 		revertSurfacesForOfflineProvider("openrouter");
 
-		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
+		expect(useModelSwapStore.getState().activeMain).toBe("tiny");
+		expect(useSettingsStore.getState().settings.model.model).toBe(
+			"openrouter:whisper",
+		);
 		expect(useRevertNoticeStore.getState().notices.length).toBeGreaterThan(0);
 	});
 

@@ -9,20 +9,19 @@
 // extraction-only + unreliable; see memory project_portable_splash_inapp_window).
 //
 // Design (matches the reference splash exactly):
-//   - 300×320 frameless, transparent, always-on-top, skip-taskbar, NOT focusable
+//   - 196×196 frameless, transparent, always-on-top, skip-taskbar, NOT focusable
 //     (never steals focus), click-through (set_ignore_cursor_events), no native
-//     shadow (the card draws its own), centered on the primary display.
+//     shadow (the icon draws its own), centered on the primary display.
 //   - Loads the static `splash.html` shipped in `public/` (→ dist root). Pure
 //     HTML/CSS, no React entry, no IPC surface — paints in one frame. It pulls
-//     the brand mark from `/icon.png` (same app asset the renderer uses).
+//     the high-resolution, visualizer-free mark from `/splash-icon.png`.
 //   - Created the instant setup starts; kept up by a ready-watcher (spawn_ready_watcher)
 //     until the app is genuinely ready — the renderer has painted (on_page_load
-//     Finished → mark_renderer_painted) AND the STT engine has finished its boot
-//     load+warm (mark_stt_boot_done) — then handed off to the real window, with a
-//     READY_TIMEOUT_MS fallback and a SPLASH_MAX_LIFETIME_MS hard backstop so a
-//     broken boot can never strand a click-through window on screen. This mirrors
-//     the reference's `showOnce` (did-finish-load + server-ready, 15 s fallback);
-//     it must NOT be closed synchronously during setup (that flashed a blank pill).
+//     Finished → mark_renderer_painted), the React tree has acknowledged its first
+//     mount (mark_renderer_boot_done), AND the STT engine has finished its boot
+//     warmup (mark_stt_boot_done) before a visible handoff. Keeping WebView2 hidden
+//     during DirectML session creation avoids a Windows GPU/compositor deadlock.
+//     READY_TIMEOUT_MS and SPLASH_MAX_LIFETIME_MS remain failure backstops.
 
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -39,16 +38,19 @@ pub const SPLASH_LABEL: &str = "splash";
 /// reference `SPLASH_MAX_LIFETIME_MS`.
 const SPLASH_MAX_LIFETIME_MS: u64 = 60_000;
 
-/// How long the ready-watcher waits for full renderer/backend readiness before
-/// giving up and showing the window anyway. Mirrors the reference app's startup
-/// fallback and stays well below `SPLASH_MAX_LIFETIME_MS` so the hard backstop
-/// never wins the handoff race.
+/// How long the ready-watcher waits for renderer + model readiness before showing
+/// the window as a fallback. A cold DirectML model can legitimately need more than
+/// five seconds while the hidden renderer loads in parallel.
 const READY_TIMEOUT_MS: u64 = 15_000;
 /// Ready-watcher poll interval. Previously 100 ms, which added up to a tenth
 /// of a second of dead air between "everything is ready" and the reveal.
 const READY_WATCHER_POLL_MS: u64 = 25;
 const SPLASH_CLOSE_ANIMATION_MS: u64 = 180;
 const SPLASH_PAINT_WAIT_TIMEOUT_MS: u64 = 5_000;
+/// Keep startup work off the CPU briefly after WebView2 reports the local page
+/// loaded. This gives the compositor several frames to present the icon at 0%
+/// before the first progress tick or model-runtime work begins.
+const SPLASH_INITIAL_ZERO_HOLD_MS: u64 = 75;
 const STARTUP_PROGRESS_TOTAL_PHASES: usize = 32;
 
 /// Set once the MAIN window's renderer reports `on_page_load(Finished)` — i.e. the
@@ -65,7 +67,7 @@ static RENDERER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 /// `initialize_core_logic`) finishes — i.e. the engine is loaded + warm, OR there
 /// was nothing to load (cloud id / first run with no model / load failed; `warmup`
 /// returns promptly in all of those). The single-process analog of the reference's
-/// `server-ready` event ("the backend is up and warm").
+/// server-readiness signal and a gate for visible startup handoff.
 static STT_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 static STARTUP_PROGRESS_PHASE: AtomicUsize = AtomicUsize::new(0);
 static SPLASH_PAGE_READY: AtomicBool = AtomicBool::new(false);
@@ -107,15 +109,15 @@ fn splash_progress_script(payload: &serde_json::Value, complete: bool) -> String
 	const clamped = Math.max(0, Math.min(100, value));
 	const bar = document.querySelector('.bar');
 	const progressText = document.getElementById('progress-text');
-	const phaseText = document.getElementById('progress-phase');
+	const progress = document.getElementById('splash-progress');
 	if (bar) {{
 		bar.style.width = `${{clamped}}%`;
 	}}
 	if (progressText) {{
-		progressText.textContent = complete ? 'Ready' : `${{Math.round(clamped)}}%`;
+		progressText.textContent = `${{Math.round(complete ? 100 : clamped)}}%`;
 	}}
-	if (phaseText && payload.label) {{
-		phaseText.textContent = payload.label;
+	if (progress) {{
+		progress.setAttribute('aria-valuenow', String(Math.round(complete ? 100 : clamped)));
 	}}
 }})();
 "#,
@@ -140,10 +142,9 @@ fn apply_startup_progress_to_splash(app: &AppHandle, payload: &serde_json::Value
 fn replay_startup_progress(app: &AppHandle) {
     crate::startup::log_since_launch("splash page painted");
     SPLASH_PAGE_READY.store(true, Ordering::SeqCst);
-    // The headless model boot now runs while the splash is still painting, so
-    // several phases may already be done by the time the splash page can
-    // execute script — replay the CURRENT phase, not a hardcoded zero, or the
-    // bar would sit at 0% and then jump.
+    // Startup is gated on this page load, so the normal first render is 0%.
+    // Replaying the current value remains defensive for a paint-timeout fallback
+    // or a page reload: progress must never move backwards.
     let phase = STARTUP_PROGRESS_PHASE.load(Ordering::SeqCst);
     let payload =
         startup_progress_payload("Starting WinSTT", phase, startup_percent_for_phase(phase));
@@ -188,6 +189,7 @@ pub fn wait_until_painted() -> bool {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    std::thread::sleep(Duration::from_millis(SPLASH_INITIAL_ZERO_HOLD_MS));
     true
 }
 
@@ -199,8 +201,8 @@ struct ReadySnapshot {
 }
 
 impl ReadySnapshot {
-    fn renderer_ready(self) -> bool {
-        self.renderer_painted && self.renderer_boot_done
+    fn handoff_ready(self, show_window: bool) -> bool {
+        self.renderer_painted && self.renderer_boot_done && (!show_window || self.stt_boot_done)
     }
 }
 
@@ -212,27 +214,12 @@ fn ready_snapshot() -> ReadySnapshot {
     }
 }
 
-fn reload_main_renderer(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    match window.eval("window.location.reload();") {
-        Err(e) => {
-            log::warn!("[splash] main renderer recovery reload failed: {e}");
-        }
-        Ok(()) => {
-            log::warn!("[splash] main renderer recovery reload requested");
-        }
-    }
-}
-
 /// Record that the main renderer has painted. Called from the main window's
 /// `on_page_load(Finished)` handler. Idempotent.
 pub fn mark_renderer_painted(app: &AppHandle) {
     if RENDERER_PAINTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    RENDERER_PAINTED.store(true, Ordering::SeqCst);
     crate::startup::log_since_launch("main renderer painted");
     emit_startup_progress(app, "main renderer painted");
 }
@@ -244,7 +231,6 @@ pub fn mark_renderer_boot_done(app: &AppHandle) {
     if RENDERER_BOOT_DONE.swap(true, Ordering::SeqCst) {
         return;
     }
-    RENDERER_BOOT_DONE.store(true, Ordering::SeqCst);
     crate::startup::log_since_launch("main renderer bootstrap ready");
     emit_startup_progress(app, "main renderer bootstrap ready");
 }
@@ -256,9 +242,15 @@ pub fn mark_stt_boot_done(app: &AppHandle) {
     if STT_BOOT_DONE.swap(true, Ordering::SeqCst) {
         return;
     }
-    STT_BOOT_DONE.store(true, Ordering::SeqCst);
     crate::startup::log_since_launch("STT boot/warmup complete");
     emit_startup_progress(app, "STT boot/warmup complete");
+}
+
+/// Whether the one-time startup STT load+warm pass has settled. Runtime-info
+/// folds this into its model-readiness bit so a renderer snapshot cannot land
+/// in the tiny handoff gap between loading and warmup.
+pub fn is_stt_boot_done() -> bool {
+    STT_BOOT_DONE.load(Ordering::SeqCst)
 }
 
 /// Whether a splash window currently exists. Used by the setup hook to decide
@@ -268,22 +260,20 @@ pub fn is_active(app: &AppHandle) -> bool {
     app.get_webview_window(SPLASH_LABEL).is_some()
 }
 
-/// Keep the splash up until the app is genuinely READY, then hand off to the real
-/// window — the single-process analog of the reference's `showOnce`, which gates the
-/// main window's first show on `did-finish-load` + `server-ready` (15 s fallback).
+/// Keep the splash up until the renderer and model runtime are genuinely ready,
+/// then hand off to the real window. Start-hidden launches only wait for renderer
+/// readiness because they never expose WebView2 during the model build.
 ///
 /// Why this exists: the previous code called `show_main_window` (which closes the
 /// splash) synchronously inside `setup`, before the event loop pumped — so the
-/// splash was torn down at the very start of boot, before the renderer painted and
-/// long before the engine warmed, flashing a blank pill. This watcher waits off the
-/// main thread for renderer paint, renderer boot, and STT boot signals (or the
-/// timeout) and only then shows the pill.
+/// splash was torn down at the very start of boot, before the renderer painted,
+/// flashing a blank pill. This watcher waits off the main thread for renderer paint,
+/// renderer boot, and (for visible launches) STT warmup before showing the pill.
 ///
 /// `show_window`: `true` for a normal/visible launch (show the pill + close the
 /// splash once ready); `false` when launching straight to the tray (start-hidden) —
 /// we only drop the splash once the hidden renderer has painted, never showing a
-/// window. In the start-hidden case the STT boot is irrelevant (no window to warm
-/// behind), so we wait on the paint signal alone.
+/// window.
 pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -293,11 +283,7 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
         let timed_out;
         loop {
             snapshot = ready_snapshot();
-            // STT boot only matters when a window will actually appear (so the user's
-            // first dictation is warm behind the still-covered splash). With no
-            // window, renderer readiness alone is enough to drop the splash.
-            let stt_ready = !show_window || snapshot.stt_boot_done;
-            if snapshot.renderer_ready() && stt_ready {
+            if snapshot.handoff_ready(show_window) {
                 timed_out = false;
                 break;
             }
@@ -328,17 +314,18 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
                 "startup ready"
             },
         );
-        let recover_renderer = show_window && timed_out && !snapshot.renderer_ready();
         // Window ops must run on the main thread on Windows; the event loop is live
         // by now (paint/timeout can only happen after `setup` returns).
         let app_for_main = app.clone();
         let res = app.run_on_main_thread(move || {
             if show_window {
                 // Shows the main pill AND closes the splash (the handoff).
+                // Do not reload on a timeout: WebView2 may still be navigating its
+                // initial about:blank document to the Vite URL. Reloading at that
+                // point can cancel the real navigation and strand the app forever
+                // on an inert blank document. Showing the window lets the in-flight
+                // load finish naturally and keeps the timeout fallback non-destructive.
                 crate::show_main_window(&app_for_main);
-                if recover_renderer {
-                    reload_main_renderer(&app_for_main);
-                }
             } else {
                 close_splash_window(&app_for_main);
             }
@@ -362,7 +349,7 @@ pub fn create_splash_window(app: &AppHandle) {
     let mut builder = crate::startup::configure_webview_window_builder(
         WebviewWindowBuilder::new(app, SPLASH_LABEL, WebviewUrl::App("splash.html".into()))
             .title("WinSTT")
-            .inner_size(300.0, 320.0)
+            .inner_size(196.0, 196.0)
             .resizable(false)
             .maximizable(false)
             .minimizable(false)
@@ -409,7 +396,7 @@ pub fn create_splash_window(app: &AppHandle) {
             #[cfg(target_os = "linux")]
             let _ = window.set_ignore_cursor_events(true);
             let _ = window.set_always_on_top(true);
-            log::info!("[splash] shown");
+            log::debug!("[splash] shown");
 
             // Hard backstop — drop the splash after SPLASH_MAX_LIFETIME_MS even if
             // the main window never reports a page load.
@@ -445,10 +432,50 @@ pub fn close_splash_window(app: &AppHandle) {
                     SPLASH_CLOSING.store(false, Ordering::SeqCst);
                 }
                 Ok(()) => {
-                    log::info!("[splash] destroyed");
+                    log::debug!("[splash] destroyed");
                     SPLASH_CLOSING.store(false, Ordering::SeqCst);
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReadySnapshot, startup_percent_for_phase};
+
+    #[test]
+    fn startup_progress_scale_begins_at_zero() {
+        assert_eq!(startup_percent_for_phase(0), 0);
+        assert!(startup_percent_for_phase(1) > 0);
+    }
+
+    #[test]
+    fn visible_renderer_handoff_waits_for_stt_warmup() {
+        let ready = ReadySnapshot {
+            renderer_painted: true,
+            renderer_boot_done: true,
+            stt_boot_done: false,
+        };
+
+        assert!(!ready.handoff_ready(true));
+        assert!(ready.handoff_ready(false));
+    }
+
+    #[test]
+    fn renderer_handoff_requires_paint_and_boot_acknowledgement() {
+        let not_painted = ReadySnapshot {
+            renderer_painted: false,
+            renderer_boot_done: true,
+            stt_boot_done: true,
+        };
+        let not_booted = ReadySnapshot {
+            renderer_painted: true,
+            renderer_boot_done: false,
+            stt_boot_done: true,
+        };
+
+        assert!(!not_painted.handoff_ready(true));
+        assert!(!not_booted.handoff_ready(true));
     }
 }

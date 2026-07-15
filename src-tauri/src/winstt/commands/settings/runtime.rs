@@ -38,20 +38,40 @@ pub(super) fn apply_model_runtime_settings(
     previous: &WinsttSettings,
     next: &WinsttSettings,
 ) {
+    apply_model_runtime_settings_inner(app, previous, next, true);
+}
+
+/// Apply model-section side effects after the atomic switch transaction has already loaded the
+/// main engine. Realtime-policy work remains settings-owned; only main-engine unload/reload/warm
+/// is suppressed.
+pub(super) fn apply_model_runtime_settings_after_stt_switch(
+    app: &AppHandle,
+    previous: &WinsttSettings,
+    next: &WinsttSettings,
+) {
+    apply_model_runtime_settings_inner(app, previous, next, false);
+}
+
+fn apply_model_runtime_settings_inner(
+    app: &AppHandle,
+    previous: &WinsttSettings,
+    next: &WinsttSettings,
+    settings_owns_main_engine: bool,
+) {
     // Moving the STT model to a cloud provider (openrouter:/elevenlabs:) frees any
     // resident LOCAL engine right away — the user shouldn't keep a local model in
     // memory after switching to the cloud (the first requirement of onboarding's
     // "configure cloud → unload local"). Idempotent and cheap: a no-op when the
     // swap controller already unloaded it (cloud ids report `is_model_loaded()==false`).
-    if stt_switched_to_cloud(previous, next) {
+    if settings_owns_main_engine && stt_switched_to_cloud(previous, next) {
         unload_loaded_stt_model_async(app);
     }
     sync_stt_runtime_policy(app, next);
     let keep_stt_warm = should_keep_stt_model_warm_for_settings(next);
 
-    if same_model_load_inputs_changed(previous, next) {
+    if should_reload_main_engine(settings_owns_main_engine, previous, next) {
         reload_stt_model_async(app, &next.model.model, keep_stt_warm);
-    } else if model_warm_inputs_changed(previous, next) {
+    } else if settings_owns_main_engine && model_warm_inputs_changed(previous, next) {
         if keep_stt_warm {
             warm_stt_model_async(app);
         } else {
@@ -65,9 +85,20 @@ pub(super) fn apply_model_runtime_settings(
     if realtime_language_changed(previous, next) {
         let rt = next.model.realtime_model.trim();
         if !rt.is_empty() {
-            crate::winstt::commands::swap_events::perform_model_reload(app, "realtime", rt);
+            crate::winstt::commands::swap_events::schedule_selected_model_rebuild(
+                app,
+                crate::winstt::commands::swap_events::SttSwitchKind::Realtime,
+            );
         }
     }
+}
+
+fn should_reload_main_engine(
+    settings_owns_main_engine: bool,
+    previous: &WinsttSettings,
+    next: &WinsttSettings,
+) -> bool {
+    settings_owns_main_engine && same_model_load_inputs_changed(previous, next)
 }
 
 /// True when only the realtime LANGUAGE changed (same realtime model). Drives a targeted realtime
@@ -123,7 +154,10 @@ fn reload_stt_model_async(app: &AppHandle, model: &str, keep_warm: bool) {
         unload_loaded_stt_model_async(app);
         return;
     }
-    crate::winstt::commands::swap_events::perform_model_reload(app, "main", model);
+    crate::winstt::commands::swap_events::schedule_selected_model_rebuild(
+        app,
+        crate::winstt::commands::swap_events::SttSwitchKind::Main,
+    );
 }
 
 /// True when the CURRENT settings still want a warm LOCAL STT engine. The queued
@@ -151,8 +185,8 @@ fn unload_loaded_stt_model_async(app: &AppHandle) {
         // only the CURRENT settings decide whether the local engine may drop.
         let current = crate::winstt::settings_store::read_settings_raw(&app);
         if local_stt_engine_wanted(&current) {
-            log::info!(
-                "[settings] STT unload skipped — current settings want the local model warm"
+            log::debug!(
+                "[settings] STT unload skipped -- current settings want the local model warm"
             );
             return;
         }
@@ -164,7 +198,7 @@ fn unload_loaded_stt_model_async(app: &AppHandle) {
         // now instead of leaving a cold engine behind an enabled-looking state.
         let after = crate::winstt::settings_store::read_settings_raw(&app);
         if local_stt_engine_wanted(&after) {
-            log::info!("[settings] STT re-warm after unload — settings flipped back mid-drop");
+            log::debug!("[settings] STT re-warm after unload -- settings flipped back mid-drop");
             warm_stt_model_async(&app);
         }
     });
@@ -235,7 +269,7 @@ fn unload_local_tts_async(app: &AppHandle) {
         use tauri::Emitter;
         let current = crate::winstt::settings_store::read_settings_raw(&app);
         if local_tts_engine_wanted(&current) {
-            log::info!("[tts] unload skipped — current settings want the local voice loaded");
+            log::debug!("[tts] unload skipped -- current settings want the local voice loaded");
             return;
         }
         let _ = app.emit(
@@ -252,7 +286,7 @@ fn unload_local_tts_async(app: &AppHandle) {
         // (the warm-up is claim-guarded and idempotent).
         let after = crate::winstt::settings_store::read_settings_raw(&app);
         if local_tts_engine_wanted(&after) {
-            log::info!("[tts] re-warm after unload — settings flipped back mid-drop");
+            log::debug!("[tts] re-warm after unload -- settings flipped back mid-drop");
             warm_tts_async(&app);
         }
     });
@@ -275,7 +309,7 @@ pub(super) fn apply_encoder_dict_runtime_settings(
     if previous.general.encoder_dictionary_enabled && !next.general.encoder_dictionary_enabled {
         std::thread::spawn(|| {
             crate::winstt::encoder_dict::clear_loaded();
-            log::info!("[encoder-dict] session dropped (feature disabled)");
+            log::debug!("[encoder-dict] session dropped (feature disabled)");
         });
     }
     // Enable edge: preload + warm the mmBERT session now so the FIRST dictation
@@ -366,7 +400,7 @@ pub(super) fn apply_llm_runtime_settings(
     }
 
     sync_llm_model_unload_timeout(app, next.global.model_unload_timeout);
-    log::info!(
+    log::debug!(
         "[llm] apply_llm_runtime: was_in_use={was_in_use:?} still_in_use={still_in_use:?} to_unload={to_unload:?} timeout={:?}",
         next.global.model_unload_timeout
     );
@@ -390,7 +424,7 @@ pub(crate) fn unload_ollama_models_async(app: &AppHandle, models: Vec<String>) {
         return;
     };
     let mgr = Arc::clone(llm.inner());
-    log::info!("[llm] unload_ollama_models_async: spawning unload for {models:?}");
+    log::debug!("[llm] unload_ollama_models_async: spawning unload for {models:?}");
     tauri::async_runtime::spawn(async move {
         mgr.unload_ollama_models(&models, std::time::Duration::from_secs(5))
             .await;
@@ -556,6 +590,16 @@ mod tests {
         let mut quant = a.clone();
         quant.model.onnx_quantization = "int8".into();
         assert!(same_model_load_inputs_changed(&a, &quant));
+    }
+
+    #[test]
+    fn atomic_switch_persistence_does_not_schedule_a_second_main_reload() {
+        let previous = WinsttSettings::default();
+        let mut next = previous.clone();
+        next.model.onnx_quantization = "int8".into();
+
+        assert!(should_reload_main_engine(true, &previous, &next));
+        assert!(!should_reload_main_engine(false, &previous, &next));
     }
 
     #[test]

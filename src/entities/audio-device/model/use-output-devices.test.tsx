@@ -5,7 +5,7 @@ import {
 	renderHook,
 	waitFor,
 } from "@testing-library/react";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import {
 	_resetOutputDevicesCacheForTests,
 	useOutputDevices,

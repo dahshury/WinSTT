@@ -5,7 +5,7 @@ const MIN_FUZZY_TOKEN_LENGTH = 4;
 const HAYSTACK_CACHE_MAX = 2048;
 const QUERY_CACHE_MAX = 128;
 
-interface PreparedSearchText {
+export interface PreparedSearchText {
 	compact: string;
 	normalized: string;
 	tokens: string[];
@@ -30,7 +30,7 @@ function setBoundedCache(
 	return value;
 }
 
-function normalizeSearchText(value: string): string {
+export function normalizeSearchText(value: string): string {
 	return value
 		.normalize("NFKD")
 		.replace(/\p{M}+/gu, "")
@@ -100,7 +100,7 @@ function compact(text: string): string {
 	return rawTokens(text).join("");
 }
 
-function prepareHaystack(text: string): PreparedSearchText {
+export function prepareHaystack(text: string): PreparedSearchText {
 	const cached = haystackCache.get(text);
 	if (cached !== undefined) {
 		return cached;
@@ -118,7 +118,7 @@ function prepareHaystack(text: string): PreparedSearchText {
 	);
 }
 
-function prepareQuery(text: string): PreparedSearchText {
+export function prepareQuery(text: string): PreparedSearchText {
 	const cached = queryCache.get(text);
 	if (cached !== undefined) {
 		return cached;
@@ -136,7 +136,7 @@ function prepareQuery(text: string): PreparedSearchText {
 	);
 }
 
-function tokenHasLiteralMatch(
+export function tokenHasLiteralMatch(
 	queryToken: string,
 	haystackToken: string,
 ): boolean {
@@ -147,7 +147,7 @@ function tokenHasLiteralMatch(
 	);
 }
 
-function allowedEditDistance(a: string, b: string): number {
+export function allowedEditDistance(a: string, b: string): number {
 	const length = Math.max(a.length, b.length);
 	if (length < MIN_FUZZY_TOKEN_LENGTH) {
 		return 0;
@@ -163,7 +163,7 @@ function rowValue(row: Uint32Array, index: number): number {
 	return value;
 }
 
-function damerauLevenshteinDistance(
+export function damerauLevenshteinDistance(
 	a: string,
 	b: string,
 	maxDistance: number,

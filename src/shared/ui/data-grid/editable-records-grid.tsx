@@ -19,9 +19,11 @@ import {
 	useGridPaginationOptions,
 } from "./model/use-grid-pagination";
 import { usePruneEmptyRows } from "./model/use-prune-empty-rows";
+import type { RowHeightValue } from "./types";
 
 export interface EditableRecordsGridProps<TData extends { id: string }> {
 	acceptData?: (next: readonly TData[], current: readonly TData[]) => boolean;
+	canAdd?: boolean;
 	columns: ColumnDef<TData>[];
 	createRow: () => TData;
 	data: TData[];
@@ -29,10 +31,14 @@ export interface EditableRecordsGridProps<TData extends { id: string }> {
 	focusColumnId: string;
 	isEmptyRow: (row: TData) => boolean;
 	onChange: (rows: TData[]) => void;
+	readOnly?: boolean;
+	rowHeight?: RowHeightValue;
+	showSortControl?: boolean;
 }
 
 export function EditableRecordsGrid<TData extends { id: string }>({
 	acceptData,
+	canAdd = true,
 	columns,
 	createRow,
 	data,
@@ -40,6 +46,9 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 	focusColumnId,
 	isEmptyRow,
 	onChange,
+	readOnly = false,
+	rowHeight,
+	showSortControl = true,
 }: EditableRecordsGridProps<TData>) {
 	const dataRef = useRef(data);
 	const tableRef = useRef<Table<TData> | null>(null);
@@ -106,9 +115,10 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 		enableSearch: true,
 		getRowId: (row) => row.id,
 		onDataChange,
-		onRowAdd,
-		onRowsAdd,
-		onRowsDelete,
+		...(canAdd && !readOnly ? { onRowAdd, onRowsAdd } : {}),
+		...(readOnly ? {} : { onRowsDelete }),
+		readOnly,
+		...(rowHeight ? { rowHeight } : {}),
 		...paginationOptions,
 	});
 	// Latest-value refs for grid callbacks that run outside render (row add/delete,
@@ -129,7 +139,7 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 		<div className="flex flex-col gap-3" onBlur={onBlur} ref={wrapperRef}>
 			<ButtonGroup aria-label="Table controls" className="self-end" connected>
 				<DataGridFilterMenu table={table} />
-				<DataGridSortMenu table={table} />
+				{showSortControl ? <DataGridSortMenu table={table} /> : null}
 				<DataGridRowHeightMenu table={table} />
 				<DataGridViewMenu table={table} />
 			</ButtonGroup>
@@ -143,7 +153,12 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 			{(table.getSelectedRowModel().rows.length > 0 ||
 				table.getPageCount() > 1) && (
 				<div className="flex min-h-7 items-center gap-3">
-					<DataGridSelectionBar onDeleteSelected={onRowsDelete} table={table} />
+					{readOnly ? null : (
+						<DataGridSelectionBar
+							onDeleteSelected={onRowsDelete}
+							table={table}
+						/>
+					)}
 					<DataGridPagination className="ms-auto" table={table} />
 				</div>
 			)}

@@ -124,8 +124,8 @@ fn encode_base64(bytes: &[u8]) -> String {
 /// Build the `tts:chunk` event payload. `pcm` carries the raw bytes BASE64-
 /// encoded (Tauri events are JSON — a `Vec<u8>` would serialize as one JSON
 /// number per byte, ~4× the size and far slower to stringify/parse than one
-/// base64 string). The renderer's port boundary (`native-bridge-adapter.ts
-/// reshape`) decodes it back to the `ArrayBuffer` the playback queue consumes:
+/// base64 string). The renderer's native event boundary decodes it back to the
+/// `ArrayBuffer` the playback queue consumes:
 ///   - "f32le": `new Float32Array(pcm)` reads it as little-endian f32 PCM.
 ///   - "mp3":   `decodeAudioData(pcm)` decodes the mp3 container.
 pub(super) fn chunk_payload(request_id: &str, chunk: &SynthesisChunk) -> serde_json::Value {

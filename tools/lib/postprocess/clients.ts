@@ -14,6 +14,8 @@ export const TEXT_SCHEMA = {
 export interface SpeedSample {
 	/** End-to-end wall-clock time measured around the request (ms). */
 	wallMs: number;
+	/** Model-reported prompt evaluation time (Ollama prompt_eval_duration), ms. */
+	promptMs?: number | null;
 	/** Model-reported generation time (Ollama eval_duration), ms — null on cloud. */
 	genMs: number | null;
 	/** Completion/generation token count. */
@@ -62,6 +64,7 @@ export async function callOllamaChat(opts: {
 	think?: boolean;
 	numPredict?: number;
 	cfg?: OllamaConfig;
+	timeoutMs?: number;
 	label: string;
 }): Promise<ChatResult> {
 	const cfg = opts.cfg ?? ollamaConfig();
@@ -85,6 +88,9 @@ export async function callOllamaChat(opts: {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
+		...(opts.timeoutMs === undefined
+			? {}
+			: { signal: AbortSignal.timeout(opts.timeoutMs) }),
 	});
 	const wallMs = clockMs() - started;
 	if (!response.ok) {
@@ -97,6 +103,7 @@ export async function callOllamaChat(opts: {
 	const raw = typeof message["content"] === "string" ? message["content"] : "";
 	const evalCount = num(data["eval_count"]);
 	const evalDurNs = num(data["eval_duration"]);
+	const promptEvalDurNs = num(data["prompt_eval_duration"]);
 	const genMs = evalDurNs === null ? null : evalDurNs / 1e6;
 	const tokensPerSec =
 		evalCount !== null && evalDurNs !== null && evalDurNs > 0
@@ -106,6 +113,7 @@ export async function callOllamaChat(opts: {
 		raw,
 		speed: {
 			wallMs,
+			promptMs: promptEvalDurNs === null ? null : promptEvalDurNs / 1e6,
 			genMs,
 			genTokens: evalCount,
 			promptTokens: num(data["prompt_eval_count"]),
@@ -271,6 +279,7 @@ export async function embedOllama(
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ model, input }),
+			signal: AbortSignal.timeout(30_000),
 		});
 		if (!response.ok) return null;
 		const data = (await response.json()) as Json;

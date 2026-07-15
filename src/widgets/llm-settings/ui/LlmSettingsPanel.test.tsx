@@ -70,6 +70,19 @@ describe("LlmSettingsPanel", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
+	test("keeps the four-level Caveman switcher in one dense row", () => {
+		render(
+			<IntlProvider>
+				<LlmSettingsPanel />
+			</IntlProvider>,
+		);
+		const caveman = screen.getAllByText("Caveman")[0];
+		const group = caveman?.closest("button")?.parentElement;
+		expect(group?.className).toContain("flex");
+		expect(group?.className).toContain("w-64");
+		expect(group?.className).not.toContain("grid-cols-2");
+	});
+
 	test("disables profile presets and playground while post-processing is off and shows one title", () => {
 		render(
 			<IntlProvider>
@@ -335,9 +348,14 @@ describe("LlmSettingsPanel helpers — buildToneOpts / buildLevelOpts", () => {
 		}
 	});
 
-	test("buildLevelOpts returns light/medium/high", () => {
+	test("buildLevelOpts returns light/medium/high/caveman", () => {
 		const opts = helpers.buildLevelOpts(tStub);
-		expect(opts.map((o) => o.value)).toEqual(["light", "medium", "high"]);
+		expect(opts.map((o) => o.value)).toEqual([
+			"light",
+			"medium",
+			"high",
+			"caveman",
+		]);
 	});
 });
 

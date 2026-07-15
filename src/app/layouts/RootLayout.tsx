@@ -5,25 +5,17 @@ import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { useVisualizerStore } from "@/features/audio-visualizer";
 import { shouldUseListenSurface } from "@/features/listen-mode";
-import {
-	CloudKeyRevertNotice,
-	useCloudOfflineAutoRevert,
-} from "@/features/revert-cloud-on-key-removal";
-import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
-import {
-	SettingsHydrationErrorNotice,
-	SettingsWarningToasts,
-} from "@/features/surface-settings-warnings";
-import { SwapFailureToast } from "@/features/swap-notifications";
-import { TransformToast } from "@/features/transform-notifications";
+import { useAfterFirstPaint } from "@/shared/lib/use-after-first-paint";
 import { springs } from "@/shared/lib/springs";
 import { SurfaceProvider } from "@/shared/lib/surface";
 import { ErrorBoundary } from "../providers/ErrorBoundary";
 import { IntlProvider } from "../providers/IntlProvider";
 import { IpcProvider } from "../providers/IpcProvider";
+import { DeferredMainSurfaces } from "./DeferredMainSurfaces";
 import { TitleBar } from "./TitleBar";
 
 export function RootLayout({ children }: { children: ReactNode }) {
+	const afterFirstPaint = useAfterFirstPaint();
 	const isListenMode =
 		useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
@@ -37,11 +29,6 @@ export function RootLayout({ children }: { children: ReactNode }) {
 		isSpeaking,
 		liveText,
 	});
-	// Persist a switch to Local whenever a cloud provider goes offline and a local
-	// model is installed (the user-chosen offline behavior). Lives in the main
-	// window because that's where dictation runs and the connectivity event lands.
-	useCloudOfflineAutoRevert();
-
 	return (
 		<IntlProvider>
 			{/* `reducedMotion="user"` makes every JS-driven framer-motion animation
@@ -62,12 +49,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
 									<main className="flex-1 overflow-hidden">
 										<ErrorBoundary>{children}</ErrorBoundary>
 									</main>
-									<TransformToast />
-									<SwapFailureToast />
-									<CloudSttErrorToasts />
-									<CloudKeyRevertNotice />
-									<SettingsWarningToasts />
-									<SettingsHydrationErrorNotice />
+									{afterFirstPaint ? <DeferredMainSurfaces /> : null}
 								</m.div>
 							</LazyMotion>
 						</SurfaceProvider>

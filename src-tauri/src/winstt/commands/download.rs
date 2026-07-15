@@ -7,9 +7,9 @@
 // state and forwards the call. The manager owns the keyed in-flight registry + the four
 // `stt:model-download-*` / `stt:model-cache-changed` broadcasts (download_manager.rs).
 //
-// IPC mapping (app/src/shared/api/native-bridge-adapter.ts ROUTE):
-//   IPC.STT_PREDOWNLOAD_QUANT       (`stt:predownload-quant`,        { modelId, quantization }) → stt_predownload_quant
-//   IPC.STT_DOWNLOAD_PAUSE          (`stt:download-pause`,           { modelId, quantization }) → download_pause_quant
+// Generated renderer command mapping:
+//   sttPredownloadQuant({ modelId, quantization }) → stt_predownload_quant
+//   downloadPauseQuant({ modelId, quantization }) → download_pause_quant
 //   IPC.STT_DOWNLOAD_RESUME         (`stt:download-resume`,          { modelId, quantization }) → download_resume_quant
 //   IPC.STT_DOWNLOAD_CANCEL_QUANT   (`stt:download-cancel-quant`,    { modelId, quantization }) → download_cancel_quant
 //   IPC.STT_DELETE_MODEL_QUANTIZATION (`stt:delete-model-quantization`, { modelId, quantization }) → delete_model_quantization
@@ -138,9 +138,7 @@ pub fn stt_predownload_quant(
         " through STT model cache",
     )?;
     validate_download_quantization_target(&model_id, &quantization, "start STT download")?;
-    // DIAGNOSTIC: trace the download trigger (the reported "clicking download does nothing /
-    // resets the selector" — confirms the command is actually reached + with what args).
-    log::info!(
+    log::debug!(
         "[download] stt_predownload_quant requested: model='{model_id}' quant='{quantization}'"
     );
     downloads.predownload_quant(model_id, quantization);

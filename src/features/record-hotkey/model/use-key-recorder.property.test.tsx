@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import fc from "fast-check";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { useKeyRecorder } from "./use-key-recorder";
 
 // ─── Mock IPC plumbing ─────────────────────────────────────────────────

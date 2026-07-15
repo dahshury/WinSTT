@@ -45,6 +45,7 @@ const PROVIDER_ICONS: Record<string, string> = {
 	openrouter: "/provider-icons/openrouter.svg",
 	perplexity: "/provider-icons/perplexity.svg",
 	"prime-intellect": "/provider-icons/prime-intellect.svg",
+	prismml: "/provider-icons/prismml.svg",
 	qwen: "/provider-icons/qwen.svg",
 	raifle: "/provider-icons/raifle.png",
 	relace: "/provider-icons/relace.svg",

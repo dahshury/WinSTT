@@ -20,7 +20,7 @@ pub fn install_audio_device_watcher(app: &AppHandle) {
     ))]
     {
         let _ = app;
-        log::info!("[devices] using renderer devicechange events for audio device updates");
+        log::debug!("[devices] using renderer devicechange events for audio device updates");
     }
 }
 
@@ -66,7 +66,7 @@ mod platform_impl {
             }
         };
 
-        log::info!("[devices] CoreAudio endpoint notifications registered");
+        log::debug!("[devices] CoreAudio endpoint notifications registered");
         while rx.recv().is_ok() {
             thread::sleep(DEVICECHANGE_DEBOUNCE);
             while rx.try_recv().is_ok() {}
@@ -179,7 +179,7 @@ mod platform_impl {
             }
         };
 
-        log::info!("[devices] CoreAudio hardware notifications registered");
+        log::debug!("[devices] CoreAudio hardware notifications registered");
         while rx.recv().is_ok() {
             thread::sleep(DEVICECHANGE_DEBOUNCE);
             while rx.try_recv().is_ok() {}

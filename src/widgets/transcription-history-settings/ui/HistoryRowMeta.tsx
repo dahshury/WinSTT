@@ -1,14 +1,11 @@
 import {
 	AiMicIcon,
-	Clock01Icon,
 	CpuIcon,
-	DashboardSpeed02Icon,
 	DollarCircleIcon,
 	FlashIcon,
 	HourglassIcon,
 	SquareLock01Icon,
 	Tag01Icon,
-	TextFontIcon,
 	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
 import {
@@ -16,6 +13,7 @@ import {
 	isCloudModelId,
 	modelChipLogo,
 } from "@/entities/cloud-stt-provider";
+import { findRecommendedModel } from "@/entities/llm-catalog";
 import {
 	SENSITIVE_HISTORY_LABEL,
 	hasPrivacyMarkers,
@@ -34,7 +32,7 @@ import {
 	formatWpm,
 	wordsPerMinute,
 } from "../lib/word-stats";
-import type { HistoryTableItem } from "./HistoryTable";
+import type { HistoryTableItem } from "../model/history-table-types";
 
 export interface MetaLabels {
 	characters: string;
@@ -54,7 +52,6 @@ export interface MetaLabels {
 	speed: string;
 	speechToTextProcessing: string;
 	sttModel: string;
-	time: string;
 	totalProcessing: string;
 	transform: string;
 	ttsModel: string;
@@ -66,6 +63,7 @@ export interface MetaLabels {
 interface DurationBreakdownRow {
 	key: string;
 	label: string;
+	separatorBefore?: boolean;
 	value: string;
 }
 
@@ -73,7 +71,12 @@ function DurationBreakdownTooltip({ rows }: { rows: DurationBreakdownRow[] }) {
 	return (
 		<span className="block min-w-32">
 			{rows.map((row) => (
-				<span className="flex items-center justify-between gap-4" key={row.key}>
+				<span
+					className={`flex items-center justify-between gap-4 ${
+						row.separatorBefore ? "mt-1.5 border-divider border-t pt-1.5" : ""
+					}`}
+					key={row.key}
+				>
 					{/* secondary, not muted — muted (55% L) sinks into the surface-7 popup */}
 					<span className="text-foreground-secondary">{row.label}</span>
 					<span className="font-medium text-foreground tabular-nums">
@@ -106,8 +109,13 @@ function formatOptionalProcessingDuration(
  *  `vendor/model` id (Ollama uses `name:tag`, never a slash) and reports a
  *  billed `llmCostUsd`, so either marks it as cloud. */
 function isCloudLlm(model: string, costUsd: number | undefined): boolean {
+	const directHuggingFacePull = bareCloudModelId(model)
+		.toLowerCase()
+		.startsWith("hf.co/");
 	return (
-		isCloudModelId(model) || model.includes("/") || Number.isFinite(costUsd)
+		isCloudModelId(model) ||
+		(!directHuggingFacePull && model.includes("/")) ||
+		Number.isFinite(costUsd)
 	);
 }
 
@@ -177,21 +185,10 @@ function buildCostChip(
 	};
 }
 
-function formatTimestamp(ms: number): string {
-	// Abbreviated on purpose — the year is dropped and the hour is non-padded so
-	// the whole meta strip fits one line in the ~500px-wide settings panel.
-	return new Date(ms).toLocaleString(undefined, {
-		month: "short",
-		day: "numeric",
-		hour: "numeric",
-		minute: "2-digit",
-	});
-}
-
 /**
  * Build a history row's card accent (the tinted edge rail typing the whole
  * card) and its footer meta strip (icon + bare value chips, in pipeline order:
- * timestamp, words, processing, model chips, cost). Split out of `HistoryRow`
+ * processing, model chips, cost). Split out of `HistoryRow`
  * so the row component stays focused on playback state and layout.
  */
 export function buildHistoryRowMeta(
@@ -240,20 +237,6 @@ export function buildHistoryRowMeta(
 			value: SENSITIVE_HISTORY_LABEL,
 		});
 	}
-	meta.push(
-		{
-			icon: Clock01Icon,
-			key: "time",
-			title: labels.time,
-			value: formatTimestamp(entry.timestamp),
-		},
-		{
-			icon: TextFontIcon,
-			key: "words",
-			title: labels.words,
-			value: String(entry.wordCount),
-		},
-	);
 	if (showAudioStats) {
 		const sttProcessingMs = positiveDurationMs(entry.sttProcessingMs);
 		const llmProcessingMs = positiveDurationMs(entry.llmProcessingMs);
@@ -261,51 +244,53 @@ export function buildHistoryRowMeta(
 			sttProcessingMs + llmProcessingMs,
 		);
 		if (processingTotal) {
+			const timingRows: DurationBreakdownRow[] = [
+				{
+					key: "recording",
+					label: labels.recordingDuration,
+					value:
+						entry.durationMs > 0
+							? formatDuration(entry.durationMs)
+							: labels.notRecorded,
+				},
+				{
+					key: "stt",
+					label: labels.speechToTextProcessing,
+					value: formatOptionalProcessingDuration(
+						entry.sttProcessingMs,
+						labels.notRecorded,
+					),
+				},
+				{
+					key: "llm",
+					label: labels.languageModelProcessing,
+					value: formatOptionalProcessingDuration(
+						entry.llmProcessingMs,
+						labels.notRun,
+					),
+				},
+			];
+			timingRows.push({
+				key: "words",
+				label: labels.words,
+				separatorBefore: true,
+				value: String(entry.wordCount),
+			});
+			if (wpm > 0) {
+				timingRows.push({
+					key: "wpm",
+					label: labels.wpm,
+					value: formatWpm(wpm),
+				});
+			}
 			meta.push({
 				icon: HourglassIcon,
 				key: "processing-total",
 				title: labels.totalProcessing,
-				tooltip: (
-					<DurationBreakdownTooltip
-						rows={[
-							{
-								key: "recording",
-								label: labels.recordingDuration,
-								value:
-									entry.durationMs > 0
-										? formatDuration(entry.durationMs)
-										: labels.notRecorded,
-							},
-							{
-								key: "stt",
-								label: labels.speechToTextProcessing,
-								value: formatOptionalProcessingDuration(
-									entry.sttProcessingMs,
-									labels.notRecorded,
-								),
-							},
-							{
-								key: "llm",
-								label: labels.languageModelProcessing,
-								value: formatOptionalProcessingDuration(
-									entry.llmProcessingMs,
-									labels.notRun,
-								),
-							},
-						]}
-					/>
-				),
+				tooltip: <DurationBreakdownTooltip rows={timingRows} />,
 				value: processingTotal,
 			});
 		}
-	}
-	if (wpm > 0) {
-		meta.push({
-			icon: DashboardSpeed02Icon,
-			key: "wpm",
-			title: labels.wpm,
-			value: formatWpm(wpm),
-		});
 	}
 	// Which STT ("main") model produced this transcription. Sits before the LLM
 	// trio so the strip reads in pipeline order: speech→text, then text cleanup.
@@ -331,6 +316,7 @@ export function buildHistoryRowMeta(
 	if (entry.llmModel) {
 		const llmError = entry.llmError?.trim();
 		const bareLlm = bareCloudModelId(entry.llmModel);
+		const displayLlm = findRecommendedModel(bareLlm)?.displayName ?? bareLlm;
 		// Title carries the full model id so truncation stays inspectable on hover.
 		// When the cleanup fail-softed, keep the model visible but mark it as failed.
 		meta.push({
@@ -345,7 +331,7 @@ export function buildHistoryRowMeta(
 				? `${bareLlm}\nPost-processing failed: ${llmError}`
 				: bareLlm,
 			truncate: true,
-			value: bareLlm,
+			value: displayLlm,
 		});
 	}
 	const processing =

@@ -53,7 +53,7 @@ pub fn handle_shortcut_event(
         match crate::winstt::commands::settings::recording_mode(app) {
             // PTT: press starts, release stops (the key hold IS the recording boundary).
             RecordingMode::Ptt => {
-                log::info!(
+                log::debug!(
                     "[shortcut] transcribe_hotkey_event mode=ptt state={} accelerator='{}'",
                     if is_pressed { "pressed" } else { "released" },
                     hotkey_string

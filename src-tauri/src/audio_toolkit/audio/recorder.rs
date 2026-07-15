@@ -408,8 +408,8 @@ impl AudioRecorder {
                 let sample_rate = config.sample_rate();
                 let channels = config.channels() as usize;
 
-                log::info!(
-                    "Using device: {:?}\nSample rate: {}\nChannels: {}\nFormat: {:?}",
+                log::debug!(
+                    "[audio] capture_device name={:?} sample_rate_hz={} channels={} format={:?}",
                     super::device_display_name(&thread_device).unwrap_or_else(|_| "Unknown".into()),
                     sample_rate,
                     channels,
@@ -672,10 +672,10 @@ impl AudioRecorder {
                             downmix_mode =
                                 decide_downmix_mode(&calib_sumsq, &calib_sum, calib_frames);
                             match downmix_mode {
-                                DownmixMode::SelectChannel(idx) => log::info!(
+                                DownmixMode::SelectChannel(idx) => log::debug!(
                                     "Downmix: dead channel detected (>20 dB imbalance); selecting channel {idx} of {channels}"
                                 ),
-                                DownmixMode::Mean => log::info!(
+                                DownmixMode::Mean => log::debug!(
                                     "Downmix: {channels} channels balanced; using mean downmix"
                                 ),
                             }

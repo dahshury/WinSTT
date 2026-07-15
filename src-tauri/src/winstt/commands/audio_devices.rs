@@ -178,7 +178,7 @@ fn map_input_devices() -> Vec<AudioDevicePayload> {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if last.as_deref() != Some(signature.as_str()) {
-            log::info!("[devices] cpal input devices: [{signature}]");
+            log::debug!("[devices] cpal input devices: [{signature}]");
             *last = Some(signature);
         }
     }
@@ -240,7 +240,7 @@ fn map_output_devices() -> Vec<AudioOutputDevicePayload> {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if last.as_deref() != Some(signature.as_str()) {
-            log::info!("[devices] cpal output devices: [{signature}]");
+            log::debug!("[devices] cpal output devices: [{signature}]");
             *last = Some(signature);
         }
     }

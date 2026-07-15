@@ -7,6 +7,10 @@ use winstt_app_lib::CliArgs;
 fn main() {
     let cli_args = CliArgs::parse();
 
+    if let Some(exit_code) = winstt_app_lib::cli::run_headless(&cli_args) {
+        std::process::exit(exit_code);
+    }
+
     #[cfg(target_os = "linux")]
     {
         // DMABUF renderer causes crashes on various GPU/display server configurations

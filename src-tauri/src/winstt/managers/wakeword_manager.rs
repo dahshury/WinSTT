@@ -408,7 +408,7 @@ impl WakeWordManager {
                         )
                         .detail(detail)
                         .model_id(engine.label().to_string())
-                        .record(Some(&app));
+                        .record_without_log(Some(&app));
                         emit_wakeword_model_status(
                             &app,
                             &status_for_app(&app, &inflight, &snapshot),
@@ -431,7 +431,7 @@ impl WakeWordManager {
                 )
                 .detail(err.to_string())
                 .model_id(engine.label().to_string())
-                .record(Some(&self.app));
+                .record_without_log(Some(&self.app));
                 false
             }
         }
@@ -534,10 +534,7 @@ impl WakeWordManager {
     }
 
     fn emit_detected(&self, result: &WakeWordResult) {
-        info!(
-            "Wake word detected: '{}' (index {})",
-            result.word, result.word_index
-        );
+        info!("Wake word detected (index {})", result.word_index);
         // Emit the canonical `wakeword:detected` event so the renderer's listener
         // reads `{ word, wordIndex }` (camelCase via the struct's serde rename).
         let _ = self.app.emit(
@@ -555,8 +552,7 @@ impl WakeWordManager {
             return;
         }
         debug!(
-            "[wakeword] live feed phrase='{}' frame_len={} raw_peak={:.4} raw_rms={:.4} norm_peak={:.4} norm_rms={:.4} gain={:.2} active={}",
-            self.current_phrase(),
+            "[wakeword] live feed frame_len={} raw_peak={:.4} raw_rms={:.4} norm_peak={:.4} norm_rms={:.4} gain={:.2} active={}",
             frame.samples.len(),
             frame.raw.peak,
             frame.raw.rms,
@@ -631,7 +627,7 @@ impl WakeWordManager {
             let paths = LegacyPorcupinePaths::from_root(self.legacy_porcupine_dir());
             if !paths.all_present_for_keyword(&phrase) {
                 debug!(
-                    "legacy Porcupine bundle missing at {}; wake word '{phrase}' stays inert until downloaded",
+                    "legacy Porcupine bundle missing at {}; wake-word detection stays inert until downloaded",
                     paths.root.display()
                 );
                 self.store_detector(None);
@@ -639,7 +635,7 @@ impl WakeWordManager {
             }
             return match LegacyPorcupineDetector::new(&paths, &phrase, sensitivity) {
                 Ok(detector) => {
-                    debug!("Built legacy Porcupine detector for wake word '{phrase}'");
+                    debug!("Built legacy Porcupine wake-word detector");
                     self.store_detector(Some(ActiveWakeWordDetector::LegacyPorcupine(detector)));
                     Ok(())
                 }
@@ -653,7 +649,6 @@ impl WakeWordManager {
                     )
                     .detail(detail.clone())
                     .model_id(engine.label().to_string())
-                    .context("phrase", phrase.clone())
                     .record(Some(&self.app));
                     Err(detail)
                 }
@@ -673,7 +668,7 @@ impl WakeWordManager {
         };
         if !model.all_present() {
             debug!(
-                "KWS model bundle missing at {}; wake word '{phrase}' stays inert until downloaded",
+                "KWS model bundle missing at {}; wake-word detection stays inert until downloaded",
                 bundle_dir.display()
             );
             self.store_detector(None);
@@ -693,7 +688,6 @@ impl WakeWordManager {
                 )
                 .detail(e.clone())
                 .model_id(engine.label().to_string())
-                .context("phrase", phrase.clone())
                 .record(Some(&self.app));
                 return Err(e);
             }
@@ -708,7 +702,7 @@ impl WakeWordManager {
             self.store_detector(None);
             return Ok(());
         }
-        debug!("[wakeword] keyword content for '{phrase}': {keywords_content:?}");
+        debug!("[wakeword] keyword content built");
 
         let config = WakeWordConfig {
             model,
@@ -724,7 +718,7 @@ impl WakeWordManager {
 
         match WakeWordDetector::new(&config) {
             Ok(detector) => {
-                debug!("Built KWS detector for wake word '{phrase}'");
+                debug!("Built KWS wake-word detector");
                 self.store_detector(Some(ActiveWakeWordDetector::Sherpa(Box::new(detector))));
                 Ok(())
             }
@@ -738,7 +732,6 @@ impl WakeWordManager {
                 )
                 .detail(detail.clone())
                 .model_id(engine.label().to_string())
-                .context("phrase", phrase)
                 .record(Some(&self.app));
                 Err(detail)
             }

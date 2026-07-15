@@ -32,6 +32,9 @@ pub enum ContextMode {
     Split,
     /// `--tree`: full UIA subtree axHtml + URL + appExe.
     Tree,
+    /// `--meta`: window title + app executable + browser URL only. This mode
+    /// never reads focused-field text and is used for per-app profile matching.
+    Meta,
 }
 
 impl ContextMode {
@@ -41,6 +44,7 @@ impl ContextMode {
             ContextMode::Selection => Some("--selection"),
             ContextMode::Split => Some("--split"),
             ContextMode::Tree => Some("--tree"),
+            ContextMode::Meta => Some("--meta"),
         }
     }
 }

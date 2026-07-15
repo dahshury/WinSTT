@@ -3,7 +3,10 @@ import {
 	isCloudModelId,
 } from "@/entities/cloud-stt-provider";
 import { resolveEffectiveQuant } from "@/entities/model-catalog";
-import { estimateForQuant } from "@/entities/system-resources";
+import {
+	ENCODER_DICT_MODEL_BYTES,
+	estimateForQuant,
+} from "@/entities/system-resources";
 import type { ModelStateEntry, OllamaModel } from "@/shared/api/ipc-client";
 
 /** The catalog fields the breakdown needs — a structural subset of both the
@@ -69,11 +72,6 @@ export interface BreakdownSection {
 	key: "stt" | "tts" | "dictionary" | "post";
 	rows: BreakdownRow[];
 }
-
-/** mmBERT-base int8 encoder dictionary — fixed on-device model (~310 MB),
- *  always loaded on CPU. Sized from the managed download in
- *  `winstt/encoder_dict/` (see `project_encoder_dict_fallback_and_toggle`). */
-const ENCODER_DICT_BYTES = 310 * 1024 * 1024;
 
 export interface BreakdownInput {
 	isGpu: boolean;
@@ -272,8 +270,10 @@ function dictionarySection(input: BreakdownInput): BreakdownSection {
 				status: null,
 				detail: "int8",
 				live: false,
-				memBytes: ENCODER_DICT_BYTES,
-				diskBytes: ENCODER_DICT_BYTES,
+				// mmBERT-base int8 — fixed on-device model, sized by the shared
+				// constant in `fit-assessor.ts` (single source for the ~310 MB).
+				memBytes: ENCODER_DICT_MODEL_BYTES,
+				diskBytes: ENCODER_DICT_MODEL_BYTES,
 				// The encoder dictionary always runs as a CPU ONNX session, even
 				// when STT is on the GPU — so its footprint is RAM, not VRAM.
 				device: "cpu",

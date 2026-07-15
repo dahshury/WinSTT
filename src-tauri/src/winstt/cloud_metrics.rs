@@ -59,7 +59,7 @@ const MAX_ERROR_LEN: usize = 200;
 pub fn record(provider: &str, operation: &str, elapsed: Duration, error: Option<&str>) {
     let ms = elapsed.as_millis() as u64;
     let ok = error.is_none();
-    log::info!("[cloud-metrics] provider={provider} op={operation} ms={ms} ok={ok}");
+    log::debug!("[cloud-metrics] provider={provider} op={operation} ms={ms} ok={ok}");
 
     let mut map = store().lock_recover();
     let entry = map

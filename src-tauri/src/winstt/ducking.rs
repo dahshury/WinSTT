@@ -183,7 +183,7 @@ fn handle_duck(
     // the worker, after every previously queued restore has fully applied. A
     // recording whose stop already landed (fast PTT tap) is not ducked at all.
     if gate_before_duck && liveness.as_ref().is_some_and(|alive| !alive()) {
-        log::info!("[ducking] duck for {reason:?} skipped — no longer wanted");
+        log::debug!("[ducking] duck for {reason:?} skipped -- no longer wanted");
         return;
     }
     state.active.push(ActiveReason {

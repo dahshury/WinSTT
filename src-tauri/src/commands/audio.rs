@@ -1,4 +1,4 @@
-use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
+use crate::audio_toolkit::audio::{CpalDeviceInfo, list_input_devices, list_output_devices};
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::{get_settings, write_settings};
 use log::warn;
@@ -38,6 +38,21 @@ pub struct AudioDevice {
     pub index: String,
     pub name: String,
     pub is_default: bool,
+}
+
+fn audio_devices_with_default(devices: Vec<CpalDeviceInfo>) -> Vec<AudioDevice> {
+    let mut result = Vec::with_capacity(devices.len() + 1);
+    result.push(AudioDevice {
+        index: "default".to_string(),
+        name: "Default".to_string(),
+        is_default: true,
+    });
+    result.extend(devices.into_iter().map(|device| AudioDevice {
+        index: device.index,
+        name: device.name,
+        is_default: false,
+    }));
+    result
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -151,20 +166,7 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
 pub fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
     let devices =
         list_input_devices().map_err(|e| format!("Failed to list audio devices: {}", e))?;
-
-    let mut result = vec![AudioDevice {
-        index: "default".to_string(),
-        name: "Default".to_string(),
-        is_default: true,
-    }];
-
-    result.extend(devices.into_iter().map(|d| AudioDevice {
-        index: d.index,
-        name: d.name,
-        is_default: false, // The explicit default is handled separately
-    }));
-
-    Ok(result)
+    Ok(audio_devices_with_default(devices))
 }
 
 /// Resolve a cpal input-device NAME (as shown in the picker) to its persisted
@@ -239,20 +241,7 @@ pub fn get_selected_microphone(app: AppHandle) -> Result<String, String> {
 pub fn get_available_output_devices() -> Result<Vec<AudioDevice>, String> {
     let devices =
         list_output_devices().map_err(|e| format!("Failed to list output devices: {}", e))?;
-
-    let mut result = vec![AudioDevice {
-        index: "default".to_string(),
-        name: "Default".to_string(),
-        is_default: true,
-    }];
-
-    result.extend(devices.into_iter().map(|d| AudioDevice {
-        index: d.index,
-        name: d.name,
-        is_default: false, // The explicit default is handled separately
-    }));
-
-    Ok(result)
+    Ok(audio_devices_with_default(devices))
 }
 
 #[tauri::command]

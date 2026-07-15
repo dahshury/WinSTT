@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import { act, renderHook } from "@testing-library/react";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 
 // The feed hook subscribes through ipc-client, which routes `on(channel, cb)`
 // through `window.nativeBridge.on`. Install the complete behavior-faithful fake

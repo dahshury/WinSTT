@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
+import { PendingBadge } from "@/shared/ui/pending";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
 
@@ -45,6 +46,13 @@ export interface SettingSectionProps {
 	toggleDisabled?: boolean;
 	/** Shown on hover over a DISABLED toggle to explain why it can't be flipped. */
 	toggleDisabledTooltip?: ReactNode;
+	/** The section is mid-transition (model warming into / draining out of
+	 *  memory after a toggle flip): the toggle locks AND wears the corner
+	 *  spinner badge (same `PendingBadge` as the post-processing toggle) so the
+	 *  background work is visible rather than an unexplained grey toggle.
+	 *  Distinct from `toggleDisabled`, which greys an *unavailable* feature and
+	 *  shows no spinner. */
+	togglePending?: boolean;
 	/** When provided, renders a toggle switch on the trailing edge of the header. */
 	toggled?: boolean;
 }
@@ -80,6 +88,7 @@ export function SettingSection({
 	tooltip,
 	toggleDisabled,
 	toggleDisabledTooltip,
+	togglePending = false,
 }: SettingSectionProps) {
 	const substrate = useSurface();
 	const contentLevel = Math.min(substrate + 1, 8);
@@ -137,18 +146,20 @@ export function SettingSection({
 										<Toggle
 											aria-label={`Toggle ${title}`}
 											checked={toggled ?? false}
-											disabled={toggleDisabled}
+											disabled={toggleDisabled || togglePending}
 											onCheckedChange={onToggle}
 										/>
 									</span>
 								</Tooltip>
 							) : (
-								<Toggle
-									aria-label={`Toggle ${title}`}
-									checked={toggled ?? false}
-									disabled={toggleDisabled}
-									onCheckedChange={onToggle}
-								/>
+								<PendingBadge pending={togglePending}>
+									<Toggle
+										aria-label={`Toggle ${title}`}
+										checked={toggled ?? false}
+										disabled={toggleDisabled || togglePending}
+										onCheckedChange={onToggle}
+									/>
+								</PendingBadge>
 							)}
 						</div>
 					)}

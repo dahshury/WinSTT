@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcOn, ipcSend } from "@/shared/api/ipc-client";
+import { commands } from "@/bindings";
+import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
+import { ipcOn } from "@/shared/api/ipc-client";
 import {
 	DEFAULT_MODEL_PICKER_MODE,
 	DESIRED_HEIGHT,
@@ -217,10 +218,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		) {
 			return;
 		}
-		ipcSend(IPC.MODEL_PICKER_RESIZE, {
-			height: desiredHeight,
-			width: desiredWidth,
-		});
+		void commands.resizeWindow("model-picker", desiredWidth, desiredHeight);
 	}, [desiredHeight, desiredWidth]);
 
 	// Pre-warm the (heavy) picker body during the window's idle pre-create

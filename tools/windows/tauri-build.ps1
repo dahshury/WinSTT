@@ -73,11 +73,34 @@ function Import-Llvm {
     throw "Could not find lld-link.exe. Install LLVM and ensure C:\Program Files\LLVM\bin is available."
 }
 
+function Assert-NonEmptyFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+        [Parameter(Mandatory = $true)]
+        [string] $Description
+    )
+
+    $File = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($null -eq $File) {
+        throw "Missing $Description required by the Windows bundle: $Path"
+    }
+    if ($File.PSIsContainer) {
+        throw "Expected a file for $Description, found a directory: $Path"
+    }
+    if ($File.Length -le 0) {
+        throw "Empty $Description required by the Windows bundle: $Path"
+    }
+}
+
 if (-not $NoBundle -and -not $Bundles) {
     $NoBundle = $true
 }
 
-$BuildArgs = @()
+$BuildArgs = @(
+    "--config",
+    "src-tauri/tauri.windows.bundle.conf.json"
+)
 if ($NoBundle) {
     $BuildArgs += "--no-bundle"
 }
@@ -93,25 +116,27 @@ Import-Llvm
 
 Push-Location $RepoRoot
 try {
-    # Build + stage the native context sidecar (winstt_context) BEFORE the bundle so
-    # the bundler picks it up via tauri.conf.json `resources` (binaries/winstt-context.exe).
-    # It is a SEPARATE cargo bin that `tauri build` does NOT build on its own, and nothing
-    # else stages it — without this the packaged app cannot resolve winstt-context.exe and
-    # context-awareness is silently disabled in release. (Dev parity: tauri-dev.ps1.)
+    $BuildStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    # Build the native context sidecar before the bundle. Its standalone manifest
+    # avoids running the full app build script and resolving the app-only graph;
+    # the shared target dir keeps dependency artifacts reusable. The Tauri bundler
+    # includes the finished target as `winstt_context.exe` next to the main binary.
     # Fatal here (unlike dev): a release that ships without the sidecar is broken.
-    cargo build --release --manifest-path (Join-Path $RepoRoot "src-tauri\Cargo.toml") --bin winstt_context
+    $SidecarManifest = Join-Path $RepoRoot "src-tauri\context-sidecar\Cargo.toml"
+    $TargetDir = Join-Path $RepoRoot "src-tauri\target"
+    $SidecarStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    cargo build --release --manifest-path $SidecarManifest --target-dir $TargetDir --bin winstt_context
+    $SidecarStopwatch.Stop()
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to build the winstt_context sidecar (exit code $LASTEXITCODE)"
     }
+    Write-Host ("Context sidecar release build: {0:N2}s" -f $SidecarStopwatch.Elapsed.TotalSeconds)
     $BinDir = Join-Path $RepoRoot "src-tauri\binaries"
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-    Copy-Item -Force `
-        -Path (Join-Path $RepoRoot "src-tauri\target\release\winstt_context.exe") `
-        -Destination (Join-Path $BinDir "winstt-context.exe")
 
     # Stage the native runtime DLLs winstt.exe needs at runtime (DirectML for the ORT
-    # DML EP — a load-time import — plus the MSVC CRT). tauri.windows.conf.json maps
-    # binaries/runtime/*.dll into the install dir next to winstt.exe; without them the
+    # DML EP — a load-time import — plus the MSVC CRT). The release-only bundle
+    # config maps binaries/runtime/*.dll next to winstt.exe; without them the
     # installed app cannot start on a machine without a dev toolchain. The sidecar build
     # above already compiled the dependency graph, so the ort build script has placed
     # DirectML.dll in target\release. (tauri-portable.ps1 reuses this stage. sherpa-onnx
@@ -122,13 +147,13 @@ try {
         Remove-Item -LiteralPath $RuntimeDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
-    $RuntimeDlls = @(
+    $OrtRuntimeDlls = @(
         "DirectML.dll"
     )
-    foreach ($Dll in $RuntimeDlls) {
+    foreach ($Dll in $OrtRuntimeDlls) {
         $Source = Join-Path $ReleaseDir $Dll
         if (-not (Test-Path -LiteralPath $Source)) {
-            throw "Missing native runtime DLL: $Source (expected from the ort/sherpa-onnx build scripts)"
+            throw "Missing native runtime DLL: $Source (expected from the ort build script)"
         }
         Copy-Item -Force -LiteralPath $Source -Destination (Join-Path $RuntimeDir $Dll)
     }
@@ -142,17 +167,34 @@ try {
     if ($null -eq $CrtDir) {
         throw "No Microsoft.VC*.CRT directory under $env:VCToolsRedistDir\x64"
     }
-    foreach ($Dll in @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+    # `winstt.exe` imports MSVCP140 + MSVCP140_1. Their transitive imports need
+    # VCRUNTIME140 + VCRUNTIME140_1; MSVCP140_2 is not in the PE dependency chain.
+    $CrtRuntimeDlls = @("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+    foreach ($Dll in $CrtRuntimeDlls) {
         $Source = Join-Path $CrtDir.FullName $Dll
-        if (Test-Path -LiteralPath $Source) {
-            Copy-Item -Force -LiteralPath $Source -Destination (Join-Path $RuntimeDir $Dll)
+        if (-not (Test-Path -LiteralPath $Source)) {
+            throw "Missing MSVC runtime DLL required by the Windows bundle: $Source"
         }
+        Copy-Item -Force -LiteralPath $Source -Destination (Join-Path $RuntimeDir $Dll)
     }
 
+    # Final bundle boundary: source checks above are not enough. A failed/truncated
+    # copy or a zero-byte cargo output must never reach NSIS as a valid-looking file.
+    $SidecarPath = Join-Path $ReleaseDir "winstt_context.exe"
+    Assert-NonEmptyFile -Path $SidecarPath -Description "context sidecar"
+    foreach ($Dll in $OrtRuntimeDlls + $CrtRuntimeDlls) {
+        Assert-NonEmptyFile -Path (Join-Path $RuntimeDir $Dll) -Description "runtime DLL '$Dll'"
+    }
+
+    $TauriBuildStopwatch = [Diagnostics.Stopwatch]::StartNew()
     bun run tauri build @BuildArgs
+    $TauriBuildStopwatch.Stop()
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri build failed with exit code $LASTEXITCODE"
     }
+    $BuildStopwatch.Stop()
+    Write-Host ("Tauri/frontend build: {0:N2}s" -f $TauriBuildStopwatch.Elapsed.TotalSeconds)
+    Write-Host ("Total build pipeline: {0:N2}s" -f $BuildStopwatch.Elapsed.TotalSeconds)
 } finally {
     Pop-Location
 }

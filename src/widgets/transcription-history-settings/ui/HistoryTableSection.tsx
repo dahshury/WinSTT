@@ -10,15 +10,20 @@ import {
 } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import { ButtonGroup } from "@/shared/ui/button-group";
+import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { CLEAR_ACTION_SEGMENT_CLASS } from "../lib/clear-action-segment";
+import { useHistorySearch } from "../api/use-history-search";
 import { useTranscriptionHistoryStore } from "../model/history-store";
-import { HistoryTable, type HistoryTableItem } from "./HistoryTable";
+import type { HistoryTableItem } from "../model/history-table-types";
+import { HistoryTable } from "./HistoryTable";
+import { HistorySearchInput } from "./HistorySearchInput";
 
 interface HistoryTableSectionProps {
 	/** The date-filtered combined rows (STT + transform + TTS) to display. */
 	combinedHistoryEntries: HistoryTableItem[];
+	selectedRange: DateRange | null;
 }
 
 /**
@@ -28,6 +33,7 @@ interface HistoryTableSectionProps {
  */
 export function HistoryTableSection({
 	combinedHistoryEntries,
+	selectedRange,
 }: HistoryTableSectionProps) {
 	const t = useTranslations("history");
 	const entries = useTranscriptionHistoryStore((s) => s.entries);
@@ -51,6 +57,8 @@ export function HistoryTableSection({
 	const [historyKind, setHistoryKind] = useState<
 		"all" | "history" | "transforms" | "tts"
 	>("all");
+	const [query, setQuery] = useState("");
+	const search = useHistorySearch(query, combinedHistoryEntries, selectedRange);
 
 	const handleClear = () => {
 		clearTranscriptionHistory().then(() => clearLocal());
@@ -117,8 +125,8 @@ export function HistoryTableSection({
 	// passes everything through; the specific kinds map onto the row's `kind` tag.
 	const visibleHistoryEntries =
 		historyKind === "all"
-			? combinedHistoryEntries
-			: combinedHistoryEntries.filter((row) => {
+			? search.items
+			: search.items.filter((row) => {
 					if (historyKind === "history") {
 						return row.kind === "transcription";
 					}
@@ -170,6 +178,11 @@ export function HistoryTableSection({
 					    (default "All") and names the target of the single Clear
 					    button, which (wrapped in the app's connected group so it
 					    reads as the standard segmented chip) acts on the selection. */}
+					<HistorySearchInput
+						count={search.totalLabelCount}
+						hasMore={search.hasMore}
+						onQueryChange={setQuery}
+					/>
 					<Select
 						className="h-7 w-44"
 						onChange={(v) =>
@@ -194,8 +207,24 @@ export function HistoryTableSection({
 			icon={ListViewIcon}
 			title={t("combinedTableTitle")}
 		>
-			<div className="py-2">
-				<HistoryTable entries={visibleHistoryEntries} />
+			<div className="flex flex-col gap-2 py-2">
+				{query.trim() ? (
+					<p className="text-foreground-muted text-xs" role="status">
+						{search.hasMore
+							? t("searchMatchCountMore", {
+									count: search.totalLabelCount,
+								})
+							: t("searchMatchCount", {
+									count: search.totalLabelCount,
+								})}
+					</p>
+				) : null}
+				<HistoryTable
+					{...(query.trim() ? { emptyLabel: t("searchNoResults") } : {})}
+					entries={visibleHistoryEntries}
+					highlights={search.highlights}
+					preserveOrder={Boolean(query.trim())}
+				/>
 			</div>
 		</SettingSection>
 	);

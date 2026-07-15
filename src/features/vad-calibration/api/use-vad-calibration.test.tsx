@@ -7,7 +7,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 
 mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 

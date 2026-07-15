@@ -57,7 +57,7 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 		useCatalogStore.setState({ isLoaded: false, models: [] });
 	});
 
-	test("shows one merged control for spoken punctuation and code commands", () => {
+	test("shows one merged control for punctuation, quote, and code commands", () => {
 		renderPanel();
 
 		expect(
@@ -65,23 +65,22 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 		).toBeDefined();
 		expect(screen.queryAllByText("Spoken punctuation commands").length).toBe(0);
 		expect(screen.queryAllByText("Technical symbol commands").length).toBe(0);
+		expect(screen.queryAllByText("Quote commands").length).toBe(0);
 	});
 
-	test("merged command control updates punctuation and code command settings together", () => {
+	test("merged command control updates the canonical spoken-command setting", () => {
 		renderPanel();
 
 		const merged = getVisibleText("Spoken punctuation and code commands");
 		fireEvent.pointerUp(merged);
 
 		let quality = useSettingsStore.getState().settings.quality;
-		expect(quality.formatSpokenPunctuationCommands).toBe(true);
-		expect(quality.formatSpokenSymbolCommands).toBe(true);
+		expect(quality.formatSpokenCommands).toBe(true);
 
 		fireEvent.pointerUp(merged);
 
 		quality = useSettingsStore.getState().settings.quality;
-		expect(quality.formatSpokenPunctuationCommands).toBe(false);
-		expect(quality.formatSpokenSymbolCommands).toBe(false);
+		expect(quality.formatSpokenCommands).toBe(false);
 	});
 
 	test("keeps remaining rules enabled when the model only covers basic formatting", () => {
@@ -101,7 +100,7 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 				quality: {
 					...DEFAULT_SETTINGS.quality,
 					formatBasicPunctuationCasing: false,
-					formatQuoteCommands: false,
+					formatSpokenCommands: false,
 				},
 			},
 			isLoaded: true,
@@ -120,10 +119,9 @@ describe("ProcessingExtrasPanel formatting rules", () => {
 			useSettingsStore.getState().settings.quality.formatBasicPunctuationCasing,
 		).toBe(false);
 
-		fireEvent.pointerUp(getVisibleText("Quote commands"));
-		expect(
-			useSettingsStore.getState().settings.quality.formatQuoteCommands,
-		).toBe(true);
+		fireEvent.pointerUp(getVisibleText("Spoken punctuation and code commands"));
+		const quality = useSettingsStore.getState().settings.quality;
+		expect(quality.formatSpokenCommands).toBe(true);
 	});
 });
 

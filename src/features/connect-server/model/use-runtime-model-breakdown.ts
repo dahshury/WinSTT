@@ -10,14 +10,8 @@ import { publicAsset } from "@/shared/lib/public-asset";
 // Deep-import the lightweight logo/maker resolvers (NOT the
 // `@/widgets/model-picker` barrel) so the heavy picker UI trees stay out of the
 // main window's chunk — the same guard FooterModelChip uses for its STT helpers.
-import {
-	getAuthorLabel,
-	getFamilyConfig,
-} from "@/widgets/model-picker/stt/lib/family-helpers";
-import {
-	getEngineConfig,
-	getEngineLogoSrc,
-} from "@/widgets/model-picker/tts/lib/tts-helpers";
+import { getAuthorLabel, getFamilyConfig } from "@/entities/model-catalog";
+import { getEngineConfig, getEngineLogoSrc } from "@/entities/tts-catalog";
 import {
 	type BreakdownSection,
 	buildRuntimeBreakdown,

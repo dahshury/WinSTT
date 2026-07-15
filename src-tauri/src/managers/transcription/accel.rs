@@ -10,7 +10,7 @@ use specta::Type;
 /// intentionally limited to logging the selected preferences for diagnostics.
 pub fn apply_accelerator_settings(app: &tauri::AppHandle) {
     let settings = read_settings_raw(app).core;
-    log::info!(
+    log::debug!(
         "STT accelerator preferences: whisper={:?}, ort={:?}, gpu_device={}",
         settings.whisper_accelerator,
         settings.ort_accelerator,

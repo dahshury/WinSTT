@@ -139,7 +139,7 @@ pub(super) fn start(
         match spawn_pw_record(target) {
             Ok(child) => spawned = Some((child, target.to_string())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                log::info!("[loopback] pw-record not found; falling back to parec");
+                log::debug!("[loopback] pw-record not found; falling back to parec");
             }
             Err(e) => {
                 log::warn!("[loopback] pw-record spawn failed ({e}); falling back to parec");

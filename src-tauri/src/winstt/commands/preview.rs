@@ -18,6 +18,7 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
 
+use crate::foreground_window::ForegroundWindow as CapturedForeground;
 use crate::winstt::sync_ext::MutexExt;
 
 /// Backend-owned preview paste session. The renderer may confirm edited text,
@@ -25,16 +26,6 @@ use crate::winstt::sync_ext::MutexExt;
 #[derive(Default)]
 pub struct PreviewState {
     pending: Mutex<Option<PendingPreview>>,
-}
-
-#[derive(Clone, Copy)]
-#[cfg_attr(
-    not(target_os = "windows"),
-    expect(dead_code, reason = "foreground capture is Windows-only")
-)]
-struct CapturedForeground {
-    hwnd_raw: isize,
-    process_id: u32,
 }
 
 struct PendingPreview {
@@ -58,40 +49,11 @@ impl PreviewState {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn current_foreground() -> Option<CapturedForeground> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-    // SAFETY: reads the current foreground HWND only; no ownership transfer.
-    let hwnd = unsafe { GetForegroundWindow() };
-    let raw = hwnd.0 as isize;
-    if raw == 0 {
-        return None;
-    }
-    let mut process_id = 0u32;
-    // SAFETY: `hwnd` is the handle returned by GetForegroundWindow and
-    // `process_id` is a valid out pointer for the duration of the call.
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-    }
-    if process_id == 0 {
-        return None;
-    }
-    Some(CapturedForeground {
-        hwnd_raw: raw,
-        process_id,
-    })
-}
-
-#[cfg(not(target_os = "windows"))]
-fn current_foreground() -> Option<CapturedForeground> {
-    None
-}
-
 /// Capture the current foreground window as the paste target and store the
 /// finalized transcript that may later be pasted. Call at preview open, BEFORE
 /// the overlay takes focus, while the user's app still owns the foreground.
 pub fn capture_foreground(app: &AppHandle, text: &str) {
-    let foreground = current_foreground();
+    let foreground = CapturedForeground::current();
     if let Some(state) = app.try_state::<PreviewState>() {
         state.set(PendingPreview {
             foreground,
@@ -146,28 +108,20 @@ mod tests {
 /// `AttachThreadInput` dance so focus moves reliably even if the overlay no
 /// longer owns the foreground.
 #[cfg(target_os = "windows")]
-fn restore_foreground(foreground: CapturedForeground) {
+pub(crate) fn restore_foreground(foreground: CapturedForeground) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::GetCurrentThreadId;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
+    let Some(target_thread) = foreground.thread_id_if_valid() else {
+        return;
+    };
     let target = HWND(foreground.hwnd_raw as *mut core::ffi::c_void);
-    // SAFETY: validates the raw HWND before reuse, then only requests foreground
-    // activation. The stored PID must still match to avoid focusing a recycled
-    // HWND that now belongs to another process.
+    // SAFETY: `thread_id_if_valid` verified the HWND and owning PID immediately
+    // above; this block only requests foreground activation.
     unsafe {
-        if !IsWindow(Some(target)).as_bool() {
-            return;
-        }
-        let mut process_id = 0u32;
         let our_thread = GetCurrentThreadId();
-        let target_thread = GetWindowThreadProcessId(target, Some(&mut process_id));
-        if target_thread == 0 || process_id != foreground.process_id {
-            return;
-        }
-        if target_thread != 0 && target_thread != our_thread {
+        if target_thread != our_thread {
             let _attach = ThreadInputAttach::new(our_thread, target_thread);
             let _ = SetForegroundWindow(target);
         } else {

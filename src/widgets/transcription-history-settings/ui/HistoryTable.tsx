@@ -18,11 +18,11 @@ import { MediaSeekBar } from "@/shared/ui/media-seek-bar";
 import { StaggerReveal } from "@/shared/ui/stagger-reveal";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { getEntryTranscriptDiff } from "../lib/transcript-diff-cache";
-import { useHistoryPlayback } from "../model/use-history-playback";
 import type {
-	TranscriptionHistoryEntry,
-	TtsHistoryEntry,
-} from "../model/history-store";
+	HistoryTableEntryKind,
+	HistoryTableItem,
+} from "../model/history-table-types";
+import { useHistoryPlayback } from "../model/use-history-playback";
 import {
 	CopyButton,
 	DeleteButton,
@@ -32,19 +32,17 @@ import {
 import { buildHistoryRowMeta, type MetaLabels } from "./HistoryRowMeta";
 import { RowTranscript } from "./RowTranscript";
 
-export type HistoryTableEntryKind = "transcription" | "transform" | "tts";
-
-export interface HistoryTableItem {
-	entry: TranscriptionHistoryEntry;
-	kind: HistoryTableEntryKind;
-	/** The originating read-aloud run — present only when `kind === "tts"`. */
-	tts?: TtsHistoryEntry;
-}
+export type {
+	HistoryTableEntryKind,
+	HistoryTableItem,
+} from "../model/history-table-types";
 
 interface HistoryTableProps {
 	emptyLabel?: string;
 	entries: HistoryTableItem[];
+	highlights?: Map<string, Array<{ end: number; start: number }>> | undefined;
 	onDeleteEntry?: (id: string, kind: HistoryTableEntryKind) => void;
+	preserveOrder?: boolean;
 }
 
 // Initial size estimate only — virtua re-measures every mounted row, so rows
@@ -65,15 +63,49 @@ function historyItemKey(item: HistoryTableItem): string {
 	return `${item.kind}:${item.entry.id}`;
 }
 
+// Playback-speed steps for the seek-bar's cycle button (matches the common
+// media-player pill: tap to advance 1× → 1.5× → 2× → back to 1×).
+const PLAYBACK_RATES = [1, 1.5, 2];
+
+function nextPlaybackRate(current: number): number {
+	const index = PLAYBACK_RATES.indexOf(current);
+	return PLAYBACK_RATES[(index + 1) % PLAYBACK_RATES.length] ?? 1;
+}
+
+function HistoryTimestamp({ timestamp }: { timestamp: number }) {
+	const date = new Date(timestamp);
+	return (
+		<time
+			className="flex w-7 flex-col items-center text-center text-[7px] text-foreground-muted leading-[9px] tabular-nums"
+			dateTime={date.toISOString()}
+		>
+			<span className="whitespace-nowrap">
+				{date.toLocaleTimeString(undefined, {
+					hour: "numeric",
+					minute: "2-digit",
+				})}
+			</span>
+			<span className="whitespace-nowrap text-foreground-muted/75">
+				{date.toLocaleDateString(undefined, {
+					month: "short",
+					day: "numeric",
+				})}
+			</span>
+		</time>
+	);
+}
+
 interface HistoryRowProps {
 	copyLabel: string;
 	item: HistoryTableItem;
 }
 
 interface HistoryRowFullProps extends HistoryRowProps {
+	highlights?: Array<{ end: number; start: number }> | undefined;
 	labels: MetaLabels;
 	onDeleteEntry: (id: string, kind: HistoryTableEntryKind) => void;
 	outputDeviceId: string;
+	playbackSpeedLabel: string;
 	viewFullLabel: string;
 	viewOriginalLabel: string;
 	viewProcessedLabel: string;
@@ -81,10 +113,12 @@ interface HistoryRowFullProps extends HistoryRowProps {
 
 function HistoryRow({
 	copyLabel,
+	highlights,
 	item,
 	labels,
 	onDeleteEntry,
 	outputDeviceId,
+	playbackSpeedLabel,
 	viewFullLabel,
 	viewOriginalLabel,
 	viewProcessedLabel,
@@ -144,28 +178,33 @@ function HistoryRow({
 				    edge rail). Rows with no saved audio keep an inert, dimmed play
 				    button whose tooltip says why. Transform rows have no audio ever,
 				    so they keep their accent bubble. */}
-				{kind === "transform" ? (
-					<Tooltip content={labels.transform} side="top">
-						<span
-							aria-label={labels.transform}
-							className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent"
-							role="img"
-						>
-							<HugeiconsIcon className="size-3.5" icon={AiEditingIcon} />
-						</span>
-					</Tooltip>
-				) : (
-					<PlayButton
-						loading={playback.loading}
-						onToggle={handlePlaybackToggle}
-						playing={playback.playing}
-						unavailable={hasPlayableAudio ? undefined : labels.notRecorded}
-					/>
-				)}
+				<div className="flex shrink-0 flex-col items-center gap-1">
+					{kind === "transform" ? (
+						<Tooltip content={labels.transform} side="top">
+							<span
+								aria-label={labels.transform}
+								className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent"
+								role="img"
+							>
+								<HugeiconsIcon className="size-3.5" icon={AiEditingIcon} />
+							</span>
+						</Tooltip>
+					) : (
+						<PlayButton
+							loading={playback.loading}
+							onToggle={handlePlaybackToggle}
+							playing={playback.playing}
+							unavailable={hasPlayableAudio ? undefined : labels.notRecorded}
+						/>
+					)}
+					<HistoryTimestamp timestamp={entry.timestamp} />
+				</div>
 				<RowTranscript
 					activeIndex={playback.activeIndex}
 					diff={transcriptDiff}
 					displayText={displayText}
+					highlights={showOriginal ? undefined : highlights}
+					playbackActive={playbackViewActive}
 					onSeekWord={
 						hasPlayableAudio
 							? (index) => {
@@ -225,6 +264,17 @@ function HistoryRow({
 					<span className="w-9 shrink-0 font-mono tabular-nums">
 						{formatTime(playback.duration * 1000)}
 					</span>
+					{/* Speed pill — cycles 1× → 1.5× → 2×. Fixed width so the label
+					    change never shifts the bar; grayscale like the time labels. */}
+					<button
+						aria-label={playbackSpeedLabel}
+						className="w-8 shrink-0 cursor-pointer rounded-sm px-1 py-0.5 text-center font-mono tabular-nums transition-colors hover:bg-foreground/10 hover:text-foreground"
+						onClick={() => playback.setRate(nextPlaybackRate(playback.rate))}
+						title={playbackSpeedLabel}
+						type="button"
+					>
+						{playback.rate}×
+					</button>
 				</div>
 			) : null}
 		</EntryCard>
@@ -234,7 +284,9 @@ function HistoryRow({
 export function HistoryTable({
 	emptyLabel,
 	entries,
+	highlights,
 	onDeleteEntry,
+	preserveOrder = false,
 }: HistoryTableProps) {
 	const t = useTranslations("history");
 	const outputDeviceId = useSettingsStore(
@@ -246,6 +298,7 @@ export function HistoryTable({
 	const previousEntryKeysRef = useRef<Set<string> | null>(null);
 	const speechActivityRef = useSpeechActivityRef();
 	const copyLabel = t("copy");
+	const playbackSpeedLabel = t("playbackSpeed");
 	const viewFullLabel = t("viewFull");
 	const viewOriginalLabel = t("viewOriginal");
 	const viewProcessedLabel = t("viewProcessed");
@@ -283,7 +336,6 @@ export function HistoryTable({
 		speed: t("colSpeed"),
 		speechToTextProcessing: t("durationSpeechToText"),
 		sttModel: t("colSttModel"),
-		time: t("colTime"),
 		totalProcessing: t("durationTotalProcessing"),
 		transform: t("transformTableTitle"),
 		ttsModel: t("colTtsModel"),
@@ -292,13 +344,16 @@ export function HistoryTable({
 		words: t("colWords"),
 	};
 
-	const sorted = entries
-		.map((item, index) => ({ index, item }))
-		.sort(
-			(a, b) =>
-				b.item.entry.timestamp - a.item.entry.timestamp || b.index - a.index,
-		)
-		.map(({ item }) => item);
+	const sorted = preserveOrder
+		? entries
+		: entries
+				.map((item, index) => ({ index, item }))
+				.sort(
+					(a, b) =>
+						b.item.entry.timestamp - a.item.entry.timestamp ||
+						b.index - a.index,
+				)
+				.map(({ item }) => item);
 
 	useLayoutEffect(() => {
 		const nextKeys = new Set(sorted.map(historyItemKey));
@@ -337,10 +392,12 @@ export function HistoryTable({
 			>
 				<HistoryRow
 					copyLabel={copyLabel}
+					highlights={highlights?.get(key)}
 					item={item}
 					labels={labels}
 					onDeleteEntry={deleteEntry}
 					outputDeviceId={outputDeviceId}
+					playbackSpeedLabel={playbackSpeedLabel}
 					viewFullLabel={viewFullLabel}
 					viewOriginalLabel={viewOriginalLabel}
 					viewProcessedLabel={viewProcessedLabel}

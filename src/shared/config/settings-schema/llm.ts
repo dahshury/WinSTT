@@ -13,7 +13,8 @@ const presetKeySchema = z.enum([
 	"translate",
 ]);
 
-const presetLevelSchema = z.enum(["light", "medium", "high"]);
+const presetLevelSchema = z.enum(["light", "medium", "high", "caveman"]);
+const standardPresetLevelSchema = z.enum(["light", "medium", "high"]);
 
 const KEYS_WITH_LEVELS = new Set(["summarize", "concise"]);
 const TONE_KEYS = new Set(["neutral", "formal", "friendly", "technical"]);
@@ -33,6 +34,10 @@ const presetEntrySchema = z
 			path: ["level"],
 		},
 	)
+	.refine((entry) => entry.level !== "caveman" || entry.key === "concise", {
+		message: "caveman level is only allowed for concise",
+		path: ["level"],
+	})
 	.refine(
 		(entry) => entry.targetLang === undefined || entry.key === "translate",
 		{
@@ -86,7 +91,8 @@ function defaultDictationPresets() {
 // `enabled` is false so the name/prompt the user wrote survives a toggle.
 // `level` is always allowed here — for a custom modifier the Low/Medium/High
 // switcher tunes intensity of the single authored prompt rather than
-// selecting between distinct texts (see `CUSTOM_LEVEL_HINT`).
+// selecting between distinct texts (see `CUSTOM_LEVEL_HINT`). Caveman is
+// concise-only, so custom modifiers intentionally keep the standard levels.
 const customModifierSchema = z.object({
 	id: z.string().min(1),
 	name: z.string().default(""),
@@ -95,7 +101,7 @@ const customModifierSchema = z.object({
 	// When false the prompt is applied verbatim; when true the Low/Medium/High
 	// switcher appears on the row and `level` tunes the intensity hint.
 	levelsEnabled: z.boolean().default(false),
-	level: presetLevelSchema.optional(),
+	level: standardPresetLevelSchema.optional(),
 });
 
 // Per-feature provider config. Dictation and transforms each pick their own
@@ -175,6 +181,27 @@ const llmTransformsSchema = z.object({
 	prompts: z.array(transformSchema).default([]),
 });
 
+const appProfileConfigSchema = z.object({
+	...llmFeatureBaseShape,
+	presets: presetsSchema.default(defaultNeutralPresets),
+	customModifiers: z.array(customModifierSchema).default([]),
+});
+
+const appProfileRuleSchema = z.object({
+	id: z.string().min(1),
+	enabled: z.boolean().default(true),
+	appExe: z.string().default(""),
+	titlePattern: z.string().default(""),
+	urlPattern: z.string().default(""),
+	configurationId: z.string().default(""),
+	configurationName: z.string().default(""),
+	config: appProfileConfigSchema.prefault({}),
+});
+
+const appProfilesSchema = z.object({
+	rules: z.array(appProfileRuleSchema).default([]).catch([]),
+});
+
 export const llmSettingsSchema = z.object({
 	// Shared infrastructure (one Ollama instance, one OpenRouter account).
 	// `.catch(...)` is load-bearing: `z.url()` REJECTS a malformed/empty string
@@ -199,11 +226,12 @@ export const llmSettingsSchema = z.object({
 	// there is no master switch (the IPC layer treats "no model" as off).
 	dictation: llmDictationSchema.prefault({}),
 	transforms: llmTransformsSchema.prefault({}),
+	appProfiles: appProfilesSchema.prefault({}),
 	// Client-side request timeout (ms). Wired through but currently NOT applied
 	// at the network layer — local LLMs (Ollama cold start) routinely exceed any
 	// finite cap, and a silent abort + un-processed-text paste is misleading.
 	// Kept here so the persisted setting / IPC plumbing / tests stay stable.
-	// `.catch(5000)`: a persisted out-of-range value (older build, hand-edit)
+	// `.catch(5000)`: a persisted out-of-range value (for example, a hand edit)
 	// would otherwise reject and drag the whole `llm` section to defaults.
 	timeout: z.number().int().min(1000).max(30_000).default(5000).catch(5000),
 });

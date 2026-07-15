@@ -2,10 +2,10 @@ import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import {
 	fetchRuntimeInfo,
-	ipcInvoke,
 	onConnectionChange,
 	onRuntimeInfo,
 	onServerStatus,
+	sttIsConnected,
 } from "@/shared/api/ipc-client";
 import { getErrorMessage } from "@/shared/lib/errors";
 
@@ -16,7 +16,7 @@ export function useConnectionListener(): void {
 
 	// Initial connection status query — runs once.
 	useEffect(() => {
-		ipcInvoke("stt:is-connected")
+		sttIsConnected()
 			.then((connected) => {
 				if (connected) {
 					setConnectionStatus("connected");
@@ -32,7 +32,7 @@ export function useConnectionListener(): void {
 
 	// Initial server-ready query — server_ready may have fired before this hook subscribed.
 	useEffect(() => {
-		ipcInvoke("stt:get-server-ready")
+		sttIsConnected()
 			.then((ready) => {
 				if (ready) {
 					setServerStatus("running");

@@ -145,7 +145,12 @@ export function DataGridRow<TData>({
 						data-slot="grid-cell"
 						tabIndex={-1}
 						className={cn({
-							grow: stretchColumns && columnId !== "select",
+							grow:
+								stretchColumns &&
+								(cell.column.columnDef.meta?.stretch === true ||
+									(columnId !== "select" &&
+										columnId !== "actions" &&
+										cell.column.columnDef.meta?.stretch !== false)),
 							"border-e": showEndBorder && columnId !== "select",
 							"border-s": showStartBorder && columnId !== "select",
 						})}

@@ -20,7 +20,6 @@ import type { SwapController } from "@/features/swap-model";
 import { FormControl } from "@/shared/ui/form-control";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
-import { Spinner } from "@/shared/ui/spinner";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import type {
 	DeviceValue,
@@ -220,18 +219,12 @@ export function SpeakerDiarizationSection(): ReactNode {
 	return (
 		<SettingSection
 			boxed
-			headerAction={
-				pending ? (
-					<Spinner
-						aria-label={tGeneral("speakerDiarization")}
-						className="size-3.5 text-foreground-muted"
-					/>
-				) : undefined
-			}
 			icon={UserMultiple02Icon}
 			onToggle={(v) => update({ speakerDiarization: v })}
 			title={tGeneral("speakerDiarization")}
-			toggleDisabled={pending}
+			// In-flight runtime toggle: the corner spinner badge (shared with the
+			// post-processing and TTS toggles) replaces the old headerAction spinner.
+			togglePending={pending}
 			toggled={enabled}
 		>
 			<p className="py-3.5 text-body-sm text-foreground-muted leading-snug">

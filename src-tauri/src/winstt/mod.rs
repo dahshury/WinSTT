@@ -9,6 +9,9 @@
 /// WinSTT's full nested settings tree (9 tabs) as a specta-typed struct.
 pub mod settings_schema;
 
+/// Pure per-app LLM profile matching and effective-settings projection.
+pub mod app_profiles;
+
 /// CORE settings persistence service: on-disk store I/O + secret seal/open/mask +
 /// cross-field normalization + seed/migrate. Both the `commands` route layer and the
 /// `managers` service layer depend DOWNWARD on this for settings reads (it never

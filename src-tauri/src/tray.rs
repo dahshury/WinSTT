@@ -1,5 +1,5 @@
 use crate::managers::history::{HistoryEntry, HistoryManager};
-use log::{error, info, warn};
+use log::{debug, error};
 use std::sync::Arc;
 use tauri::image::Image;
 use tauri::tray::TrayIcon;
@@ -26,6 +26,13 @@ pub fn get_current_theme(app: &AppHandle) -> AppTheme {
         // On Linux, always use the colored theme
         AppTheme::Colored
     } else {
+        // The Windows tray icon is rendered on the taskbar, whose theme can differ
+        // from the app theme when Personalization uses the Custom color mode.
+        #[cfg(target_os = "windows")]
+        if let Some(theme) = windows_taskbar_theme() {
+            return theme;
+        }
+
         // On other platforms, map system theme to our app theme
         match app.get_webview_window("main") {
             Some(main_window) => {
@@ -38,6 +45,27 @@ pub fn get_current_theme(app: &AppHandle) -> AppTheme {
             None => AppTheme::Dark,
         }
     }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn taskbar_theme_from_registry_value(value: u32) -> Option<AppTheme> {
+    match value {
+        0 => Some(AppTheme::Dark),
+        1 => Some(AppTheme::Light),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_taskbar_theme() -> Option<AppTheme> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let personalize = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+        .ok()?;
+    let system_uses_light: u32 = personalize.get_value("SystemUsesLightTheme").ok()?;
+    taskbar_theme_from_registry_value(system_uses_light)
 }
 
 /// Gets the appropriate icon path for the given theme and state
@@ -188,7 +216,7 @@ pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
             error!("Failed to set tray visibility: {}", e);
         }
         Ok(()) => {
-            info!("Tray visibility set to: {}", visible);
+            debug!("Tray visibility set to: {}", visible);
         }
     }
 }
@@ -205,7 +233,7 @@ pub fn copy_last_transcript(app: AppHandle) -> bool {
     let entry = match history_manager.get_latest_completed_entry() {
         Ok(Some(entry)) => entry,
         Ok(None) => {
-            warn!("No completed transcription history entries available for tray copy.");
+            debug!("No completed transcription history entries available for tray copy");
             return false;
         }
         Err(err) => {
@@ -219,7 +247,7 @@ pub fn copy_last_transcript(app: AppHandle) -> bool {
 
     let text = last_transcript_text(&entry);
     if text.trim().is_empty() {
-        warn!("Last completed transcription is empty; skipping tray copy.");
+        debug!("Last completed transcription is empty; skipping tray copy");
         return false;
     }
 
@@ -228,13 +256,13 @@ pub fn copy_last_transcript(app: AppHandle) -> bool {
         return false;
     }
 
-    info!("Copied last transcript to clipboard via tray.");
+    debug!("Copied last transcript to clipboard via tray");
     true
 }
 
 #[cfg(test)]
 mod tests {
-    use super::last_transcript_text;
+    use super::{AppTheme, last_transcript_text, taskbar_theme_from_registry_value};
     use crate::managers::history::HistoryEntry;
 
     fn build_entry(transcription: &str, post_processed: Option<&str>) -> HistoryEntry {
@@ -269,5 +297,20 @@ mod tests {
     fn falls_back_to_raw_transcription() {
         let entry = build_entry("raw", None);
         assert_eq!(last_transcript_text(&entry), "raw");
+    }
+
+    #[test]
+    fn taskbar_theme_is_dark_when_registry_value_is_zero() {
+        assert_eq!(taskbar_theme_from_registry_value(0), Some(AppTheme::Dark));
+    }
+
+    #[test]
+    fn taskbar_theme_is_light_when_registry_value_is_one() {
+        assert_eq!(taskbar_theme_from_registry_value(1), Some(AppTheme::Light));
+    }
+
+    #[test]
+    fn taskbar_theme_falls_back_when_registry_value_is_invalid() {
+        assert_eq!(taskbar_theme_from_registry_value(2), None);
     }
 }

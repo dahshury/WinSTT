@@ -1,6 +1,22 @@
-import { IPC } from "../ipc-channels";
-import { invokeOrDefault, on, onCast, onTyped, send } from "../ipc-transport";
+import {
+	commands,
+	type Result,
+	type SttModelSnapshot,
+	type SttSwitchKind,
+	type SttSwitchModelRequest,
+	type SttSwitchModelResult,
+	type SttSwitchRollbackSnapshot,
+} from "@/bindings";
+import { NATIVE_EVENTS as IPC } from "../native-events";
+import { commandOrDefault, on, onCast, onTyped } from "../native-boundary";
 import { sttCallMethod } from "./stt-audio";
+
+function unwrapResult<T, E>(result: Result<T, E>): T {
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw result.error;
+}
 
 export const onModelDownloadStart = (
 	cb: (model: string, quantization?: string) => void,
@@ -55,11 +71,11 @@ export const onModelDownloadPaused = (
 		cb(d.model, d.quantization);
 	});
 
-export const cancelDownload = () =>
-	invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOAD, undefined);
+export const cancelDownload = () => commands.winsttCancelDownload();
 
-export const deleteModelCache = (modelId: string) =>
-	invokeOrDefault<void>(IPC.STT_DELETE_MODEL_CACHE, undefined, modelId);
+export const deleteModelCache = async (modelId: string) => {
+	unwrapResult(await commands.deleteModelCache(modelId));
+};
 
 /** Per-quant delete — drops just the weight files matching ``quantization``
  *  from the HF cache of ``modelId``, leaving other quants intact. Powers
@@ -69,11 +85,7 @@ export const deleteModelCache = (modelId: string) =>
 export const deleteModelQuantization = (
 	modelId: string,
 	quantization: string,
-) =>
-	invokeOrDefault<void>(IPC.STT_DELETE_MODEL_QUANTIZATION, undefined, {
-		modelId,
-		quantization,
-	});
+) => commands.deleteModelQuantization(modelId, quantization).then(unwrapResult);
 
 /** Kick off a byte-level pause/resume capable download for one
  *  ``(modelId, quantization)`` tuple. The server downloads into the HF
@@ -83,38 +95,32 @@ export const deleteModelQuantization = (
  *  follow-up ``setModel`` once the download_complete event fires — at
  *  which point the swap is fast because the files are already cached. */
 export const predownloadModelQuant = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.STT_PREDOWNLOAD_QUANT, undefined, {
-		modelId,
-		quantization,
-	});
+	commands.sttPredownloadQuant(modelId, quantization).then(unwrapResult);
 
 /** Pause an in-flight per-quant download. Worker thread exits at the
  *  next chunk; .partial files survive on disk so the next resume picks
  *  up from the current byte offset via HTTP Range. */
 export const pauseModelDownload = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.STT_DOWNLOAD_PAUSE, undefined, {
-		modelId,
-		quantization,
-	});
+	commands.downloadPauseQuant(modelId, quantization).then(unwrapResult);
 
 /** Resume a paused per-quant download. Server re-runs the worker which
  *  skips any files already in cache. */
 export const resumeModelDownload = (modelId: string, quantization: string) =>
-	invokeOrDefault<void>(IPC.STT_DOWNLOAD_RESUME, undefined, {
-		modelId,
-		quantization,
-	});
+	commands.downloadResumeQuant(modelId, quantization).then(unwrapResult);
 
 export const onModelCatalog = (cb: (models: unknown[]) => void) =>
 	onTyped(IPC.STT_MODEL_CATALOG, (d: { models: unknown[] }) => d.models, cb);
 
 export const fetchModelCatalog = () =>
-	invokeOrDefault<unknown[]>(IPC.STT_GET_MODEL_CATALOG, []);
+	commandOrDefault("stt_list_models", () => commands.sttListModels(), []);
 
 // ── Runtime info (active ORT providers — drives the GPU/CPU chip) ──
 export interface RuntimeInfoPayload {
 	device: string;
 	is_gpu: boolean;
+	/** The selected local model is loading weights or warming kernels. Optional for
+	 * compatibility with older backends and lightweight test fixtures. */
+	model_preparing?: boolean;
 	model: string | null;
 	providers: string[];
 	realtime_model: string | null;
@@ -126,25 +132,39 @@ export const onRuntimeInfo = (cb: (info: RuntimeInfoPayload | null) => void) =>
 	);
 
 export const fetchRuntimeInfo = () =>
-	invokeOrDefault<RuntimeInfoPayload | null>(IPC.STT_GET_RUNTIME_INFO, null);
+	commandOrDefault(
+		"get_runtime_info",
+		async () => (await commands.getRuntimeInfo()) as RuntimeInfoPayload,
+		null,
+	);
 
 // ── Model swap (live model reload while server is running) ──
-export type ModelSwapKind = "main" | "realtime";
+export type ModelSwapKind = SttSwitchKind;
 
-export const sttReloadModel = (
-	kind: ModelSwapKind,
-	name: string,
-	quantization?: string,
-) =>
-	send(IPC.STT_RELOAD_MODEL, {
-		kind,
-		name,
-		quantization: quantization ?? null,
-	});
+let sttSwitchSequence = 0;
 
-interface ModelSwapPayload {
-	kind: ModelSwapKind;
+export function nextSttSwitchRequestId(source = "ui"): string {
+	sttSwitchSequence += 1;
+	return `stt-${source}-${Date.now()}-${sttSwitchSequence}`;
+}
+
+/** The sole renderer → backend model activation path. Callers must open their
+ * correlated swap UI before invoking it; the backend owns load, warm, commit,
+ * rollback, and the authoritative terminal snapshot. */
+export function requestSttModelSwitch(
+	request: SttSwitchModelRequest,
+): Promise<SttSwitchModelResult> {
+	return commands.sttSwitchModel(request);
+}
+
+export interface ModelSwapPayload {
+	kind: SttSwitchKind;
 	name: string;
+	requestId: string;
+	/** Backend-assigned monotonic correlation revision. */
+	revision: number;
+	snapshot: SttModelSnapshot;
+	rollback: SttSwitchRollbackSnapshot | null;
 }
 
 /** Stable category codes mirroring the server's ``SwapErrorCategory``.
@@ -260,6 +280,15 @@ export interface ModelStateEntry {
 	 * in which case consumers fall back to the raw selection.
 	 */
 	effective_quantization?: string;
+	/**
+	 * Where each PUBLISHED quant actually runs under the server's current
+	 * accelerator: `"gpu"` (a VRAM-backed EP — DirectML/CUDA) or `"cpu"`
+	 * (RAM-backed). Comes from the per-engine device pin matrix, so
+	 * CPU-pinned engines (Cohere, Kaldi transducers) and per-quant DML
+	 * demotions report `"cpu"` even on GPU hosts. Optional: older servers
+	 * omit it — consumers fall back to the GPU-compatible-quant heuristic.
+	 */
+	device_by_quantization?: Record<string, string>;
 	estimated_bytes: number;
 	id: string;
 }
@@ -276,8 +305,12 @@ export interface ModelsWithStatePayload {
 }
 
 export const fetchModelsWithState = () =>
-	invokeOrDefault<ModelsWithStatePayload | null>(
-		IPC.STT_LIST_MODELS_WITH_STATE,
+	commandOrDefault(
+		"stt_list_models_with_state",
+		async () =>
+			unwrapResult(
+				await commands.sttListModelsWithState(),
+			) as ModelsWithStatePayload,
 		null,
 	);
 
@@ -325,29 +358,36 @@ export interface FitAssessmentEntry {
 }
 
 export const fetchLiveResources = (forceRefresh = false) =>
-	invokeOrDefault<LiveResourcesEntry | null>(IPC.STT_GET_LIVE_RESOURCES, null, {
-		forceRefresh,
-	});
+	commandOrDefault(
+		"get_live_resources",
+		async () =>
+			(await commands.getLiveResources(forceRefresh)) as LiveResourcesEntry,
+		null,
+	);
 
 export const assessDictationFit = (
 	modelId: string,
 	quantization = "",
 	device: string | null = null,
 ) =>
-	invokeOrDefault<FitAssessmentEntry | null>(
-		IPC.STT_ASSESS_DICTATION_FIT,
+	commandOrDefault(
+		"assess_dictation_fit",
+		() =>
+			commands
+				.assessDictationFit(modelId, quantization || null, device)
+				.then((value) => value as FitAssessmentEntry | null),
 		null,
-		{
-			modelId,
-			quantization,
-			device,
-		},
 	);
 
 export const assessOllamaFitOnServer = (sizeBytes: number) =>
-	invokeOrDefault<FitAssessmentEntry | null>(IPC.STT_ASSESS_OLLAMA_FIT, null, {
-		sizeBytes,
-	});
+	commandOrDefault(
+		"assess_ollama_fit",
+		() =>
+			commands
+				.assessOllamaFit(sizeBytes)
+				.then((value) => value as FitAssessmentEntry | null),
+		null,
+	);
 
 export const onModelCacheChanged = (cb: (modelId: string) => void) =>
 	on(IPC.STT_MODEL_CACHE_CHANGED, (data) => {
@@ -359,7 +399,7 @@ export const onModelCacheChanged = (cb: (modelId: string) => void) =>
 
 // Loopback
 export const loopbackListDevices = () =>
-	invokeOrDefault<
+	commandOrDefault<
 		Array<{
 			id?: string;
 			index: number;
@@ -368,15 +408,13 @@ export const loopbackListDevices = () =>
 			maxOutputChannels: number;
 			isDefault?: boolean;
 		}>
-	>(IPC.LOOPBACK_LIST_DEVICES, []);
+	>("loopback_list_devices", () => commands.loopbackListDevices(), []);
 
-export const loopbackStart = (deviceIndex: number, modelId: string) =>
-	invokeOrDefault<void>(IPC.LOOPBACK_START, undefined, {
-		deviceIndex,
-		modelId,
-	});
+export const loopbackStart = async (deviceIndex: number, modelId: string) => {
+	unwrapResult(await commands.startListen(deviceIndex, modelId));
+};
 
-export const loopbackStop = () => send(IPC.LOOPBACK_STOP);
+export const loopbackStop = () => void commands.stopListen();
 
 export const onLoopbackStarted = (cb: (deviceName: string) => void) =>
 	onTyped(

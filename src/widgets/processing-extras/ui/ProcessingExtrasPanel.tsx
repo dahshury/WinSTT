@@ -37,15 +37,12 @@ type LlmT = ReturnType<typeof useTranslations<"llm">>;
 type ContextAppMode = NonNullable<GeneralSettings["contextAppMode"]>;
 type FormattingOptionKey =
 	| "formatBasicPunctuationCasing"
-	| "formatSpokenPunctuationCommands"
-	| "formatSpokenSymbolCommands"
-	| "formatQuoteCommands"
+	| "formatSpokenCommands"
 	| "formatFillerRepeatCleanup";
 
 interface FormattingOption {
 	key: FormattingOptionKey;
 	label: string;
-	linkedKeys?: readonly FormattingOptionKey[];
 	tooltip: string;
 }
 
@@ -57,17 +54,10 @@ const FORMATTING_OPTIONS = [
 			"Only for raw STT output that lacks written-text punctuation/capitalization.",
 	},
 	{
-		key: "formatSpokenPunctuationCommands",
-		linkedKeys: ["formatSpokenSymbolCommands"],
+		key: "formatSpokenCommands",
 		label: "Spoken punctuation and code commands",
 		tooltip:
-			'Turns spoken punctuation, layout, and code commands such as "comma", "new line", "dash dash save", and "example dot com" into symbols.',
-	},
-	{
-		key: "formatQuoteCommands",
-		label: "Quote commands",
-		tooltip:
-			'Turns paired commands such as "quote Save changes unquote" into quoted text.',
+			'Turns spoken punctuation, layout, quote, and code commands such as "comma", "new line", "quote Save changes unquote", "dash dash save", and "example dot com" into symbols.',
 	},
 	{
 		key: "formatFillerRepeatCleanup",
@@ -82,24 +72,14 @@ const LISTEN_MODE_PROCESSING_DISABLED_TOOLTIP =
 const NATIVE_FORMATTING_KEY_BY_SETTING = {
 	formatBasicPunctuationCasing: "basicPunctuationCasing",
 	formatFillerRepeatCleanup: "fillerRepeatCleanup",
-	formatQuoteCommands: "quoteCommands",
-	formatSpokenPunctuationCommands: "spokenPunctuationCommands",
-	formatSpokenSymbolCommands: "spokenSymbolCommands",
+	formatSpokenCommands: "spokenCommands",
 } as const satisfies Record<FormattingOptionKey, ModelNativeFormattingKey>;
 
 const NATIVE_FORMATTING_LABEL = {
 	basicPunctuationCasing: "punctuation and casing",
 	fillerRepeatCleanup: "filler/repeat cleanup",
-	quoteCommands: "quote commands",
-	spokenPunctuationCommands: "spoken punctuation commands",
-	spokenSymbolCommands: "code and symbol commands",
+	spokenCommands: "spoken punctuation, quote, and code commands",
 } as const satisfies Record<ModelNativeFormattingKey, string>;
-
-function formattingOptionKeys(
-	option: FormattingOption,
-): readonly FormattingOptionKey[] {
-	return option.linkedKeys ? [option.key, ...option.linkedKeys] : [option.key];
-}
 
 function nativeFormattingKey(
 	key: FormattingOptionKey,
@@ -118,18 +98,16 @@ function formattingOptionNeedsDeterministicPass(
 	option: FormattingOption,
 	nativeFormatting: ModelNativeFormatting,
 ): boolean {
-	return formattingOptionKeys(option).some((key) =>
-		needsDeterministicFormatting(key, nativeFormatting),
-	);
+	return needsDeterministicFormatting(option.key, nativeFormatting);
 }
 
 function deterministicFormattingKeys(
 	option: FormattingOption,
 	nativeFormatting: ModelNativeFormatting,
 ): readonly FormattingOptionKey[] {
-	return formattingOptionKeys(option).filter((key) =>
-		needsDeterministicFormatting(key, nativeFormatting),
-	);
+	return needsDeterministicFormatting(option.key, nativeFormatting)
+		? [option.key]
+		: [];
 }
 
 function formatList(labels: readonly string[]): string {
@@ -154,23 +132,17 @@ function optionNativeFormattingLabels(
 	option: FormattingOption,
 	nativeFormatting: ModelNativeFormatting,
 ): string[] {
-	return formattingOptionKeys(option).flatMap((key) => {
-		const nativeKey = nativeFormattingKey(key);
-		return nativeFormatting[nativeKey]
-			? [NATIVE_FORMATTING_LABEL[nativeKey]]
-			: [];
-	});
+	const nativeKey = nativeFormattingKey(option.key);
+	return nativeFormatting[nativeKey]
+		? [NATIVE_FORMATTING_LABEL[nativeKey]]
+		: [];
 }
 
 function formattingDefaultsPatch(): Partial<QualitySettings> {
 	return {
 		formatBasicPunctuationCasing:
 			DEFAULT_SETTINGS.quality.formatBasicPunctuationCasing,
-		formatSpokenPunctuationCommands:
-			DEFAULT_SETTINGS.quality.formatSpokenPunctuationCommands,
-		formatSpokenSymbolCommands:
-			DEFAULT_SETTINGS.quality.formatSpokenSymbolCommands,
-		formatQuoteCommands: DEFAULT_SETTINGS.quality.formatQuoteCommands,
+		formatSpokenCommands: DEFAULT_SETTINGS.quality.formatSpokenCommands,
 		formatFillerRepeatCleanup:
 			DEFAULT_SETTINGS.quality.formatFillerRepeatCleanup,
 	};
@@ -180,12 +152,10 @@ function formattingAtDefault(
 	quality: QualitySettings,
 	nativeFormatting: ModelNativeFormatting,
 ): boolean {
-	return FORMATTING_OPTIONS.every((option) =>
-		formattingOptionKeys(option).every(
-			(key) =>
-				!needsDeterministicFormatting(key, nativeFormatting) ||
-				quality[key] === DEFAULT_SETTINGS.quality[key],
-		),
+	return FORMATTING_OPTIONS.every(
+		(option) =>
+			!needsDeterministicFormatting(option.key, nativeFormatting) ||
+			quality[option.key] === DEFAULT_SETTINGS.quality[option.key],
 	);
 }
 

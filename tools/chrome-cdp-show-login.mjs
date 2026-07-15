@@ -123,8 +123,8 @@ async function main() {
 	const ap = waitAttach(firstTarget);
 	await send("Target.attachToTarget", { targetId: firstTarget, flatten: true });
 	const s = await ap;
-	await send("Page.enable", {}, s).catch(() => {});
-	await send("Page.bringToFront", {}, s).catch(() => {});
+	await send("Page.enable", {}, s);
+	await send("Page.bringToFront", {}, s);
 
 	// Open the remaining logins as tabs in the same window.
 	for (let i = 1; i < LOGINS.length; i++) {

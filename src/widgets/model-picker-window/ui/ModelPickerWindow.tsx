@@ -63,7 +63,6 @@ export function ModelPickerWindow() {
 
 	const modelSettings = useSettingsStore((s) => s.settings.model);
 	const currentModel = modelSettings?.model;
-	const update = useSettingsStore((s) => s.updateModelSettings);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
 	const openrouterKey = useSettingsStore(
 		(s) => s.settings.llm.openrouterApiKey,
@@ -112,7 +111,6 @@ export function ModelPickerWindow() {
 		deviceValue,
 		getModel,
 		statesById,
-		update,
 		isQuantDownloading,
 		() => fileQueueBusy,
 	);

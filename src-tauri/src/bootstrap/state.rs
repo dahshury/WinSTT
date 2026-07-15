@@ -115,12 +115,11 @@ pub(crate) fn schedule_vad_preload(app_handle: &AppHandle, recording: Arc<AudioR
 pub(crate) fn activate_interactive_runtime(app_handle: &AppHandle) {
     crate::shortcut::init_shortcuts(app_handle);
 
-    #[cfg(not(target_os = "macos"))]
     if app_handle.try_state::<crate::input::EnigoState>().is_none() {
         match crate::input::EnigoState::new() {
             Ok(enigo_state) => {
                 app_handle.manage(enigo_state);
-                log::info!("Enigo initialized (paste pipeline ready)");
+                log::debug!("Enigo initialized (paste pipeline ready)");
             }
             Err(e) => log::warn!("Enigo init failed: {e}"),
         }

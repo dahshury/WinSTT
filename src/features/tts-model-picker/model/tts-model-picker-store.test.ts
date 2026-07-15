@@ -7,6 +7,9 @@ const initial = useSettingsStore.getState().settings;
 beforeEach(() => {
 	useSettingsStore.setState({ settings: { ...initial } });
 	useTtsModelPickerStore.getState().close();
+	// `close()` deliberately preserves the pending turn-on intent, so tests
+	// must reset it explicitly.
+	useTtsModelPickerStore.setState({ pendingEnable: null });
 });
 
 afterEach(() => {
@@ -108,5 +111,64 @@ describe("useTtsModelPickerStore", () => {
 		const before = useSettingsStore.getState().settings.tts.model;
 		useTtsModelPickerStore.getState().commitInstalled("ghost-model");
 		expect(useSettingsStore.getState().settings.tts.model).toBe(before);
+	});
+
+	test("a download started in a turn-on session keeps its commit rights after close", () => {
+		// The background-download UX: enable toggle → picker opens → download
+		// starts → user closes the picker (or switches apps). When the download
+		// lands, the toggle must still flip on.
+		useTtsModelPickerStore.getState().openFor(true, "local");
+		useTtsModelPickerStore.getState().trackEnableDownload("piper-en-us");
+		useTtsModelPickerStore.getState().close();
+		useTtsModelPickerStore.getState().commitInstalled("piper-en-us");
+		const tts = useSettingsStore.getState().settings.tts;
+		expect(tts.model).toBe("piper-en-us");
+		expect(tts.enabled).toBe(true);
+		expect(tts.source).toBe("local");
+		expect(useTtsModelPickerStore.getState().pendingEnable).toBeNull();
+	});
+
+	test("an unrelated completion while closed does NOT commit, even with a pending intent", () => {
+		useTtsModelPickerStore.getState().openFor(true);
+		useTtsModelPickerStore.getState().trackEnableDownload("piper-en-us");
+		useTtsModelPickerStore.getState().close();
+		const before = useSettingsStore.getState().settings.tts;
+		useTtsModelPickerStore.getState().commitInstalled("kokoro-82m");
+		const tts = useSettingsStore.getState().settings.tts;
+		expect(tts.model).toBe(before.model);
+		expect(tts.enabled).toBe(before.enabled);
+		// The parked download is still eligible.
+		expect(useTtsModelPickerStore.getState().pendingEnable?.models).toEqual([
+			"piper-en-us",
+		]);
+	});
+
+	test("cancelling the last pending download clears the parked intent", () => {
+		useTtsModelPickerStore.getState().openFor(true);
+		useTtsModelPickerStore.getState().trackEnableDownload("piper-en-us");
+		useTtsModelPickerStore.getState().close();
+		useTtsModelPickerStore.getState().untrackEnableDownload("piper-en-us");
+		expect(useTtsModelPickerStore.getState().pendingEnable).toBeNull();
+		const before = useSettingsStore.getState().settings.tts;
+		useTtsModelPickerStore.getState().commitInstalled("piper-en-us");
+		expect(useSettingsStore.getState().settings.tts.enabled).toBe(
+			before.enabled,
+		);
+	});
+
+	test("browse-session downloads never arm the pending intent", () => {
+		useTtsModelPickerStore.getState().openFor(false);
+		useTtsModelPickerStore.getState().trackEnableDownload("piper-en-us");
+		expect(useTtsModelPickerStore.getState().pendingEnable).toBeNull();
+	});
+
+	test("a live commit resolves any parked intent (latest interaction wins)", () => {
+		useTtsModelPickerStore.getState().openFor(true);
+		useTtsModelPickerStore.getState().trackEnableDownload("piper-en-us");
+		useTtsModelPickerStore.getState().close();
+		// User reopens and settles on a cached model instead.
+		useTtsModelPickerStore.getState().openFor(true);
+		useTtsModelPickerStore.getState().commitInstalled("kokoro-82m");
+		expect(useTtsModelPickerStore.getState().pendingEnable).toBeNull();
 	});
 });

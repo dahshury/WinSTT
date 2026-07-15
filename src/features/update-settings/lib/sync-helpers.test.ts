@@ -487,24 +487,6 @@ describe("deriveIpcLoadUpdate", () => {
 		expect(result.nextFromIpcLoad).toBe(true);
 	});
 
-	test("migrates a local-only dictionary into the central settings snapshot", () => {
-		const localDictionary = [{ id: "local-1", term: "Kubernetes" }];
-		const loadBaseline = {
-			dictionary: localDictionary,
-			snippets: [],
-		} as never;
-		const loaded = {
-			dictionary: [],
-			snippets: [],
-		} as never;
-		const current = loadBaseline;
-
-		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
-
-		expect(result.merged.dictionary).toEqual(localDictionary);
-		expect(result.nextFromIpcLoad).toBe(false);
-	});
-
 	test("does not let a stale local dictionary overwrite central settings", () => {
 		const centralDictionary = [{ id: "central-1", term: "DirectML" }];
 		const loadBaseline = {
@@ -521,64 +503,6 @@ describe("deriveIpcLoadUpdate", () => {
 
 		expect(result.merged.dictionary).toEqual(centralDictionary);
 		expect(result.nextFromIpcLoad).toBe(true);
-	});
-
-	test("migrates local-only snippets into the central settings snapshot", () => {
-		const localSnippets = [
-			{ id: "snippet-1", trigger: "/sig", expansion: "kind regards" },
-		];
-		const loadBaseline = {
-			dictionary: [],
-			snippets: localSnippets,
-		} as never;
-		const loaded = {
-			dictionary: [],
-			snippets: [],
-		} as never;
-		const current = loadBaseline;
-
-		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
-
-		expect(result.merged.snippets).toEqual(localSnippets);
-		expect(result.nextFromIpcLoad).toBe(false);
-	});
-
-	test("does not resurrect a blank-only local collection over the empty backend", () => {
-		const loadBaseline = {
-			dictionary: [{ id: "blank-1", term: "" }],
-			snippets: [{ id: "blank-2", trigger: "", expansion: "" }],
-		} as never;
-		const loaded = {
-			dictionary: [],
-			snippets: [],
-		} as never;
-		const current = loadBaseline;
-
-		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
-
-		expect(result.merged.dictionary).toEqual([]);
-		expect(result.merged.snippets).toEqual([]);
-	});
-
-	test("migrates only the meaningful rows, dropping trailing blanks", () => {
-		const loadBaseline = {
-			dictionary: [],
-			snippets: [
-				{ id: "real-1", trigger: "/sig", expansion: "kind regards" },
-				{ id: "blank-1", trigger: "", expansion: "" },
-			],
-		} as never;
-		const loaded = {
-			dictionary: [],
-			snippets: [],
-		} as never;
-		const current = loadBaseline;
-
-		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
-
-		expect(result.merged.snippets).toEqual([
-			{ id: "real-1", trigger: "/sig", expansion: "kind regards" },
-		]);
 	});
 });
 

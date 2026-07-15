@@ -1,23 +1,23 @@
+import { Button as BaseButton } from "@base-ui/react/button";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect } from "react";
-import { useTranslations } from "use-intl";
-import { commands } from "@/bindings";
-import { useSettingsStore } from "@/entities/setting";
-import { useDownloadListener } from "@/features/model-download";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { commands, type PermissionPreflightStatus } from "@/bindings";
 import {
 	type SettingsHydrationStatus,
 	useSettingsHydrationStore,
-	useSyncSettings,
-} from "@/features/update-settings";
-import { publicAsset } from "@/shared/lib/public-asset";
+	useSettingsStore,
+} from "@/entities/setting";
+import { useDownloadListener } from "@/features/model-download";
+import { useSyncSettings } from "@/features/update-settings";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
-import { Button } from "@/shared/ui/button";
+import { useTransparentBody } from "@/shared/lib/window-effects";
 import { Spinner } from "@/shared/ui/spinner";
-import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	OnboardingWizard,
+	PermissionPreflightPanel,
 	useOnboardingWizardStore,
 } from "@/widgets/onboarding-wizard";
 
@@ -25,13 +25,10 @@ import {
  * First-run wizard view. Mirrors the SettingsPage shell so the window reads
  * as first-party WinSTT chrome rather than a tacked-on dialog:
  *
- *   - Page substrate: the shared `settings-window-shell` gradient + ambient
- *     noise overlay — the exact same field Settings paints behind its sidebar
- *     and content-card gutter.
- *   - Titlebar: 32px frameless bar, surface-2 (Elevated offset=1) with a
- *     Docker-blue hairline at the very top, the WinSTT app icon, mono-caps
- *     "WinSTT Setup" title, and a close button on the trailing edge that
- *     turns red on hover. The whole strip is draggable except the close.
+ *   - Transparent viewport gutter around the renderer-owned rounded shell,
+ *     matching the Settings window's frameless card and CSS shadow.
+ *   - No titlebar band: the close button floats in the content card's top-right
+ *     corner and the thin gutter above the card remains draggable.
  *   - Body: the `settings-content-frame` + `settings-content-card` pair,
  *     identical to SettingsPage — a thin surface-1 gutter around an elevated
  *     surface-3 card (same bloom, ring, radius). Lifting to surface-3 makes
@@ -44,9 +41,9 @@ import {
  * only in this window's zustand store and disappear when the wizard closes.
  */
 export function OnboardingPage() {
-	const t = useTranslations("onboarding");
 	useSyncSettings();
 	useDownloadListener();
+	useTransparentBody();
 	const settings = useSettingsStore((s) => s.settings);
 	const hydrationStatus = useSettingsHydrationStore((s) => s.status);
 	const hydrationError = useSettingsHydrationStore((s) => s.error);
@@ -62,6 +59,112 @@ export function OnboardingPage() {
 		void commands.quitApp();
 	});
 	const settingsReady = settingsReadyForWizard(hydrationStatus);
+	const [permissionStatus, setPermissionStatus] =
+		useState<PermissionPreflightStatus | null>(null);
+	const [permissionBusy, setPermissionBusy] = useState(true);
+	const [permissionError, setPermissionError] = useState<string | null>(null);
+	const awaitingGrantRef = useRef(false);
+	const preflightInFlightRef =
+		useRef<Promise<PermissionPreflightStatus | null> | null>(null);
+
+	const acceptPermissionResult = useCallback(
+		(result: Awaited<ReturnType<typeof commands.permissionRunPreflight>>) => {
+			if (result.status === "error") {
+				throw new Error(result.error);
+			}
+			setPermissionStatus(result.data);
+			setPermissionError(null);
+			if (result.data.ready) {
+				awaitingGrantRef.current = false;
+			}
+			return result.data;
+		},
+		[],
+	);
+
+	const runPreflight = useCallback(() => {
+		if (preflightInFlightRef.current) {
+			return preflightInFlightRef.current;
+		}
+		if (!hasTauriRuntime()) {
+			const browserStatus: PermissionPreflightStatus = {
+				platform: "other",
+				microphone: "not_required",
+				accessibility: "not_required",
+				ready: true,
+			};
+			setPermissionStatus(browserStatus);
+			setPermissionError(null);
+			setPermissionBusy(false);
+			return Promise.resolve(browserStatus);
+		}
+		setPermissionBusy(true);
+		const pending = commands
+			.permissionRunPreflight()
+			.then(acceptPermissionResult)
+			.catch((error: unknown) => {
+				setPermissionError(
+					error instanceof Error ? error.message : String(error),
+				);
+				return null;
+			})
+			.finally(() => {
+				preflightInFlightRef.current = null;
+				setPermissionBusy(false);
+			});
+		preflightInFlightRef.current = pending;
+		return pending;
+	}, [acceptPermissionResult]);
+
+	const requestPermission = useCallback(
+		async (kind: "microphone" | "accessibility") => {
+			setPermissionBusy(true);
+			setPermissionError(null);
+			awaitingGrantRef.current = true;
+			try {
+				const result =
+					kind === "microphone"
+						? await commands.permissionRequestMicrophone()
+						: await commands.permissionRequestAccessibility();
+				acceptPermissionResult(result);
+			} catch (error) {
+				setPermissionError(
+					error instanceof Error ? error.message : String(error),
+				);
+			} finally {
+				setPermissionBusy(false);
+			}
+		},
+		[acceptPermissionResult],
+	);
+
+	useEffect(() => {
+		void runPreflight();
+	}, [runPreflight]);
+
+	// System privacy panels live outside the webview. Recheck while waiting for a
+	// grant and immediately when the user returns, without continuously polling
+	// once the preflight is settled.
+	useEffect(() => {
+		const recheckOnReturn = () => {
+			if (document.visibilityState === "visible") {
+				void runPreflight();
+			}
+		};
+		const pollWhileWaiting = () => {
+			if (awaitingGrantRef.current) {
+				recheckOnReturn();
+			}
+		};
+		window.addEventListener("focus", recheckOnReturn);
+		document.addEventListener("visibilitychange", recheckOnReturn);
+		const poll = window.setInterval(pollWhileWaiting, 1000);
+		return () => {
+			window.removeEventListener("focus", recheckOnReturn);
+			document.removeEventListener("visibilitychange", recheckOnReturn);
+			window.clearInterval(poll);
+		};
+	}, [runPreflight]);
 
 	useEffect(() => {
 		if (settingsReady) {
@@ -71,71 +174,58 @@ export function OnboardingPage() {
 
 	return (
 		<SurfaceProvider value={1}>
-			<div className="noise-overlay settings-window-shell flex h-dvh min-h-dvh flex-col bg-surface-1">
-				{/* Title bar — surface-2 substrate with a top-light gradient
-				    overlay, a Docker-blue accent hairline at the top edge
-				    (single brand moment, matching Settings), and the WinSTT app
-				    icon anchoring the title text (matching the main window). */}
-				<Elevated
-					className="titlebar-drag relative flex h-8 shrink-0 items-stretch border-border border-b bg-gradient-to-b from-[var(--color-surface-3)]/45 to-transparent"
-					offset={1}
-					shadowLevel={1}
-				>
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
-					/>
-					<div className="flex items-center gap-2 pl-3">
-						<img
-							alt=""
-							className="size-4"
-							draggable={false}
-							height={16}
-							src={publicAsset("/icon-32.png")}
-							width={16}
+			<div className="flex h-dvh min-h-dvh p-5">
+				<div className="noise-overlay settings-window-shell relative flex min-w-0 flex-1 overflow-hidden rounded-[1.35rem] shadow-settings-window ring-1 ring-divider-strong">
+					{/* Content frame + card — the same renderer-owned shell Settings
+					    uses. The transparent viewport gutter leaves room for the CSS
+					    shadow without exposing a square native window. */}
+					<div className="settings-content-frame relative min-w-0 flex-1 p-2">
+						<div
+							aria-hidden="true"
+							className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-1.5"
 						/>
-						<span className="font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">
-							{t("windowTitle")}
-						</span>
-					</div>
-					<div className="flex-1" />
-					<div className="titlebar-no-drag flex items-center">
-						<Tooltip content="Quit WinSTT">
-							<Button
+						<Elevated
+							className="settings-content-card relative flex h-full flex-col overflow-hidden rounded-[1.35rem] ring-1 ring-divider-strong"
+							offset={2}
+							shadowLevel={5}
+						>
+							<BaseButton
 								aria-label="Quit WinSTT"
-								className="group flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error/85 hover:text-on-error"
+								className="titlebar-no-drag group absolute end-1.5 top-1.5 z-titlebar flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-on-error focus-visible:ring-2 focus-visible:ring-accent"
+								type="button"
 								{...quitActivation}
 							>
 								<HugeiconsIcon
 									className="transition-transform duration-150 ease-out group-hover:scale-110"
 									icon={Cancel01Icon}
-									size={12}
+									size={15}
 								/>
-							</Button>
-						</Tooltip>
+							</BaseButton>
+							{permissionStatus?.ready && settingsReady ? (
+								<OnboardingWizard />
+							) : permissionStatus?.ready ? (
+								<OnboardingSettingsHydrationState
+									error={hydrationError}
+									status={hydrationStatus}
+								/>
+							) : (
+								<PermissionPreflightPanel
+									busy={permissionBusy}
+									error={permissionError}
+									onRequestAccessibility={() => {
+										void requestPermission("accessibility");
+									}}
+									onRequestMicrophone={() => {
+										void requestPermission("microphone");
+									}}
+									onRetry={() => {
+										void runPreflight();
+									}}
+									status={permissionStatus}
+								/>
+							)}
+						</Elevated>
 					</div>
-				</Elevated>
-
-				{/* Content frame + card — the SAME shell SettingsPage uses. A thin
-				    surface-1 gutter (window-shell gradient flows through) wraps an
-				    elevated surface-3 content card carrying the identical bloom,
-				    ring, and 1.35rem radius. The surface-3 substrate is what lifts
-				    every wizard control to surface-5, matching every settings panel. */}
-				<div className="settings-content-frame relative min-w-0 flex-1 p-2">
-					<Elevated
-						className="settings-content-card relative flex h-full flex-col overflow-hidden rounded-[1.35rem] ring-1 ring-divider-strong"
-						offset={2}
-						shadowLevel={5}
-					>
-						{settingsReady ? (
-							<OnboardingWizard />
-						) : (
-							<OnboardingSettingsHydrationState
-								error={hydrationError}
-								status={hydrationStatus}
-							/>
-						)}
-					</Elevated>
 				</div>
 			</div>
 		</SurfaceProvider>

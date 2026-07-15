@@ -21,6 +21,7 @@ pub mod llm_manager;
 pub mod loopback_manager;
 pub mod ollama_manager;
 pub mod transcode;
+pub mod transcript_export;
 pub mod tts_download_manager;
 pub mod tts_manager;
 pub mod wakeword_manager;

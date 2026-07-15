@@ -1,22 +1,24 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { nativeEventName } from "./native-boundary";
+import { NATIVE_EVENTS } from "./native-events";
 
 // ── Emit-coverage guard (the test that would have caught the prefix-drift bugs) ──
 //
 // Backend events cross the IPC boundary as raw STRINGS: Rust emits `app.emit(name,
-// …)` and the renderer listens via the adapter ROUTE `event: "name"` value. tsc
+// …)` and the renderer listens directly through Tauri's event API. tsc
 // CANNOT see across this boundary — twice in this repo's history the renderer
 // listened on one spelling (`stt:vad-sensitivity-adapted`) while the backend
 // emitted another, and the event silently never arrived. There was no test.
 //
 // This test asserts BOTH directions of the contract:
-//   A) Every event the renderer ROUTE listens on is actually emitted by the
+//   A) Every event the renderer listens on is actually emitted by the
 //      backend (a string literal in `src-tauri/src/**`, OR a value of a const in
 //      the canonical `names` module) — or it is an explicitly-allowlisted dead
 //      route (documented below).
 //   B) Every canonical backend event name (`names::*` in events.rs) has a
-//      frontend listener (a ROUTE event value or an adapter `listen("…")` call)
+//      frontend listener (a declared event channel or direct `listen("…")` call)
 //      — or it is an explicitly-allowlisted Rust-internal event.
 //
 // New prefix drift (rename one side, forget the other) fails this test instead of
@@ -57,24 +59,18 @@ function collectCaptures(source: string, re: RegExp): Set<string> {
 }
 
 // ── Frontend side ───────────────────────────────────────────────────────────────
-const adapterSource = read("native-bridge-adapter.ts");
+const runtimeSource = read("native-runtime.ts");
 
-/** Event strings the renderer ROUTE listens on: every `event: "…"` in ROUTE. */
+/** Canonical event strings declared as renderer subscriptions. */
 function routeEventNames(): Set<string> {
-	const start = adapterSource.indexOf("const ROUTE:");
-	const end = adapterSource.indexOf("// ── Event payload reshape", start);
-	if (start === -1 || end === -1 || end <= start) {
-		throw new Error("Could not isolate native bridge ROUTE table");
-	}
-	return collectCaptures(
-		adapterSource.slice(start, end),
-		/event:\s*"([^"]+)"/g,
+	return new Set(
+		Object.values(NATIVE_EVENTS).map((channel) => nativeEventName(channel)),
 	);
 }
 
-/** Event strings the adapter listens on directly via `evt.listen("…")`. */
+/** Event strings the runtime bootstrap listens on directly. */
 function adapterListenNames(): Set<string> {
-	return collectCaptures(adapterSource, /evt\.listen\(\s*"([^"]+)"/g);
+	return collectCaptures(runtimeSource, /listen(?:<[^>]+>)?\(\s*"([^"]+)"/g);
 }
 
 // ── Backend side ─────────────────────────────────────────────────────────────────
@@ -174,7 +170,7 @@ const emittable = backendEmittableNames();
 const names = namesModuleValues();
 const listened = new Set<string>([...route, ...adapterListenNames()]);
 
-describe("IPC emit coverage (renderer ROUTE ↔ backend emits)", () => {
+describe("native event coverage (renderer listeners ↔ backend emits)", () => {
 	test("the extractors find a non-trivial set (guards against a broken regex / moved file)", () => {
 		expect(route.size).toBeGreaterThan(50);
 		expect(emittable.size).toBeGreaterThan(50);
@@ -182,7 +178,7 @@ describe("IPC emit coverage (renderer ROUTE ↔ backend emits)", () => {
 		expect(rustSources.length).toBeGreaterThan(100);
 	});
 
-	test("every ROUTE event the renderer listens on is emitted by the backend (or allowlisted)", () => {
+	test("every renderer event listener is emitted by the backend (or allowlisted)", () => {
 		const missing = [...route]
 			.filter(
 				(ev) =>

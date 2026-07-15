@@ -49,9 +49,13 @@ export interface PlaybackState {
 	hasStarted: boolean;
 	loading: boolean;
 	playing: boolean;
+	/** Playback speed multiplier (1 = normal). Applied live to the `<audio>` element. */
+	rate: number;
 	/** Jump the playhead to `seconds` (word click / seek-bar drag). Highlights and
 	 *  the bar follow immediately, whether playing or paused. */
 	seek: (seconds: number) => void;
+	/** Set the playback speed (1 / 1.5 / 2). Takes effect immediately, playing or paused. */
+	setRate: (rate: number) => void;
 	toggle: () => void;
 	words: WordTiming[] | null;
 }
@@ -97,6 +101,10 @@ export function useHistoryPlayback(
 	const [currentTime, setCurrentTime] = useState(0);
 	const [duration, setDuration] = useState(0);
 	const [hasStarted, setHasStarted] = useState(false);
+	const [rate, setRateState] = useState(1);
+	// Mirrors `rate` for `beginPlayback`, which creates the `<audio>` element inside
+	// an async closure that would otherwise capture a stale rate.
+	const rateRef = useRef(1);
 
 	useEffect(
 		() => () => {
@@ -160,6 +168,7 @@ export function useHistoryPlayback(
 			el.onloadedmetadata = captureDuration;
 			el.ondurationchange = captureDuration;
 			captureDuration();
+			el.playbackRate = rateRef.current;
 			audioRef.current = el;
 			setHasStarted(true);
 		}
@@ -208,6 +217,17 @@ export function useHistoryPlayback(
 		setCurrentTime(clamped);
 	};
 
+	// Change the playback speed. The `<audio>` element applies it live (playing or
+	// paused); the ref keeps `beginPlayback`'s element creation in sync so a rate
+	// picked before first play carries over.
+	const setRate = (next: number) => {
+		rateRef.current = next;
+		setRateState(next);
+		if (audioRef.current) {
+			audioRef.current.playbackRate = next;
+		}
+	};
+
 	// Highlight follows the playhead whenever the clip is loaded — not just while
 	// playing — so seeking (or a word click) relights the right word when paused.
 	const activeIndex =
@@ -219,7 +239,9 @@ export function useHistoryPlayback(
 		hasStarted,
 		loading,
 		playing,
+		rate,
 		seek,
+		setRate,
 		toggle,
 		words,
 	};

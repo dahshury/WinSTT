@@ -5,16 +5,17 @@
 // DEPENDENCY DIRECTION: this is a service-tier module (sits below both the
 // `winstt::commands` route layer and the `winstt::managers` / app-level service
 // layer). Managers and commands BOTH depend DOWNWARD on it for settings reads —
-// the hot recording loops and the legacy app code no longer read settings through
+// the hot recording loops and backend services no longer read settings through
 // a route-layer command module. It depends only on the pure-logic tiers
-// (`settings_schema`, `secret_storage`, `sync_ext`) and the legacy `crate::settings`
+// (`settings_schema`, `secret_storage`, `sync_ext`) and the backend `crate::settings`
 // core; it never reaches back up into commands/managers.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
 use tauri::AppHandle;
 use tauri_plugin_store::{Store, StoreExt};
 
@@ -76,7 +77,7 @@ fn store_path() -> PathBuf {
     match RESOLVED_STORE_DIR.get() {
         Some(dir) => dir.join(WINSTT_SETTINGS_FILE),
         // Pre-resolution fallback (should not happen in practice — both store
-        // constructors resolve first): the legacy portable-aware relative path.
+        // constructors resolve first): the portable-aware relative path.
         None => crate::portable::store_path(WINSTT_SETTINGS_FILE),
     }
 }
@@ -109,6 +110,18 @@ fn backup_store_path() -> PathBuf {
 /// call from any thread.
 static SETTINGS_STORE: OnceLock<Arc<Store<tauri::Wry>>> = OnceLock::new();
 static SETTINGS_RAW_CACHE: OnceLock<Mutex<Option<WinsttSettings>>> = OnceLock::new();
+
+/// Monotonic process-local revision for the canonical settings snapshot.
+///
+/// Every durable settings write advances this counter while holding
+/// `SETTINGS_WRITE_LOCK`. Renderer clients use it for optimistic concurrency:
+/// a patch based on an older snapshot is rejected and rebased instead of
+/// silently overwriting a newer write from another window.
+static SETTINGS_REVISION: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn settings_revision() -> u64 {
+    SETTINGS_REVISION.load(Ordering::Acquire)
+}
 
 /// Build + cache the settings store handle on the MAIN thread. MUST be called once from
 /// the tauri setup hook BEFORE any background thread (the spawned startup thread, the
@@ -182,7 +195,7 @@ fn update_raw_settings_cache(settings: &WinsttSettings) {
 ///
 /// All four mutating paths are unguarded read→merge→write spans over the SAME store
 /// key from different threads — the renderer's per-utterance `{audio}` patch, the
-/// LLM learning thread's `{dictation}` appends, the TTS pool, the legacy per-field
+/// LLM learning thread's `{dictation}` appends, the TTS pool, the per-field
 /// setters, and the reader-backfill in `settings::store::get_settings`. Without a
 /// lock two interleaving patches read the same `previous`, each grafts only its own
 /// section, and whichever writes last silently drops the other's section. Holding
@@ -195,7 +208,7 @@ fn update_raw_settings_cache(settings: &WinsttSettings) {
 ///     themselves call `get_settings` / `read_settings`) and the renderer broadcast
 ///     run AFTER the guard is dropped.
 ///   * `write_core_settings` re-reads the live tree UNDER the lock and grafts only
-///     `core`, so a legacy setter can never lose a renderer-owned section.
+///     `core`, so a backend setter can never lose a renderer-owned section.
 ///   * `settings::store::get_settings` computes its backfill lock-free, then persists
 ///     it through `write_core_settings` (a single lock acquisition), so the reader's
 ///     backfill write can't lose a concurrently-written section and never re-enters.
@@ -227,8 +240,7 @@ pub(crate) fn with_settings_write_lock<R>(f: impl FnOnce() -> R) -> R {
 /// This is the single read path every consumer uses (managers for LLM / cloud-STT /
 /// verify read API keys straight off the returned struct). Renderer-facing commands
 /// must use `read_settings_for_renderer` instead of masking this internal view.
-/// The on-disk store holds the sealed `enc:v1:` envelopes; legacy plaintext (no
-/// prefix) passes through unchanged.
+/// The on-disk store holds sealed `enc:v1:` envelopes.
 ///
 /// Defaults cleanly on a missing / partial blob — every field is `#[serde(default)]`,
 /// mirroring Zod `.catch`.
@@ -316,7 +328,7 @@ fn parse_settings_value(value: serde_json::Value) -> Result<WinsttSettings, Stri
     // its default. A key that is PRESENT but wrong-typed (e.g. `recordingMode: 42`
     // from a hand-edited or downgrade-mangled file) still fails the whole-tree
     // parse, though — serde's `default` only covers absence, not a decode error.
-    // The strict path is the fast common case; on failure we recover per-section so
+    // The strict path is the fast common case; on failure we recover per-field so
     // one bad value can no longer wipe the WHOLE tree back to defaults (nor wedge
     // every later save by making `try_read_settings` error forever) — this mirrors
     // Zod's `.catch` "never let one bad field nuke the rest" guarantee (finding #47b).
@@ -325,7 +337,7 @@ fn parse_settings_value(value: serde_json::Value) -> Result<WinsttSettings, Stri
         Err(err) => {
             log::warn!(
                 "[settings] persisted WinSTT settings failed strict parse ({err}); \
-                 recovering per section"
+                 recovering per field"
             );
             recover_settings_value(value)
         }
@@ -334,48 +346,75 @@ fn parse_settings_value(value: serde_json::Value) -> Result<WinsttSettings, Stri
     Ok(settings)
 }
 
-/// Per-section fallback for a settings blob that failed the strict parse. Each
-/// top-level section is decoded in isolation; any section that fails to decode is
-/// dropped from the value so serde's per-field defaults re-materialize just THAT
-/// section (its siblings, and every good field, are preserved). If the whole tree
+/// Per-field fallback for a settings blob that failed the strict parse. Each
+/// top-level section is decoded in isolation, then an invalid object section is
+/// rebuilt from its defaults one persisted field at a time. Only fields that make
+/// that section fail are dropped; good sibling fields survive. Non-object sections
+/// (the dictionary/snippet arrays) still recover as one value. If the whole tree
 /// still can't decode after that, fall back to full defaults as a last resort.
 fn recover_settings_value(mut value: serde_json::Value) -> WinsttSettings {
+    let defaults = serde_json::to_value(WinsttSettings::default())
+        .expect("WinsttSettings defaults must serialize");
     if let Some(obj) = value.as_object_mut() {
-        drop_unparseable_section::<GlobalSettings>(obj, "global");
-        drop_unparseable_section::<ModelSettings>(obj, "model");
-        drop_unparseable_section::<QualitySettings>(obj, "quality");
-        drop_unparseable_section::<AudioSettings>(obj, "audio");
-        drop_unparseable_section::<GeneralSettings>(obj, "general");
-        drop_unparseable_section::<HotkeySettings>(obj, "hotkey");
-        drop_unparseable_section::<Vec<DictionaryEntry>>(obj, "dictionary");
-        drop_unparseable_section::<Vec<SnippetEntry>>(obj, "snippets");
-        drop_unparseable_section::<LlmSettings>(obj, "llm");
-        drop_unparseable_section::<TtsSettings>(obj, "tts");
-        drop_unparseable_section::<IntegrationsSettings>(obj, "integrations");
-        drop_unparseable_section::<crate::settings::AppSettings>(obj, "core");
+        salvage_section_fields::<GlobalSettings>(obj, &defaults, "global");
+        salvage_section_fields::<ModelSettings>(obj, &defaults, "model");
+        salvage_section_fields::<QualitySettings>(obj, &defaults, "quality");
+        salvage_section_fields::<AudioSettings>(obj, &defaults, "audio");
+        salvage_section_fields::<GeneralSettings>(obj, &defaults, "general");
+        salvage_section_fields::<HotkeySettings>(obj, &defaults, "hotkey");
+        salvage_section_fields::<Vec<DictionaryEntry>>(obj, &defaults, "dictionary");
+        salvage_section_fields::<Vec<SnippetEntry>>(obj, &defaults, "snippets");
+        salvage_section_fields::<LlmSettings>(obj, &defaults, "llm");
+        salvage_section_fields::<TtsSettings>(obj, &defaults, "tts");
+        salvage_section_fields::<IntegrationsSettings>(obj, &defaults, "integrations");
+        salvage_section_fields::<crate::settings::AppSettings>(obj, &defaults, "core");
     }
     serde_json::from_value::<WinsttSettings>(value).unwrap_or_else(|err| {
         log::error!(
-            "[settings] per-section recovery still failed ({err}); falling back to full defaults"
+            "[settings] per-field recovery still failed ({err}); falling back to full defaults"
         );
         WinsttSettings::default()
     })
 }
 
-/// If `obj[key]` is present but doesn't decode into `T`, remove it so the caller's
-/// re-parse falls back to that section's serde default. A no-op for absent or
-/// well-formed sections.
-fn drop_unparseable_section<T: DeserializeOwned>(
+/// Salvage an invalid object section one current field at a time over its
+/// serialized defaults.
+fn salvage_section_fields<T: DeserializeOwned + Serialize>(
     obj: &mut serde_json::Map<String, serde_json::Value>,
+    defaults: &serde_json::Value,
     key: &str,
 ) {
-    let unparseable = obj
-        .get(key)
-        .is_some_and(|section| serde_json::from_value::<T>(section.clone()).is_err());
-    if unparseable {
+    let Some(section) = obj.get(key) else {
+        return;
+    };
+    if serde_json::from_value::<T>(section.clone()).is_ok() {
+        return;
+    }
+
+    let Some(persisted_fields) = section.as_object() else {
         log::warn!("[settings] dropping unparseable `{key}` section; restoring its defaults");
         obj.remove(key);
+        return;
+    };
+    let Some(default_fields) = defaults.get(key).and_then(serde_json::Value::as_object) else {
+        log::warn!("[settings] dropping unparseable `{key}` section; restoring its defaults");
+        obj.remove(key);
+        return;
+    };
+
+    let mut recovered = default_fields.clone();
+    for (field, persisted) in persisted_fields {
+        let mut candidate = recovered.clone();
+        candidate.insert(field.clone(), persisted.clone());
+        if serde_json::from_value::<T>(serde_json::Value::Object(candidate.clone())).is_ok() {
+            recovered = candidate;
+        } else {
+            log::warn!(
+                "[settings] dropping unparseable `{key}.{field}` field; restoring its default"
+            );
+        }
     }
+    obj.insert(key.to_string(), serde_json::Value::Object(recovered));
 }
 
 pub(crate) fn word_by_word_pasting_effective(settings: &WinsttSettings) -> bool {
@@ -397,9 +436,7 @@ pub fn recording_mode(app: &AppHandle) -> RecordingMode {
     read_settings_raw(app).general.recording_mode
 }
 
-/// Open (decrypt) the secret fields on a settings tree in place. Idempotent
-/// on already-plaintext values (legacy passthrough). Covers the
-/// renderer-facing string secrets.
+/// Open the encrypted renderer-facing secret fields on a settings tree in place.
 fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_decrypt_secret(&settings.llm.openrouter_api_key)?;
     settings.integrations.elevenlabs.api_key =
@@ -422,9 +459,7 @@ fn clear_secret_fields(settings: &mut WinsttSettings) {
     settings.integrations.elevenlabs.api_key.clear();
 }
 
-/// Seal (encrypt) the secret fields on a settings tree in place, ready for
-/// the store. A value that is already a sealed envelope is left as-is via
-/// `encrypt_secret`'s idempotence. Covers the renderer-facing string secrets.
+/// Seal the plaintext secret fields on a settings tree for persistence.
 pub(crate) fn try_seal_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_encrypt_secret(&settings.llm.openrouter_api_key)?;
     settings.integrations.elevenlabs.api_key =
@@ -473,14 +508,14 @@ pub(crate) fn preserve_masked_secrets(previous: &WinsttSettings, next: &mut Wins
     );
 }
 
-/// SINGLE-STORE BRIDGE write path for the embedded legacy `AppSettings` view.
+/// Write path for the backend-only `AppSettings` section.
 ///
-/// `crate::settings::write_settings` (every legacy per-field setter command —
-/// bindings, post-process CRUD, custom words, accelerators, log level, …) funnels
+/// `crate::settings::write_settings` (bindings, accelerators, log level, and other
+/// backend-owned controls) funnels
 /// here. We read the current plaintext WinSTT tree, graft the new `core` onto it,
 /// re-seal ALL secrets (incl. the embedded post-process API keys), persist, and
-/// re-broadcast nothing (the legacy `core` is renderer-invisible). The non-`core`
-/// sections are preserved untouched so a legacy write can't clobber the renderer's
+/// re-broadcast nothing (`core` is renderer-invisible). The non-`core` sections
+/// are preserved untouched so a backend write cannot clobber the renderer's
 /// model/general/llm/etc. settings.
 pub fn write_core_settings(
     app: &AppHandle,
@@ -504,35 +539,12 @@ pub(crate) fn write_settings_value(
     settings: &WinsttSettings,
 ) -> Result<(), String> {
     let store = settings_store(app)?;
-    let mut value = serde_json::to_value(settings).map_err(|e| e.to_string())?;
-    // FORWARD-COMPAT (finding #20): carry over any unknown top-level keys the
-    // current binary doesn't model (a NEWER build may have written extra sections).
-    // Without this, an older build's read→write cycle would permanently delete them.
-    preserve_unknown_top_level_keys(&store, &mut value);
+    let value = serde_json::to_value(settings).map_err(|e| e.to_string())?;
     store.set(WINSTT_SETTINGS_KEY, value);
     durable_save_store(&store)?;
     update_raw_settings_cache(settings);
+    SETTINGS_REVISION.fetch_add(1, Ordering::AcqRel);
     Ok(())
-}
-
-/// Merge any top-level keys present on disk but absent from `value` (the freshly
-/// serialized known tree) INTO `value`, so a downgrade→save round-trip preserves
-/// sections a newer schema added rather than dropping them (finding #20). Known
-/// sections are always present in `value`, so `or_insert` never overwrites them.
-fn preserve_unknown_top_level_keys(store: &Store<tauri::Wry>, value: &mut serde_json::Value) {
-    let (Some(new_obj), Some(existing)) = (value.as_object_mut(), store.get(WINSTT_SETTINGS_KEY))
-    else {
-        return;
-    };
-    let Some(existing_obj) = existing.as_object() else {
-        return;
-    };
-    for (key, stored) in existing_obj {
-        if !new_obj.contains_key(key) {
-            log::debug!("[settings] preserving unknown top-level key `{key}` across write");
-            new_obj.insert(key.clone(), stored.clone());
-        }
-    }
 }
 
 /// Atomically + durably persist the ENTIRE store cache to disk, replacing the
@@ -650,115 +662,24 @@ fn restore_settings_from_backup(store: &Store<tauri::Wry>) {
     }
 }
 
-/// One-time-migration marker stored alongside `winstt_settings`. Once the embedded
-/// `core` section has been seeded from the legacy `settings_store.json` (or seeded
-/// fresh on a brand-new install) this is set to `true` so the seed never re-runs
-/// and can't clobber later user edits to bindings / API keys / paste settings.
-const CORE_MIGRATED_KEY: &str = "core_migrated";
-
-/// Seed the default settings tree on first run so the store file exists and a cold
-/// renderer boots against a complete tree, AND perform the one-time single-store
-/// migration of the legacy `AppSettings` (`settings_store.json`) into the embedded
-/// `WinsttSettings.core` section. Called once from lib.rs setup.
-///
-/// Migration semantics (data-preserving, idempotent via [`CORE_MIGRATED_KEY`]):
-///   * Fresh install (no `winstt_settings` key): write the default tree (whose
-///     `core` is the canonical AppSettings defaults) and mark migrated.
-///   * Existing WinsttSettings store, `core` never migrated, legacy
-///     `settings_store.json` present: read the legacy AppSettings, seal its
-///     secrets (incl. plaintext post-process API keys), graft it onto the
-///     persisted tree's `core`, persist, and mark migrated. The user keeps their
-///     bindings, audio-feedback, paste, post-process, accelerator, and tray
-///     settings — now in the single store, with the API keys encrypted at rest.
-///   * Existing store, already migrated: no-op.
+/// Materialize the canonical default tree on first run.
 pub fn seed_defaults(app: &AppHandle) {
-    // Seeds + the one-time migration are a read→graft→write over the same store as the
-    // live write paths; serialize them under the shared lock so a concurrent renderer
-    // save during startup can't interleave. (Side-effect-free body — no runtime hooks
-    // run here — so wrapping the whole thing can't re-enter the lock.)
     with_settings_write_lock(|| {
         let Ok(store) = settings_store(app) else {
             return;
         };
+        if store.get(WINSTT_SETTINGS_KEY).is_some() {
+            return;
+        }
 
-        // Brand-new install: materialize the full default tree and short-circuit.
-        if store.get(WINSTT_SETTINGS_KEY).is_none() {
-            let defaults = WinsttSettings::default();
-            if let Ok(value) = serde_json::to_value(&defaults) {
-                store.set(WINSTT_SETTINGS_KEY, value);
-                store.set(CORE_MIGRATED_KEY, serde_json::json!(true));
-                if let Err(err) = durable_save_store(&store) {
-                    log::error!(
-                        "[settings] core-migration: failed to persist fresh defaults: {err}"
-                    );
-                } else {
-                    update_raw_settings_cache(&defaults);
-                }
+        let defaults = WinsttSettings::default();
+        if let Ok(value) = serde_json::to_value(&defaults) {
+            store.set(WINSTT_SETTINGS_KEY, value);
+            if let Err(err) = durable_save_store(&store) {
+                log::error!("[settings] failed to persist fresh defaults: {err}");
+            } else {
+                update_raw_settings_cache(&defaults);
             }
-            return;
-        }
-
-        // Existing store. If the one-time core migration already ran, leave it alone.
-        let already_migrated = store
-            .get(CORE_MIGRATED_KEY)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if already_migrated {
-            return;
-        }
-
-        // Pull the legacy AppSettings out of the old `settings_store.json` (plaintext),
-        // if it exists. `load_legacy_app_settings` returns `None` when the legacy store
-        // is absent or unreadable — in that case the embedded `core` keeps whatever it
-        // already deserialized to (defaults for a pre-migration tree), which is correct.
-        let mut current = match try_read_settings(app) {
-            Ok(settings) => settings,
-            Err(err) => {
-                log::warn!("[settings] core-migration: failed to read WinSTT settings: {err}");
-                return;
-            }
-        };
-        // NON-DESTRUCTIVE RE-RUN (M6): if a prior migration's settings write succeeded
-        // but the flag save below failed, the previous boot already persisted the
-        // grafted `core` (so `current.core` now differs from defaults). Re-grafting the
-        // stale legacy `settings_store.json` over it would clobber whatever the user
-        // edited since. Only graft when `core` is still pristine defaults; otherwise just
-        // re-attempt the flag so the migration stops re-running.
-        let core_is_pristine = current.core == crate::settings::get_default_settings();
-        if core_is_pristine {
-            if let Some(legacy) = crate::settings::load_legacy_app_settings(app) {
-                log::info!(
-                    "[settings] core-migration: seeding embedded `core` from legacy settings_store.json"
-                );
-                current.core = legacy;
-            }
-        } else {
-            log::warn!(
-                "[settings] core-migration: embedded `core` already differs from defaults; \
-                 re-marking migrated WITHOUT re-grafting legacy settings (prior flag save likely failed)"
-            );
-        }
-
-        // Seal secrets (the legacy post-process API keys are plaintext on disk in the
-        // old store; this is where they get DPAPI-sealed into the single store).
-        let mut to_persist = current;
-        if let Err(err) = try_seal_secrets(&mut to_persist) {
-            log::warn!("[settings] core-migration: failed to seal secrets: {err}");
-            return;
-        }
-        if let Err(err) = write_settings_value(app, &to_persist) {
-            log::warn!("[settings] core-migration: failed to persist migrated settings: {err}");
-            return;
-        }
-        store.set(CORE_MIGRATED_KEY, serde_json::json!(true));
-        if let Err(err) = durable_save_store(&store) {
-            // LOUD (M6): a swallowed failure here means the next boot re-runs this
-            // migration. The non-destructive guard above keeps that re-run from
-            // clobbering user edits, but the operator still needs to see it.
-            log::error!(
-                "[settings] core-migration: settings persisted but failed to save the \
-                 `{CORE_MIGRATED_KEY}` flag; migration will retry on next boot: {err}"
-            );
         }
     });
 }
@@ -798,22 +719,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_settings_value_recovers_section_with_malformed_field() {
+    fn parse_settings_value_recovers_only_the_malformed_field() {
         // A present-but-wrong-typed field (here `general.recordingMode: 42`) must NOT
-        // fail the whole-tree parse (finding #47b). The offending SECTION recovers to
-        // its defaults; every OTHER section — including good custom values — survives.
+        // fail the whole-tree parse (finding #47b). Only the offending FIELD recovers
+        // to its default; good fields in the same and other sections survive.
         let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
         value["model"]["model"] = serde_json::json!("nemo-canary-180m-flash");
+        value["general"]["overlayMode"] = serde_json::json!("floating-bottom");
         value["general"]["recordingMode"] = serde_json::json!(42);
 
         let settings = parse_settings_value(value).expect("must recover, not error");
 
-        // The corrupt `general` section fell back to defaults …
+        // The corrupt field fell back to its default …
         assert_eq!(
             settings.general.recording_mode,
             WinsttSettings::default().general.recording_mode
         );
-        // … while an unrelated good section kept its customized value.
+        // … while good values in both the same and another section were retained.
+        assert_eq!(
+            settings.general.overlay_mode,
+            crate::winstt::settings_schema::OverlayMode::FloatingBottom
+        );
         assert_eq!(settings.model.model, "nemo-canary-180m-flash");
     }
 
@@ -865,7 +791,7 @@ mod tests {
     fn internal_open_failure_clears_all_secret_fields() {
         let mut s = WinsttSettings::default();
         s.model.model = "nemo-canary-180m-flash".into();
-        s.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        s.llm.openrouter_api_key = "enc:v1:not-hex-!!!".into();
         s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
 
         let err = try_open_secrets_fail_closed(&mut s).unwrap_err();
@@ -879,7 +805,7 @@ mod tests {
     #[test]
     fn renderer_sanitization_masks_after_open_failure() {
         let mut s = WinsttSettings::default();
-        s.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        s.llm.openrouter_api_key = "enc:v1:not-hex-!!!".into();
         s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
 
         let err = try_open_secrets(&mut s).unwrap_err();
@@ -1062,21 +988,23 @@ mod tests {
         );
     }
 
-    // ── #47b per-section recovery ────────────────────────────────────────────────
+    // ── #47b per-field recovery ──────────────────────────────────────────────────
 
     #[test]
-    fn recover_settings_value_drops_only_the_corrupt_section() {
+    fn recover_settings_value_drops_only_the_corrupt_field() {
         let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
         value["model"]["language"] = serde_json::json!("fr"); // good custom value
+        value["audio"]["sampleRate"] = serde_json::json!(48_000); // good sibling field
         value["audio"]["microphoneRelease"] = serde_json::json!(12345); // corrupt enum
 
         let recovered = recover_settings_value(value);
 
-        // Corrupt `audio` section → defaults; good `model` value preserved.
+        // Only corrupt `audio.microphoneRelease` defaults; both good values survive.
         assert_eq!(
             recovered.audio.microphone_release,
             WinsttSettings::default().audio.microphone_release
         );
+        assert_eq!(recovered.audio.sample_rate, 48_000);
         assert_eq!(recovered.model.language, "fr");
     }
 

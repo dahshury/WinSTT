@@ -3,11 +3,12 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { commands } from "@/bindings";
 import { _resetInputDevicesCacheForTests } from "@/entities/audio-device/model/use-input-devices";
-import { IPC } from "@/shared/api/ipc-channels";
+import { DEFAULT_SETTINGS } from "@/entities/setting";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { DevicePickerWindow } from "./DevicePickerWindow";
 
 const originalBridge = window.nativeBridge;
-const originalGetSettings = commands.winsttGetSettings;
+const originalGetSettings = commands.winsttGetSettingsSnapshot;
 const originalGetAudioDevices = commands.getAudioDevices;
 const originalRefreshAudioDevices = commands.refreshAudioDevices;
 const originalResizeWindow = commands.resizeWindow;
@@ -83,10 +84,10 @@ beforeEach(() => {
 	startCalls = 0;
 	stopCalls = 0;
 	installNativeBridgeStub();
-	commands.winsttGetSettings = (async () =>
-		({}) as Awaited<
-			ReturnType<typeof commands.winsttGetSettings>
-		>) satisfies typeof commands.winsttGetSettings;
+	commands.winsttGetSettingsSnapshot = (async () => ({
+		revision: 0,
+		settings: DEFAULT_SETTINGS as never,
+	})) satisfies typeof commands.winsttGetSettingsSnapshot;
 	commands.getAudioDevices =
 		(async () => []) satisfies typeof commands.getAudioDevices;
 	commands.refreshAudioDevices =
@@ -106,7 +107,7 @@ beforeEach(() => {
 afterEach(() => {
 	cleanup();
 	window.nativeBridge = originalBridge;
-	commands.winsttGetSettings = originalGetSettings;
+	commands.winsttGetSettingsSnapshot = originalGetSettings;
 	commands.getAudioDevices = originalGetAudioDevices;
 	commands.refreshAudioDevices = originalRefreshAudioDevices;
 	commands.resizeWindow = originalResizeWindow;

@@ -50,7 +50,7 @@
  */
 
 import { commands } from "@/bindings";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { decodeSettingsPayload } from "@/shared/config/settings-codec";
 
 type NativeBridgeApi = Window["nativeBridge"] | undefined;
@@ -247,18 +247,30 @@ export function ipcClientMock(): Record<string, unknown> {
 
 		// Settings
 		settingsSave: (settings: unknown) => send(IPC.SETTINGS_SAVE, { settings }),
-		// Acknowledged settings save (audit #46). The real export routes through the
-		// typed `invoke(SETTINGS_SAVE)`, which ipc-transport maps to
-		// `commands.winsttSetSettings` and REJECTS on a backend `Result::Err`. Mirror
+		// Acknowledged revisioned settings save. The real export calls
+		// `commands.winsttPatchSettings` directly and rejects on a backend `Result::Err`. Mirror
 		// that here (through the same command binding) so a suite that leaks this mock
 		// in via `mock.module` still exercises the confirmed-ack path — and so tests
-		// stubbing `commands.winsttSetSettings` capture the write. Omitting this left
+		// stubbing `commands.winsttPatchSettings` capture the write. Omitting this left
 		// `settingsSaveAck` undefined, throwing inside `performScheduledSave` and
 		// silently dropping the save whenever this mock won the global slot.
-		settingsSaveAck: async (settings: unknown): Promise<void> => {
-			unwrapCommandResult(
-				(await commands.winsttSetSettings(settings as never)) as never,
-			);
+		settingsSaveAck: async (settings: unknown, baseRevision = 0) => {
+			const response = unwrapCommandResult(
+				(await commands.winsttPatchSettings({
+					baseRevision,
+					settings: settings as never,
+				})) as never,
+			) as {
+				applied: boolean;
+				changedSections: string[];
+				snapshot: { revision: number; settings: unknown };
+			};
+			return {
+				applied: response.applied,
+				changedSections: response.changedSections,
+				revision: response.snapshot.revision,
+				settings: decodeSettingsPayload(response.snapshot.settings),
+			};
 		},
 		// Faithful to the real module: it decodes the raw payload through
 		// `decodeSettingsPayload`, which fills every section with schema
@@ -273,6 +285,19 @@ export function ipcClientMock(): Record<string, unknown> {
 			decodeSettingsPayload(
 				await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {}),
 			),
+		settingsLoadSnapshot: async () => ({
+			revision: 0,
+			settings: decodeSettingsPayload(
+				await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {}),
+			),
+		}),
+		settingsLoadSnapshotStrict: async () => {
+			const snapshot = await commands.winsttGetSettingsSnapshot();
+			return {
+				revision: snapshot.revision,
+				settings: decodeSettingsPayload(snapshot.settings),
+			};
+		},
 		removeApplicationData: (deleteOllamaModels: boolean) =>
 			invokeOrDefault<unknown>(
 				IPC.SETTINGS_REMOVE_APPLICATION_DATA,
@@ -375,6 +400,20 @@ export function ipcClientMock(): Record<string, unknown> {
 				(d: { settings: unknown }) => d.settings,
 				cb,
 			),
+		onSettingsChangedSnapshot: (cb: (s: unknown) => void) =>
+			onTyped(
+				IPC.SETTINGS_CHANGED,
+				(d: {
+					changedSections?: string[];
+					revision?: number;
+					settings: unknown;
+				}) => ({
+					changedSections: d.changedSections ?? [],
+					revision: d.revision ?? 0,
+					settings: decodeSettingsPayload(d.settings),
+				}),
+				cb,
+			),
 		onSettingsSaveError: (cb: (e: string) => void) =>
 			onTyped(IPC.SETTINGS_SAVE_ERROR, (d: { error: string }) => d.error, cb),
 
@@ -404,6 +443,10 @@ export function ipcClientMock(): Record<string, unknown> {
 				const d = data as { model: string; quantization?: string };
 				cb(d.model, d.quantization);
 			}),
+		onSttModelLifecycle: (cb: (snapshot: unknown) => void) =>
+			onCast(IPC.STT_MODEL_LIFECYCLE, cb),
+		fetchSttModelLifecycleSnapshots: () =>
+			commands.sttModelLifecycleSnapshots(),
 		cancelDownload: () =>
 			invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOAD, undefined),
 
@@ -424,8 +467,6 @@ export function ipcClientMock(): Record<string, unknown> {
 			invokeOrDefault<unknown>(IPC.STT_GET_RUNTIME_INFO, null),
 
 		// Model swap
-		sttReloadModel: (kind: unknown, name: unknown) =>
-			send(IPC.STT_RELOAD_MODEL, { kind, name }),
 		onModelSwapStarted: (cb: (i: unknown) => void) =>
 			on(IPC.STT_MODEL_SWAP_STARTED, (data) => cb(data)),
 		onModelSwapCompleted: (cb: (i: unknown) => void) =>
@@ -722,6 +763,11 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.STT_DIARIZATION_TOGGLE_FAILED, cb),
 
 		// Model cache + fitness
+		nextSttSwitchRequestId: (source = "test") =>
+			`${source}-${Date.now().toString(36)}`,
+		requestSttModelSwitch: (
+			request: Parameters<typeof commands.sttSwitchModel>[0],
+		) => commands.sttSwitchModel(request),
 		deleteModelCache: (modelId: string) =>
 			invokeOrDefault<unknown>(IPC.STT_DELETE_MODEL_CACHE, null, { modelId }),
 		deleteModelQuantization: (modelId: string, quantization: string) =>

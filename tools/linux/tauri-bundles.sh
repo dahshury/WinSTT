@@ -30,6 +30,18 @@ if [ "$config" != "none" ]; then
   build_args+=(--config "$config")
 fi
 
+# The context reader is a standalone package so the app build does not pay for
+# it during normal checks. Release bundles must build and explicitly carry it.
+cargo build \
+  --release \
+  --manifest-path "$repo_root/src-tauri/context-sidecar/Cargo.toml" \
+  --target-dir "$repo_root/src-tauri/target" \
+  --bin winstt_context
+# `resources` is a union (array or map), so replacing the base array with this
+# release overlay must repeat the complete resource set as well as the sidecar.
+sidecar_config='{"bundle":{"resources":{"resources/*.png":"resources/","resources/recording_sound_default.wav":"resources/recording_sound_default.wav","resources/error_sound.wav":"resources/error_sound.wav","resources/marimba_start.wav":"resources/marimba_start.wav","resources/models/*":"resources/models/","target/release/winstt_context":"./"}}}'
+build_args+=(--config "$sidecar_config")
+
 rm -rf "$bundle_dir/appimage" "$bundle_dir/deb" "$bundle_dir/rpm"
 
 bun run tauri build "${build_args[@]}"

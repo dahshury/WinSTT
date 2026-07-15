@@ -18,8 +18,7 @@ export const generalSettingsSchema = z.object({
 	// Percent reduction applied to system playback volume while dictating.
 	// 0 = off (volume untouched), 100 = full mute; intermediate values duck
 	// to (100 - value)% of the previous level. The UI constrains this to
-	// multiples of 20; `.catch(0)` covers older builds that persisted the
-	// legacy boolean.
+	// multiples of 20; invalid persisted values reset to 60.
 	systemAudioReductionWhileDictating: z
 		.number()
 		.int()
@@ -34,10 +33,11 @@ export const generalSettingsSchema = z.object({
 	recordingSoundPath: z.string().default(""),
 	// User-uploaded clips, copied into `userData/sounds/` by the main process
 	// on add so the library survives the user moving/renaming the source file.
-	// `.catch([])` keeps older builds (no key) from wiping the whole general
-	// section on first read.
 	recordingSoundLibrary: z.array(soundLibraryEntrySchema).default([]).catch([]),
-	fileTranscriptionFormat: z.enum(["txt", "srt"]).default("txt"),
+	fileTranscriptionFormats: z
+		.array(z.enum(["txt", "srt", "vtt", "json", "csv"]))
+		.min(1)
+		.default(["txt"]),
 	fileTranscriptionSaveLocation: z.enum(["auto", "ask"]).default("auto"),
 	recordingMode: z.enum(["ptt", "toggle", "listen", "wakeword"]).default("ptt"),
 	// True manual toggle: in `toggle` mode, recording runs continuously from
@@ -83,12 +83,11 @@ export const generalSettingsSchema = z.object({
 	wakeWordTimeout: z.number().min(1).max(30).default(5).catch(5),
 	showRecordingOverlay: z.boolean().default(true),
 	// Layout of the recording overlay.
-	// `floating-bottom` keeps the historical two-piece pill near the bottom
+	// `floating-bottom` renders the two-piece pill near the bottom
 	// of the primary display; `dynamic-island` docks a morphing capsule flush
 	// against the top-center of the primary display, switching size presets
-	// in OverlayPage as content changes. `.catch` keeps an older persisted
-	// value (or a missing key on first read after upgrade) from wiping the
-	// whole `general` section.
+	// in OverlayPage as content changes. Invalid input resets to the current
+	// default without affecting other fields.
 	overlayMode: z
 		.enum(["floating-bottom", "dynamic-island"])
 		.default("dynamic-island")
@@ -103,22 +102,18 @@ export const generalSettingsSchema = z.object({
 	//     macOS / Windows → effectively `"bottom"`.
 	//   - `"none"`: never show the pill, regardless of platform.
 	//   - `"top"` / `"bottom"`: explicit screen edge.
-	// `.catch` keeps an older persisted value (or missing key on upgrade)
-	// from wiping the whole `general` section.
+	// Invalid input resets to the current default.
 	overlayPosition: z
 		.enum(["auto", "none", "top", "bottom"])
 		.default("auto")
 		.catch("auto"),
-	// `.catch` covers older builds that persisted an integer pixel value;
-	// without it an integer here fails the whole settings parse and the codec
-	// falls back to ALL defaults, wiping unrelated settings on upgrade.
+	// Invalid input resets only this field instead of the entire section.
 	visualizerSize: z
 		.enum(["xs", "sm", "md", "lg", "xl"])
 		.default("xs")
 		.catch("xs"),
-	// Single multi-choice replaces the old `showLiveTranscription` (pill) and
-	// `showInAppLiveTranscription` (main window) booleans. `.catch` keeps an
-	// older persisted value from wiping the whole `general` section on upgrade.
+	// One value controls the in-app and recording-pill transcript surfaces.
+	// Invalid input resets only this field.
 	liveTranscriptionDisplay: z
 		.enum(["none", "in-app", "in-pill", "both"])
 		.default("both")
@@ -126,20 +121,13 @@ export const generalSettingsSchema = z.object({
 	visualizerType: z
 		.enum(["bar", "grid", "radial", "wave", "aura"])
 		.default("bar"),
-	// `.catch(9)` covers stale persisted values from an earlier slider bug that
-	// emitted 22 (off the zero-anchored snap grid). Without it, a single
-	// out-of-range integer fails the whole `general` parse in
-	// `decodeSettingsPayload`, and other windows fall back to ALL defaults —
-	// which then broadcasts back and silently resets unrelated settings.
+	// An out-of-range integer resets only this field.
 	visualizerBarCount: z.number().int().min(3).max(21).default(9).catch(9),
 	// Per-shape visualizer customization. Each knob mirrors the bar-count
 	// pattern above: a defaulted, `.catch`-guarded scalar that the renderer
 	// forwards into the matching component prop / shader uniform (see
-	// `resolveVisualizerConfig` in features/audio-visualizer). Defaults
-	// reproduce the previous hardcoded look exactly. `.catch` keeps a stale
-	// out-of-range persisted value from failing the whole `general` parse —
-	// which would otherwise fall back to ALL defaults and silently wipe
-	// unrelated settings across windows on upgrade.
+	// `resolveVisualizerConfig` in features/audio-visualizer). Invalid values
+	// reset only their own field.
 	// — Radial —
 	visualizerRadialDotCount: z
 		.number()
@@ -208,8 +196,7 @@ export const generalSettingsSchema = z.object({
 	 *   `contextDenyList`.
 	 * - `selected-only`: read only apps/sites that match `contextAllowList`.
 	 *
-	 * `.catch("all-except-denied")` preserves the historic privacy posture for
-	 * stale or corrupt persisted values.
+	 * Invalid input resets to the privacy-preserving default.
 	 */
 	contextAppMode: z
 		.enum(["all-except-denied", "selected-only"])
@@ -297,8 +284,8 @@ export const generalSettingsSchema = z.object({
 	// HTMLAudioElement, TTS via AudioContext) accept the deviceId verbatim.
 	outputDeviceId: z.string().default("").catch(""),
 	// Auto-press a "submit" key after each dictation paste lands. Off by
-	// default to preserve historical behaviour (paste, leave cursor where
-	// the user can review). When on, `autoSubmitKey` chooses which combo
+	// default pastes and leaves the cursor where the user can review. When
+	// on, `autoSubmitKey` chooses which combo
 	// to inject — Enter for chat boxes, Ctrl+Enter for IDE prompts.
 	autoSubmit: z.boolean().default(false).catch(false),
 	autoSubmitKey: z

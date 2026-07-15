@@ -1,0 +1,470 @@
+"use client";
+
+import { Button as BaseButton } from "@base-ui/react/button";
+import {
+	BinaryCodeIcon,
+	CancelCircleIcon,
+	CloudDownloadIcon,
+	Delete02Icon,
+	PauseIcon,
+	PlayIcon,
+	SparklesIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { cn } from "@/shared/lib/cn";
+import { ButtonGroup } from "@/shared/ui/button-group";
+import { PulseDot } from "@/shared/ui/pulse-dot";
+import { Tooltip } from "@/shared/ui/tooltip";
+import {
+	badgeToneForCache,
+	buildQuantTooltipContent,
+	resolveProgressFillPct,
+} from "./quant-shelf-state";
+import type { QuantShelfEntry, QuantShelfProps } from "./quant-shelf-types";
+
+export type {
+	QuantCacheSnapshot,
+	QuantCacheState,
+	QuantDownloadAction,
+	QuantDownloadSnapshot,
+	QuantShelfEntry,
+	QuantShelfProps,
+	ResolvedQuantDownloadState,
+} from "./quant-shelf-types";
+
+/**
+ * The recessed precision/quantization shelf shared by every model picker (STT,
+ * TTS, …). It is the single source of visual identity AND download-control
+ * behavior for the per-quant badges: click an uncached badge to start a
+ * background download, watch live progress, pause/resume/cancel, delete cached
+ * weights, or select a cached precision.
+ *
+ * Each picker normalizes its own catalog + cache-state shape into a list of
+ * {@link QuantShelfEntry} (the STT card adds the RAM-aware "recommended" mark;
+ * the TTS card routes its "Auto" sentinel to the server's effective precision)
+ * and hands them to {@link QuantShelf} — so the chrome and the four download
+ * actions are literally one implementation, never copy-pasted per picker.
+ */
+
+type BadgeIconButtonTone = "neutral" | "danger" | "primary";
+
+/** Maps a {@link BadgeIconButtonTone} to its Tailwind class string. */
+function toneClassName(tone: BadgeIconButtonTone): string {
+	const map: Record<BadgeIconButtonTone, string> = {
+		danger:
+			"bg-foreground/[0.04] text-foreground-muted hover:bg-error/15 hover:text-error",
+		primary: "bg-foreground/[0.04] text-accent hover:bg-accent/15",
+		neutral:
+			"bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.10] hover:text-foreground",
+	};
+	return map[tone];
+}
+
+/** Inline icon button for each per-badge download-control action (Pause /
+ *  Resume / Cancel / Delete) — same height + border-l treatment so the controls
+ *  compose into a single ButtonGroup chip. Exported so the Ollama picker's
+ *  tag/pull shelf composes the IDENTICAL control chip. */
+function BadgeIconButton({
+	ariaLabel,
+	icon,
+	onClick,
+	tone = "neutral",
+	tooltip,
+}: {
+	ariaLabel: string;
+	icon: IconSvgElement;
+	onClick: () => void;
+	tone?: BadgeIconButtonTone;
+	tooltip: string;
+}) {
+	return (
+		<Tooltip content={tooltip} side="top">
+			<BaseButton
+				aria-label={ariaLabel}
+				className={cn(
+					"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
+					"last:rounded-r-[5px]",
+					toneClassName(tone),
+				)}
+				// Base UI's Combobox.Item starts selection on pointerdown, BEFORE click —
+				// so an onClick-only stop lets the card select first (the action gets lost).
+				// Stop the pointer events too so Delete / Cancel / Pause / Resume act on the
+				// quant without selecting the whole card.
+				onClick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onClick();
+				}}
+				onMouseDown={(e) => e.stopPropagation()}
+				onPointerDown={(e) => e.stopPropagation()}
+				type="button"
+			>
+				<HugeiconsIcon className="size-3" icon={icon} />
+			</BaseButton>
+		</Tooltip>
+	);
+}
+
+/** Inner content of the precision-label button — downloading (glyph + live %),
+ *  idle-not-cached (label crossfading to a download glyph on hover), or the bare
+ *  label. Exported so other pickers' shelves render the IDENTICAL badge content.
+ *  `mono` renders the label in the mono font (Ollama tags like `q4_K_M`). */
+function QuantBadgeLabel({
+	canStartDownload,
+	isDownloading,
+	label,
+	mono = false,
+	paused,
+	progress,
+}: {
+	canStartDownload: boolean;
+	isDownloading: boolean;
+	label: string;
+	mono?: boolean;
+	paused: boolean;
+	progress: number | null;
+}) {
+	if (isDownloading) {
+		return (
+			<span className="relative inline-flex items-center gap-1.5">
+				{paused ? (
+					// Paused: a STATIC dot — a live pulse would imply bytes are still
+					// flowing. The frozen amber fill + the trailing resume/cancel
+					// controls already read as "stopped, resumable".
+					<span
+						aria-hidden="true"
+						className="size-1.5 rounded-full bg-current opacity-60"
+						data-slot="paused-dot"
+					/>
+				) : (
+					<PulseDot className="size-1.5" />
+				)}
+				<span className="font-mono text-[9.5px] tabular-nums">
+					{progress === null ? "..." : `${progress}%`}
+				</span>
+			</span>
+		);
+	}
+	if (progress !== null) {
+		return (
+			<span className="font-mono text-[9.5px] tabular-nums">
+				{`${progress}%`}
+			</span>
+		);
+	}
+	if (canStartDownload) {
+		return (
+			<span className="relative inline-flex items-center justify-center">
+				<span
+					className={cn(
+						"transition-opacity duration-150 group-hover/badge:opacity-0 motion-reduce:transition-none",
+						mono && "font-mono",
+					)}
+				>
+					{label}
+				</span>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="absolute inset-0 m-auto size-3 opacity-0 transition-opacity duration-150 group-hover/badge:opacity-100 motion-reduce:transition-none"
+					icon={CloudDownloadIcon}
+				/>
+			</span>
+		);
+	}
+	return (
+		<span
+			className={cn("relative inline-flex items-center", mono && "font-mono")}
+		>
+			{label}
+		</span>
+	);
+}
+
+/** The 0..2 trailing action buttons appended to a precision badge in the same
+ *  ButtonGroup (pause / resume / cancel for an active download; delete for an
+ *  on-disk idle badge). Actions target `entry.actionQuant`. */
+function QuantActionButtons({
+	entry,
+	modelDisplayName,
+	modelId,
+	onDownloadAction,
+	onRequestDeleteQuant,
+}: {
+	entry: QuantShelfEntry;
+	modelDisplayName: string;
+	modelId: string;
+	onDownloadAction: QuantShelfProps["onDownloadAction"];
+	onRequestDeleteQuant: QuantShelfProps["onRequestDeleteQuant"];
+}) {
+	const { actionQuant, cacheState, download, label } = entry;
+	const actionModelId = entry.modelId ?? modelId;
+	const isDownloading = download !== undefined;
+	const canDownload = onDownloadAction !== undefined;
+	const deleteTooltip =
+		cacheState === "partial"
+			? `Delete partial ${label} download`
+			: `Delete cached ${label} weights`;
+	return (
+		<>
+			{isDownloading && canDownload && download.paused ? (
+				<BadgeIconButton
+					ariaLabel={`Resume ${label} download`}
+					icon={PlayIcon}
+					onClick={() => onDownloadAction("resume", actionModelId, actionQuant)}
+					tone="primary"
+					tooltip="Resume download"
+				/>
+			) : null}
+			{isDownloading && canDownload && !download.paused ? (
+				<BadgeIconButton
+					ariaLabel={`Pause ${label} download`}
+					icon={PauseIcon}
+					onClick={() => onDownloadAction("pause", actionModelId, actionQuant)}
+					tooltip="Pause download (resumable mid-file)"
+				/>
+			) : null}
+			{isDownloading && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Cancel ${label} download`}
+					icon={CancelCircleIcon}
+					onClick={() => onDownloadAction("cancel", actionModelId, actionQuant)}
+					tone="danger"
+					tooltip="Cancel download"
+				/>
+			) : null}
+			{entry.canResumeDownload && !isDownloading && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Resume ${label} download`}
+					icon={PlayIcon}
+					onClick={() => onDownloadAction("resume", actionModelId, actionQuant)}
+					tone="primary"
+					tooltip="Resume download"
+				/>
+			) : null}
+			{entry.canResumeDownload && !isDownloading && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Cancel ${label} download`}
+					icon={CancelCircleIcon}
+					onClick={() => onDownloadAction("cancel", actionModelId, actionQuant)}
+					tone="danger"
+					tooltip="Cancel download"
+				/>
+			) : null}
+			{entry.canDelete && !isDownloading && onRequestDeleteQuant ? (
+				<BadgeIconButton
+					ariaLabel={`Delete ${label} weights for ${modelDisplayName}`}
+					icon={Delete02Icon}
+					onClick={() =>
+						onRequestDeleteQuant(
+							actionModelId,
+							actionQuant,
+							modelDisplayName,
+							label,
+						)
+					}
+					tone="danger"
+					tooltip={deleteTooltip}
+				/>
+			) : null}
+		</>
+	);
+}
+
+/** One precision-badge ButtonGroup: the precision label button followed by
+ *  0..2 contextual action buttons. */
+function QuantBadge({
+	dimmed,
+	entry,
+	modelDisplayName,
+	modelId,
+	onDownloadAction,
+	onRequestDeleteQuant,
+	onSelect,
+}: {
+	dimmed: boolean;
+	entry: QuantShelfEntry;
+	modelDisplayName: string;
+	modelId: string;
+	onDownloadAction: QuantShelfProps["onDownloadAction"];
+	onRequestDeleteQuant: QuantShelfProps["onRequestDeleteQuant"];
+	onSelect: QuantShelfProps["onSelect"];
+}) {
+	const {
+		canResumeDownload,
+		canStartDownload,
+		disabled,
+		download,
+		isActive,
+		isRecommended,
+		label,
+		mono,
+		value,
+	} = entry;
+	const actionModelId = entry.modelId ?? modelId;
+	const isDownloading = download !== undefined;
+	const cacheToneClass = badgeToneForCache(entry.cacheState);
+	const progressFillPct = resolveProgressFillPct(
+		entry.cacheState,
+		entry.cacheProgress,
+		download,
+	);
+	const hasTrailingActions =
+		(isDownloading && onDownloadAction !== undefined) ||
+		(canResumeDownload === true && onDownloadAction !== undefined) ||
+		(entry.canDelete && !isDownloading);
+	const actionHint = canStartDownload
+		? "Click to download."
+		: canResumeDownload
+			? "Click to resume."
+			: null;
+	let badgeAriaLabel = `Select ${label} precision`;
+	if (canStartDownload) {
+		badgeAriaLabel = `Download ${label} weights`;
+	} else if (canResumeDownload) {
+		badgeAriaLabel = `Resume ${label} weights download`;
+	} else if (isDownloading) {
+		badgeAriaLabel =
+			download?.paused === true
+				? `${label} download paused`
+				: `${label} downloading`;
+	}
+	if (isRecommended) {
+		badgeAriaLabel += " (recommended for your hardware)";
+	}
+	const tooltipContent =
+		disabled === true && entry.disabledReason !== undefined
+			? entry.disabledReason
+			: buildQuantTooltipContent(entry, actionHint);
+	return (
+		<ButtonGroup
+			aria-label={`Precision ${label} for ${modelDisplayName}`}
+			className={cn(
+				// Match the inner badges' 5px radius (rounded-sm): the group's
+				// `ring-inset` is a box-shadow that doesn't inset child content, so a
+				// flush child with a smaller radius than the group protrudes past its
+				// corner. Equal radii let the inset ring hug the badge fill cleanly.
+				"rounded-sm ring-1 ring-inset transition-opacity",
+				// The accent ring marks the SELECTED quant (the sparkle alone marks the
+				// recommended one). Sibling badges dim while a selection exists so the
+				// active precision reads at a glance; hover/focus restores them.
+				isActive ? "ring-accent" : "ring-border",
+				dimmed && "opacity-55 focus-within:opacity-100 hover:opacity-100",
+			)}
+		>
+			<Tooltip content={tooltipContent} side="top">
+				<BaseButton
+					aria-disabled={isDownloading || disabled === true}
+					aria-label={badgeAriaLabel}
+					className={cn(
+						"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
+						isDownloading || disabled === true
+							? "cursor-default"
+							: "cursor-pointer",
+						hasTrailingActions ? "rounded-l-[5px]" : "rounded-[5px]",
+						isActive ? "bg-accent/20 text-accent" : cacheToneClass,
+						// Greyed non-interactive badge (doesn't fit the memory budgets).
+						disabled === true && "opacity-40 saturate-50",
+					)}
+					onClick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						if (isDownloading || disabled === true) {
+							return;
+						}
+						if (canStartDownload) {
+							onDownloadAction?.("start", actionModelId, value);
+						} else if (canResumeDownload) {
+							onDownloadAction?.("resume", actionModelId, entry.actionQuant);
+						} else {
+							onSelect(actionModelId, value);
+						}
+					}}
+					onMouseDown={(e) => e.stopPropagation()}
+					onPointerDown={(e) => e.stopPropagation()}
+					type="button"
+				>
+					{progressFillPct !== null && !isActive ? (
+						<span
+							aria-hidden="true"
+							className="pointer-events-none absolute inset-y-0 left-0 bg-cache-partial/20 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+							style={{ width: `${progressFillPct}%` }}
+						/>
+					) : null}
+					{isRecommended ? (
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="size-3 shrink-0 text-accent"
+							icon={SparklesIcon}
+						/>
+					) : null}
+					<QuantBadgeLabel
+						canStartDownload={canStartDownload}
+						isDownloading={isDownloading}
+						label={label}
+						mono={mono === true}
+						paused={download?.paused === true}
+						progress={progressFillPct}
+					/>
+				</BaseButton>
+			</Tooltip>
+			<QuantActionButtons
+				entry={entry}
+				modelDisplayName={modelDisplayName}
+				modelId={modelId}
+				onDownloadAction={onDownloadAction}
+				onRequestDeleteQuant={onRequestDeleteQuant}
+			/>
+		</ButtonGroup>
+	);
+}
+
+/**
+ * The recessed precision shelf — a `BinaryCode` glyph header followed by one
+ * {@link QuantBadge} per entry. Renders nothing when there are no entries (a
+ * model that ships a single precision still gets its one badge, so it stays
+ * downloadable / selectable).
+ */
+export function QuantShelf({
+	entries,
+	modelDisplayName,
+	modelId,
+	onDownloadAction,
+	onRequestDeleteQuant,
+	onSelect,
+	showIcon = true,
+}: QuantShelfProps) {
+	if (entries.length === 0) {
+		return null;
+	}
+	const hasSelection = entries.some((entry) => entry.isActive);
+	return (
+		<div className="flex flex-wrap items-center gap-2">
+			{showIcon ? (
+				<Tooltip
+					content="Precision — the numeric format of the model's weights. Lower precision (q4 / int8) loads + runs faster and takes less disk/RAM, at a small quality cost. Higher precision (fp32 / fp16) is the most faithful but heaviest."
+					side="top"
+				>
+					<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
+						<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
+					</span>
+				</Tooltip>
+			) : null}
+			{entries.map((entry) => (
+				<QuantBadge
+					// Keep in-flight downloads at full strength — their progress must
+					// stay legible even while another precision is selected.
+					dimmed={
+						hasSelection && !entry.isActive && entry.download === undefined
+					}
+					entry={entry}
+					key={entry.value || "default"}
+					modelDisplayName={modelDisplayName}
+					modelId={modelId}
+					onDownloadAction={onDownloadAction}
+					onRequestDeleteQuant={onRequestDeleteQuant}
+					onSelect={onSelect}
+				/>
+			))}
+		</div>
+	);
+}

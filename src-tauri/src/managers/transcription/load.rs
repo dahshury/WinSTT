@@ -116,7 +116,7 @@ impl TranscriptionManager {
             // catch_unwind so a build panic can't escape and abort the thread before the guard's
             // Drop runs (it would still run on unwind, but this keeps the log clean + explicit).
             let outcome = catch_unwind(AssertUnwindSafe(|| {
-                if let Err(e) = self_clone.dispatch_load(&desired, None) {
+                if let Err(e) = self_clone.dispatch_load(&desired, None, None, None) {
                     error!("Failed to load model '{}': {}", desired, e);
                     crate::winstt::observability::IssueBuilder::new(
                         "stt",
@@ -125,7 +125,7 @@ impl TranscriptionManager {
                     )
                     .detail(e.to_string())
                     .model_id(desired.clone())
-                    .record(Some(&self_clone.app_handle));
+                    .record_without_log(Some(&self_clone.app_handle));
                 }
             }));
             if outcome.is_err() {
@@ -150,7 +150,13 @@ impl TranscriptionManager {
     /// engine once that succeeds (the Windows DLL race forbids two live ort sessions). On any
     /// error, the previously-loaded model is still resident, so we re-emit
     /// `loading_completed` for it so the picker chip clears on a model the user can still dictate with.
-    fn dispatch_load(&self, model_id: &str, quantization_override: Option<&str>) -> Result<()> {
+    fn dispatch_load(
+        &self,
+        model_id: &str,
+        quantization_override: Option<&str>,
+        device_override: Option<crate::winstt::settings_schema::DeviceType>,
+        realtime_model_override: Option<&str>,
+    ) -> Result<()> {
         // Snapshot the still-resident model BEFORE attempting the swap, for the rollback re-emit.
         let previous = self.get_current_model();
 
@@ -169,7 +175,12 @@ impl TranscriptionManager {
                 self.touch_activity();
                 Ok(())
             }
-            BackendRoute::Catalog => self.load_winstt_model(model_id, quantization_override),
+            BackendRoute::Catalog => self.load_winstt_model(
+                model_id,
+                quantization_override,
+                device_override,
+                realtime_model_override,
+            ),
             BackendRoute::Unsupported => Err(anyhow::anyhow!(
                 "model '{}' is not in the WinSTT catalog",
                 model_id
@@ -210,14 +221,14 @@ impl TranscriptionManager {
     }
 
     /// Synchronous load to a SPECIFIC `model_id` (the picker's choice, threaded through from
-    /// `set_winstt_model` → `perform_model_swap`) that RETURNS the real load error so the swap
+    /// the atomic switch transaction) that RETURNS the real load error so the swap
     /// orchestrator can emit `stt:model-swap-failed` (rollback + toast) instead of swallowing it.
     /// Mirrors the legacy `switch_active_model(model_id)` + the body of `initiate_model_load`, but
     /// blocking and id-EXPLICIT — it must NOT re-read settings (the renderer's persist of
     /// `model.model` is debounced, so a re-read would load the stale/default "tiny" and "succeed").
     /// Runs on the swap orchestrator's own thread, so it never blocks the Tauri command thread.
     pub fn load_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
-        self.load_model_blocking_inner(model_id, false, None)
+        self.load_model_blocking_inner(model_id, false, None, None, None)
     }
 
     pub fn load_model_blocking_with_quantization(
@@ -225,13 +236,33 @@ impl TranscriptionManager {
         model_id: &str,
         quantization_override: Option<&str>,
     ) -> std::result::Result<(), String> {
-        self.load_model_blocking_inner(model_id, false, quantization_override)
+        self.load_model_blocking_inner(model_id, false, quantization_override, None, None)
     }
 
     /// Same as [`Self::load_model_blocking`], but intentionally rebuilds even when `model_id` is
     /// already current. Used for same-model load-input changes such as quantization/device swaps.
     pub fn reload_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
-        self.load_model_blocking_inner(model_id, true, None)
+        self.load_model_blocking_inner(model_id, true, None, None, None)
+    }
+
+    /// Load a model using transaction-local load inputs. The overrides are not persisted until the
+    /// caller has observed a ready resident engine, so a failed build cannot commit a selection the
+    /// process cannot actually use.
+    pub fn switch_model_blocking(
+        &self,
+        model_id: &str,
+        quantization_override: Option<&str>,
+        device_override: Option<crate::winstt::settings_schema::DeviceType>,
+        realtime_model_override: Option<&str>,
+        force_reload: bool,
+    ) -> std::result::Result<(), String> {
+        self.load_model_blocking_inner(
+            model_id,
+            force_reload,
+            quantization_override,
+            device_override,
+            realtime_model_override,
+        )
     }
 
     fn load_model_blocking_inner(
@@ -239,6 +270,8 @@ impl TranscriptionManager {
         model_id: &str,
         force_reload: bool,
         quantization_override: Option<&str>,
+        device_override: Option<crate::winstt::settings_schema::DeviceType>,
+        realtime_model_override: Option<&str>,
     ) -> std::result::Result<(), String> {
         let model_id = model_id.trim();
         if model_id.is_empty() {
@@ -271,7 +304,12 @@ impl TranscriptionManager {
             // catch_unwind turns a build panic into an Err so the swap orchestrator can emit
             // `model-swap-failed` (rollback + toast) instead of the worker thread dying silently.
             let outcome: Result<()> = match catch_unwind(AssertUnwindSafe(|| {
-                self.dispatch_load(model_id, quantization_override)
+                self.dispatch_load(
+                    model_id,
+                    quantization_override,
+                    device_override,
+                    realtime_model_override,
+                )
             })) {
                 Ok(r) => r,
                 Err(_) => Err(anyhow::anyhow!(
@@ -322,7 +360,7 @@ impl TranscriptionManager {
             return SttWarmupOutcome::NothingToWarm;
         };
         if self.is_model_warm(&model_id) {
-            debug!("[stt] warmup skipped — model '{model_id}' is already warm");
+            debug!("[stt] warmup skipped -- model '{model_id}' is already warm");
             return SttWarmupOutcome::AlreadyWarm;
         }
         if !self.is_model_loaded() {
@@ -334,7 +372,7 @@ impl TranscriptionManager {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            debug!("[stt] warmup skipped — another warmup is already running");
+            debug!("[stt] warmup skipped -- another warmup is already running");
             return SttWarmupOutcome::InFlight;
         }
         // Clear `warming` on EVERY exit path (early return / panic) via RAII.
@@ -348,7 +386,7 @@ impl TranscriptionManager {
         let mut engine_guard = match self.engine.try_lock() {
             Ok(g) => g,
             Err(std::sync::TryLockError::WouldBlock) => {
-                debug!("[stt] warmup yielded — a real decode is using the engine");
+                debug!("[stt] warmup yielded -- a real decode is using the engine");
                 return SttWarmupOutcome::InFlight;
             }
             Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
@@ -384,13 +422,15 @@ impl TranscriptionManager {
             .detail(err.to_string())
             .model_id(model_id.clone())
             .user_visible(false)
-            .record(Some(&self.app_handle));
+            .record_without_log(Some(&self.app_handle));
             if degenerate {
                 warn!(
                     "[stt] recycling '{model_id}' after DirectML degenerate decode during warmup"
                 );
                 drop(warming_guard);
-                if let Err(reload_err) = self.load_model_blocking_inner(&model_id, true, None) {
+                if let Err(reload_err) =
+                    self.load_model_blocking_inner(&model_id, true, None, None, None)
+                {
                     error!(
                         "[stt] CPU fallback reload failed for '{model_id}' after degenerate warmup: {reload_err}"
                     );
@@ -402,7 +442,7 @@ impl TranscriptionManager {
                     .detail(reload_err)
                     .model_id(model_id.clone())
                     .severity("error")
-                    .record(Some(&self.app_handle));
+                    .record_without_log(Some(&self.app_handle));
                     return SttWarmupOutcome::Failed;
                 }
                 // Recovery reload succeeded and spawned its own detached warmup —
@@ -414,7 +454,7 @@ impl TranscriptionManager {
 
         self.mark_model_warmed_if_current(&model_id);
         self.touch_activity();
-        log::info!("[stt] engine warmup complete for '{model_id}'");
+        log::debug!("[stt] engine warmup complete for '{model_id}'");
         crate::log_model_duration(&format!("stt warmup '{model_id}'"), warmup_started);
         SttWarmupOutcome::Warmed
     }
@@ -443,7 +483,7 @@ impl TranscriptionManager {
                 }
             }
         }
-        warn!("[stt] wait_until_warm timed out for '{model_id}' — completing the swap anyway");
+        warn!("[stt] wait_until_warm timed out for '{model_id}' -- completing the swap anyway");
     }
 
     /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT benchmark
@@ -459,7 +499,13 @@ impl TranscriptionManager {
     /// the new one. A failed resolve returns `Err` with the old engine STILL RESIDENT — the caller
     /// re-emits `loading_completed` for it so the picker chip clears on a model the user can still
     /// dictate with.
-    fn load_winstt_model(&self, model_id: &str, quantization_override: Option<&str>) -> Result<()> {
+    fn load_winstt_model(
+        &self,
+        model_id: &str,
+        quantization_override: Option<&str>,
+        device_override: Option<crate::winstt::settings_schema::DeviceType>,
+        realtime_model_override: Option<&str>,
+    ) -> Result<()> {
         let load_start = std::time::Instant::now();
 
         // Best-effort display name (catalog → display, else raw id) for the events. The backend's
@@ -504,25 +550,27 @@ impl TranscriptionManager {
         // PHASE 1 — offline resolve (no ORT session, leaves the resident engine untouched). On
         // failure the old engine is still resident; emit loading_failed with the best-effort name.
         let resolve_start = std::time::Instant::now();
-        let spec =
-            match self
-                .backend
-                .resolve_catalog(&self.app_handle, model_id, quantization_override)
-            {
-                Ok(spec) => {
-                    crate::log_model_duration(&format!("stt resolve '{model_id}'"), resolve_start);
-                    spec
-                }
-                Err(e) => {
-                    crate::log_model_duration(
-                        &format!("stt resolve failed '{model_id}'"),
-                        resolve_start,
-                    );
-                    let msg = e.to_string();
-                    emit_failed(&msg, &display_name);
-                    return Err(e);
-                }
-            };
+        let spec = match self.backend.resolve_catalog(
+            &self.app_handle,
+            model_id,
+            quantization_override,
+            device_override,
+            realtime_model_override,
+        ) {
+            Ok(spec) => {
+                crate::log_model_duration(&format!("stt resolve '{model_id}'"), resolve_start);
+                spec
+            }
+            Err(e) => {
+                crate::log_model_duration(
+                    &format!("stt resolve failed '{model_id}'"),
+                    resolve_start,
+                );
+                let msg = e.to_string();
+                emit_failed(&msg, &display_name);
+                return Err(e);
+            }
+        };
 
         // FAILURE-ATOMIC SWAP: now that the file set is verified present on disk (resolve
         // succeeded), the build is essentially guaranteed — so it's safe to free the OLD engine's

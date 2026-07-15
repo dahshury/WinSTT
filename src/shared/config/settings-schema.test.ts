@@ -70,16 +70,38 @@ describe("global model lifetime settings", () => {
 				?.modelUnloadTimeout,
 		).toBe("min15");
 	});
+});
 
-	test("migrates legacy model.modelUnloadTimeout into the global section", () => {
-		const out = appSettingsSchema.parse({
-			model: { modelUnloadTimeout: "hour1" },
+describe("llm per-app profiles", () => {
+	test("defaults to an empty rule list", () => {
+		expect(llmSettingsSchema.parse({}).appProfiles.rules).toEqual([]);
+	});
+
+	test("corrupt rule arrays fail soft without resetting the llm section", () => {
+		const parsed = llmSettingsSchema.parse({
+			endpoint: "http://example.test:11434",
+			appProfiles: { rules: "corrupt" },
 		});
-		expect(
-			(out as { global?: { modelUnloadTimeout?: string } }).global
-				?.modelUnloadTimeout,
-		).toBe("hour1");
-		expect("modelUnloadTimeout" in out.model).toBe(false);
+		expect(parsed.endpoint).toBe("http://example.test:11434");
+		expect(parsed.appProfiles.rules).toEqual([]);
+	});
+
+	test("partial rule config receives feature defaults", () => {
+		const [rule] = llmSettingsSchema.parse({
+			appProfiles: {
+				rules: [
+					{
+						id: "gmail",
+						urlPattern: "gmail.com",
+						config: { model: "qwen3:4b" },
+					},
+				],
+			},
+		}).appProfiles.rules;
+		expect(rule?.enabled).toBe(true);
+		expect(rule?.config.model).toBe("qwen3:4b");
+		expect(rule?.config.customModifiers).toEqual([]);
+		expect(rule?.config.presets).toEqual([{ key: "neutral" }]);
 	});
 });
 
@@ -137,9 +159,7 @@ describe("qualitySettingsSchema", () => {
 	test("deterministic formatting toggles default off", () => {
 		const out = qualitySettingsSchema.parse({});
 		expect(out.formatBasicPunctuationCasing).toBe(false);
-		expect(out.formatSpokenPunctuationCommands).toBe(false);
-		expect(out.formatSpokenSymbolCommands).toBe(false);
-		expect(out.formatQuoteCommands).toBe(false);
+		expect(out.formatSpokenCommands).toBe(false);
 		expect(out.formatFillerRepeatCleanup).toBe(false);
 	});
 });
@@ -177,7 +197,7 @@ describe("generalSettingsSchema", () => {
 		).toBe("LCtrl+LAlt+R");
 	});
 
-	test("visualizerSize falls back to 'xs' for legacy integer values via .catch()", () => {
+	test("visualizerSize falls back to 'xs' for invalid integer input via .catch()", () => {
 		// Old persisted format: a numeric pixel — schema should swallow and emit 'xs'
 		const out = generalSettingsSchema.parse({ visualizerSize: 24 });
 		expect(out.visualizerSize).toBe("xs");
@@ -214,13 +234,13 @@ describe("generalSettingsSchema", () => {
 		).toBe(9);
 	});
 
-	test("rejects invalid fileTranscriptionFormat", () => {
+	test("rejects invalid fileTranscriptionFormats", () => {
 		expect(() =>
-			generalSettingsSchema.parse({ fileTranscriptionFormat: "pdf" }),
+			generalSettingsSchema.parse({ fileTranscriptionFormats: ["pdf"] }),
 		).toThrow();
 	});
 
-	test("context app mode defaults to the legacy deny-list behavior", () => {
+	test("context app mode defaults to all-except-denied", () => {
 		expect(generalSettingsSchema.parse({}).contextAppMode).toBe(
 			"all-except-denied",
 		);
@@ -464,18 +484,33 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 		expect(generalSettingsSchema.parse({}).recordingSoundPath).toBe("");
 	});
 
-	test("fileTranscriptionFormat enum accepts both 'txt' and 'srt' as INPUT (not just default)", () => {
-		// Pass 'txt'/'srt' explicitly so the enum gating fires (Zod's default
+	test("fileTranscriptionFormats accepts every export format as input", () => {
+		// Pass every value explicitly so the enum gating fires (Zod's default
 		// does NOT validate the default against the enum, so passing nothing
 		// would let mutated enum literals slip through).
+		for (const format of ["txt", "srt", "vtt", "json", "csv"] as const) {
+			expect(
+				generalSettingsSchema.parse({ fileTranscriptionFormats: [format] })
+					.fileTranscriptionFormats,
+			).toEqual([format]);
+		}
+	});
+
+	test("fileTranscriptionFormats defaults and rejects malformed data", () => {
+		expect(generalSettingsSchema.parse({}).fileTranscriptionFormats).toEqual([
+			"txt",
+		]);
+		expect(() =>
+			generalSettingsSchema.parse({ fileTranscriptionFormats: "txt" }),
+		).toThrow();
+		expect(() =>
+			generalSettingsSchema.parse({ fileTranscriptionFormats: [] }),
+		).toThrow();
 		expect(
-			generalSettingsSchema.parse({ fileTranscriptionFormat: "txt" })
-				.fileTranscriptionFormat,
-		).toBe("txt");
-		expect(
-			generalSettingsSchema.parse({ fileTranscriptionFormat: "srt" })
-				.fileTranscriptionFormat,
-		).toBe("srt");
+			generalSettingsSchema.parse({
+				fileTranscriptionFormats: ["txt", "vtt", "json", "csv"],
+			}).fileTranscriptionFormats,
+		).toEqual(["txt", "vtt", "json", "csv"]);
 	});
 
 	test("fileTranscriptionSaveLocation enum accepts 'auto' and 'ask' as INPUT", () => {
@@ -866,6 +901,32 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 		).toThrow();
 	});
 
+	test("Caveman level is accepted only for Concise", () => {
+		expect(
+			llmSettingsSchema.parse({
+				dictation: { presets: [{ key: "concise", level: "caveman" }] },
+			}).dictation.presets,
+		).toEqual([{ key: "concise", level: "caveman" }]);
+		expect(() =>
+			llmSettingsSchema.parse({
+				dictation: { presets: [{ key: "summarize", level: "caveman" }] },
+			}),
+		).toThrow();
+		expect(() =>
+			llmSettingsSchema.parse({
+				dictation: {
+					customModifiers: [
+						{
+							id: "custom",
+							levelsEnabled: true,
+							level: "caveman",
+						},
+					],
+				},
+			}),
+		).toThrow();
+	});
+
 	test("transforms defaults mirror dictation: neutral preset, no modifiers, default Ctrl+Shift+T hotkey", () => {
 		const out = llmSettingsSchema.parse({}).transforms;
 		expect(out.presets).toEqual([{ key: "neutral" }]);
@@ -901,19 +962,14 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 });
 
 describe("explicit parse-time validation (kills `.default()` mutations that bypass enum validation)", () => {
-	test("fileTranscriptionFormat default('txt') is exactly 'txt' (not '')", () => {
-		// Locks `.default("txt")` on L55. Zod's `.default()` does NOT validate
-		// the default against the enum, so a mutation to `.default("")` would
-		// silently produce "" without throwing — only a strict equality check
-		// catches it.
+	test("fileTranscriptionFormats defaults to exactly txt", () => {
 		const out = generalSettingsSchema.parse({});
-		expect(out.fileTranscriptionFormat).toBe("txt");
-		expect(out.fileTranscriptionFormat.length).toBeGreaterThan(0);
+		expect(out.fileTranscriptionFormats).toEqual(["txt"]);
 	});
 
 	test("fileTranscriptionSaveLocation default('auto') is exactly 'auto' (not '')", () => {
 		// Locks `.default("auto")` on L56. Same Zod default-bypass concern as
-		// fileTranscriptionFormat.
+		// fileTranscriptionFormats.
 		const out = generalSettingsSchema.parse({});
 		expect(out.fileTranscriptionSaveLocation).toBe("auto");
 		expect(out.fileTranscriptionSaveLocation.length).toBeGreaterThan(0);

@@ -10,11 +10,8 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 // not dragged into the `main` window's chunk — StatusBar only needs these two
 // helpers, and the barrel re-export would otherwise pull the whole
 // model-picker package into the main entry.
-import {
-	getFamilyConfig,
-	variantDisplayName,
-} from "@/widgets/model-picker/stt/lib/family-helpers";
-import { formatModelName } from "@/widgets/model-picker/lib/model-selector-utils";
+import { getFamilyConfig, variantDisplayName } from "@/entities/model-catalog";
+import { formatModelName } from "@/shared/ui/model-picker/lib/model-selector-utils";
 import type { CSSProperties, ReactNode } from "react";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {

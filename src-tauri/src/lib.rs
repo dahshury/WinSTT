@@ -12,6 +12,7 @@ mod cloud_llm;
 mod command_auth;
 mod commands;
 mod commands_registry;
+mod foreground_window;
 mod helpers;
 mod input;
 mod managers;
@@ -31,7 +32,7 @@ mod windows_com;
 pub mod winstt;
 
 pub use cli::CliArgs;
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 
 #[cfg(unix)]
@@ -57,6 +58,7 @@ pub(crate) use startup::{log_model_duration, log_startup_duration, startup_profi
 pub(crate) use window_state::show_main_window;
 
 static EXIT_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
+static STT_BOOT_WARMUP_STARTED: AtomicBool = AtomicBool::new(false);
 
 // Boot-time helpers used only inside this crate root (run / initialize_core_logic
 // / the window-event handlers).
@@ -64,11 +66,9 @@ use startup::{
     StartupProfiler, build_console_filter, configure_webview_window_builder, ensure_hf_cache_env,
     request_app_exit, wait_for_renderer_dev_server,
 };
-use window_state::{
-    restore_main_window_position, save_main_window_position, should_force_show_permissions_window,
-};
+use window_state::{restore_main_window_position, save_main_window_position};
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn export_typescript_bindings(
     builder: &tauri_specta::Builder<tauri::Wry>,
     path: &str,
@@ -84,7 +84,7 @@ fn export_typescript_bindings(
     Ok(())
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn post_process_typescript_bindings(path: &str) -> std::io::Result<()> {
     let text = std::fs::read_to_string(path)?;
     let processed = strip_unused_tauri_channel_import(&text);
@@ -99,7 +99,7 @@ fn post_process_typescript_bindings(path: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn strip_unused_tauri_channel_import(text: &str) -> String {
     let generated_import_lf = "import {\n\tinvoke as TAURI_INVOKE,\n\tChannel as TAURI_CHANNEL,\n} from \"@tauri-apps/api/core\";";
     let generated_import_crlf = generated_import_lf.replace('\n', "\r\n");
@@ -109,7 +109,7 @@ fn strip_unused_tauri_channel_import(text: &str) -> String {
         .replace(&generated_import_crlf, cleaned_import)
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn normalize_generated_result_errors(text: &str) -> String {
     let without_error_casts = text
         .replace(
@@ -134,7 +134,7 @@ fn normalize_generated_result_errors(text: &str) -> String {
     without_error_casts.replacen(&result_type, &replacement, 1)
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn replace_generated_event_helper(text: &str) -> String {
     let start_marker = "function __makeEvents__<T extends Record<string, any>>(";
     let Some(start) = text.find(start_marker) else {
@@ -152,12 +152,12 @@ fn replace_generated_event_helper(text: &str) -> String {
     processed
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn preferred_typescript_newline(text: &str) -> &'static str {
     if text.contains("\r\n") { "\r\n" } else { "\n" }
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn normalize_newlines(text: &str, newline: &str) -> String {
     if newline == "\r\n" {
         text.replace('\n', "\r\n")
@@ -166,10 +166,10 @@ fn normalize_newlines(text: &str, newline: &str) -> String {
     }
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 const COMMAND_ERROR_HELPER_LF: &str = "function __commandError__<E>(error: unknown): { status: \"error\"; error: E } {\n\treturn { status: \"error\", error: error as E };\n}\n";
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 const EVENT_HELPER_LF: &str = r#"type __EventAccessor__<T> = __EventObj__<T> & {
 	(handle: __WebviewWindow__): __EventObj__<T>;
 };
@@ -218,7 +218,7 @@ function __makeEvents__<T extends object>(
 	});
 }"#;
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 fn trim_trailing_whitespace(text: &str) -> String {
     let mut trimmed = String::with_capacity(text.len());
 
@@ -244,26 +244,18 @@ fn advance_startup_phase(startup: &mut StartupProfiler, app: &AppHandle, label: 
 
 fn open_startup_onboarding_window(
     app: &AppHandle,
-    main_window: &tauri::WebviewWindow,
+    _main_window: &tauri::WebviewWindow,
 ) -> Result<(), String> {
-    winstt::commands::windows::open_window(
-        app.clone(),
-        main_window.clone(),
-        "onboarding".to_string(),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+    winstt::commands::windows::show_onboarding_window_internal(app)
 }
 
 fn spawn_stt_boot_warmup(
     app_handle: &AppHandle,
     tm: Arc<managers::transcription::TranscriptionManager>,
 ) {
+    if STT_BOOT_WARMUP_STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let app_handle_for_stt = app_handle.clone();
     let profile_stt = startup_profile_enabled();
     startup::log_since_launch("STT boot/warmup thread spawned");
@@ -274,23 +266,30 @@ fn spawn_stt_boot_warmup(
         // failed-to-open onboarding window's fallback ready-watcher can proceed.
         if winstt::commands::onboarding::is_onboarding_active() {
             if profile_stt {
-                log::info!("[startup] STT boot/warmup skipped — onboarding active");
+                log::info!("[startup] STT boot/warmup skipped -- onboarding active");
             }
             splash::mark_stt_boot_done(&app_handle_for_stt);
             return;
         }
         tm.initiate_model_load(); // spawns its own background load thread
         tm.warmup(); // waits out that load, then dummy-decodes to compile kernels
-        // Signal the splash ready-watcher that the backend is up + warm (or had
-        // nothing to load). The single-process analog of the reference's
-        // `server-ready`; one of the two gates before the pill is shown.
+        splash::mark_stt_boot_done(&app_handle_for_stt);
+        // Push the settled readiness flags. The renderer may already be visible,
+        // so it must not have to poll or wait for a later model swap to learn
+        // that the background warmup finished.
+        let runtime_info =
+            winstt::commands::runtime::runtime_info_snapshot(&app_handle_for_stt, tm.as_ref());
+        winstt::commands::swap_events::SwapEvents::runtime_info(&app_handle_for_stt, &runtime_info);
+        // Publish model readiness for diagnostics and first-dictation status.
+        // The visible-window handoff deliberately does not wait for this: large
+        // DirectML models can take many seconds to load, while the renderer is
+        // already usable and can continue warming the engine in the background.
         if profile_stt {
             log::info!(
                 "[startup] STT boot/warmup thread completed: {} ms",
                 started.elapsed().as_millis()
             );
         }
-        splash::mark_stt_boot_done(&app_handle_for_stt);
         crate::bootstrap::state::schedule_winstt_background_warmups(&app_handle_for_stt);
         if profile_stt {
             log::info!("[startup] WinSTT background warmups scheduled after STT boot");
@@ -298,10 +297,39 @@ fn spawn_stt_boot_warmup(
     });
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SttBootWarmupPolicy {
+    Eager,
+    RendererReady,
+}
+
+fn stt_boot_warmup_policy() -> SttBootWarmupPolicy {
+    parse_stt_boot_warmup_policy(&std::env::var("WINSTT_STT_WARMUP_POLICY").unwrap_or_default())
+}
+
+fn parse_stt_boot_warmup_policy(value: &str) -> SttBootWarmupPolicy {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "renderer-ready" => SttBootWarmupPolicy::RendererReady,
+        _ => SttBootWarmupPolicy::Eager,
+    }
+}
+
+/// Start the one-time STT load/warm pass after the renderer has acknowledged
+/// its first paint and startup IPC work. The measured default is eager; this
+/// entry point retains the delayed policy for controlled launch experiments.
+pub(crate) fn schedule_stt_boot_warmup_after_renderer_ready(app: &AppHandle) {
+    let Some(transcription) = app.try_state::<Arc<managers::transcription::TranscriptionManager>>()
+    else {
+        log::warn!("[startup] renderer-ready STT warmup skipped: manager unavailable");
+        return;
+    };
+    spawn_stt_boot_warmup(app, Arc::clone(transcription.inner()));
+}
+
 /// Headless model-runtime boot: manager construction + registration and the
-/// STT/VAD/wakeword warmup spawns. Runs BEFORE the main webview is created —
-/// the reveal gate waits on the STT load+warmup (the long pole by seconds), so
-/// every millisecond spent ahead of `spawn_stt_boot_warmup` delays the window.
+/// VAD/wakeword setup. Runs before the main webview is created. STT load/warm
+/// defaults to eager because the packaged native A/B found it faster at paint,
+/// first usable, and STT-ready; renderer-ready remains an explicit benchmark policy.
 /// Nothing in here touches a window or webview.
 ///
 /// Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
@@ -319,15 +347,15 @@ fn initialize_model_runtime(
     std::thread::spawn(winstt::model_watchdog::install);
     advance_startup_phase(startup, app_handle, "model cleanup watchdog installed");
 
-    // Decide up-front whether the first-run wizard owns this launch (same predicate
-    // that opens the onboarding window later in `run`'s setup). While it does, the
-    // boot STT load + warmup, the background TTS/encoder/LLM warmups, and wakeword
-    // arming scheduled below all stay dormant so onboarding starts MODEL-FREE — the
-    // user shouldn't load a local model they may swap for a cloud provider. The gate
-    // is lifted (and the deferred warmups run) in `onboarding_finish`.
-    {
-        let onboarding_settings = winstt::commands::settings::read_settings_raw(app_handle);
-        winstt::commands::onboarding::set_onboarding_active(!onboarding_settings.general.onboarded);
+    // Establish both the first-run and returning-user permission gate before
+    // device watchers, microphone streams, VAD, or model warmups are scheduled.
+    // This is a non-requesting preflight: OS prompts remain owned by the focused
+    // onboarding/recovery UI.
+    let permission_status = winstt::commands::permission::initialize_startup_gate(app_handle);
+    if permission_status.ready {
+        winstt::audio_device_watcher::install_audio_device_watcher(app_handle);
+    } else {
+        log::info!("[permissions] audio device watcher deferred until access is restored");
     }
 
     let core_managers = bootstrap::state::construct_core_managers(app_handle)?;
@@ -364,13 +392,19 @@ fn initialize_model_runtime(
 
     bootstrap::state::register_winstt_managers(app_handle, &core_managers);
     advance_startup_phase(startup, app_handle, "WinSTT managers registered");
-    // Eagerly load + WARM the STT engine at boot so the user's FIRST PTT decode is warm — no
-    // model-load + cold DirectML-kernel JIT serialized after release (the ~10x first-dictation
-    // gap vs the reference app, whose server warms at boot). Start this immediately after WinSTT
-    // managers are registered so cloud STT has its managed state and local STT overlaps the rest of
-    // startup.
-    spawn_stt_boot_warmup(app_handle, core_managers.transcription);
-    advance_startup_phase(startup, app_handle, "STT boot/warmup scheduled");
+    // Default to eager warmup: the packaged native A/B found lower median paint,
+    // first-usable, and STT-ready times than deferring until renderer-ready.
+    // Keep the delayed policy available for repeatable controlled measurements.
+    if stt_boot_warmup_policy() == SttBootWarmupPolicy::Eager {
+        spawn_stt_boot_warmup(app_handle, core_managers.transcription);
+        advance_startup_phase(startup, app_handle, "eager STT boot/warmup scheduled");
+    } else {
+        advance_startup_phase(
+            startup,
+            app_handle,
+            "STT boot/warmup deferred until renderer ready",
+        );
+    }
     // If the persisted WinSTT mode is wakeword, arm the detector and open the
     // microphone stream during startup. The renderer treats wakeword as
     // server-driven, so this backend sync is the only place that can make a cold
@@ -531,9 +565,18 @@ fn initialize_desktop_integration(
         },
     );
 
-    let settings = winstt::commands::settings::read_settings_raw(app_handle);
-    autostart::sync_launch_at_login(app_handle, settings.general.auto_start, "[autostart]");
-    advance_startup_phase(startup, app_handle, "tray settings and autostart applied");
+    let auto_start = winstt::commands::settings::read_settings_raw(app_handle)
+        .general
+        .auto_start;
+    let app_for_autostart = app_handle.clone();
+    std::thread::spawn(move || {
+        autostart::sync_launch_at_login(&app_for_autostart, auto_start, "[autostart]");
+    });
+    advance_startup_phase(
+        startup,
+        app_handle,
+        "tray settings applied; autostart sync scheduled",
+    );
 
     // The separate `recording_overlay` window is no longer created — the
     // WinSTT recording pill is the React `overlay` WebviewWindow, and every show path
@@ -544,20 +587,16 @@ fn initialize_desktop_integration(
 }
 
 /// Settings-store seeding, the cheap headless singletons, then the model
-/// runtime. Runs on the deferred startup thread BEFORE the splash-paint wait
-/// (unless `WINSTT_STARTUP_LEGACY_BOOT`) so the STT load+warmup — the reveal
-/// gate's long pole — overlaps WebView2 startup instead of queueing behind it.
+/// runtime. Runs on the deferred startup thread only after the splash has
+/// painted at 0%; expensive STT warmup follows the selected eager/renderer-ready
+/// policy.
 fn run_headless_boot(
     app_handle: &AppHandle,
     cli_args: &CliArgs,
     startup: &mut StartupProfiler,
 ) -> Result<(), String> {
-    // SINGLE-STORE: seed WinSTT settings defaults + run the one-time migration of
-    // the legacy `settings_store.json` into the embedded `WinsttSettings.core`
-    // BEFORE any manager reads settings. `crate::settings::get_settings` now derives
-    // its `AppSettings` view from `core`, so this must run first or early readers
-    // (e.g. `apply_accelerator_settings`) would see defaults instead of the
-    // migrated user values.
+    // Materialize the canonical settings tree, including backend-only `core`,
+    // before any manager reads settings.
     winstt::commands::settings::seed_defaults(app_handle);
     advance_startup_phase(startup, app_handle, "settings defaults seeded");
 
@@ -576,9 +615,6 @@ fn run_headless_boot(
         "settings loaded and coordinator registered",
     );
 
-    crate::winstt::audio_device_watcher::install_audio_device_watcher(app_handle);
-    advance_startup_phase(startup, app_handle, "audio device watcher scheduled");
-
     initialize_model_runtime(app_handle, startup)
 }
 
@@ -593,7 +629,7 @@ fn abort_startup(app_handle: &AppHandle, err: String) {
     )
     .detail(err)
     .severity("error")
-    .record(Some(app_handle));
+    .record_without_log(Some(app_handle));
     splash::close_splash_window(app_handle);
     request_app_exit(app_handle, "Core logic initialization failed");
 }
@@ -604,7 +640,6 @@ fn continue_startup_after_splash_paint(
     mut startup: StartupProfiler,
     headless_boot: Result<(), String>,
 ) {
-    advance_startup_phase(&mut startup, &app_handle, "splash painted");
     if let Err(err) = headless_boot {
         abort_startup(&app_handle, err);
         return;
@@ -648,7 +683,7 @@ fn continue_startup_after_splash_paint(
             )
             .detail(e.to_string())
             .severity("error")
-            .record(Some(&app_handle));
+            .record_without_log(Some(&app_handle));
             splash::close_splash_window(&app_handle);
             return;
         }
@@ -682,12 +717,11 @@ fn continue_startup_after_splash_paint(
     advance_startup_phase(&mut startup, &app_handle, "tray CLI visibility applied");
 
     let visibility_settings = winstt::commands::settings::read_settings_raw(&app_handle);
-    let should_show_onboarding = !visibility_settings.general.onboarded;
+    let should_show_onboarding = !visibility_settings.general.onboarded
+        || winstt::commands::permission::is_recovery_active();
     let should_hide = visibility_settings.general.start_minimized || cli_args.start_hidden;
-    let should_force_show = should_force_show_permissions_window(&app_handle);
     let tray_available = visibility_settings.core.show_tray_icon && !cli_args.no_tray;
-    let will_show_main =
-        !should_show_onboarding && (should_force_show || !should_hide || !tray_available);
+    let will_show_main = !should_show_onboarding && (!should_hide || !tray_available);
     advance_startup_phase(&mut startup, &app_handle, "startup visibility decided");
 
     if should_show_onboarding {
@@ -704,14 +738,24 @@ fn continue_startup_after_splash_paint(
                     "Startup could not open the onboarding window",
                 )
                 .detail(e)
-                .record(Some(&app_handle));
+                .record_without_log(Some(&app_handle));
+                if winstt::commands::permission::is_recovery_active() {
+                    // Never bypass an explicit OS denial into a half-active app.
+                    // If the focused recovery surface cannot be created, stop
+                    // cleanly and let the recorded startup issue explain why.
+                    request_app_exit(
+                        &app_handle,
+                        "Permission recovery window could not be opened",
+                    );
+                    return;
+                }
                 // The wizard never opened, so `onboarding_finish` will never run to
                 // lift the model gate. Drop straight into normal-launch behaviour:
                 // un-gate and warm the configured model so the user isn't stranded
                 // on a model-free app.
                 winstt::commands::onboarding::set_onboarding_active(false);
                 bootstrap::state::activate_runtime_after_onboarding(&app_handle);
-                let fallback_will_show = should_force_show || !should_hide || !tray_available;
+                let fallback_will_show = !should_hide || !tray_available;
                 if splash::is_active(&app_handle) {
                     splash::spawn_ready_watcher(&app_handle, fallback_will_show);
                 } else if fallback_will_show {
@@ -747,11 +791,6 @@ pub fn run(cli_args: CliArgs) {
     let console_filter = build_console_filter();
 
     let specta_builder = make_specta_builder();
-
-    #[cfg(debug_assertions)] // <- Only export on non-release builds
-    if let Err(err) = export_typescript_bindings(&specta_builder, "../src/bindings.ts") {
-        eprintln!("Failed to export TypeScript bindings: {err}");
-    }
 
     let invoke_handler = specta_builder.invoke_handler();
 
@@ -808,7 +847,7 @@ pub fn run(cli_args: CliArgs) {
                     .context("thread", name.to_string())
                     .context("location", location)
                     .context("backtrace", backtrace)
-                    .record(Some(&app_for_panic));
+                    .record_without_log(Some(&app_for_panic));
                     prev_hook(info);
                 }));
             }
@@ -835,24 +874,26 @@ pub fn run(cli_args: CliArgs) {
             std::thread::spawn(move || {
                 let mut startup = StartupProfiler::new();
                 startup::log_since_launch("deferred startup thread running");
+                // Do not begin any progress-producing or model-runtime work until
+                // the local splash page has loaded and WebView2 has had time to
+                // present its initial 0% frame. Starting headless boot first could
+                // starve the splash compositor, making its first visible frame land
+                // at 50-70% on cold launches.
+                if should_show_splash && splash::wait_until_painted() {
+                    advance_startup_phase(&mut startup, &app_handle_for_startup, "splash painted");
+                }
                 // Wire the ducking crash journal and restore any session
                 // volumes a previous run left ducked (crash / kill while
                 // dictating). Must precede the first dictation.
                 winstt::ducking::init(&app_handle_for_startup);
-                // Headless model-runtime boot FIRST, while the splash webview is
-                // still painting: the reveal gate's long pole is the STT
-                // load+warmup, and none of this touches a window — the two now
-                // overlap instead of serializing. The splash-paint wait still
-                // gates the WEBVIEW half (window creation competes with the
-                // splash for the shared WebView2 browser process).
+                // With the splash already visible, begin headless manager setup
+                // and the selected STT load/warm policy before creating the main
+                // renderer webview.
                 let headless_boot = run_headless_boot(
                     &app_handle_for_startup,
                     &cli_args_for_startup,
                     &mut startup,
                 );
-                if should_show_splash {
-                    let _ = splash::wait_until_painted();
-                }
                 continue_startup_after_splash_paint(
                     app_handle_for_startup,
                     cli_args_for_startup,
@@ -882,7 +923,7 @@ pub fn run(cli_args: CliArgs) {
                         && !window.app_handle().state::<CliArgs>().no_tray;
                     if settings.general.minimize_to_tray && tray_available {
                         api.prevent_close();
-                        log::info!("Main window close requested - hiding to tray.");
+                        log::debug!("Main window close requested - hiding to tray.");
                         let _ = window.hide();
                         return;
                     }
@@ -906,21 +947,23 @@ pub fn run(cli_args: CliArgs) {
                         winstt::commands::settings::read_settings_raw(window.app_handle())
                             .general
                             .onboarded;
-                    if !onboarded {
+                    if !onboarded
+                        || winstt::commands::permission::is_recovery_active()
+                    {
                         request_app_exit(
                             window.app_handle(),
-                            "Onboarding window closed before completion",
+                            "Permission/onboarding window closed before completion",
                         );
                         return;
                     }
                 }
 
-                // Native close of Settings (Alt+F4 etc.) bypasses close_self_window,
-                // so route it through the same animated close helper.
-                if window.label() == "settings" {
+                // Native close of a main-window modal (Alt+F4 etc.) bypasses
+                // close_self_window, so route it through the same teardown path.
+                if matches!(window.label(), "settings" | "whats-new") {
                     let _ = winstt::commands::windows::close_window_internal(
                         window.app_handle(),
-                        "settings",
+                        window.label(),
                     );
                     return;
                 }
@@ -962,9 +1005,14 @@ pub fn run(cli_args: CliArgs) {
                 }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
-                log::info!("Theme changed to: {:?}", theme);
+                log::debug!("Theme changed to: {:?}", theme);
                 // Update tray icon to match new theme, maintaining idle state
                 utils::change_tray_icon(window.app_handle(), utils::TrayIconState::Idle);
+            }
+            tauri::WindowEvent::Focused(true) if window.label() == "main" => {
+                winstt::commands::permission::schedule_recurring_preflight(
+                    window.app_handle(),
+                );
             }
             _ => {}
         })
@@ -989,6 +1037,9 @@ pub fn run(cli_args: CliArgs) {
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { .. } = &event {
             cleanup_runtime_models_on_exit(app);
+        }
+        if let tauri::RunEvent::Resumed = &event {
+            winstt::commands::permission::schedule_recurring_preflight(app);
         }
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = &event {
@@ -1091,6 +1142,28 @@ fn free_ollama_vram_on_exit(app: &AppHandle) {
         let _ = rx.recv_timeout(Duration::from_millis(2200));
     }
     winstt::commands::llm::stop_winstt_spawned_ollama();
+}
+
+#[cfg(test)]
+mod startup_policy_tests {
+    use super::{SttBootWarmupPolicy, parse_stt_boot_warmup_policy};
+
+    #[test]
+    fn eager_is_the_default_warmup_policy() {
+        assert_eq!(parse_stt_boot_warmup_policy(""), SttBootWarmupPolicy::Eager);
+        assert_eq!(
+            parse_stt_boot_warmup_policy("unexpected"),
+            SttBootWarmupPolicy::Eager
+        );
+    }
+
+    #[test]
+    fn renderer_ready_warmup_remains_available_for_ab_measurement() {
+        assert_eq!(
+            parse_stt_boot_warmup_policy(" RENDERER-READY "),
+            SttBootWarmupPolicy::RendererReady
+        );
+    }
 }
 
 #[cfg(test)]

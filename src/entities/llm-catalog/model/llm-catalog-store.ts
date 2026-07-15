@@ -14,6 +14,7 @@ import {
 	onOllamaPullProgress,
 	pullOllamaModel,
 } from "@/shared/api/ipc-client";
+import { hasNativeRuntime } from "@/shared/api/native-boundary";
 import { OllamaPullProgressStatusSchema } from "@/shared/api/schema.zod";
 import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
@@ -69,13 +70,9 @@ const pausedPullStateSchema = z.object({
 const pausedPullsSchema = z.record(z.string(), pausedPullStateSchema);
 
 /** Load persisted paused pulls. Gated on `hasTauriRuntime()` (the synchronously
- *  injected `__TAURI_INTERNALS__`, present from the very first renderer module) —
- *  NOT on `window.nativeBridge`, whose install is a separate side effect that can
- *  race this module-load read. That race is exactly why a partial download's
- *  saved percentage failed to show on reopen: the load ran before the bridge
- *  installed and returned `{}`. `hasTauriRuntime()` removes the ordering
- *  dependency entirely (and is still false under plain Vite / a browser preview,
- *  so those start clean). */
+ *  injected `__TAURI_INTERNALS__`, present from the first renderer module).
+ *  This keeps module-load reads deterministic and remains false under plain Vite
+ *  or a browser preview, so those environments start clean. */
 function loadPersistedPausedPulls(): Record<string, PausedPullState> {
 	if (
 		!hasTauriRuntime() ||
@@ -568,12 +565,12 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	},
 }));
 
-// SSR/bridge guard — under bun:test, the bridge is mocked and nativeBridge
-// is undefined, so the body is skipped regardless of the conditional outcome.
+// Native-runtime guard — under bun:test, the runtime is mocked and remains
+// unavailable here, so the body is skipped regardless of the conditional outcome.
 // Observable test behavior is identical with or without this branch, hence
 // every mutator on this if-statement is equivalent.
 // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,StringLiteral,BlockStatement
-if (typeof window !== "undefined" && window.nativeBridge != null) {
+if (hasNativeRuntime()) {
 	// Stryker disable next-line ArrowFunction
 	onLlmCatalog((models) => useLlmCatalogStore.getState().setModels(models));
 	// Stryker disable next-line ArrowFunction

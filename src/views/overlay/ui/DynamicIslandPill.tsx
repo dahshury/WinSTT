@@ -9,7 +9,11 @@ import {
 	ThinkingIndicator,
 } from "@/shared/ui/thinking-indicator";
 import { computeIslandSize } from "../lib/overlay-reveal";
-import { CancelButton, LivePulse } from "./overlay-shell";
+import {
+	CancelButton,
+	LivePulse,
+	SkipPostProcessingButton,
+} from "./overlay-shell";
 import {
 	ICON_PRESET_PX,
 	OVERLAY_PANEL_CLOSE_MS,
@@ -136,7 +140,7 @@ function DynamicIslandPillContent({
 			// centering slack (~35px on each side) already clears the absolute
 			// X cancel button in the top-right corner — no asymmetric `pr` needed.
 			<div
-				className="flex justify-center px-5 pt-2 pb-3"
+				className="flex flex-col items-center justify-center gap-2 px-5 pt-2 pb-3"
 				data-overlay-processing-content="true"
 				style={{ fontSize: textFontSize }}
 			>
@@ -146,6 +150,7 @@ function DynamicIslandPillContent({
 					startedAt={processingStartedAt}
 					{...processingWordProps}
 				/>
+				{isThinking ? <SkipPostProcessingButton /> : null}
 			</div>
 		);
 	}

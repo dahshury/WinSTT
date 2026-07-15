@@ -9,8 +9,8 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { domAnimation, LazyMotion, m, useReducedMotion } from "motion/react";
 import { useTranslations } from "use-intl";
-import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
+import { settingsSave } from "@/shared/api/ipc-client";
 import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
@@ -59,19 +59,7 @@ export function OnboardingCapabilitiesStep() {
 	const updateRecordingMode = (value: RecordingMode): void => {
 		const patch = { recordingMode: value };
 		updateGeneral(patch);
-		void commands
-			.winsttSetSettings({ general: { ...general, ...patch } })
-			.then((result) => {
-				if (result.status === "error") {
-					console.error(
-						"[onboarding] failed to persist recording mode:",
-						result.error,
-					);
-				}
-			})
-			.catch((error: unknown) => {
-				console.error("[onboarding] failed to persist recording mode:", error);
-			});
+		settingsSave({ general: { ...general, ...patch } });
 	};
 
 	const itemInitial = reduceMotion

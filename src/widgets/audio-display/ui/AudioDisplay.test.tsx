@@ -81,9 +81,8 @@ describe("AudioDisplay helpers — collectDroppedFiles", () => {
 
 describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
 	// `getFilePath` (inside collectDroppedFiles) reads
-	// `window.nativeBridge.getPathForFile`, but `fileQueueEnqueue` routes through
-	// the TYPED `commands.fileTranscribeEnqueue()` (IPC.FILE_QUEUE_ENQUEUE is in
-	// `COMMAND_INVOKERS`), which calls `@tauri-apps/api/core` invoke →
+	// the test harness's `window.nativeBridge.getPathForFile`, while
+	// `fileQueueEnqueue` calls the typed `commands.fileTranscribeEnqueue()` directly →
 	// `window.__TAURI_INTERNALS__.invoke("file_transcribe_enqueue")` — NOT
 	// `nativeBridge.invoke`.
 	//

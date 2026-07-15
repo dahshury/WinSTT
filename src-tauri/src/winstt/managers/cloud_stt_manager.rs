@@ -100,8 +100,8 @@ impl CloudSttManager {
     /// Emit the single code-discriminated cloud error channel (07_* §4b).
     /// `aborted` is suppressed (user-initiated cancel).
     ///
-    /// The renderer's `CloudSttErrorToasts` fan-out (native-bridge-adapter
-    /// `shouldDeliver`) routes ONE `stt:cloud-error` event to one of the five
+    /// The renderer's `CloudSttErrorToasts` fan-out routes ONE
+    /// `stt:cloud-error` event to one of the five
     /// WinSTT channels by matching the payload `code` against the fan-out tokens
     /// `auth_failed | network_error | key_missing | rate_limited | provider_error`.
     /// So we emit the FAN-OUT token (not the raw taxonomy `auth`/`network`/…) and
@@ -363,7 +363,7 @@ mod tests {
     use super::*;
     use crate::winstt::cloud_stt::cloud_error_fanout_code;
 
-    /// The fan-out tokens the `native-bridge-adapter` `shouldDeliver` routes on.
+    /// The fan-out tokens the renderer's direct native event boundary routes on.
     /// Exercises the REAL mapping (`cloud_error_fanout_code`) rather than a
     /// test-local copy that could drift from it.
     #[test]

@@ -1,7 +1,5 @@
-// The Settings → Models "Open custom-models folder" button sends
-// `CUSTOM_MODELS_OPEN_FOLDER`. The adapter (native-bridge-adapter.ts) routes it as
-// `{ kind: "plugin", plugin: "opener:custom-models" }`, whose handler INVOKES the
-// Tauri command `open_custom_models_folder`, then hands the returned absolute path
+// The Settings → Models "Open custom-models folder" button calls the generated
+// `open_custom_models_folder` binding directly, then hands the returned absolute path
 // to `@tauri-apps/plugin-opener`'s `openPath`. So this command must RETURN THE PATH
 // (a String) rather than shelling out — the actual reveal stays inside the
 // capability-gated opener plugin.

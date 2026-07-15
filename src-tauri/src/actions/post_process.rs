@@ -3,11 +3,89 @@ use crate::winstt::llm::DictationSideEffects;
 use crate::winstt::managers::{ContextManager, LlmManager};
 use crate::winstt::settings_schema::{LlmProvider, RecordingMode, WinsttSettings};
 use ferrous_opencc::{OpenCC, config::BuiltinConfig};
-use log::{debug, error, info, warn};
-use std::sync::Arc;
-use std::time::Instant;
+use log::{debug, error, warn};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri::Manager;
+
+/// The dictation session currently offering the "skip post-processing" action.
+/// A session id (rather than a boolean) prevents a late Alt+S release/click from
+/// leaking into the next dictation.
+static ACTIVE_POST_PROCESSING_SESSION: AtomicU64 = AtomicU64::new(0);
+static SKIP_POST_PROCESSING_SESSION: AtomicU64 = AtomicU64::new(0);
+
+fn begin_post_processing_skip_window(session_id: u64) {
+    SKIP_POST_PROCESSING_SESSION.store(0, Ordering::Release);
+    ACTIVE_POST_PROCESSING_SESSION.store(session_id, Ordering::Release);
+}
+
+fn finish_post_processing_skip_window(session_id: u64) {
+    let _ = ACTIVE_POST_PROCESSING_SESSION.compare_exchange(
+        session_id,
+        0,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+    let _ = SKIP_POST_PROCESSING_SESSION.compare_exchange(
+        session_id,
+        0,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+}
+
+fn post_processing_skip_requested(session_id: u64) -> bool {
+    SKIP_POST_PROCESSING_SESSION.load(Ordering::Acquire) == session_id
+}
+
+/// Request a raw-transcript finish for the currently active dictation cleanup.
+/// Cancelling the LLM manager drops the in-flight network/local generation, but
+/// deliberately leaves the transcription coordinator alive so its normal
+/// history + paste path can finish with the original STT text.
+pub(crate) fn request_post_processing_skip(app: &AppHandle, restore_focus: bool) -> bool {
+    let session_id = ACTIVE_POST_PROCESSING_SESSION.load(Ordering::Acquire);
+    if session_id == 0 {
+        return false;
+    }
+    SKIP_POST_PROCESSING_SESSION.store(session_id, Ordering::Release);
+    if let Some(llm) = app.try_state::<Arc<LlmManager>>() {
+        llm.cancel_all();
+    }
+    if restore_focus {
+        super::pinned_foreground::restore_focus();
+    }
+    debug!("Skipping post-processing for dictation session {session_id}");
+    true
+}
+
+/// Arms Alt+S only for the LLM cleanup window and guarantees teardown on every
+/// return/unwind path.
+pub(super) struct PostProcessingSkipGuard {
+    app: AppHandle,
+    session_id: u64,
+}
+
+impl PostProcessingSkipGuard {
+    pub(super) fn new(app: &AppHandle, session_id: u64) -> Self {
+        begin_post_processing_skip_window(session_id);
+        crate::shortcut::register_skip_post_processing_shortcut(app);
+        Self {
+            app: app.clone(),
+            session_id,
+        }
+    }
+}
+
+impl Drop for PostProcessingSkipGuard {
+    fn drop(&mut self) {
+        finish_post_processing_skip_window(self.session_id);
+        crate::shortcut::unregister_skip_post_processing_shortcut(&self.app);
+    }
+}
 
 /// Telemetry captured while the LLM post-processes a transcription, surfaced in
 /// the history footer (model + how long it took + generation speed + cloud
@@ -48,7 +126,10 @@ fn should_run_winstt_dictation_llm(settings: &WinsttSettings) -> bool {
 }
 
 pub(super) fn should_run_winstt_dictation_llm_from_app(app: &AppHandle) -> bool {
-    let settings = crate::winstt::commands::settings::read_settings(app);
+    let mut settings = crate::winstt::commands::settings::read_settings(app);
+    if let Some(profile) = super::app_profile::take_resolved(Duration::ZERO) {
+        crate::winstt::app_profiles::apply_profile_to_settings(&mut settings, &profile.config);
+    }
     should_run_winstt_dictation_llm(&settings)
 }
 
@@ -314,6 +395,7 @@ async fn process_winstt_dictation_llm(
         llm_manager.inner().clone(),
         transcription.to_string(),
         context,
+        settings,
     )
     .await
     {
@@ -436,23 +518,46 @@ pub(crate) struct ProcessedTranscription {
     pub privacy_markers: Vec<String>,
 }
 
+fn raw_transcription_output(transcription: &str) -> ProcessedTranscription {
+    ProcessedTranscription {
+        final_text: transcription.to_string(),
+        post_processed_text: None,
+        post_process_requested: false,
+        llm_meta: None,
+        dictionary_fixes: None,
+        history_tag: None,
+        privacy_markers: Vec::new(),
+    }
+}
+
+async fn skipped_transcription_output(transcription: &str) -> ProcessedTranscription {
+    // A mouse click activates WebView2 before its handler runs. Give the command
+    // path's pinned-window restore one compositor beat to settle before the
+    // existing paste worker synthesizes Ctrl+V. Alt+S pays the same tiny delay.
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    raw_transcription_output(transcription)
+}
+
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
+    session_id: u64,
 ) -> ProcessedTranscription {
     if transcription.trim().is_empty() {
-        return ProcessedTranscription {
-            final_text: String::new(),
-            post_processed_text: None,
-            post_process_requested: false,
-            llm_meta: None,
-            dictionary_fixes: None,
-            history_tag: None,
-            privacy_markers: Vec::new(),
-        };
+        return raw_transcription_output("");
+    }
+    if post_processing_skip_requested(session_id) {
+        return skipped_transcription_output(transcription).await;
     }
 
-    let winstt_settings = crate::winstt::commands::settings::read_settings(app);
+    let mut winstt_settings = crate::winstt::commands::settings::read_settings(app);
+    let active_profile = super::app_profile::take_resolved(Duration::from_millis(1500));
+    if let Some(profile) = &active_profile {
+        crate::winstt::app_profiles::apply_profile_to_settings(
+            &mut winstt_settings,
+            &profile.config,
+        );
+    }
     let dictation_post_processing = dictation_post_processing_enabled(&winstt_settings);
     let winstt_dictation_llm = should_run_winstt_dictation_llm(&winstt_settings);
     let post_process_requested = winstt_dictation_llm;
@@ -504,12 +609,20 @@ pub(crate) async fn process_transcription_output(
         .as_ref()
         .map(format_captured_context)
         .unwrap_or_default();
+    let llm_result = if winstt_dictation_llm {
+        process_winstt_dictation_llm(app, &winstt_settings, &final_text, llm_context_fragment).await
+    } else {
+        None
+    };
+
+    // Alt+S may have cancelled the await above. Return the untouched engine
+    // transcript before any replacement, vocabulary, snippet, or caret passes.
+    if post_processing_skip_requested(session_id) {
+        return skipped_transcription_output(transcription).await;
+    }
+
     let mut llm_cleanup_succeeded = false;
-    if winstt_dictation_llm
-        && let Some((processed_text, meta, dict_fixes, side_effects)) =
-            process_winstt_dictation_llm(app, &winstt_settings, &final_text, llm_context_fragment)
-                .await
-    {
+    if let Some((processed_text, meta, dict_fixes, side_effects)) = llm_result {
         let llm_failed = meta.error.is_some();
         llm_cleanup_succeeded = !llm_failed;
         if llm_failed {
@@ -531,33 +644,15 @@ pub(crate) async fn process_transcription_output(
             "learnedProperNounCount": side_effects.learned_proper_nouns.len(),
             "learnedSnippetCount": side_effects.learned_snippets.len(),
             "suggestedModifierCount": side_effects.suggested_modifier_presets.len(),
+            "appProfileRule": active_profile.as_ref().map(|profile| &profile.configuration_name),
         }))
         .ok();
     }
 
-    // Post-LLM deterministic replacement-pair safety net. Replacement pairs are fed to the model in
-    // its prompt, but a small local model may ignore one — so re-apply them (case-insensitive
-    // whole-word) to the model's OUTPUT, exactly as the dictionary schema documents. Folds the count
-    // into `dictionary_fixes` so the History "AI Impact" stat reflects the deterministic guarantee,
-    // not just what the model happened to change (the LLM path itself reports 0 fixes).
-    if winstt_dictation_llm {
-        let pairs = crate::winstt::commands::llm::replacement_pairs(&winstt_settings);
-        if !pairs.is_empty() {
-            let (replaced, n) =
-                crate::winstt::llm::apply_replacement_pairs_counted(&final_text, &pairs);
-            if n > 0 {
-                final_text = replaced;
-                post_processed_text = Some(final_text.clone());
-                dictionary_fixes = Some(dictionary_fixes.unwrap_or(0) + n as i64);
-            }
-        }
-    }
-
-    // Deterministic replacement pairs (find→replace) need NO model, so they run whenever the LLM is
-    // not the dictionary authority — INDEPENDENT of the encoder toggle. (Previously they were gated
-    // behind `encoder_dictionary_enabled`, so disabling the on-device model silently killed plain
-    // string replacements too.) Listen mode stays raw; when the LLM path ran, it owns the dictionary.
-    if !winstt_dictation_llm && winstt_settings.general.recording_mode != RecordingMode::Listen {
+    // Replacement pairs are deterministic and model-independent. Apply them once
+    // after LLM cleanup (as a safety net for ignored prompt instructions), or on
+    // non-listen local paths. Listen mode stays raw unless LLM cleanup ran.
+    if winstt_dictation_llm || winstt_settings.general.recording_mode != RecordingMode::Listen {
         let pairs = crate::winstt::commands::llm::replacement_pairs(&winstt_settings);
         if !pairs.is_empty() {
             let (replaced, n) =
@@ -606,7 +701,7 @@ pub(crate) async fn process_transcription_output(
 
         if !terms.is_empty() {
             let encoder_started = Instant::now();
-            info!(
+            debug!(
                 "[stt-ui] encoder_dict_start chars={} terms={} user_terms={} context_terms={}",
                 final_text.chars().count(),
                 terms.len(),
@@ -615,7 +710,7 @@ pub(crate) async fn process_transcription_output(
             );
             let corrected =
                 crate::winstt::encoder_dict::correct_vocabulary(app, &final_text, &terms).await;
-            info!(
+            debug!(
                 "[stt-ui] encoder_dict_complete duration_ms={} changed={}",
                 encoder_started.elapsed().as_millis(),
                 corrected != final_text
@@ -681,6 +776,34 @@ pub(crate) async fn process_transcription_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static SKIP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn post_processing_skip_is_scoped_to_one_dictation_session() {
+        let _guard = SKIP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        begin_post_processing_skip_window(41);
+        assert!(!post_processing_skip_requested(41));
+
+        SKIP_POST_PROCESSING_SESSION.store(41, Ordering::Release);
+        assert!(post_processing_skip_requested(41));
+        assert!(!post_processing_skip_requested(42));
+
+        finish_post_processing_skip_window(41);
+        assert!(!post_processing_skip_requested(41));
+        assert_eq!(ACTIVE_POST_PROCESSING_SESSION.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn raw_skip_output_keeps_only_the_engine_transcript() {
+        let output = raw_transcription_output("untouched STT text");
+        assert_eq!(output.final_text, "untouched STT text");
+        assert!(output.post_processed_text.is_none());
+        assert!(!output.post_process_requested);
+        assert!(output.llm_meta.is_none());
+    }
 
     fn settings_with_dictation_model(enabled: bool) -> WinsttSettings {
         let mut settings = WinsttSettings::default();

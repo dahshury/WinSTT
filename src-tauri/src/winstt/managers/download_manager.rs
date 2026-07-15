@@ -38,15 +38,19 @@ mod progress;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
+use crate::winstt::commands::model_lifecycle::{
+    self, LifecycleProgress, SttModelLifecyclePhase as LifecyclePhase,
+};
 use crate::winstt::downloads::{
     PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest, transfer_url,
 };
@@ -75,22 +79,28 @@ use progress::*;
 /// `agg`/`start` live on the handle (not as `run_quant_download` locals) so the progress total and
 /// speed/ETA carry across the pause→resume re-run instead of resetting to 0%.
 struct DownloadHandle {
+    /// Correlates every worker callback with the authoritative lifecycle request. A stale worker
+    /// can still finish after a newer request begins, but its transition is then rejected.
+    request_id: String,
     /// The hot pause/cancel flags polled by `transfer_url` (shared `PauseCancelFlags`); the handle
     /// embeds it and forwards `TransferControl` to it.
     flags: PauseCancelFlags,
     parked: AtomicBool,
     agg: Arc<ProgressAgg>,
     partial_path: Mutex<Option<std::path::PathBuf>>,
+    verification_ms: AtomicU64,
     start: Instant,
 }
 
 impl DownloadHandle {
-    fn new() -> Self {
+    fn new(request_id: String) -> Self {
         Self {
+            request_id,
             flags: PauseCancelFlags::default(),
             parked: AtomicBool::new(false),
             agg: Arc::new(ProgressAgg::new()),
             partial_path: Mutex::new(None),
+            verification_ms: AtomicU64::new(0),
             start: Instant::now(),
         }
     }
@@ -149,6 +159,70 @@ fn checked_snapshot_path(base: &Path, commit: &str, repo_path: &str) -> Option<P
     path_stays_under(base, &path).then_some(path)
 }
 
+/// HF LFS/xet content identities are SHA-256 only when the normalized linked ETag is exactly 64
+/// hexadecimal characters. Git/blob ETags use other shapes and are deliberately not treated as a
+/// cryptographic checksum.
+fn parse_sha256_etag(etag: &str) -> Option<[u8; 32]> {
+    if etag.len() != 64 || !etag.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (index, pair) in etag.as_bytes().chunks_exact(2).enumerate() {
+        let text = std::str::from_utf8(pair).ok()?;
+        out[index] = u8::from_str_radix(text, 16).ok()?;
+    }
+    Some(out)
+}
+
+fn sha256_file_matches(path: &Path, expected: [u8; 32]) -> std::io::Result<bool> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().as_slice() == expected)
+}
+
+async fn verify_hf_integrity(path: PathBuf, etag: &str) -> Result<Option<u64>, String> {
+    let Some(expected) = parse_sha256_etag(etag) else {
+        log::debug!(
+            "[stt-download] integrity verification skipped for {}: HF ETag is not a 64-hex LFS SHA-256",
+            path.display()
+        );
+        return Ok(None);
+    };
+    let started = Instant::now();
+    let display_path = path.display().to_string();
+    let matched =
+        tauri::async_runtime::spawn_blocking(move || sha256_file_matches(&path, expected))
+            .await
+            .map_err(|error| {
+                format!("integrity verification task failed for {display_path}: {error}")
+            })?
+            .map_err(|error| {
+                format!("integrity verification failed for {display_path}: {error}")
+            })?;
+    let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    log::info!(
+        "[stt-download] SHA-256 verification {} for {display_path} in {elapsed_ms}ms",
+        if matched { "passed" } else { "failed" }
+    );
+    if matched {
+        Ok(Some(elapsed_ms))
+    } else {
+        Err(format!(
+            "downloaded artifact failed SHA-256 verification: {display_path}"
+        ))
+    }
+}
+
 impl TransferControl for DownloadHandle {
     fn should_cancel(&self) -> bool {
         self.flags.is_cancelled()
@@ -171,7 +245,22 @@ const CACHE_SCAN_TTL: Duration = Duration::from_millis(2000);
 /// consume download jobs from a shared queue, so queued quants wait IN THE QUEUE rather than as
 /// parked OS threads on a semaphore. Two workers keep two transfers saturating the link without
 /// unbounded thread/socket pressure.
-const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+const DEFAULT_CONCURRENT_DOWNLOADS: usize = 2;
+const MAX_BENCHMARK_CONCURRENT_DOWNLOADS: usize = 8;
+
+/// Worker width override for controlled local/CI benchmarks. Production keeps the proven
+/// two-worker default; invalid or out-of-range values cannot create an unbounded thread fan-out.
+fn concurrent_download_workers() -> usize {
+    let configured = std::env::var("WINSTT_DOWNLOAD_WORKERS").ok();
+    parse_concurrent_download_workers(configured.as_deref())
+}
+
+fn parse_concurrent_download_workers(value: Option<&str>) -> usize {
+    value
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|&value| (1..=MAX_BENCHMARK_CONCURRENT_DOWNLOADS).contains(&value))
+        .unwrap_or(DEFAULT_CONCURRENT_DOWNLOADS)
+}
 
 /// A unit of work handed to a pool worker: the `(model, quant)` to fetch plus its already-registered
 /// control handle (registered at ENQUEUE time so a cancel can flip the flag while the job waits in
@@ -195,7 +284,8 @@ pub struct DownloadManager {
     scan_memo: Mutex<Option<(Instant, BTreeMap<String, cache_probe::ModelQuantCache>)>>,
     /// Sender into the fixed worker pool's shared job queue. Lazily initialized on the first
     /// `predownload_quant` (the first call that has an `Arc<Self>` to hand the workers), which
-    /// spawns exactly `MAX_CONCURRENT_DOWNLOADS` long-lived worker threads. This is the concurrency
+    /// spawns the bounded number of long-lived worker threads selected by
+    /// `concurrent_download_workers`. This is the concurrency
     /// bound now (replaces the per-quant `thread::spawn` + `Semaphore`): queued quants sit in the
     /// channel, not as parked OS threads.
     job_tx: OnceLock<Sender<DownloadJob>>,
@@ -311,7 +401,16 @@ impl DownloadManager {
         if !self.is_downloading(&model, &quantization)
             && self.is_quant_fully_cached(&model, &quantization)
         {
+            let lifecycle = model_lifecycle::begin_download(&self.app, &model, &quantization);
             self.emit_start(&model, Some(&quantization));
+            self.transition_lifecycle(
+                &model,
+                &quantization,
+                &lifecycle.request_id,
+                LifecyclePhase::Ready,
+                None,
+                None,
+            );
             self.emit_complete(&model, Some(&quantization), false);
             return;
         }
@@ -324,19 +423,20 @@ impl DownloadManager {
         //   - existing and ACTIVE (a worker owns it)    → DON'T enqueue (would double-run the key);
         //                                                 just clear the flags so it keeps going.
         // A cancel-while-queued flips `cancelled`; the worker re-checks it on dequeue before any I/O.
+        let lifecycle = model_lifecycle::begin_download(&self.app, &model, &quantization);
         let k = key(&model, &quantization);
         let (handle, should_enqueue) = {
             let mut map = self.inflight.lock_recover();
             match map.get(&k) {
-                Some(h) => {
+                Some(h) if h.request_id == lifecycle.request_id => {
                     h.flags.reset();
                     // `swap(false)`: claim the slot iff it WAS parked (enqueue exactly once); an
                     // active job stays active (parked already false) and is not re-enqueued.
                     let was_parked = h.parked.swap(false, Ordering::AcqRel);
                     (h.clone(), was_parked)
                 }
-                None => {
-                    let h = Arc::new(DownloadHandle::new());
+                Some(_) | None => {
+                    let h = Arc::new(DownloadHandle::new(lifecycle.request_id));
                     map.insert(k.clone(), h.clone());
                     (h, true)
                 }
@@ -347,6 +447,7 @@ impl DownloadManager {
             return;
         }
         // Hand the job to the fixed worker pool instead of spawning a fresh OS thread per quant.
+        let request_id = handle.request_id.clone();
         let job = DownloadJob {
             model: model.clone(),
             quantization: quantization.clone(),
@@ -356,7 +457,12 @@ impl DownloadManager {
             // The pool's receiver is gone (would only happen if every worker thread had already
             // exited, which they don't until process teardown). Settle the badge rather than leak an
             // in-flight entry that never completes.
-            self.finish_quant(&model, &quantization, true);
+            self.finish_quant_failed(
+                &model,
+                &quantization,
+                &request_id,
+                "STT download worker pool is unavailable".to_string(),
+            );
         }
     }
 
@@ -373,7 +479,9 @@ impl DownloadManager {
             // A single receiver shared across all workers; the `Mutex` serializes `recv()` so each
             // queued job is handed to exactly one idle worker (work-stealing fan-out, FIFO order).
             let rx = Arc::new(Mutex::new(rx));
-            for n in 0..MAX_CONCURRENT_DOWNLOADS {
+            let worker_count = concurrent_download_workers();
+            log::info!("[stt-download] starting bounded worker pool with {worker_count} workers");
+            for n in 0..worker_count {
                 let me = Arc::clone(self);
                 let app_for_spawn_error = me.app.clone();
                 let rx = Arc::clone(&rx);
@@ -401,6 +509,7 @@ impl DownloadManager {
                                 quantization,
                                 handle,
                             } = job;
+                            let request_id = handle.request_id.clone();
                             // This is the SINGLE point where the async download job is driven to
                             // completion — one `block_on` per job, wrapping the ENTIRE async pipeline.
                             // Because the whole job is one future, every `.await` inside runs in the
@@ -425,7 +534,12 @@ impl DownloadManager {
                                 log::error!(
                                     "[stt-download] worker job panicked for {model}@{quantization}; settling cancelled and continuing"
                                 );
-                                me.finish_quant(&model, &quantization, true);
+                                me.finish_quant_failed(
+                                    &model,
+                                    &quantization,
+                                    &request_id,
+                                    "STT download worker panicked".to_string(),
+                                );
                             }
                         }
                     });
@@ -442,7 +556,7 @@ impl DownloadManager {
                     .detail(e.to_string())
                     .severity("error")
                     .context("worker", n.to_string())
-                    .record(Some(&app_for_spawn_error));
+                    .record_without_log(Some(&app_for_spawn_error));
                 }
             }
             tx
@@ -484,20 +598,28 @@ impl DownloadManager {
     }
 
     pub fn pause_quant(&self, model: &str, quantization: &str) {
-        let parked = {
+        let request_id = {
             let map = self.inflight.lock_recover();
             match map.get(&key(model, quantization)) {
                 Some(h) => {
                     h.flags.pause();
-                    true
+                    Some(h.request_id.clone())
                 }
-                None => false,
+                None => None,
             }
         };
         // Broadcast AFTER dropping the registry lock (the renderer fan-out must not race it). Only
         // when a live handle was actually flagged — a pause for an unknown/finished key is a no-op
         // and must not tell windows to paint a paused badge for a download that isn't there.
-        if parked {
+        if let Some(request_id) = request_id {
+            self.transition_lifecycle(
+                model,
+                quantization,
+                &request_id,
+                LifecyclePhase::Paused,
+                None,
+                None,
+            );
             self.emit_paused(model, Some(quantization));
         }
     }
@@ -514,10 +636,11 @@ impl DownloadManager {
         // Under the registry lock: flag the job cancelled. If it had PARKED (paused → released its
         // worker), no worker will ever observe the flag, so settle it HERE (remove + emit complete);
         // otherwise the active worker sees `cancelled` on its next chunk and finishes itself.
-        let settle = {
+        let (settle, request_id) = {
             let mut map = self.inflight.lock_recover();
             match map.get(&k) {
                 Some(h) => {
+                    let request_id = h.request_id.clone();
                     h.flags.cancel();
                     h.flags.resume();
                     if h.parked.load(Ordering::Acquire) {
@@ -527,14 +650,24 @@ impl DownloadManager {
                             let _ = std::fs::remove_file(path);
                         }
                         map.remove(&k);
-                        true
+                        (true, Some(request_id))
                     } else {
-                        false
+                        (false, Some(request_id))
                     }
                 }
-                None => false,
+                None => (false, None),
             }
         };
+        if let Some(request_id) = request_id {
+            self.transition_lifecycle(
+                model,
+                quantization,
+                &request_id,
+                LifecyclePhase::Cancelled,
+                None,
+                None,
+            );
+        }
         if settle {
             self.emit_complete(model, Some(quantization), true);
         }
@@ -598,11 +731,15 @@ impl DownloadManager {
         // and emit their completion — collect them so we settle their badges below. Active entries'
         // workers see `cancelled` per-chunk and emit themselves.
         let mut parked_removed: Vec<String> = Vec::new();
+        let mut lifecycle_cancelled: Vec<(String, String)> = Vec::new();
         {
             let mut map = self.inflight.lock_recover();
             map.retain(|k, h| {
                 if k.starts_with(&prefix) {
                     h.flags.cancel();
+                    if let Some(q) = k.strip_prefix(&prefix) {
+                        lifecycle_cancelled.push((q.to_string(), h.request_id.clone()));
+                    }
                     if h.parked.load(Ordering::Acquire)
                         && let Some(q) = k.strip_prefix(&prefix)
                     {
@@ -613,6 +750,9 @@ impl DownloadManager {
                     true
                 }
             });
+        }
+        for (q, request_id) in &lifecycle_cancelled {
+            self.transition_lifecycle(model, q, request_id, LifecyclePhase::Cancelled, None, None);
         }
         for q in &parked_removed {
             self.emit_complete(model, Some(q), true);
@@ -708,6 +848,7 @@ impl DownloadManager {
         quantization: String,
         handle: Arc<DownloadHandle>,
     ) {
+        let request_id = handle.request_id.clone();
         // On dequeue, BEFORE spending any network I/O (plan + stream), re-check the cancel flag.
         // The job may have been cancelled while it waited in the pool's queue for a free worker
         // (cancel-while-queued); this re-check replicates the old post-semaphore-permit re-check so
@@ -715,9 +856,17 @@ impl DownloadManager {
         // fixed N-worker pool (not a semaphore) is what now bounds concurrency to N, so there's no
         // permit to acquire here — the worker itself IS the slot.
         if handle.flags.is_cancelled() {
-            self.finish_quant(&model, &quantization, true);
+            self.finish_quant_cancelled(&model, &quantization, &request_id);
             return;
         }
+        self.transition_lifecycle(
+            &model,
+            &quantization,
+            &request_id,
+            LifecyclePhase::Downloading,
+            None,
+            None,
+        );
 
         // Resolve the engine kind for the model so we know which files this quant needs.
         let entry = catalog::find(&model);
@@ -741,10 +890,10 @@ impl DownloadManager {
                 .detail(e.to_string())
                 .model_id(model.clone())
                 .context("quantization", quantization.clone())
-                .record(Some(&self.app));
+                .record_without_log(Some(&self.app));
                 // No plan → nothing to download. Settle as cancelled so the badge clears rather than
                 // spinning forever (the renderer drops the in-flight entry on a cancelled-complete).
-                self.finish_quant(&model, &quantization, true);
+                self.finish_quant_failed(&model, &quantization, &request_id, e.to_string());
                 return;
             }
         };
@@ -805,7 +954,7 @@ impl DownloadManager {
             // `return`) or, if a resume raced in first, re-loops to resume the same file in place.
             'file: loop {
                 if handle.flags.is_cancelled() {
-                    self.finish_quant(&model, &quantization, true);
+                    self.finish_quant_cancelled(&model, &quantization, &request_id);
                     return;
                 }
 
@@ -819,7 +968,7 @@ impl DownloadManager {
                         Some(&sz) => agg.update_file(repo_path, sz, sz),
                         None => agg.mark_file_cached(repo_path),
                     }
-                    self.emit_agg(&model, &quantization, &agg, start);
+                    self.emit_agg(&model, &quantization, &request_id, &agg, start);
                     break 'file;
                 }
 
@@ -839,7 +988,7 @@ impl DownloadManager {
                     StreamOutcome::Completed => break 'file,
                     StreamOutcome::Cancelled => {
                         // Partial `.incomplete` is left on disk (resumable); the badge clears.
-                        self.finish_quant(&model, &quantization, true);
+                        self.finish_quant_cancelled(&model, &quantization, &request_id);
                         return;
                     }
                     StreamOutcome::Paused => {
@@ -852,13 +1001,17 @@ impl DownloadManager {
                         }
                         continue 'file;
                     }
+                    StreamOutcome::IntegrityFailed(error) => {
+                        self.finish_quant_failed(&model, &quantization, &request_id, error);
+                        return;
+                    }
                     StreamOutcome::Failed => {
                         // FALLBACK to hf-hub for this file (handles xet / private repos / odd
                         // layouts our plain-HTTP path can't). Mid-file cancel is lost here, but the
                         // bytes are guaranteed to land. Keep the FileReporter so the fallback still
                         // reports progress (with the Start-total seed fix).
                         if handle.flags.is_cancelled() {
-                            self.finish_quant(&model, &quantization, true);
+                            self.finish_quant_cancelled(&model, &quantization, &request_id);
                             return;
                         }
                         let reporter: Arc<dyn hf_hub::progress::ProgressHandler> =
@@ -867,6 +1020,7 @@ impl DownloadManager {
                                 app: self.app.clone(),
                                 model: model.clone(),
                                 quantization: quantization.clone(),
+                                request_id: request_id.clone(),
                                 filename: repo_path.clone(),
                                 start,
                             });
@@ -878,12 +1032,12 @@ impl DownloadManager {
                         {
                             Ok(_) => {
                                 agg.mark_file_complete(repo_path);
-                                self.emit_agg(&model, &quantization, &agg, start);
+                                self.emit_agg(&model, &quantization, &request_id, &agg, start);
                                 break 'file;
                             }
                             Err(e) => {
                                 if handle.flags.is_cancelled() {
-                                    self.finish_quant(&model, &quantization, true);
+                                    self.finish_quant_cancelled(&model, &quantization, &request_id);
                                     return;
                                 }
                                 log::warn!(
@@ -898,8 +1052,13 @@ impl DownloadManager {
                                 .model_id(model.clone())
                                 .context("quantization", quantization.clone())
                                 .context("repoPath", repo_path.clone())
-                                .record(Some(&self.app));
-                                self.finish_quant(&model, &quantization, false);
+                                .record_without_log(Some(&self.app));
+                                self.finish_quant_failed(
+                                    &model,
+                                    &quantization,
+                                    &request_id,
+                                    e.to_string(),
+                                );
                                 return;
                             }
                         }
@@ -910,7 +1069,8 @@ impl DownloadManager {
 
         // All planned files present → complete (not cancelled). cache-changed lets the picker
         // re-probe and settle the effective-quant badge to "Downloaded".
-        self.finish_quant(&model, &quantization, false);
+        self.finish_quant_success(&model, &quantization, &request_id, &planned, quant, &handle)
+            .await;
     }
 
     /// Our own cancellable, resumable, byte-level-progress downloader for ONE planned file.
@@ -973,7 +1133,7 @@ impl DownloadManager {
         let headers = head.headers();
         let (Some(etag), Some(commit)) = (header_etag(headers), header_commit(headers)) else {
             log::warn!(
-                "[stt-download] missing commit/etag headers for {model}@{quantization} {repo_path} — falling back to hf-hub"
+                "[stt-download] missing commit/etag headers for {model}@{quantization} {repo_path}; falling back to hf-hub"
             );
             return StreamOutcome::Failed;
         };
@@ -1010,6 +1170,18 @@ impl DownloadManager {
         // Final file already present (a prior run finished it, or it survived): ensure refs/main and
         // settle. After a delete the snapshot is gone, so this won't fire → a real re-download runs.
         if snapshot.is_file() {
+            match verify_hf_integrity(snapshot.clone(), &etag).await {
+                Ok(Some(elapsed_ms)) => {
+                    handle
+                        .verification_ms
+                        .fetch_add(elapsed_ms, Ordering::AcqRel);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = std::fs::remove_file(&snapshot);
+                    return StreamOutcome::IntegrityFailed(error);
+                }
+            }
             if let Err(e) = ensure_cache_ref(&ref_file, &commit) {
                 log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
                 return StreamOutcome::Failed;
@@ -1019,7 +1191,7 @@ impl DownloadManager {
             }
             agg.update_file(repo_path, size, size);
             agg.mark_file_complete(repo_path);
-            self.emit_agg(model, quantization, agg, start);
+            self.emit_agg(model, quantization, &handle.request_id, agg, start);
             if let Ok(mut partial_path) = handle.partial_path.lock() {
                 *partial_path = None;
             }
@@ -1052,7 +1224,7 @@ impl DownloadManager {
                     .unwrap_or(progress.downloaded_bytes)
                     .max(progress.downloaded_bytes);
                 agg.update_file(repo_path, progress.downloaded_bytes, total);
-                self.emit_agg(model, quantization, agg, start);
+                self.emit_agg(model, quantization, &handle.request_id, agg, start);
             },
         )
         .await
@@ -1079,9 +1251,23 @@ impl DownloadManager {
             .unwrap_or(report.downloaded_bytes)
             .max(report.downloaded_bytes);
         agg.update_file(repo_path, report.downloaded_bytes, final_total);
-        self.emit_agg(model, quantization, agg, start);
+        self.emit_agg(model, quantization, &handle.request_id, agg, start);
 
         // The shared transfer moved the staged bytes to the FINAL snapshot path (no kept blob copy).
+        // Verify the content identity BEFORE publishing the cache ref/installation. Hashing runs on
+        // a blocking worker so large model files never stall Tauri's async executor.
+        match verify_hf_integrity(snapshot.clone(), &etag).await {
+            Ok(Some(elapsed_ms)) => {
+                handle
+                    .verification_ms
+                    .fetch_add(elapsed_ms, Ordering::AcqRel);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = std::fs::remove_file(&snapshot);
+                return StreamOutcome::IntegrityFailed(error);
+            }
+        }
         // Finish the HF cache pointer and verify cache-only resolution can see it.
         if let Err(e) = ensure_cache_ref(&ref_file, &commit) {
             log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
@@ -1092,26 +1278,178 @@ impl DownloadManager {
         // to a real hf-hub fetch rather than claim a success the model loader can't load.
         if !resolver::is_file_cached(model, repo_path, quant).await {
             log::warn!(
-                "[stt-download] streamed file failed cache self-check {model}@{quantization} {repo_path} — falling back to hf-hub"
+                "[stt-download] streamed file failed cache self-check {model}@{quantization} {repo_path}; falling back to hf-hub"
             );
             return StreamOutcome::Failed;
         }
         agg.update_file(repo_path, report.downloaded_bytes, final_total);
         agg.mark_file_complete(repo_path);
-        self.emit_agg(model, quantization, agg, start);
+        self.emit_agg(model, quantization, &handle.request_id, agg, start);
         StreamOutcome::Completed
     }
 
     /// Emit a coalesced model-level progress event from the aggregate.
-    fn emit_agg(&self, model: &str, quantization: &str, agg: &ProgressAgg, start: Instant) {
-        emit_model_progress(&self.app, model, quantization, agg, start);
+    fn emit_agg(
+        &self,
+        model: &str,
+        quantization: &str,
+        request_id: &str,
+        agg: &ProgressAgg,
+        start: Instant,
+    ) {
+        emit_model_progress(&self.app, model, quantization, request_id, agg, start);
     }
 
-    fn finish_quant(&self, model: &str, quantization: &str, cancelled: bool) {
-        self.inflight
-            .lock_recover()
-            .remove(&key(model, quantization));
-        self.emit_complete(model, Some(quantization), cancelled);
+    fn transition_lifecycle(
+        &self,
+        model: &str,
+        quantization: &str,
+        request_id: &str,
+        phase: LifecyclePhase,
+        progress: Option<LifecycleProgress>,
+        error: Option<String>,
+    ) -> bool {
+        match model_lifecycle::transition(
+            &self.app,
+            model,
+            quantization,
+            request_id,
+            phase,
+            progress,
+            error,
+        ) {
+            Ok(_) => true,
+            Err(error) => {
+                log::debug!(
+                    "[stt-lifecycle] ignored stale/invalid {phase:?} for {model}@{quantization}: {error}"
+                );
+                false
+            }
+        }
+    }
+
+    /// Remove only the worker correlated with `request_id`; a stale completion can never tear down
+    /// a newer request that reused the same model/quant key.
+    fn remove_quant_request(&self, model: &str, quantization: &str, request_id: &str) -> bool {
+        let mut inflight = self.inflight.lock_recover();
+        let lifecycle_key = key(model, quantization);
+        if inflight
+            .get(&lifecycle_key)
+            .is_some_and(|handle| handle.request_id == request_id)
+        {
+            inflight.remove(&lifecycle_key);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn finish_quant_cancelled(&self, model: &str, quantization: &str, request_id: &str) {
+        self.transition_lifecycle(
+            model,
+            quantization,
+            request_id,
+            LifecyclePhase::Cancelled,
+            None,
+            None,
+        );
+        if self.remove_quant_request(model, quantization, request_id) {
+            self.emit_complete(model, Some(quantization), true);
+        }
+    }
+
+    fn finish_quant_failed(
+        &self,
+        model: &str,
+        quantization: &str,
+        request_id: &str,
+        error: String,
+    ) {
+        self.transition_lifecycle(
+            model,
+            quantization,
+            request_id,
+            LifecyclePhase::Failed,
+            None,
+            Some(error),
+        );
+        if self.remove_quant_request(model, quantization, request_id) {
+            // Keep the legacy completion broadcast only as a compatibility wake-up. The typed
+            // lifecycle is the source of truth and carries the failure detail.
+            self.emit_complete(model, Some(quantization), false);
+        }
+    }
+
+    async fn finish_quant_success(
+        &self,
+        model: &str,
+        quantization: &str,
+        request_id: &str,
+        planned: &[String],
+        quant: Quantization,
+        handle: &DownloadHandle,
+    ) {
+        if !self.transition_lifecycle(
+            model,
+            quantization,
+            request_id,
+            LifecyclePhase::Verifying,
+            None,
+            None,
+        ) {
+            return;
+        }
+
+        let cache_check_started = Instant::now();
+        for repo_path in planned {
+            if !resolver::is_file_cached(model, repo_path, quant).await {
+                self.finish_quant_failed(
+                    model,
+                    quantization,
+                    request_id,
+                    format!("installed artifact is not cache-resolvable: {repo_path}"),
+                );
+                return;
+            }
+        }
+        let cache_check_ms = cache_check_started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        let verification_ms = handle
+            .verification_ms
+            .load(Ordering::Acquire)
+            .saturating_add(cache_check_ms);
+        let (downloaded_bytes, total_bytes) = handle.agg.totals();
+        if !self.transition_lifecycle(
+            model,
+            quantization,
+            request_id,
+            LifecyclePhase::Installing,
+            Some(LifecycleProgress {
+                downloaded_bytes,
+                total_bytes,
+                speed_bps: 0,
+                eta_seconds: 0,
+                verification_ms: Some(verification_ms),
+            }),
+            None,
+        ) {
+            return;
+        }
+        log::info!("[stt-download] verified {model}@{quantization} in {verification_ms}ms");
+
+        if self.remove_quant_request(model, quantization, request_id) {
+            self.emit_complete(model, Some(quantization), false);
+            self.transition_lifecycle(
+                model,
+                quantization,
+                request_id,
+                LifecyclePhase::Ready,
+                None,
+                None,
+            );
+        }
     }
 
     /// Whether `(model, quant)` has an in-flight download (parity with the renderer's
@@ -1318,5 +1656,41 @@ mod tests {
         // A new revision overwrites the ref.
         ensure_cache_ref(&ref_file, "commitY").expect("update ref");
         assert_eq!(std::fs::read_to_string(&ref_file).unwrap(), "commitY");
+    }
+
+    #[test]
+    fn download_worker_override_stays_bounded_and_defaults_to_two() {
+        assert_eq!(parse_concurrent_download_workers(None), 2);
+        assert_eq!(parse_concurrent_download_workers(Some(" 1 ")), 1);
+        assert_eq!(parse_concurrent_download_workers(Some("4")), 4);
+        assert_eq!(parse_concurrent_download_workers(Some("8")), 8);
+        for invalid in ["", "0", "9", "999", "two"] {
+            assert_eq!(parse_concurrent_download_workers(Some(invalid)), 2);
+        }
+    }
+
+    #[test]
+    fn sha256_etag_parser_accepts_only_full_content_hashes() {
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(parse_sha256_etag(expected).is_some());
+        assert!(parse_sha256_etag(&expected.to_uppercase()).is_some());
+        assert!(parse_sha256_etag("git-blob-etag").is_none());
+        assert!(parse_sha256_etag(&"a".repeat(63)).is_none());
+        assert!(parse_sha256_etag(&format!("{}z", "a".repeat(63))).is_none());
+    }
+
+    #[test]
+    fn sha256_verification_detects_corrupt_artifacts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let artifact = dir.path().join("artifact.onnx");
+        std::fs::write(&artifact, b"abc").expect("write fixture");
+
+        let correct =
+            parse_sha256_etag("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+                .expect("valid fixture hash");
+        assert!(sha256_file_matches(&artifact, correct).expect("hash fixture"));
+
+        let wrong = parse_sha256_etag(&"0".repeat(64)).expect("valid wrong hash");
+        assert!(!sha256_file_matches(&artifact, wrong).expect("hash fixture"));
     }
 }

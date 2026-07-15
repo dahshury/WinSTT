@@ -47,6 +47,7 @@ import {
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { AboutActionRow } from "./AboutActionRow";
+import { LiveDebugLogViewer } from "./LiveDebugLogViewer";
 import type { AboutT } from "./types";
 
 const OBSERVABILITY_COPY = {
@@ -591,6 +592,7 @@ export function DiagnosticsSection({ t }: { t: AboutT }): ReactNode {
 				summary={t("saveDiagnosticBundleSummary")}
 				title={t("saveDiagnosticBundle")}
 			/>
+			<LiveDebugLogViewer />
 			<ObservabilityTimeline />
 		</SettingSection>
 	);

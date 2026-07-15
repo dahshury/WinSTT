@@ -711,7 +711,7 @@ pub fn apply_cmvn(features: &mut Array2<f32>, neg_mean: &[f32], inv_stddev: &[f3
         static WARNED: std::sync::Once = std::sync::Once::new();
         WARNED.call_once(|| {
             log::warn!(
-                "[stt] apply_cmvn skipped: stats len mismatch (neg_mean={}, inv_stddev={}, cols={cols}) — features left un-normalized",
+                "[stt] apply_cmvn skipped: stats len mismatch (neg_mean={}, inv_stddev={}, cols={cols}); features left un-normalized",
                 neg_mean.len(),
                 inv_stddev.len()
             );
@@ -734,7 +734,7 @@ pub fn apply_dolphin_cmvn(features: &mut Array2<f32>, mean: &[f32], invstd: &[f3
         static WARNED: std::sync::Once = std::sync::Once::new();
         WARNED.call_once(|| {
             log::warn!(
-                "[stt] apply_dolphin_cmvn skipped: stats len mismatch (mean={}, invstd={}, cols={cols}) — features left un-normalized",
+                "[stt] apply_dolphin_cmvn skipped: stats len mismatch (mean={}, invstd={}, cols={cols}); features left un-normalized",
                 mean.len(),
                 invstd.len()
             );

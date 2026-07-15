@@ -57,15 +57,14 @@ gets pasted. Everything in this section configures it.
   Only CPU is offered on machines without a supported GPU.
 </SettingRow>
 
-<SettingRow label="Model Unload Timeout" settingKey="model.modelUnloadTimeout" default="min5">
+<SettingRow label="Model Unload Timeout" settingKey="global.modelUnloadTimeout" default="min5">
   How long the server keeps the model resident after the last transcription before
   freeing RAM/VRAM. Options run from **Immediately** to **Never**.
 </SettingRow>
 
-<SettingRow label="Translate to English" settingKey="model.translateToEnglish" default="false">
-  Uses Whisper's native `task=translate` to transcribe **and** translate to English in a
-  single pass — no extra latency, no LLM round-trip. Only shown for multilingual Whisper
-  (and Canary) models that support the translate task.
+<SettingRow label="Translate To" settingKey="model.translateTargetLanguage" default='""'>
+  Stores the selected target-language code; an empty value disables translation. Supported
+  multilingual models transcribe and translate in one pass without an LLM round-trip.
 </SettingRow>
 
 ### The model picker
@@ -75,6 +74,13 @@ showing its hardware fit, size, the languages it covers, and which quantizations
 download.
 
 <Screenshot src="model-dropdown" alt="The open model picker dropdown: a maker rail on the left and model rows showing accuracy and speed bars, size, language scope, and quantization badges." label="Model picker" caption="Search, filter by family or language, and download a specific quantization per model." />
+
+A **Suggested** filter chip sits next to the search box and is on by default. It hides
+models that wouldn't fit in your machine's free memory alongside everything else you have
+enabled (your other STT slot, TTS, and the cleanup LLM), and greys out individual
+quantizations that would need more RAM or VRAM than is available. Toggle the chip off to
+browse the full catalog regardless of fit. The same filter appears in the TTS and LLM
+pickers.
 
 Each model exposes one or more **quantizations** — compressed weight formats that trade a
 little accuracy for big wins in size and speed.

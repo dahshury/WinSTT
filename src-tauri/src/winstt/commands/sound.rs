@@ -1,9 +1,8 @@
 // The custom recording-sound file-library manager.
 //
 // The renderer's `features/recording-sound` slice persists user-supplied recording
-// sounds (.wav / .mp3) under `<appData>/sounds/`. It drives these via the
-// `window.nativeBridge` polyfill (native-bridge-adapter.ts), which routes the WinSTT
-// `sound:library-*` channels to these commands with BYTE-IDENTICAL arg shapes:
+// sounds (.wav / .mp3) under `<appData>/sounds/`. It calls these generated
+// commands directly with byte-identical argument shapes:
 //
 //   sound:library-add        → sound_library_add        { sourcePath, name? }  -> SoundLibraryAddResult
 //   sound:library-remove     → sound_library_remove     { path }               -> SoundLibraryRemoveResult
@@ -409,8 +408,8 @@ pub fn sound_library_read_file(
 // The renderer (`features/recording-sound/use-sound-preview.ts` +
 // `use-recording-sound.ts`) calls `invoke("sound:get-data")` on mount to fetch the
 // ACTIVE recording chime's raw bytes (default OR the user-chosen custom path). It
-// decodes them into a Web Audio buffer and plays it on `sound:play`. The adapter
-// (native-bridge-adapter.ts) routes `SOUND_GET_DATA → sound_get_data`, expecting
+// decodes them into a Web Audio buffer and plays it on `sound:play`. The renderer
+// calls `sound_get_data` directly, expecting
 // `Vec<u8> | null` (`Uint8Array | null` in TS).
 //
 // Behaviour mirror:

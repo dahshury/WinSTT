@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, type RenderHookResult, renderHook } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { useVisualizerStore } from "../model/visualizer-store";
 import { useVisualizerSync } from "./use-visualizer-sync";
 

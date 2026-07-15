@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 const unsubscribed: string[] = [];

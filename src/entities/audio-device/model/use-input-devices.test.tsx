@@ -9,7 +9,7 @@ import {
 	_resetInputDevicesCacheForTests,
 	useInputDevices,
 } from "./use-input-devices";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 
 // ── Transport seam #2: the globally-mocked `@tauri-apps/api/core` ──────────────
 //

@@ -128,7 +128,7 @@ const LlmPresetKeySchema = z.enum([
 ]);
 export type LlmPresetKey = z.infer<typeof LlmPresetKeySchema>;
 
-const LlmPresetLevelSchema = z.enum(["light", "medium", "high"]);
+const LlmPresetLevelSchema = z.enum(["light", "medium", "high", "caveman"]);
 export type LlmPresetLevel = z.infer<typeof LlmPresetLevelSchema>;
 
 export const OllamaPullProgressStatusSchema = z.enum([

@@ -174,6 +174,16 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		tags: ["instruct", "recommended"],
 	},
 	{
+		name: "hf.co/prism-ml/Bonsai-27B-gguf:Q1_0",
+		displayName: "Bonsai 27B 1-bit",
+		family: "bonsai",
+		paramSize: "27B",
+		sizeBytes: 3_803_452_480,
+		description:
+			"PrismML Bonsai 27B, derived from Qwen 3.6 and packed as native Q1_0 binary weights. Delivers 27B-class reasoning in a 3.8 GB text-only Ollama download; the optional vision and DSpark drafter files are not included.",
+		tags: ["instruct", "recommended"],
+	},
+	{
 		name: "command-r7b:7b",
 		displayName: "Command R7B",
 		family: "command",

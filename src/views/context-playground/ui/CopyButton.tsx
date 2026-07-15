@@ -52,9 +52,8 @@ function copyClass(status: CopyStatus): string {
  * legacy textarea + execCommand path covers file:// where the async API can be
  * blocked. Returns whether either path succeeded.
  *
- * NOTE: the earlier `clipboardWriteText` route went through secure-IPC, whose
- * `invokeSecureOrDefault` swallows errors and returns a fake-success fallback —
- * that's why copy silently stopped working. Always copy directly in-renderer.
+ * NOTE: the former secure-IPC route swallowed errors and returned a fake-success
+ * fallback, which made copy failures invisible. Always copy directly in-renderer.
  */
 async function copyTextRobust(text: string): Promise<boolean> {
 	try {

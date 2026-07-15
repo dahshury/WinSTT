@@ -9,13 +9,8 @@ const modelUnloadTimeoutSchema = z
 export const modelSettingsSchema = z.object({
 	// Bundled offline base model — see `project_offline_base_and_tts_pack`
 	// memory. tiny-q4 is vendored into the installer so first-run users
-	// transcribe with zero network traffic. The historical "large-v2"
-	// default predates the offline-base seeding and resolved to a Whisper
-	// catalog id that the picker no longer surfaces; falling back to it
-	// on a partial-save decode produced the "large v2 in the main window
-	// but vosk-russian in the picker" desync (different fallbacks across
-	// surfaces). "tiny" exists in every catalog flavor and matches the
-	// CLI default the backend spawn passes (`--model tiny`).
+	// transcribe with zero network traffic. "tiny" exists in every catalog
+	// flavor and matches the CLI default passed by the backend.
 	model: z.string().default("tiny"),
 	realtimeModel: z.string().default("tiny"),
 	// Forced language for a multilingual/prompt realtime model (Nemotron-3.5), independent of the
@@ -42,15 +37,8 @@ export const modelSettingsSchema = z.object({
 	// single decode (no extra latency, no LLM round-trip). Multilingual Whisper
 	// can only ever target English (<|translate|> is English-only); NeMo Canary
 	// honors the concrete token and translates any→any among its languages. Every
-	// other family silently falls through to normal transcription. `z.preprocess`
-	// migrates the legacy boolean `translateToEnglish` (true → "en"); `.catch("")`
-	// keeps a corrupt persisted value from wiping the whole model section.
-	translateTargetLanguage: z
-		.preprocess(
-			(value) => (typeof value === "boolean" ? (value ? "en" : "") : value),
-			z.string().default(""),
-		)
-		.catch(""),
+	// other family silently falls through to normal transcription.
+	translateTargetLanguage: z.string().default("").catch(""),
 });
 
 export const globalSettingsSchema = z.object({
@@ -65,9 +53,7 @@ export const qualitySettingsSchema = z.object({
 	initRealtimeAfterSeconds: z.number().default(0.2),
 	earlyTranscriptionOnSilence: z.number().default(0.2),
 	formatBasicPunctuationCasing: z.boolean().default(false).catch(false),
-	formatSpokenPunctuationCommands: z.boolean().default(false).catch(false),
-	formatSpokenSymbolCommands: z.boolean().default(false).catch(false),
-	formatQuoteCommands: z.boolean().default(false).catch(false),
+	formatSpokenCommands: z.boolean().default(false).catch(false),
 	formatFillerRepeatCleanup: z.boolean().default(false).catch(false),
 	// ON by default: the DistilBERT sentence-completion classifier extends
 	// the silence pause when the utterance is semantically incomplete, which
@@ -78,16 +64,15 @@ export const qualitySettingsSchema = z.object({
 	// Pause multiplier: pause = (model + whisper) * smartEndpointSpeed.
 	// HIGHER = longer wait = more patient. Default 2.0 matches the
 	// RealtimeSTT reference (its binary-classified smart-endpoint example
-	// ships 2.0); the old 1.5 committed ~25% sooner everywhere and read
-	// as "pastes too eagerly" in toggle dictation.
+	// ships 2.0) for patient toggle-mode dictation.
 	smartEndpointSpeed: z.number().min(0.5).max(3.0).default(2.0).catch(2.0),
 	// Sentence-pause durations driving the toggle-mode silence-timing heuristic
 	// (the fallback when Smart Endpoint is off). Defaults match the server's
 	// CLI argument defaults. unknownSentenceDetectionPause governs normal
 	// mid-sentence speech; 0.7s cut off natural breath/think pauses, so the
 	// default is 1.3s.
-	// `.catch(...)` on each constrained slider: a stale out-of-range persisted
-	// value (or hand-edit) must reset only the offending field, never nuke the
+	// `.catch(...)` on each constrained slider: an invalid value must reset only
+	// the offending field, never nuke the
 	// whole `quality` section to defaults on decode.
 	endOfSentenceDetectionPause: z
 		.number()
@@ -111,7 +96,7 @@ export const qualitySettingsSchema = z.object({
 
 export const hotkeySettingsSchema = z.object({
 	// `.catch("LCtrl+LMeta")` is the rescue path: if settings.json on disk
-	// ever sneaks an empty string in (legacy data, hand-edit, sync conflict),
+	// ever receives an empty string (hand-edit or sync conflict),
 	// `.min(1)` would throw and `decodeSettingsPayload` would wipe the whole
 	// `hotkey` section. Catch rehydrates to the documented default so the
 	// PTT binding is always present and never empty.
@@ -135,7 +120,7 @@ export const dictionaryEntrySchema = z.object({
 	id: z.string().min(1),
 	term: z.string().min(1, "Required"),
 	// True only for entries inserted by the LLM dictionary tool. Manual and
-	// legacy entries omit the field and render as "Manual" in Settings.
+	// manually added entries omit the field and render as "Manual" in Settings.
 	autoAdded: z.boolean().optional(),
 	replacement: z.string().optional(),
 });

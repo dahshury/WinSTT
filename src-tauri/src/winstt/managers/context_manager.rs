@@ -196,28 +196,43 @@ impl ContextReader for ContextManager {
     }
 }
 
-/// Resolve the sidecar exe. Packaged: `<resource>/binaries/winstt-context.exe`.
+/// Resolve the sidecar exe. Packaged: `<resource>/winstt_context.exe` (the Cargo
+/// bin Tauri bundles next to the main executable).
 /// Dev fallback: the binary staged under `src-tauri/binaries/`.
 fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
-    let name = if cfg!(windows) {
+    let staged_name = if cfg!(windows) {
         "winstt-context.exe"
     } else {
         "winstt-context"
     };
-    // 1. Tauri resource dir (where externalBin lands at build time).
+    let bundled_name = if cfg!(windows) {
+        "winstt_context.exe"
+    } else {
+        "winstt_context"
+    };
+    // 1. Tauri resource dir. Prefer the Cargo bin bundled beside the app, then
+    //    accept the legacy resources/binaries layout for existing dev artifacts.
     if let Ok(res) = app.path().resource_dir() {
-        let candidate = res.join("binaries").join(name);
-        if candidate.exists() {
-            return Some(candidate);
+        for candidate in [
+            res.join(bundled_name),
+            res.join("binaries").join(staged_name),
+        ] {
+            if candidate.exists() {
+                return Some(candidate);
+            }
         }
     }
     // 2. Next to the executable.
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        let candidate = dir.join("binaries").join(name);
-        if candidate.exists() {
-            return Some(candidate);
+        for candidate in [
+            dir.join(bundled_name),
+            dir.join("binaries").join(staged_name),
+        ] {
+            if candidate.exists() {
+                return Some(candidate);
+            }
         }
     }
     // 3. Dev fallback: prefer `src-tauri/binaries/` when present (all platforms —
@@ -226,8 +241,8 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
     {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let candidates = [
-            PathBuf::from("binaries").join(name),
-            manifest_dir.join("binaries").join(name),
+            PathBuf::from("binaries").join(staged_name),
+            manifest_dir.join("binaries").join(staged_name),
         ];
 
         for candidate in candidates {
@@ -249,6 +264,7 @@ fn mode_str(mode: ContextMode) -> &'static str {
         ContextMode::Selection => "selection",
         ContextMode::Split => "split",
         ContextMode::Tree => "tree",
+        ContextMode::Meta => "meta",
     }
 }
 
@@ -546,5 +562,6 @@ mod tests {
         assert_eq!(mode_str(ContextMode::Selection), "selection");
         assert_eq!(mode_str(ContextMode::Split), "split");
         assert_eq!(mode_str(ContextMode::Tree), "tree");
+        assert_eq!(mode_str(ContextMode::Meta), "meta");
     }
 }

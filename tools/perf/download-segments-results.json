@@ -1,0 +1,283 @@
+{
+  "generatedAt": "2026-07-14T23:50:22.620Z",
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v22.20.0"
+  },
+  "fixture": {
+    "chunkBytes": 65536,
+    "fileBytes": 33554432,
+    "localOnly": true,
+    "trials": 2
+  },
+  "results": [
+    {
+      "width": 1,
+      "scenario": "per-connection-latency",
+      "durationMs": 7893.52,
+      "throughputMiBps": 4.05,
+      "cpuMs": 375,
+      "peakRssDeltaMiB": 19.07,
+      "bytes": 33554432,
+      "serverPeak": 1,
+      "trial": 1
+    },
+    {
+      "width": 1,
+      "scenario": "per-connection-latency",
+      "durationMs": 7855.13,
+      "throughputMiBps": 4.07,
+      "cpuMs": 235,
+      "peakRssDeltaMiB": 19.45,
+      "bytes": 33554432,
+      "serverPeak": 1,
+      "trial": 2
+    },
+    {
+      "width": 2,
+      "scenario": "per-connection-latency",
+      "durationMs": 3957.43,
+      "throughputMiBps": 8.09,
+      "cpuMs": 125,
+      "peakRssDeltaMiB": 19.99,
+      "bytes": 33554432,
+      "serverPeak": 2,
+      "trial": 1
+    },
+    {
+      "width": 2,
+      "scenario": "per-connection-latency",
+      "durationMs": 3951.39,
+      "throughputMiBps": 8.1,
+      "cpuMs": 204,
+      "peakRssDeltaMiB": 19.56,
+      "bytes": 33554432,
+      "serverPeak": 2,
+      "trial": 2
+    },
+    {
+      "width": 4,
+      "scenario": "per-connection-latency",
+      "durationMs": 1977.91,
+      "throughputMiBps": 16.18,
+      "cpuMs": 187,
+      "peakRssDeltaMiB": 20.47,
+      "bytes": 33554432,
+      "serverPeak": 4,
+      "trial": 1
+    },
+    {
+      "width": 4,
+      "scenario": "per-connection-latency",
+      "durationMs": 1979.93,
+      "throughputMiBps": 16.16,
+      "cpuMs": 141,
+      "peakRssDeltaMiB": 20.15,
+      "bytes": 33554432,
+      "serverPeak": 4,
+      "trial": 2
+    },
+    {
+      "width": 8,
+      "scenario": "per-connection-latency",
+      "durationMs": 1004.41,
+      "throughputMiBps": 31.86,
+      "cpuMs": 234,
+      "peakRssDeltaMiB": 21.02,
+      "bytes": 33554432,
+      "serverPeak": 8,
+      "trial": 1
+    },
+    {
+      "width": 8,
+      "scenario": "per-connection-latency",
+      "durationMs": 993.87,
+      "throughputMiBps": 32.2,
+      "cpuMs": 282,
+      "peakRssDeltaMiB": 21.51,
+      "bytes": 33554432,
+      "serverPeak": 8,
+      "trial": 2
+    },
+    {
+      "width": 1,
+      "scenario": "serialized-sink",
+      "durationMs": 3369.77,
+      "throughputMiBps": 9.5,
+      "cpuMs": 266,
+      "peakRssDeltaMiB": 34.64,
+      "bytes": 33554432,
+      "serverPeak": 1,
+      "trial": 1
+    },
+    {
+      "width": 1,
+      "scenario": "serialized-sink",
+      "durationMs": 3327.14,
+      "throughputMiBps": 9.62,
+      "cpuMs": 172,
+      "peakRssDeltaMiB": 34.39,
+      "bytes": 33554432,
+      "serverPeak": 1,
+      "trial": 2
+    },
+    {
+      "width": 2,
+      "scenario": "serialized-sink",
+      "durationMs": 2326.52,
+      "throughputMiBps": 13.75,
+      "cpuMs": 140,
+      "peakRssDeltaMiB": 34.28,
+      "bytes": 33554432,
+      "serverPeak": 2,
+      "trial": 1
+    },
+    {
+      "width": 2,
+      "scenario": "serialized-sink",
+      "durationMs": 2262.65,
+      "throughputMiBps": 14.14,
+      "cpuMs": 187,
+      "peakRssDeltaMiB": 34.68,
+      "bytes": 33554432,
+      "serverPeak": 2,
+      "trial": 2
+    },
+    {
+      "width": 4,
+      "scenario": "serialized-sink",
+      "durationMs": 1902.84,
+      "throughputMiBps": 16.82,
+      "cpuMs": 375,
+      "peakRssDeltaMiB": 22.14,
+      "bytes": 33554432,
+      "serverPeak": 4,
+      "trial": 1
+    },
+    {
+      "width": 4,
+      "scenario": "serialized-sink",
+      "durationMs": 1774.74,
+      "throughputMiBps": 18.03,
+      "cpuMs": 63,
+      "peakRssDeltaMiB": 34.33,
+      "bytes": 33554432,
+      "serverPeak": 4,
+      "trial": 2
+    },
+    {
+      "width": 8,
+      "scenario": "serialized-sink",
+      "durationMs": 2345.79,
+      "throughputMiBps": 13.64,
+      "cpuMs": 110,
+      "peakRssDeltaMiB": 35.1,
+      "bytes": 33554432,
+      "serverPeak": 8,
+      "trial": 1
+    },
+    {
+      "width": 8,
+      "scenario": "serialized-sink",
+      "durationMs": 2222.97,
+      "throughputMiBps": 14.4,
+      "cpuMs": 219,
+      "peakRssDeltaMiB": 34.87,
+      "bytes": 33554432,
+      "serverPeak": 8,
+      "trial": 2
+    }
+  ],
+  "summary": [
+    {
+      "width": 1,
+      "scenario": "per-connection-latency",
+      "durationMs": 7893.52,
+      "throughputMiBps": 4.05,
+      "cpuMs": 375,
+      "peakRssDeltaMiB": 19.07,
+      "bytes": 33554432,
+      "serverPeak": 1,
+      "trial": "median"
+    },
+    {
+      "width": 1,
+      "scenario": "serialized-sink",
+      "durationMs": 3369.77,
+      "throughputMiBps": 9.5,
+      "cpuMs": 266,
+      "peakRssDeltaMiB": 34.64,
+      "bytes": 33554432,
+      "serverPeak": 1,
+      "trial": "median"
+    },
+    {
+      "width": 2,
+      "scenario": "per-connection-latency",
+      "durationMs": 3957.43,
+      "throughputMiBps": 8.09,
+      "cpuMs": 125,
+      "peakRssDeltaMiB": 19.99,
+      "bytes": 33554432,
+      "serverPeak": 2,
+      "trial": "median"
+    },
+    {
+      "width": 2,
+      "scenario": "serialized-sink",
+      "durationMs": 2326.52,
+      "throughputMiBps": 13.75,
+      "cpuMs": 140,
+      "peakRssDeltaMiB": 34.28,
+      "bytes": 33554432,
+      "serverPeak": 2,
+      "trial": "median"
+    },
+    {
+      "width": 4,
+      "scenario": "per-connection-latency",
+      "durationMs": 1979.93,
+      "throughputMiBps": 16.16,
+      "cpuMs": 141,
+      "peakRssDeltaMiB": 20.15,
+      "bytes": 33554432,
+      "serverPeak": 4,
+      "trial": "median"
+    },
+    {
+      "width": 4,
+      "scenario": "serialized-sink",
+      "durationMs": 1902.84,
+      "throughputMiBps": 16.82,
+      "cpuMs": 375,
+      "peakRssDeltaMiB": 22.14,
+      "bytes": 33554432,
+      "serverPeak": 4,
+      "trial": "median"
+    },
+    {
+      "width": 8,
+      "scenario": "per-connection-latency",
+      "durationMs": 1004.41,
+      "throughputMiBps": 31.86,
+      "cpuMs": 234,
+      "peakRssDeltaMiB": 21.02,
+      "bytes": 33554432,
+      "serverPeak": 8,
+      "trial": "median"
+    },
+    {
+      "width": 8,
+      "scenario": "serialized-sink",
+      "durationMs": 2345.79,
+      "throughputMiBps": 13.64,
+      "cpuMs": 110,
+      "peakRssDeltaMiB": 35.1,
+      "bytes": 33554432,
+      "serverPeak": 8,
+      "trial": "median"
+    }
+  ],
+  "recommendation": "Width 4 is the bounded candidate: 3.99x throughput under per-connection latency, 1.77x under a serialized sink, and 20.15 MiB measured RSS growth. Production still requires 200/206 fallback and crash-safe contiguous resume semantics."
+}

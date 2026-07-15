@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import type { LlmProvider } from "./types";
 import { resolveUnloadPending } from "./feature-block-helpers";
 import { useOllamaUnloadTracker } from "./FeatureBlock";

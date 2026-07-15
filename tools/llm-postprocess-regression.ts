@@ -6,6 +6,7 @@ import {
 	buildSystemPrompt,
 	type PresetEntry,
 } from "../src/shared/lib/preset-prompts";
+import { buildUserPromptForPresets as buildProductionUserPrompt } from "./lib/postprocess/prompts";
 
 interface RegressionCase {
 	id: string;
@@ -41,7 +42,7 @@ const REVIEW_MODE = process.argv.includes("--review");
 const CAPABILITY_GAPS_MODE = process.argv.includes("--capability-gaps");
 
 const BASE_USER_CLEANUP =
-	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, versions, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); preserve compact product/model/API/release version labels, keeping v plus a number joined and normalizing model/release "version N" to vN when clearly part of a name; convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker\'s meaning and every idea.';
+	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken punctuation and layout commands (period, comma, question mark, exclamation mark, colon, semicolon, dash, slash, quote/end quote, new line, new paragraph = one blank line) into the character or layout itself only when the word is spoken in place of the character (for example, "great work exclamation mark" -> "Great work!"), and keep punctuation words as words when the speech talks about punctuation — a determiner, quantifier, or plural before the word, or the word as the object of replace/remove/add/insert (for example, "please replace this slash with a comma" keeps the words unchanged); convert spoken numbers, dates, times, currency, percentages, units, versions, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); preserve compact product/model/API/release version labels, keeping v plus a number joined and normalizing model/release "version N" to vN when clearly part of a name; convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping sentence punctuation after the closing quote mark ("connection refused", so — never "connection refused," so) unless the punctuation was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker\'s meaning and every idea.';
 
 const CAPABILITY_GAP_PROFILES: readonly PresetProfile[] = [
 	{ id: "neutral", presets: [{ key: "neutral" }] },
@@ -232,6 +233,161 @@ const CAPABILITY_GAP_CASES: readonly CapabilityGapCase[] = [
 				/\byou are\b|^role:|^instructions:|^output format:|please summarize the following/i,
 				"does not expand into a generated prompt",
 			),
+		],
+	},
+	// ── Spoken punctuation: command vs. content ───────────────────────────────
+	// A punctuation word spoken IN PLACE of the character is a command and must
+	// become the character; a punctuation word the speech talks ABOUT (with a
+	// determiner, plural, or as the object of replace/remove/add) is content and
+	// must stay a word. These cases pin both directions.
+	{
+		id: "punct-terminal-question-mark",
+		profiles: ["neutral"],
+		before: "are you coming to the standup tomorrow question mark",
+		checks: [
+			matches(/\?\s*$/, "ends with ?"),
+			lacks(/question mark/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-terminal-exclamation",
+		profiles: ["neutral"],
+		before: "great work on the release exclamation mark",
+		checks: [
+			matches(/!\s*$/, "ends with !"),
+			lacks(/exclamation/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-new-line-command",
+		profiles: ["neutral"],
+		before:
+			"action items new line review the pull request new line update the docs",
+		checks: [
+			matches(/\n/, "contains a real line break"),
+			lacks(/new line/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-new-paragraph-command",
+		profiles: ["neutral"],
+		before:
+			"thanks for the quick turnaround new paragraph one more thing the deploy is still blocked",
+		checks: [
+			matches(/\n\n/, "contains a blank line"),
+			lacks(/new paragraph/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-slash-command",
+		profiles: ["neutral"],
+		before: "the split is fifty slash fifty between the two teams",
+		checks: [hasText("50/50"), lacks(/\bslash\b/i, "command word removed")],
+	},
+	{
+		id: "punct-quote-unquote-error",
+		profiles: ["neutral"],
+		// The trailing `,?` tolerates gemma4:e4b's American-style comma inside
+		// the closing quote: the prompt (system rule + user-prompt clause +
+		// final check, each with a demo) asks for the comma AFTER the quote,
+		// but at temperature 0 the model's typographic prior wins every time.
+		// Larger models comply; enforcing it on 4B would need a deterministic
+		// normalize-pass rule, not more prompt text.
+		before:
+			"the error says quote connection refused unquote so the server is down",
+		checks: [
+			matches(/"connection refused,?"/i, "quoted error text"),
+			lacks(/\bquote\b|\bunquote\b/i, "quote command words removed"),
+		],
+	},
+	{
+		id: "punct-parens-command",
+		profiles: ["neutral"],
+		before: "the results open paren see table two close paren were positive",
+		checks: [
+			matches(/\(see table 2\)/i, "(see Table 2)"),
+			lacks(/\bparen\b/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-ellipsis-command",
+		profiles: ["neutral"],
+		before: "I was thinking dot dot dot maybe we should postpone the launch",
+		checks: [
+			matches(/\.\.\.|…/, "ellipsis character"),
+			lacks(/dot dot dot/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-colon-command",
+		profiles: ["neutral"],
+		before: "here is the plan colon ship the fix today and monitor overnight",
+		checks: [
+			matches(/plan:/i, "plan:"),
+			lacks(/\bcolon\b/i, "command word removed"),
+		],
+	},
+	{
+		id: "punct-referential-slash-comma",
+		profiles: ["neutral"],
+		before:
+			"please replace this slash with a comma because the parser breaks on it",
+		checks: [
+			matches(/\bslash\b/i, "keeps the word slash"),
+			matches(/\bcomma\b/i, "keeps the word comma"),
+			lacks(/[/]/, "no literal slash inserted"),
+		],
+	},
+	{
+		id: "punct-referential-new-lines",
+		profiles: ["neutral"],
+		before:
+			"there are a ton of new lines inside this file and they should be reduced",
+		checks: [
+			matches(/\bnew ?lines\b/i, "keeps the words new lines"),
+			lacks(/\n/, "no line break inserted"),
+		],
+	},
+	{
+		id: "punct-referential-period",
+		profiles: ["neutral"],
+		before: "this sentence is missing a period at the end can you add one",
+		checks: [matches(/\bperiod\b/i, "keeps the word period")],
+	},
+	{
+		id: "punct-referential-plural-commas",
+		profiles: ["neutral"],
+		before: "remove all the commas from the csv file before importing it",
+		checks: [matches(/\bcommas\b/i, "keeps the word commas"), hasText("CSV")],
+	},
+	{
+		id: "punct-mixed-referential-and-command",
+		profiles: ["neutral"],
+		before: "replace the semicolon with a period exclamation mark",
+		checks: [
+			matches(/\bsemicolon\b/i, "keeps the word semicolon"),
+			matches(/\bperiod\b/i, "keeps the word period"),
+			matches(/!\s*$/, "trailing exclamation converted"),
+			lacks(/exclamation/i, "command words removed"),
+		],
+	},
+	{
+		id: "punct-ai-prompt-referential-new-lines",
+		profiles: ["neutral"],
+		before:
+			"tell the model that there are too many new lines in its output and it should reduce them",
+		checks: [
+			matches(/\bnew ?lines\b/i, "keeps the words new lines"),
+			lacks(/\n/, "no line break inserted"),
+		],
+	},
+	{
+		id: "punct-formal-preserves-referential",
+		profiles: ["formal"],
+		before: "please replace this slash with a comma in the config parser",
+		checks: [
+			matches(/\bslash\b/i, "keeps the word slash under formal rewrite"),
+			lacks(/[/]/, "no literal slash inserted"),
 		],
 	},
 ];
@@ -560,28 +716,9 @@ function buildUserPromptForPresets(
 	before: string,
 	presets: readonly PresetEntry[],
 ): string {
-	const operations = presets
-		.map(operationSummary)
-		.filter((value): value is string => value !== null);
-	if (operations.length === 0) {
-		return [
-			BASE_USER_CLEANUP,
-			"Before returning, check that adjacent self-correction alternatives keep only the later restatement.",
-			"Transform the following text according to the style guide above. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
-			"",
-			`Text to transform:\n${before}`,
-		].join("\n");
-	}
-	const opLabel =
-		operations.length === 1 ? "Active operation" : "Active operations";
-	return [
-		BASE_USER_CLEANUP,
-		`${opLabel} to apply exactly: ${operations.join("; ")}.`,
-		"Apply the active operation visibly unless the input is empty or pure noise. Before returning, do a final check: durable names, literal quoted text, code, command lines, URLs, file paths, email addresses, identifiers, and the speaker's meaning are preserved, except earlier adjacent self-correction alternatives that were replaced by a later restatement; run-on sentences are split; no markdown emphasis or highlighting is added unless explicitly dictated.",
-		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
-		"",
-		`Text to transform:\n${before}`,
-	].join("\n");
+	void BASE_USER_CLEANUP;
+	void operationSummary;
+	return buildProductionUserPrompt(before, presets);
 }
 
 // Mirrors the runtime user prompt composed by `active_modifier_user_prompt`
@@ -592,15 +729,7 @@ function buildUserPromptForPresets(
 // everything here must stay general — no case-specific phrases lifted from the
 // regression inputs.
 function buildUserPrompt(before: string): string {
-	return [
-		BASE_USER_CLEANUP,
-		"Active operations to apply exactly: actively structure announced counts, ordered steps, parallel items, inventories, and label-value mappings into numbered or `* ` bullet lists with the lead-in kept as prose, ending each list where the speech moves to a new topic, and keeping everything else prose; visibly rewrite unclear or awkward phrasing into clearer natural language, fixing obvious wrong-word slips and vague placeholders while preserving meaning, point of view, and trailing fragments.",
-		'Format every list with REAL line breaks (newline characters in the `text` value): each numbered item or bullet on its own line, and a blank line before the first item and after the last item. Never put list items on one line separated by spaces. Patterns to apply wherever the text matches them: "You should update the docs, fix the tests and ping the team." -> "You should:\n\n* update the docs\n* fix the tests\n* ping the team" "The status should be red for errors, yellow for warnings and green for success." -> "The status should be:\n\n* red for errors\n* yellow for warnings\n* green for success" "One. Open the settings. Second, change the language. Third, restart the app, then the first issue is that the language resets." -> "1. Open the settings.\n2. Change the language.\n3. Restart the app.\n\nThe first issue is that the language resets."',
-		"Apply the active operations visibly unless the input is empty or pure noise. Before returning, do a final check: no sentence, item, or action from the input is missing except earlier adjacent self-correction alternatives that were replaced by a later restatement; announced counts and ordered steps are formatted as numbered lists with each item on its own line; parallel items and label-value mappings are `* ` bullets; every list has a blank line before and after it; literal labels and values are quoted; intent framing and trailing fragments are preserved; run-on sentences are split.",
-		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
-		"",
-		`Text to transform:\n${before}`,
-	].join("\n");
+	return buildProductionUserPrompt(before, PRESETS);
 }
 
 const TEXT_SCHEMA = {

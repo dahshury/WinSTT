@@ -1,11 +1,11 @@
 import {
-	computeModelExclusionConfig,
 	OllamaModelSelector,
 	type OllamaModelSelectorProps,
-	OpenRouterModelSelector,
-	SttModelSelector,
-} from "@/widgets/model-picker";
-import { TtsModelSelector } from "@/widgets/model-picker/tts";
+} from "@/features/llm-model-picker";
+import { SttModelSelector } from "@/features/select-local-stt-model";
+import { OpenRouterModelSelector } from "@/features/select-cloud-stt-model";
+import { TtsModelSelector } from "@/features/tts-model-picker";
+import { computeModelExclusionConfig } from "@/shared/ui/model-picker/lib/model-exclusion";
 import { type KeyboardEvent, type ReactNode, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { providerOf } from "@/entities/cloud-stt-provider";
@@ -30,6 +30,11 @@ import {
 	useTtsModelStateStore,
 } from "@/entities/tts-catalog";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
+import {
+	useOllamaSuggestions,
+	useSttSuggestions,
+	useTtsSuggestions,
+} from "@/features/suggested-models";
 import {
 	resolveTtsModelSelectionPatch,
 	useTtsModelDownloads,
@@ -218,16 +223,25 @@ function DetachedOllamaPicker({
 	);
 	const pulls = useOllamaPulls();
 	const librarySearch = useLibrarySearchProps();
+	// Suggested (spec-based recommender) verdict: cross-modality budgets with
+	// the LLM slot excluded → either-pool per-tag fit + proxy ranking.
+	// `undefined` until system info arrives — the picker hides the chip then.
+	const suggestions = useOllamaSuggestions();
 	useEffect(() => {
 		if (!isLoaded) {
 			fireAndForget(scanModels(), "PickerBody.scanModels");
 		}
 	}, [isLoaded, scanModels]);
 	const setModel = (modelName: string) => {
+		const patch = {
+			provider: "ollama" as const,
+			model: modelName,
+			...(mode.enableOnInstall ? { enabled: true } : {}),
+		};
 		if (mode.feature === "transforms") {
-			updateTransforms({ provider: "ollama", model: modelName });
+			updateTransforms(patch);
 		} else {
-			updatePostProcessing({ provider: "ollama", model: modelName });
+			updatePostProcessing(patch);
 		}
 		close();
 	};
@@ -269,6 +283,7 @@ function DetachedOllamaPicker({
 				popupWidthClass="w-full max-w-none"
 				pulls={pulls}
 				recommendedModels={RECOMMENDED_OLLAMA_MODELS}
+				suggestions={suggestions}
 				swap={null}
 				systemFit={getFit}
 				uiStorageKey={ollamaLlmSelectorUiStorageKey(mode.feature)}
@@ -394,6 +409,10 @@ function DetachedTtsPicker() {
 	const updateTts = useSettingsStore((s) => s.updateTtsSettings);
 	const currentQuant = statesById[currentModel]?.effectiveQuantization ?? "";
 	const { getSnapshot, onDownloadAction } = useTtsModelDownloads();
+	// Suggested (spec-based recommender) verdict: cross-modality budgets with
+	// the TTS slot excluded → per-quant fit + language de-rank. `undefined`
+	// until system info arrives — the picker hides the chip then.
+	const getSuggestion = useTtsSuggestions({ models, statesById });
 
 	// `refresh()` fetches BOTH the catalog model list and the per-model cache
 	// state in one round-trip. The detached window doesn't bootstrap the TTS
@@ -413,6 +432,7 @@ function DetachedTtsPicker() {
 			<div className="min-h-0 flex-1 [&>*]:size-full">
 				<TtsModelSelector
 					currentQuantization={currentQuant}
+					getSuggestion={getSuggestion}
 					inline
 					isLoading={!isLoaded}
 					models={models}
@@ -456,6 +476,23 @@ export function PickerBody({
 	statesById,
 	systemInfo,
 }: PickerBodyProps) {
+	// Suggested (spec-based recommender) verdicts for the two STT pickers.
+	// Hooks run unconditionally (this component branches per mode below); the
+	// language rule follows the picker: the realtime picker reuses the exact
+	// selection + main-model context its prefilter already consumes, the main
+	// picker reads `settings.model` directly.
+	const mainLanguageSelection = useSettingsStore((s) => s.settings.model);
+	const isRealtimeMode = mode.kind === "stt-realtime";
+	const getSuggestion = useSttSuggestions({
+		models: catalogModels,
+		statesById,
+		sourceLanguageSelection: isRealtimeMode
+			? realtime.sourceLanguageSelection
+			: mainLanguageSelection,
+		mainModel: isRealtimeMode
+			? realtime.mainModelInfo
+			: catalogModels.find((m) => m.id === currentModel),
+	});
 	// Which sub-picker shows is derived purely from the active model — there is
 	// NO Local/Cloud switch in this window. The source toggle is a Settings-only
 	// control (see `SourceArea` in ModelSettingsPanel); this detached picker just
@@ -494,6 +531,7 @@ export function PickerBody({
 						currentQuantization={currentQuantization}
 						disabled={fileQueueBusy}
 						getFitAssessment={getFitAssessment}
+						getSuggestion={getSuggestion}
 						inline
 						isLoading={!catalogLoaded}
 						kind="realtime"
@@ -553,6 +591,7 @@ export function PickerBody({
 						currentQuantization={currentQuantization}
 						disabled={fileQueueBusy}
 						getFitAssessment={getFitAssessment}
+						getSuggestion={getSuggestion}
 						inline
 						isLoading={!catalogLoaded}
 						kind="main"

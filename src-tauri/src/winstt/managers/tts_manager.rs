@@ -359,7 +359,7 @@ impl TtsManager {
         engine.shutdown();
         self.lifecycle.clear_warm(&warm_key);
         self.mark_model_used();
-        log::info!("[tts] local model session dropped ({reason})");
+        log::debug!("[tts] local model session dropped ({reason})");
         crate::log_model_duration(&format!("tts unload active local ({reason})"), started);
     }
 
@@ -383,7 +383,7 @@ impl TtsManager {
         engine.shutdown();
         self.lifecycle.clear_warm(&warm_key);
         self.mark_model_used();
-        log::info!("[tts] local model session dropped ({reason})");
+        log::debug!("[tts] local model session dropped ({reason})");
         crate::log_model_duration(&format!("tts unload active local ({reason})"), started);
     }
 
@@ -662,10 +662,12 @@ impl TtsManager {
         let mut a = self.active.lock_recover();
         let mut outgoing: Option<Arc<dyn TtsEngine>> = None;
         let mut swap_started: Option<Instant> = None;
+        let mut had_previous_engine = false;
         if a.fingerprint != fingerprint || a.source != source {
             swap_started = Some(Instant::now());
             let old_fp = a.fingerprint.clone();
             let old_source = a.source;
+            had_previous_engine = !old_fp.is_empty();
             self.lifecycle
                 .clear_warm(&tts_engine_key(old_source, &old_fp));
             let engine: Arc<dyn TtsEngine> = match source {
@@ -695,9 +697,13 @@ impl TtsManager {
             // native ORT session(s) explicitly below — a Chatterbox graph is ~1.6 GB
             // resident, so relying on `Arc`-drop alone would leave the old model
             // wandering in memory if any in-flight synthesis clone still holds a ref.
-            log::info!(
-                "[tts] engine swap ({old_source:?} '{old_fp}' → {source:?} '{fingerprint}') — unloading previous model"
-            );
+            if had_previous_engine {
+                log::info!(
+                    "[tts] engine swap ({old_source:?} '{old_fp}' -> {source:?} '{fingerprint}'); unloading previous model"
+                );
+            } else {
+                log::debug!("[tts] selected initial engine ({source:?} '{fingerprint}')");
+            }
             outgoing = Some(std::mem::replace(&mut a.engine, engine));
             a.source = source;
             a.fingerprint = fingerprint;
@@ -716,7 +722,9 @@ impl TtsManager {
             // state to None behind its own lock); a stale clone simply lazily re-warms
             // instead of pinning the previous model's memory.
             old.shutdown();
-            log::info!("[tts] previous engine session dropped (unloaded)");
+            if had_previous_engine {
+                log::debug!("[tts] previous engine session dropped (unloaded)");
+            }
             if let Some(started) = swap_started {
                 crate::log_model_duration("tts engine swap", started);
             }
@@ -993,7 +1001,7 @@ impl TtsManager {
             let (target_source, target_fingerprint) = Self::engine_fingerprint_from(&settings);
             let target_key = tts_engine_key(target_source, &target_fingerprint);
             if self.lifecycle.is_warm(&target_key) {
-                log::debug!("[tts] warm-up skipped — engine '{target_key}' is already warm");
+                log::debug!("[tts] warm-up skipped -- engine '{target_key}' is already warm");
                 return Ok(());
             }
             let Some(_claim) = self.lifecycle.try_claim(target_key.clone()) else {
@@ -1034,7 +1042,7 @@ impl TtsManager {
             let _synth_guard = match self.synth_lock.try_lock() {
                 Ok(guard) => guard,
                 Err(std::sync::TryLockError::WouldBlock) => {
-                    log::debug!("[tts] warm-up yielded — real synthesis is using '{engine_key}'");
+                    log::debug!("[tts] warm-up yielded -- real synthesis is using '{engine_key}'");
                     self.lifecycle.mark_warm(engine_key);
                     return Ok(());
                 }

@@ -17,6 +17,13 @@ export {
 	type ModelNativeFormatting,
 	type ModelNativeFormattingKey,
 } from "./lib/model-formatting";
+export {
+	buildModelSearchCorpus,
+	getAuthorLabel,
+	getFamilyConfig,
+	type FamilyKey,
+} from "./lib/family-metadata";
+export { variantDisplayName } from "./lib/family-display-name";
 export { resolveEffectiveQuant, resolveQuantCache } from "./lib/quant-cache";
 export {
 	isSelectableRealtimeModel,
@@ -29,13 +36,14 @@ export {
 } from "./lib/model-options";
 export {
 	modelSupportsSelectedSourceLanguages,
+	normalizeSttLanguageCode,
+	resolveSelectedSourceLanguages,
 	type SourceLanguageSelection,
 } from "./lib/source-language-compatibility";
 export type { ModelInfo } from "./model/catalog-store";
-export { useCatalogStore } from "./model/catalog-store";
+export { initCatalogStore, useCatalogStore } from "./model/catalog-store";
 export { useModelStateStore } from "./model/model-state-store";
 export {
-	_resetOptimisticSwapForTests,
 	type SwapQuant,
 	useModelSwapStore,
 } from "./model/model-swap-store";

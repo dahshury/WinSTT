@@ -20,9 +20,9 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, LogicalPosition, Manager};
 
-use super::windows::ensure_window;
+use super::windows::{ensure_window, placement::work_area_for_point};
 
 /// Label of the tray-menu webview (== Vite entry key == renderer window name).
 const TRAY_MENU_LABEL: &str = "tray-menu";
@@ -110,47 +110,6 @@ const TRAY_MENU_HIDDEN_EVENT: &str = "winstt:tray-menu-hidden";
 #[derive(Default)]
 pub struct TrayMenuAnchor(pub Mutex<Option<(f64, f64)>>);
 
-/// Find the monitor whose bounds contain the given logical point, falling back
-/// to the primary monitor. Ported from `overlay.rs::get_monitor_with_cursor`
-/// (which is private to that module) — deliberately uses `position()`+`size()`
-/// rather than `work_area()` (the latter forces `dpi::PhysicalRect`, which is
-/// not present in the pinned `dpi 0.1.2`; the fixed `TASKBAR_MARGIN` covers the
-/// taskbar gap instead).
-fn monitor_for_point(app: &AppHandle, point: (f64, f64)) -> Option<tauri::Monitor> {
-    let (px, py) = point;
-    if let Ok(monitors) = app.available_monitors() {
-        for monitor in monitors {
-            let scale = monitor.scale_factor();
-            let mx = monitor.position().x as f64 / scale;
-            let my = monitor.position().y as f64 / scale;
-            let mw = monitor.size().width as f64 / scale;
-            let mh = monitor.size().height as f64 / scale;
-            if px >= mx && px < mx + mw && py >= my && py < my + mh {
-                return Some(monitor);
-            }
-        }
-    }
-    app.primary_monitor().ok().flatten()
-}
-
-/// Logical-pixel monitor rect (x, y, width, height) for a point. Used as the
-/// clamp box for the tray menu so it never spills off-screen.
-fn monitor_rect_for_point(app: &AppHandle, point: (f64, f64)) -> (f64, f64, f64, f64) {
-    if let Some(monitor) = monitor_for_point(app, point) {
-        let scale = monitor.scale_factor();
-        let PhysicalPosition { x, y } = *monitor.position();
-        let PhysicalSize { width, height } = *monitor.size();
-        return (
-            x as f64 / scale,
-            y as f64 / scale,
-            width as f64 / scale,
-            height as f64 / scale,
-        );
-    }
-    // No monitor info: a generous default so we still place SOMETHING on-screen.
-    (0.0, 0.0, 1920.0, 1080.0)
-}
-
 /// Clamp the desired top-left so the whole `menu_size` stays inside `work_area`,
 /// leaving `TASKBAR_MARGIN` at the bottom.
 fn clamp_to_work_area(
@@ -202,7 +161,7 @@ fn position_tray_menu(
         (s.width as f64 / scale, s.height as f64 / scale)
     });
 
-    let work_area = monitor_rect_for_point(app, anchor);
+    let work_area = work_area_for_point(app, anchor);
     let (px, py) = clamp_to_work_area(anchor, menu_size, work_area);
 
     window

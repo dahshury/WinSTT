@@ -11,6 +11,8 @@ mod priority;
 mod ptt_release_watchdog;
 mod settings_commands;
 mod tauri_impl;
+#[cfg(target_os = "windows")]
+mod windows_accelerator;
 
 pub use accelerator_commands::*;
 pub use settings_commands::*;
@@ -24,6 +26,7 @@ use tauri::AppHandle;
 use crate::settings::{self, ShortcutBinding};
 
 static CANCEL_SHORTCUT_REGISTERED: AtomicBool = AtomicBool::new(false);
+static SKIP_POST_PROCESSING_SHORTCUT_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 // Note: commands are accessed through their shortcut implementation module.
 
@@ -65,6 +68,16 @@ pub(crate) fn escape_cancel_binding() -> ShortcutBinding {
         })
 }
 
+fn skip_post_processing_binding() -> ShortcutBinding {
+    ShortcutBinding {
+        id: "skip_post_processing".to_string(),
+        name: "Skip post-processing".to_string(),
+        description: "Paste the raw STT transcript without post-processing.".to_string(),
+        default_binding: "Alt+S".to_string(),
+        current_binding: "Alt+S".to_string(),
+    }
+}
+
 /// Register the Escape cancel shortcut (called when dictation starts)
 pub fn register_cancel_shortcut(app: &AppHandle) {
     if crate::winstt::commands::onboarding::is_onboarding_active() {
@@ -87,6 +100,44 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
         return;
     }
     tauri_impl::unregister_cancel_shortcut(app);
+}
+
+/// Arm the fixed Alt+S shortcut only while dictation LLM cleanup is active.
+/// The overlay is intentionally non-focusable, so this must be global for the
+/// focused target application to keep keyboard focus.
+pub fn register_skip_post_processing_shortcut(app: &AppHandle) {
+    if crate::winstt::commands::onboarding::is_onboarding_active()
+        || priority::refresh_dev_hotkey_priority(app)
+    {
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        return;
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        if SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Err(err) = tauri_impl::register_shortcut(app, skip_post_processing_binding()) {
+            SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.store(false, Ordering::SeqCst);
+            warn!("Failed to register Alt+S post-processing skip shortcut: {err}");
+        }
+    }
+}
+
+pub fn unregister_skip_post_processing_shortcut(app: &AppHandle) {
+    if !SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    #[cfg(not(target_os = "linux"))]
+    if let Err(err) = tauri_impl::unregister_shortcut(app, skip_post_processing_binding()) {
+        log::debug!("Alt+S post-processing skip shortcut was already unregistered: {err}");
+    }
 }
 
 /// Register a shortcut.
@@ -135,6 +186,16 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
 fn binding_for_tauri_backend(mut binding: ShortcutBinding) -> ShortcutBinding {
     binding.current_binding = binding_for_active_backend(&binding.id, &binding.current_binding);
     binding
+}
+
+fn same_binding(a: &str, b: &str) -> bool {
+    a.split('+')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .eq(b
+            .split('+')
+            .map(|part| part.trim().to_ascii_lowercase())
+            .filter(|part| !part.is_empty()))
 }
 
 pub(crate) fn binding_for_active_backend(id: &str, raw: &str) -> String {
@@ -237,6 +298,7 @@ fn reconcile_one(app: &AppHandle, id: &str, enabled: bool, accel: &str) {
 
 pub(crate) fn disarm_all_shortcuts(app: &AppHandle) {
     CANCEL_SHORTCUT_REGISTERED.store(false, Ordering::SeqCst);
+    SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.store(false, Ordering::SeqCst);
     // Tear down the recording-mode cycle gesture hook alongside the other global
     // shortcuts (e.g. when a packaged instance takes over hotkey ownership).
     mode_cycle::disable();
@@ -261,6 +323,7 @@ pub(crate) fn disarm_all_shortcuts(app: &AppHandle) {
     unregister_winstt_tree_binding(app, "read_aloud", &ws.tts.hotkey);
     unregister_winstt_tree_binding(app, "repaste", &ws.general.repaste_hotkey);
     unregister_if_nonempty(app, escape_cancel_binding());
+    unregister_if_nonempty(app, skip_post_processing_binding());
 }
 
 fn unregister_winstt_tree_binding(app: &AppHandle, id: &str, accel: &str) {
@@ -353,16 +416,38 @@ pub fn change_binding(
         });
     }
 
+    // Validate before touching the live registration. The old order removed the
+    // working shortcut first, so an invalid replacement could leave PTT unarmed.
+    validate_binding_for_active_backend(&id, &binding).inspect_err(|e| {
+        warn!("change_binding validation error: {e}");
+    })?;
+
+    // Renderer hydration and React StrictMode can request the already-active
+    // binding more than once. Keep this path idempotent: preserve the live hook
+    // and avoid rewriting settings, but repair a missing runtime registration.
+    if same_binding(&binding_to_modify.current_binding, &binding) {
+        if id == "transcribe" {
+            mode_cycle::update(&app, binding.trim());
+        }
+        if id == "transcribe" && modifier_combo::is_modifier_only_accelerator(&binding) {
+            register_shortcut(&app, binding_to_modify.clone())?;
+        } else {
+            let backend_binding = binding_for_tauri_backend(binding_to_modify.clone());
+            if !tauri_impl::is_registered(&app, &backend_binding)? {
+                register_shortcut(&app, binding_to_modify.clone())?;
+            }
+        }
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(binding_to_modify),
+            error: None,
+        });
+    }
+
     // Unregister the existing binding
     if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
         let error_msg = format!("Failed to unregister shortcut: {}", e);
         error!("change_binding error: {}", error_msg);
-    }
-
-    // Validate the new shortcut for the active backend.
-    if let Err(e) = validate_binding_for_active_backend(&id, &binding) {
-        warn!("change_binding validation error: {}", e);
-        return Err(e);
     }
 
     // Create an updated binding
@@ -430,7 +515,7 @@ pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShortcutBinding, binding_for_tauri_backend};
+    use super::{ShortcutBinding, binding_for_tauri_backend, same_binding};
 
     fn binding(id: &str, current_binding: &str) -> ShortcutBinding {
         ShortcutBinding {
@@ -455,5 +540,16 @@ mod tests {
     fn tauri_backend_binding_preserves_modifier_only_ptt() {
         let normalized = binding_for_tauri_backend(binding("transcribe", "LCtrl+LMeta"));
         assert_eq!(normalized.current_binding, "LCtrl+LMeta");
+    }
+
+    #[test]
+    fn same_binding_ignores_case_and_token_whitespace() {
+        assert!(same_binding("LCtrl + LMeta", "lctrl+lmeta"));
+    }
+
+    #[test]
+    fn same_binding_rejects_different_key_order_or_members() {
+        assert!(!same_binding("LCtrl+LMeta", "LMeta+LCtrl"));
+        assert!(!same_binding("LCtrl+LMeta", "LCtrl+LShift"));
     }
 }

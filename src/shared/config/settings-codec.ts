@@ -5,7 +5,6 @@ import {
 	type AppSettingsOutput,
 	appSettingsSchema,
 	appSettingsSectionSchemas,
-	migrateLegacySettings,
 } from "./settings-schema";
 
 /**
@@ -122,12 +121,6 @@ function normalizeHotkeys(parsed: AppSettingsOutput): {
  * clobbered with defaults. Per-section parsing here means even if a future
  * upstream bug corrupts ``integrations`` again, ``model`` survives.
  *
- * The legacy migrations (``model.modelUnloadTimeout`` → ``global`` and the
- * OpenAI→OpenRouter STT rewrite) are reused from the schema preprocess
- * (``migrateLegacySettings``) so the rewrites stay single-sourced; the
- * per-section parse below bypasses the preprocess, so the migrations must be
- * applied explicitly here.
- *
  * Returns the recovered settings plus the list of sections that had to fall
  * back to defaults (audit #45 — this was silent, and the next save then
  * persisted the defaulted section over the still-readable disk value).
@@ -141,7 +134,7 @@ function partialDecodeBySections(payload: unknown): {
 	settings: AppSettingsOutput;
 } {
 	const defaults = appSettingsSchema.parse({});
-	const payloadRecord = payloadAsRecord(migrateLegacySettings(payload));
+	const payloadRecord = payloadAsRecord(payload);
 	const result: Record<string, unknown> = { ...defaults };
 	const defaultedSections: string[] = [];
 	for (const [key, sectionSchema] of Object.entries(

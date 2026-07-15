@@ -14,7 +14,7 @@ export const ttsSettingsSchema = z.object({
 	enabled: z.boolean().default(false),
 	// Local TTS catalog id selecting WHICH engine/model synthesizes (Kokoro,
 	// Kitten, Piper, Supertonic). `voice` below is the voice WITHIN this model.
-	// Default "kokoro-82m" preserves the historical Kokoro-only behaviour.
+	// Kokoro is the bundled default local voice model.
 	model: z.string().default("kokoro-82m"),
 	voice: z.string().default("af_heart"),
 	// Reference-clip transcript for cloning models that need it (cloning ===
@@ -94,8 +94,5 @@ const providerIntegrationStatusSchema = z.object({
 });
 
 export const integrationsSchema = z.object({
-	// OpenAI was removed as a direct cloud STT provider (served via OpenRouter as
-	// `openai/*`); a persisted `integrations.openai` from an older build is
-	// dropped by zod (unknown key).
 	elevenlabs: providerIntegrationStatusSchema.prefault({}),
 });

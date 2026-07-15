@@ -15,19 +15,13 @@ import {
 } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import {
+	buildContextAppOptions,
+	ContextAppIcon,
+	type ContextAppOption,
+	uniqueContextAppIds,
+} from "@/shared/ui/context-app-combobox";
 import "@/shared/ui/searchable-select/searchable-select.css";
-
-interface ContextAppOption {
-	exe: string;
-	icon?: string | null;
-	id: string;
-	label: string;
-	title?: string | null;
-}
-
-function normalizeAppId(value: string): string {
-	return value.trim().toLowerCase();
-}
 
 /** Stable code-unit comparator for order-independent allow-list equality. */
 function byCodeUnit(a: string, b: string): number {
@@ -35,63 +29,6 @@ function byCodeUnit(a: string, b: string): number {
 		return -1;
 	}
 	return a > b ? 1 : 0;
-}
-
-function uniqueNormalized(values: readonly string[]): string[] {
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const value of values) {
-		const id = normalizeAppId(value);
-		if (id && !seen.has(id)) {
-			seen.add(id);
-			out.push(id);
-		}
-	}
-	return out;
-}
-
-function toOption(app: ContextAppEntry): ContextAppOption | null {
-	const id = normalizeAppId(app.exe || app.id);
-	if (!id) {
-		return null;
-	}
-	return {
-		id,
-		exe: id,
-		label: app.label || id,
-		title: app.title ?? null,
-		icon: app.icon ?? null,
-	};
-}
-
-function buildOptions(
-	apps: readonly ContextAppEntry[],
-	selectedValues: readonly string[],
-): ContextAppOption[] {
-	const byId = new Map<string, ContextAppOption>();
-	for (const app of apps) {
-		const option = toOption(app);
-		if (option) {
-			byId.set(option.id, option);
-		}
-	}
-	for (const raw of selectedValues) {
-		const id = normalizeAppId(raw);
-		if (id && !byId.has(id)) {
-			byId.set(id, {
-				id,
-				exe: id,
-				label: id,
-				title: null,
-				icon: null,
-			});
-		}
-	}
-	return [...byId.values()].toSorted((a, b) =>
-		a.label
-			.toLowerCase()
-			.localeCompare(b.label.toLowerCase(), undefined, { sensitivity: "base" }),
-	);
 }
 
 function optionMatches(option: ContextAppOption, query: string): boolean {
@@ -116,24 +53,6 @@ function summarizeSelection(
 		return labels.join(", ");
 	}
 	return `${labels.length} apps selected`;
-}
-
-function AppIcon({ icon, label }: { icon?: string | null; label: string }) {
-	if (icon) {
-		return (
-			<img
-				alt=""
-				className="size-4 rounded-[3px] object-contain"
-				draggable={false}
-				src={icon}
-			/>
-		);
-	}
-	return (
-		<span className="flex size-4 items-center justify-center rounded-[3px] border border-border bg-surface-1 font-semibold text-[10px] text-foreground-muted uppercase">
-			{label.trim().charAt(0) || "?"}
-		</span>
-	);
 }
 
 interface ContextAppsComboboxProps {
@@ -170,8 +89,8 @@ function ContextAppsCombobox({
 	}));
 	const apps = appsState.apps;
 	const loading = open && appsState.status === "loading";
-	const normalizedValue = uniqueNormalized(value);
-	const options = buildOptions(apps, normalizedValue);
+	const normalizedValue = uniqueContextAppIds(value);
+	const options = buildContextAppOptions(apps, normalizedValue);
 	const selected = new Set(normalizedValue);
 	const visibleOptions = options.filter((option) =>
 		optionMatches(option, query),
@@ -299,7 +218,7 @@ function ContextAppsCombobox({
 												key={option.id}
 												label={option.label}
 												leading={
-													<AppIcon
+													<ContextAppIcon
 														icon={option.icon ?? null}
 														label={option.label}
 													/>
@@ -330,7 +249,7 @@ export function ContextAllowedAppsSection({
 }) {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
-	const allowList = uniqueNormalized(general?.contextAllowList ?? []);
+	const allowList = uniqueContextAppIds(general?.contextAllowList ?? []);
 	const defaultAllowList = DEFAULT_SETTINGS.general.contextAllowList;
 	const isDefaultAllowList =
 		allowList.toSorted(byCodeUnit).join(" ") ===

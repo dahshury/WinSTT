@@ -7,12 +7,13 @@ import {
 	screen,
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import type {
 	TranscriptionHistoryEntry,
 	TtsHistoryEntry,
 } from "../model/history-store";
-import { HistoryTable, type HistoryTableItem } from "./HistoryTable";
+import type { HistoryTableItem } from "../model/history-table-types";
+import { HistoryTable } from "./HistoryTable";
 
 const clipboardDescriptor = Object.getOwnPropertyDescriptor(
 	globalThis.navigator,
@@ -107,6 +108,31 @@ describe("HistoryTable touch gestures", () => {
 });
 
 describe("HistoryTable LLM variant toggle", () => {
+	test("shows a branded short label for a local Hugging Face Bonsai model", async () => {
+		const rawModel = "hf.co/prism-ml/Bonsai-27B-gguf:Q1_0";
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 1200,
+			id: "entry-bonsai",
+			llmModel: rawModel,
+			text: "Bonsai-cleaned transcript",
+			timestamp: Date.UTC(2026, 0, 1),
+			wordCount: 2,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText("Bonsai-cleaned transcript");
+		expect(screen.getByText("Bonsai 27B 1-bit")).not.toBeNull();
+		expect(screen.queryByText(rawModel)).toBeNull();
+		expect(screen.queryByRole("img", { name: "Cloud" })).toBeNull();
+		const modelChip = screen.getByLabelText(rawModel);
+		expect(modelChip.querySelector('[style*="prismml.svg"]')).not.toBeNull();
+	});
+
 	test("sums STT and LLM processing durations in the transcription footer", async () => {
 		const entry: TranscriptionHistoryEntry = {
 			durationMs: 10_000,
@@ -132,6 +158,68 @@ describe("HistoryTable LLM variant toggle", () => {
 		expect(screen.queryByText("5.0s")).toBeNull();
 		expect(screen.queryByText("2.0s")).toBeNull();
 		expect(screen.getByLabelText("Processing time")).not.toBeNull();
+	});
+
+	test("moves the timestamp under play and folds word stats into the processing tooltip", async () => {
+		const timestamp = Date.UTC(2026, 6, 15, 13, 17);
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 34_118,
+			id: "entry-condensed-meta",
+			sttProcessingMs: 1300,
+			text: "condensed history metadata",
+			timestamp,
+			wordCount: 58,
+		};
+
+		const { container } = render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText(entry.text);
+		const timestampElement = container.querySelector("time");
+		expect(timestampElement).not.toBeNull();
+		expect(timestampElement?.className).toContain("w-7");
+		expect(timestampElement?.className).not.toContain("min-w-14");
+		expect(timestampElement?.textContent).toContain(
+			new Date(timestamp).toLocaleTimeString(undefined, {
+				hour: "numeric",
+				minute: "2-digit",
+			}),
+		);
+		expect(timestampElement?.textContent).toContain(
+			new Date(timestamp).toLocaleDateString(undefined, {
+				month: "short",
+				day: "numeric",
+			}),
+		);
+		expect(screen.queryByText("58")).toBeNull();
+		expect(screen.queryByText("102")).toBeNull();
+
+		const processing = screen.getByLabelText("Processing time");
+		fireEvent.pointerEnter(processing);
+		fireEvent.mouseEnter(processing);
+		fireEvent.focus(processing);
+
+		const words = await screen.findByText("58");
+		const wpm = await screen.findByText("102");
+		const recording = screen.getByText("Recording");
+		const speechToText = screen.getByText("Transcription");
+		const languageModel = screen.getByText("AI processing");
+		expect(words.parentElement?.className).toContain("border-t");
+		expect(recording.compareDocumentPosition(words)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
+		);
+		expect(speechToText.compareDocumentPosition(words)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
+		);
+		expect(languageModel.compareDocumentPosition(words)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
+		);
+		expect(words.compareDocumentPosition(wpm)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
+		);
 	});
 
 	test("hides the LLM text toggle when the processed text is unchanged", async () => {

@@ -197,6 +197,28 @@ describe("ConnectionIndicator", () => {
 		expect(text).not.toContain("12700K");
 	});
 
+	test("replaces the runtime icon with a spinner while the speech model prepares", () => {
+		useConnectionStore.setState({
+			connectionStatus: "connected",
+			serverStatus: "running",
+			runtimeInfo: {
+				device: "directml",
+				providers: ["DmlExecutionProvider", "CPUExecutionProvider"],
+				is_gpu: true,
+				model_preparing: true,
+				model: "onnx-community/whisper-base",
+				realtime_model: null,
+			},
+		});
+		renderIt();
+
+		const status = screen.getByRole("status");
+		expect(status.getAttribute("aria-label")).toContain("speech model loading");
+		expect(
+			status.querySelector('[data-slot="model-preparing-spinner"]'),
+		).not.toBeNull();
+	});
+
 	test("stays in 'connecting' state while WS is open but recorder is warming up", () => {
 		// Server has accepted the WebSocket but has not yet sent server_ready
 		// — recorder is loading models / warming CUDA kernels.  User must NOT

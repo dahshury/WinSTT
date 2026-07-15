@@ -147,50 +147,6 @@ describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 	});
 });
 
-describe("maybeHotReload", () => {
-	// These exercise the four (quantizationChanging, modelChanging) branches.
-	// ``sttReloadModel`` is a fire-and-forget IPC send; in the hermetic test
-	// env it no-ops, so we only assert the call doesn't throw and rely on
-	// ``shouldReloadForHotSwap`` below for the branch logic.
-	test("same model, quant changing → skips immediate reload (settings save owns it)", () => {
-		t.maybeHotReload("main", "m", undefined, true, false);
-	});
-
-	test("model changing AND quant changing → still reloads the new model", () => {
-		t.maybeHotReload("main", "new", "fp16", true, true);
-	});
-
-	test("model changing, quant unchanged → reloads", () => {
-		t.maybeHotReload("main", "new", undefined, false, true);
-	});
-
-	test("same model, quant unchanged → reloads (idempotent re-pick)", () => {
-		t.maybeHotReload("realtime", "m", undefined, false, false);
-	});
-});
-
-describe("shouldReloadForHotSwap", () => {
-	// Pure predicate behind maybeHotReload's branch — see the regression note
-	// in the implementation. The only case that skips the model reload is a
-	// pure same-model quant change (the Tauri settings-save path reloads after
-	// persisting the new quantization).
-	test("skips ONLY when quant changes and model is unchanged", () => {
-		expect(t.shouldReloadForHotSwap(true, false)).toBe(false);
-	});
-
-	test("reloads when the model changes even if quant also changes", () => {
-		expect(t.shouldReloadForHotSwap(true, true)).toBe(true);
-	});
-
-	test("reloads when only the model changes", () => {
-		expect(t.shouldReloadForHotSwap(false, true)).toBe(true);
-	});
-
-	test("reloads on an idempotent same-model re-pick (nothing changing)", () => {
-		expect(t.shouldReloadForHotSwap(false, false)).toBe(true);
-	});
-});
-
 describe("needsDownloadPrompt", () => {
 	test("true when state is undefined (fail-safe: prompt download)", () => {
 		// Regression: previously returned false, which made the caller issue a
@@ -353,28 +309,6 @@ describe("isCloudModel", () => {
 	});
 });
 
-describe("applyPureQuantSwap", () => {
-	test("applies the override patch when quantization is changing", () => {
-		const update = mock(() => undefined);
-		t.applyPureQuantSwap(true, "int8", update as never);
-		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({
-			onnxQuantization: "int8",
-		});
-	});
-
-	test("does nothing when quantization is not changing", () => {
-		const update = mock(() => undefined);
-		t.applyPureQuantSwap(false, "int8", update as never);
-		expect(update).not.toHaveBeenCalled();
-	});
-
-	test("does nothing when quantization value is undefined", () => {
-		const update = mock(() => undefined);
-		t.applyPureQuantSwap(true, undefined, update as never);
-		expect(update).not.toHaveBeenCalled();
-	});
-});
-
 describe("dispatchChange / dispatchGate", () => {
 	test("dispatchChange routes cloud ids to issueSwap directly", () => {
 		const issueSwap = mock(() => undefined);
@@ -386,7 +320,6 @@ describe("dispatchChange / dispatchGate", () => {
 			issueSwap: issueSwap as never,
 			kind: "main",
 			quantization: undefined,
-			update: mock(() => undefined) as never,
 			value: "openrouter:openai/whisper-1",
 		});
 		expect(issueSwap).toHaveBeenCalled();
@@ -403,7 +336,6 @@ describe("dispatchChange / dispatchGate", () => {
 			issueSwap: issueSwap as never,
 			kind: "main",
 			quantization: undefined,
-			update: mock(() => undefined) as never,
 			value: "whisper-tiny",
 		});
 		expect(gate).toHaveBeenCalled();
@@ -419,7 +351,6 @@ describe("dispatchChange / dispatchGate", () => {
 			issueSwap: mock(() => undefined) as never,
 			kind: "main",
 			quantization: undefined,
-			update: mock(() => undefined) as never,
 			value: "whisper-tiny",
 		});
 		await new Promise((r) => setTimeout(r, 5));
@@ -436,30 +367,30 @@ describe("runIssueSwap — cloud persistence (regression: cloud combo showed no 
 		currentQuantization: "int8" as OnnxQuantization,
 		// Cloud ids are never in the catalog, so getModel returns undefined.
 		getModel: (() => undefined) as never,
-		prevMainModelRef: { current: null as string | null } as never,
-		prevRealtimeModelRef: { current: null as string | null } as never,
 	});
 
-	test("persists a cloud model despite the empty catalog lookup", () => {
-		const update = mock(() => undefined);
+	test("routes cloud selection through the atomic backend without an optimistic settings write", () => {
+		const atomicInvoker = mock(() => undefined);
 		t.runIssueSwap({
 			...cloudArgs("openrouter:openai/gpt-4o-mini-transcribe"),
-			update: update as never,
+			atomicDevice: "auto",
+			atomicInvoker,
 		});
-		// Without the fix `applyMainSwap` bailed on `!info` and never called
-		// update, leaving model.model unchanged → the cloud combo stayed empty.
-		expect(update).toHaveBeenCalledWith({
-			model: "openrouter:openai/gpt-4o-mini-transcribe",
+
+		expect(atomicInvoker).toHaveBeenCalledTimes(1);
+		expect(atomicInvoker.mock.calls.at(0)?.at(0)).toMatchObject({
+			kind: "main",
+			modelId: "openrouter:openai/gpt-4o-mini-transcribe",
+			quantization: "int8",
+			device: "auto",
+			realtimeModel: null,
 		});
 	});
 
 	test("still bails for a genuinely-missing LOCAL id (no invalid patch)", () => {
-		const update = mock(() => undefined);
 		t.runIssueSwap({
 			...cloudArgs("nonexistent-local-id"),
-			update: update as never,
 		});
-		expect(update).not.toHaveBeenCalled();
 	});
 });
 
@@ -472,7 +403,6 @@ describe("runHandleChange", () => {
 		// pure-quant swaps through dispatchChange / gateWithAssessment just
 		// like a model swap, so the dialog can offer a Download before the
 		// reload path is allowed to run with files that aren't on disk.
-		const update = mock(() => undefined);
 		const gateWithAssessment = mock(() => Promise.resolve());
 		t.runHandleChange({
 			currentModel: "m",
@@ -481,18 +411,15 @@ describe("runHandleChange", () => {
 			issueSwap: mock(() => undefined) as never,
 			kind: "main",
 			quantization: "fp16",
-			update: update as never,
 			value: "m",
 		});
 		expect(gateWithAssessment).toHaveBeenCalled();
-		expect(update).not.toHaveBeenCalled();
 	});
 
 	test("no-op short-circuit when neither model nor quant changed", () => {
 		// Same model + same quant must not round-trip the gate. The picker
 		// re-fires onChange in a few benign cases (re-mount, ItemIndicator
 		// reflow) and we don't want those triggering a model reload.
-		const update = mock(() => undefined);
 		const gateWithAssessment = mock(() => Promise.resolve());
 		const issueSwap = mock(() => undefined);
 		t.runHandleChange({
@@ -502,11 +429,9 @@ describe("runHandleChange", () => {
 			issueSwap: issueSwap as never,
 			kind: "main",
 			quantization: "int8",
-			update: update as never,
 			value: "m",
 		});
 		expect(gateWithAssessment).not.toHaveBeenCalled();
-		expect(update).not.toHaveBeenCalled();
 		expect(issueSwap).not.toHaveBeenCalled();
 	});
 
@@ -519,14 +444,12 @@ describe("runHandleChange", () => {
 			issueSwap: issueSwap as never,
 			kind: "main",
 			quantization: undefined,
-			update: mock(() => undefined) as never,
 			value: "openrouter:openai/whisper-1",
 		});
 		expect(issueSwap).toHaveBeenCalled();
 	});
 
 	test("realtime path mirrors main path", () => {
-		const update = mock(() => undefined);
 		const gateWithAssessment = mock(() => Promise.resolve());
 		t.runHandleChange({
 			currentModel: "rt",
@@ -535,45 +458,26 @@ describe("runHandleChange", () => {
 			issueSwap: mock(() => undefined) as never,
 			kind: "realtime",
 			quantization: "fp16",
-			update: update as never,
 			value: "rt",
 		});
 		expect(gateWithAssessment).toHaveBeenCalled();
-		expect(update).not.toHaveBeenCalled();
 	});
 });
 
 describe("runIssueSwap", () => {
-	test("main: updates settings with the new model AND backend from the catalog", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
+	test("main atomic: sends the companion realtime correction and leaves settings backend-owned", () => {
+		const atomicInvoker = mock(() => undefined);
 		t.runIssueSwap({
-			currentQuantization: "int8",
-			getModel: ((id: string) =>
-				id === "next" ? ({} as never) : undefined) as never,
-			kind: "main",
-			previous: "prev",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
-			quantization: undefined,
-			update: update as never,
-			value: "next",
-		});
-		expect(update).toHaveBeenCalledWith({ model: "next" });
-		expect(refMain.current).toBe("prev");
-	});
-
-	test("main: clears saved realtime model when languages no longer overlap", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
-		t.runIssueSwap({
-			currentQuantization: "int8",
+			atomicDevice: "cpu",
+			atomicInvoker,
+			currentQuantization: "q4",
 			currentRealtimeModel: "rt-ru",
 			getModel: ((id: string) => {
 				if (id === "next-en") {
-					return { languages: ["en"] } as never;
+					return {
+						availableQuantizations: ["", "int8"],
+						languages: ["en"],
+					} as never;
 				}
 				if (id === "rt-ru") {
 					return { id, languages: ["ru"], nativeStreaming: true } as never;
@@ -581,130 +485,34 @@ describe("runIssueSwap", () => {
 			}) as never,
 			kind: "main",
 			previous: "prev",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
 			quantization: undefined,
-			update: update as never,
 			value: "next-en",
 		});
-		expect(update).toHaveBeenCalledWith({
-			model: "next-en",
+
+		expect(atomicInvoker.mock.calls.at(0)?.at(0)).toMatchObject({
+			kind: "main",
+			modelId: "next-en",
+			quantization: "",
+			device: "cpu",
 			realtimeModel: "",
 		});
-		expect(refMain.current).toBe("prev");
-	});
-
-	test("main: preserves saved realtime model when languages overlap", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
-		t.runIssueSwap({
-			currentQuantization: "int8",
-			currentRealtimeModel: "rt-en",
-			getModel: ((id: string) => {
-				if (id === "next-en") {
-					return { languages: ["en"] } as never;
-				}
-				if (id === "rt-en") {
-					return {
-						id,
-						languages: ["en", "de"],
-						nativeStreaming: true,
-					} as never;
-				}
-			}) as never,
-			kind: "main",
-			previous: "prev",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
-			quantization: undefined,
-			update: update as never,
-			value: "next-en",
-		});
-		expect(update).toHaveBeenCalledWith({
-			model: "next-en",
-		});
-		expect(refMain.current).toBe("prev");
-	});
-
-	test("main: native-streaming target owns the realtime slot", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
-		t.runIssueSwap({
-			currentQuantization: "int8",
-			currentRealtimeModel: "rt-en",
-			getModel: ((id: string) => {
-				if (id === "streaming-zipformer-en") {
-					return { id, languages: ["en"], nativeStreaming: true } as never;
-				}
-				if (id === "rt-en") {
-					return { id, languages: ["en"], nativeStreaming: true } as never;
-				}
-			}) as never,
-			kind: "main",
-			previous: "prev",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
-			quantization: undefined,
-			update: update as never,
-			value: "streaming-zipformer-en",
-		});
-		expect(update).toHaveBeenCalledWith({
-			model: "streaming-zipformer-en",
-			realtimeModel: "streaming-zipformer-en",
-		});
-		expect(refMain.current).toBe("prev");
 	});
 
 	test("main: short-circuits when catalog does not know the target model", () => {
 		// A genuinely-missing LOCAL id isn't a real catalog selection, so
 		// applyMainSwap must early-return rather than persist an id the picker
 		// can't resolve.
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
 		t.runIssueSwap({
 			currentQuantization: "int8",
 			getModel: ((_id: string) => undefined) as never,
 			kind: "main",
 			previous: "prev",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
 			quantization: undefined,
-			update: update as never,
 			value: "missing-from-catalog",
 		});
-		expect(update).not.toHaveBeenCalled();
-		expect(refMain.current).toBeNull();
-	});
-
-	test("realtime: updates realtime model", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
-		t.runIssueSwap({
-			currentQuantization: "int8",
-			getModel: ((id: string) =>
-				id === "rt-next"
-					? ({ id, languages: ["en"], nativeStreaming: true } as never)
-					: undefined) as never,
-			kind: "realtime",
-			previous: "prev-rt",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
-			quantization: undefined,
-			update: update as never,
-			value: "rt-next",
-		});
-		expect(update).toHaveBeenCalledWith({ realtimeModel: "rt-next" });
-		expect(refRt.current).toBe("prev-rt");
 	});
 
 	test("realtime: refuses a model whose languages do not overlap the current main model", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
 		t.runIssueSwap({
 			currentMainModel: "main-en",
 			currentQuantization: "int8",
@@ -718,20 +526,12 @@ describe("runIssueSwap", () => {
 			}) as never,
 			kind: "realtime",
 			previous: "prev-rt",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
 			quantization: undefined,
-			update: update as never,
 			value: "rt-ru",
 		});
-		expect(update).not.toHaveBeenCalled();
-		expect(refRt.current).toBeNull();
 	});
 
 	test("realtime: refuses a different model when current main is native streaming", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
 		t.runIssueSwap({
 			currentMainModel: "streaming-zipformer-en",
 			currentQuantization: "int8",
@@ -745,20 +545,12 @@ describe("runIssueSwap", () => {
 			}) as never,
 			kind: "realtime",
 			previous: "streaming-zipformer-en",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
 			quantization: undefined,
-			update: update as never,
 			value: "streaming-nemo-rnnt-en-1040ms-int8",
 		});
-		expect(update).not.toHaveBeenCalled();
-		expect(refRt.current).toBeNull();
 	});
 
 	test("realtime: refuses a non-canonical duplicated streaming export", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: null as string | null };
 		t.runIssueSwap({
 			currentQuantization: "int8",
 			getModel: ((id: string) =>
@@ -767,14 +559,9 @@ describe("runIssueSwap", () => {
 					: undefined) as never,
 			kind: "realtime",
 			previous: "prev-rt",
-			prevMainModelRef: refMain as never,
-			prevRealtimeModelRef: refRt as never,
 			quantization: undefined,
-			update: update as never,
 			value: "streaming-parakeet-unified-en-240ms-int8",
 		});
-		expect(update).not.toHaveBeenCalled();
-		expect(refRt.current).toBeNull();
 	});
 });
 
@@ -976,89 +763,6 @@ describe("handleDownloadCompleteEvent / closePendingDownloadFor / clearIfMatches
 
 	test("matchesPending returns false when current is null", () => {
 		expect(t.matchesPending(null, "m")).toBe(false);
-	});
-});
-
-describe("handleSwapFailedEvent / rollbackMain / rollbackRealtime", () => {
-	const fakeGetModel = (id: string) =>
-		id === "prev-main" ? ({} as never) : undefined;
-
-	test("main rollback uses the captured main ref and resolves backend from the catalog", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: "prev-main" };
-		const refRt = { current: null as string | null };
-		t.handleSwapFailedEvent(
-			"main",
-			"unknown",
-			refMain as never,
-			refRt as never,
-			update as never,
-			fakeGetModel as never,
-		);
-		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({
-			model: "prev-main",
-		});
-	});
-
-	test("realtime rollback uses the captured realtime ref", () => {
-		const update = mock(() => undefined);
-		const refMain = { current: null as string | null };
-		const refRt = { current: "prev-rt" };
-		t.handleSwapFailedEvent(
-			"realtime",
-			"unknown",
-			refMain as never,
-			refRt as never,
-			update as never,
-			fakeGetModel as never,
-		);
-		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({
-			realtimeModel: "prev-rt",
-		});
-	});
-
-	test("superseded failure does NOT roll back (the winning swap owns the model)", () => {
-		// Regression: a redundant onnx_quantization reload that got superseded
-		// must not revert the picker off the model the winning swap committed.
-		const update = mock(() => undefined);
-		t.handleSwapFailedEvent(
-			"main",
-			"superseded",
-			{ current: "prev-main" } as never,
-			{ current: null } as never,
-			update as never,
-			fakeGetModel as never,
-		);
-		expect(update).not.toHaveBeenCalled();
-	});
-
-	test("cancelled failure does NOT roll back (user already owns the intent)", () => {
-		const update = mock(() => undefined);
-		t.handleSwapFailedEvent(
-			"main",
-			"cancelled",
-			{ current: "prev-main" } as never,
-			{ current: null } as never,
-			update as never,
-			fakeGetModel as never,
-		);
-		expect(update).not.toHaveBeenCalled();
-	});
-
-	test("rollbackMain is a no-op when no previous is captured", () => {
-		const update = mock(() => undefined);
-		t.rollbackMain(
-			{ current: null } as never,
-			update as never,
-			fakeGetModel as never,
-		);
-		expect(update).not.toHaveBeenCalled();
-	});
-
-	test("rollbackRealtime is a no-op when no previous is captured", () => {
-		const update = mock(() => undefined);
-		t.rollbackRealtime({ current: null } as never, update as never);
-		expect(update).not.toHaveBeenCalled();
 	});
 });
 

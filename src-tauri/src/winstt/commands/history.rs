@@ -1,6 +1,5 @@
-// History command surface for the WinSTT renderer. The WinSTT renderer drives
-// history through TWO disjoint channel groups (both routed by the WU-0 adapter,
-// `shared/api/native-bridge-adapter.ts`):
+// History command surface for the WinSTT renderer. The renderer calls these
+// generated commands directly across two disjoint history groups:
 //
 //   1. The dedicated `views/history` window + the `entities/transcription-history`
 //      client → the SQLite-store channels:  history:list / add / delete-row /
@@ -42,6 +41,7 @@ use tauri_specta::Event;
 use crate::command_auth;
 use crate::managers::history::{
     HistoryEntry as DbHistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistoryDbEntry,
+    TtsHistoryDbEntry,
 };
 
 const EVT_TRANSFORM_HISTORY_ADDED: &str = "transform-history:added";
@@ -271,6 +271,41 @@ pub struct ToggleResult {
 #[serde(rename_all = "camelCase")]
 pub struct ClearResult {
     pub cleared: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionHistorySearchHit {
+    pub entry: TranscriptionHistoryEntry,
+    /// Native history-window row shape. The settings table consumes `entry`,
+    /// while the dedicated History window needs saved/title fields and epoch
+    /// seconds for its existing controls.
+    pub row: HistoryRow,
+    pub tier: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TransformHistorySearchHit {
+    pub entry: TransformHistoryEntry,
+    pub tier: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsHistorySearchHit {
+    pub entry: TtsHistoryEntry,
+    pub tier: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySearchResult {
+    pub transcriptions: Vec<TranscriptionHistorySearchHit>,
+    pub transforms: Vec<TransformHistorySearchHit>,
+    pub tts: Vec<TtsHistorySearchHit>,
+    pub has_more: bool,
+    pub fts_active: bool,
 }
 
 // ── Reshaping helpers ───────────────────────────────────────────────────────────
@@ -610,28 +645,6 @@ where
     .map_err(|e| format!("history db task panicked: {e}"))?
 }
 
-fn map_db_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbHistoryEntry> {
-    Ok(DbHistoryEntry {
-        id: row.get("id")?,
-        file_name: row.get("file_name")?,
-        timestamp: row.get("timestamp")?,
-        saved: row.get("saved")?,
-        title: row.get("title")?,
-        transcription_text: row.get("transcription_text")?,
-        post_processed_text: row.get("post_processed_text")?,
-        post_process_prompt: row.get("post_process_prompt")?,
-        post_process_requested: row.get("post_process_requested")?,
-        llm_meta: row.get("llm_meta")?,
-        dictionary_fixes: row.get("dictionary_fixes")?,
-        history_tag: row.get("history_tag")?,
-        privacy_markers_json: row.get("privacy_markers_json")?,
-        stt_model: row.get("stt_model")?,
-        stt_processing_ms: row.get("stt_processing_ms")?,
-        stt_cost_usd: row.get("stt_cost_usd")?,
-        stt_cost_is_estimate: row.get("stt_cost_is_estimate")?,
-    })
-}
-
 // ── Group 1: SQLite-store channels (dedicated history window) ───────────────────
 
 /// `history:list` — offset-paginated rows, newest first. `{ offset, limit }` →
@@ -661,7 +674,10 @@ pub async fn history_list(
         // Bind before the closure ends so the row-iterator's borrow of `stmt`
         // is released before `stmt` is dropped.
         let rows = stmt
-            .query_map(rusqlite::params![fetch, off], map_db_row)?
+            .query_map(
+                rusqlite::params![fetch, off],
+                HistoryManager::map_history_entry,
+            )?
             .collect::<rusqlite::Result<Vec<DbHistoryEntry>>>()?;
         Ok(rows)
     })
@@ -673,6 +689,349 @@ pub async fn history_list(
     Ok(PaginatedHistory {
         entries: entries.iter().map(to_history_row).collect(),
         has_more,
+    })
+}
+
+fn search_transcription_rows(
+    conn: &Connection,
+    query: &str,
+    prefix: Option<&str>,
+    relaxed: Option<&str>,
+    fts_active: bool,
+    from: Option<i64>,
+    to: Option<i64>,
+    offset: i64,
+    limit: i64,
+) -> rusqlite::Result<(Vec<(DbHistoryEntry, i64)>, bool)> {
+    let fetch = offset.saturating_add(limit).saturating_add(1);
+    let mut rows = Vec::new();
+    if fts_active {
+        if let Some(prefix) = prefix {
+            let mut stmt = conn.prepare(
+                "SELECT h.id, h.file_name, h.timestamp, h.saved, h.title, h.transcription_text,
+                 h.post_processed_text, h.post_process_prompt, h.post_process_requested, h.llm_meta,
+                 h.dictionary_fixes, h.history_tag, h.privacy_markers_json, h.stt_model,
+                 h.stt_processing_ms, h.stt_cost_usd, h.stt_cost_is_estimate
+                 FROM transcription_fts JOIN transcription_history h ON h.id=transcription_fts.rowid
+                 WHERE transcription_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
+                 AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(transcription_fts), h.id DESC LIMIT ?4",
+            )?;
+            rows.extend(
+                stmt.query_map(
+                    rusqlite::params![prefix, from, to, fetch],
+                    HistoryManager::map_history_entry,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .into_iter()
+                .map(|row| (row, 1)),
+            );
+            if (rows.len() as i64) < fetch {
+                if let Some(relaxed) = relaxed {
+                    let seen: std::collections::HashSet<i64> =
+                        rows.iter().map(|(row, _)| row.id).collect();
+                    let mut stmt = conn.prepare(
+                        "SELECT h.id, h.file_name, h.timestamp, h.saved, h.title, h.transcription_text,
+                         h.post_processed_text, h.post_process_prompt, h.post_process_requested, h.llm_meta,
+                         h.dictionary_fixes, h.history_tag, h.privacy_markers_json, h.stt_model,
+                         h.stt_processing_ms, h.stt_cost_usd, h.stt_cost_is_estimate
+                         FROM transcription_fts JOIN transcription_history h ON h.id=transcription_fts.rowid
+                         WHERE transcription_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
+                         AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(transcription_fts), h.id DESC LIMIT ?4",
+                    )?;
+                    let candidates = stmt
+                        .query_map(
+                            rusqlite::params![relaxed, from, to, fetch],
+                            HistoryManager::map_history_entry,
+                        )?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    rows.extend(
+                        candidates
+                            .into_iter()
+                            .filter(|row| !seen.contains(&row.id))
+                            .map(|row| (row, 2)),
+                    );
+                }
+            }
+        }
+    } else {
+        let pattern = crate::managers::history::search::like_pattern(query);
+        let mut stmt = conn.prepare(
+            "SELECT id, file_name, timestamp, saved, title, transcription_text,
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta,
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms,
+             stt_cost_usd, stt_cost_is_estimate FROM transcription_history
+             WHERE (transcription_text LIKE ?1 ESCAPE '\\' OR coalesce(post_processed_text,'') LIKE ?1 ESCAPE '\\')
+             AND (?2 IS NULL OR timestamp>=?2) AND (?3 IS NULL OR timestamp<=?3)
+             ORDER BY id DESC LIMIT ?4",
+        )?;
+        rows.extend(
+            stmt.query_map(
+                rusqlite::params![pattern, from, to, fetch],
+                HistoryManager::map_history_entry,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| (row, 1)),
+        );
+    }
+    let page: Vec<_> = rows.into_iter().skip(offset as usize).collect();
+    let has_more = page.len() as i64 > limit;
+    Ok((page.into_iter().take(limit as usize).collect(), has_more))
+}
+
+fn search_transform_rows(
+    conn: &Connection,
+    query: &str,
+    prefix: Option<&str>,
+    relaxed: Option<&str>,
+    fts_active: bool,
+    from: Option<i64>,
+    to: Option<i64>,
+    offset: i64,
+    limit: i64,
+) -> rusqlite::Result<(Vec<(TransformHistoryDbEntry, i64)>, bool)> {
+    let fetch = offset.saturating_add(limit).saturating_add(1);
+    let mut rows = Vec::new();
+    let select =
+        "SELECT h.id, h.timestamp, h.title, h.before_text, h.after_text, h.source, h.llm_meta
+        FROM transform_fts JOIN transform_history h ON h.id=transform_fts.rowid
+        WHERE transform_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
+        AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(transform_fts), h.id DESC LIMIT ?4";
+    if fts_active {
+        if let Some(prefix) = prefix {
+            let mut stmt = conn.prepare(select)?;
+            rows.extend(
+                stmt.query_map(
+                    rusqlite::params![prefix, from, to, fetch],
+                    HistoryManager::map_transform_history_entry,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .into_iter()
+                .map(|row| (row, 1)),
+            );
+            if (rows.len() as i64) < fetch {
+                if let Some(relaxed) = relaxed {
+                    let seen: std::collections::HashSet<i64> =
+                        rows.iter().map(|(row, _)| row.id).collect();
+                    let mut stmt = conn.prepare(select)?;
+                    let candidates = stmt
+                        .query_map(
+                            rusqlite::params![relaxed, from, to, fetch],
+                            HistoryManager::map_transform_history_entry,
+                        )?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    rows.extend(
+                        candidates
+                            .into_iter()
+                            .filter(|row| !seen.contains(&row.id))
+                            .map(|row| (row, 2)),
+                    );
+                }
+            }
+        }
+    } else {
+        let pattern = crate::managers::history::search::like_pattern(query);
+        let mut stmt = conn.prepare("SELECT id, timestamp, title, before_text, after_text, source, llm_meta FROM transform_history WHERE (before_text LIKE ?1 ESCAPE '\\' OR after_text LIKE ?1 ESCAPE '\\') AND (?2 IS NULL OR timestamp>=?2) AND (?3 IS NULL OR timestamp<=?3) ORDER BY id DESC LIMIT ?4")?;
+        rows.extend(
+            stmt.query_map(
+                rusqlite::params![pattern, from, to, fetch],
+                HistoryManager::map_transform_history_entry,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| (row, 1)),
+        );
+    }
+    let page: Vec<_> = rows.into_iter().skip(offset as usize).collect();
+    let has_more = page.len() as i64 > limit;
+    Ok((page.into_iter().take(limit as usize).collect(), has_more))
+}
+
+fn search_tts_rows(
+    conn: &Connection,
+    query: &str,
+    prefix: Option<&str>,
+    relaxed: Option<&str>,
+    fts_active: bool,
+    from: Option<i64>,
+    to: Option<i64>,
+    offset: i64,
+    limit: i64,
+) -> rusqlite::Result<(Vec<(TtsHistoryDbEntry, i64)>, bool)> {
+    let fetch = offset.saturating_add(limit).saturating_add(1);
+    let mut rows = Vec::new();
+    let select = "SELECT h.id, h.timestamp, h.title, h.text, h.model, h.voice, h.characters,
+        h.processing_ms, h.cost_usd, h.cost_is_estimate, h.audio_file_name
+        FROM tts_fts JOIN tts_history h ON h.id=tts_fts.rowid
+        WHERE tts_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
+        AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(tts_fts), h.id DESC LIMIT ?4";
+    if fts_active {
+        if let Some(prefix) = prefix {
+            let mut stmt = conn.prepare(select)?;
+            rows.extend(
+                stmt.query_map(
+                    rusqlite::params![prefix, from, to, fetch],
+                    HistoryManager::map_tts_history_entry,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+                .into_iter()
+                .map(|row| (row, 1)),
+            );
+            if (rows.len() as i64) < fetch {
+                if let Some(relaxed) = relaxed {
+                    let seen: std::collections::HashSet<i64> =
+                        rows.iter().map(|(row, _)| row.id).collect();
+                    let mut stmt = conn.prepare(select)?;
+                    let candidates = stmt
+                        .query_map(
+                            rusqlite::params![relaxed, from, to, fetch],
+                            HistoryManager::map_tts_history_entry,
+                        )?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    rows.extend(
+                        candidates
+                            .into_iter()
+                            .filter(|row| !seen.contains(&row.id))
+                            .map(|row| (row, 2)),
+                    );
+                }
+            }
+        }
+    } else {
+        let pattern = crate::managers::history::search::like_pattern(query);
+        let mut stmt = conn.prepare("SELECT id, timestamp, title, text, model, voice, characters, processing_ms, cost_usd, cost_is_estimate, audio_file_name FROM tts_history WHERE text LIKE ?1 ESCAPE '\\' AND (?2 IS NULL OR timestamp>=?2) AND (?3 IS NULL OR timestamp<=?3) ORDER BY id DESC LIMIT ?4")?;
+        rows.extend(
+            stmt.query_map(
+                rusqlite::params![pattern, from, to, fetch],
+                HistoryManager::map_tts_history_entry,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| (row, 1)),
+        );
+    }
+    let page: Vec<_> = rows.into_iter().skip(offset as usize).collect();
+    let has_more = page.len() as i64 > limit;
+    Ok((page.into_iter().take(limit as usize).collect(), has_more))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn history_search(
+    app: AppHandle,
+    webview: WebviewWindow,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    query: String,
+    limit: i64,
+    offset: i64,
+    kinds: Vec<String>,
+    date_from: Option<i64>,
+    date_to: Option<i64>,
+) -> Result<HistorySearchResult, String> {
+    authorize_history_operation(&webview, HistoryOperation::Read)?;
+    if query.trim().is_empty() {
+        return Ok(HistorySearchResult {
+            transcriptions: Vec::new(),
+            transforms: Vec::new(),
+            tts: Vec::new(),
+            has_more: false,
+            fts_active: true,
+        });
+    }
+    let lim = limit.clamp(1, 200);
+    let off = offset.max(0);
+    let from = date_from.map(|value| value.div_euclid(1000));
+    let to = date_to.map(|value| value.div_euclid(1000));
+    let all_kinds = kinds.is_empty();
+    let include_transcriptions = all_kinds || kinds.iter().any(|kind| kind == "transcription");
+    let include_transforms = all_kinds || kinds.iter().any(|kind| kind == "transform");
+    let include_tts = all_kinds || kinds.iter().any(|kind| kind == "tts");
+    let prefix = crate::managers::history::search::fts_prefix_query(&query);
+    let relaxed = crate::managers::history::search::fts_relaxed_query(&query);
+    let query_for_db = query.clone();
+    let data = spawn_db(&app, move |conn| {
+        let ready = crate::managers::history::search::fts_ready(conn)?;
+        let use_fts = ready && prefix.is_some();
+        let transcriptions = if include_transcriptions {
+            search_transcription_rows(
+                conn,
+                &query_for_db,
+                prefix.as_deref(),
+                relaxed.as_deref(),
+                use_fts,
+                from,
+                to,
+                off,
+                lim,
+            )?
+        } else {
+            (Vec::new(), false)
+        };
+        let transforms = if include_transforms {
+            search_transform_rows(
+                conn,
+                &query_for_db,
+                prefix.as_deref(),
+                relaxed.as_deref(),
+                use_fts,
+                from,
+                to,
+                off,
+                lim,
+            )?
+        } else {
+            (Vec::new(), false)
+        };
+        let tts = if include_tts {
+            search_tts_rows(
+                conn,
+                &query_for_db,
+                prefix.as_deref(),
+                relaxed.as_deref(),
+                use_fts,
+                from,
+                to,
+                off,
+                lim,
+            )?
+        } else {
+            (Vec::new(), false)
+        };
+        Ok((transcriptions, transforms, tts, use_fts))
+    })
+    .await?;
+    let mgr = history_manager.inner().as_ref();
+    let (
+        (transcription_rows, transcription_more),
+        (transform_rows, transform_more),
+        (tts_rows, tts_more),
+        fts_active,
+    ) = data;
+    Ok(HistorySearchResult {
+        transcriptions: transcription_rows
+            .into_iter()
+            .map(|(entry, tier)| TranscriptionHistorySearchHit {
+                entry: to_transcription_entry(mgr, &entry),
+                row: to_history_row(&entry),
+                tier,
+            })
+            .collect(),
+        transforms: transform_rows
+            .into_iter()
+            .map(|(entry, tier)| TransformHistorySearchHit {
+                entry: to_transform_entry(&entry),
+                tier,
+            })
+            .collect(),
+        tts: tts_rows
+            .into_iter()
+            .map(|(entry, tier)| TtsHistorySearchHit {
+                entry: to_tts_entry(mgr, &entry),
+                tier,
+            })
+            .collect(),
+        has_more: transcription_more || transform_more || tts_more,
+        fts_active,
     })
 }
 
@@ -695,7 +1054,7 @@ pub async fn history_recent(
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![n], map_db_row)?
+            .query_map(rusqlite::params![n], HistoryManager::map_history_entry)?
             .collect::<rusqlite::Result<Vec<DbHistoryEntry>>>()?;
         Ok(rows)
     })
@@ -853,7 +1212,10 @@ pub async fn history_get_all(
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![HISTORY_GET_ALL_CAP], map_db_row)?
+            .query_map(
+                rusqlite::params![HISTORY_GET_ALL_CAP],
+                HistoryManager::map_history_entry,
+            )?
             .collect::<rusqlite::Result<Vec<DbHistoryEntry>>>()?;
         Ok(rows)
     })
@@ -1107,11 +1469,11 @@ pub async fn tts_history_delete(
     Ok(DeletedResult { deleted })
 }
 
-// ── Event bridge: collected HistoryUpdatePayload → WinSTT plain events ───────────
+// ── Event fan-out: collected HistoryUpdatePayload → renderer events ──────────────
 
 /// Re-emit the collected `HistoryUpdatePayload` (fired by `actions.rs` /
 /// `HistoryManager` on save / update / delete / toggle) as the WinSTT-shaped plain
-/// events the WU-0 adapter listens for:
+/// events the renderer listens for directly:
 ///   - `Added`   → `history:added` (legacy `TranscriptionHistoryEntry`)
 ///     + `history:row-added` (entity `HistoryRow`)
 ///   - `Deleted` → `history:deleted` `{ id: "<n>" }`  +  `history:row-deleted` `{ id: <n> }`

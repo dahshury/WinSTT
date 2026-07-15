@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import { renderHook } from "@testing-library/react";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 
 // download-store's actions delegate to ipc-client, which routes through
@@ -43,6 +43,9 @@ function makeQuantEntry(
 	return {
 		modelId,
 		quantization,
+		phase: paused ? "paused" : "downloading",
+		requestId: "test-request",
+		revision: 1,
 		progress: 25,
 		downloadedBytes: 100,
 		totalBytes: 400,
@@ -54,12 +57,15 @@ function makeQuantEntry(
 beforeEach(() => {
 	invokeCalls = [];
 	installNativeBridgeStub();
-	useDownloadStore.setState({ quantDownloads: {} });
+	useDownloadStore.setState({ quantDownloads: {}, quantOwners: {} });
 });
 
 afterEach(() => {
 	window.nativeBridge = originalNativeBridge;
-	useDownloadStore.setState({ quantDownloads: INITIAL_STATE.quantDownloads });
+	useDownloadStore.setState({
+		quantDownloads: INITIAL_STATE.quantDownloads,
+		quantOwners: INITIAL_STATE.quantOwners,
+	});
 });
 
 const Q4 = "q4" as OnnxQuantization;
@@ -119,23 +125,14 @@ describe("useQuantActions", () => {
 		).toEqual(entry);
 	});
 
-	test("action 'start' seeds an indeterminate entry AND fires predownload IPC", async () => {
+	test("action 'start' waits for lifecycle state and fires predownload IPC", async () => {
 		const { result } = renderHook(() => useQuantActions());
 		result.current.handleDownloadAction("start", "whisper-base", Q4);
 
-		// predownloadQuant seeds the entry so the badge flips to "downloading"
-		// instantly, before the first server progress event.
+		// The backend lifecycle is authoritative; no optimistic entry is seeded.
 		const seeded =
 			useDownloadStore.getState().quantDownloads["whisper-base@q4"];
-		expect(seeded).toEqual({
-			modelId: "whisper-base",
-			quantization: "q4",
-			progress: null,
-			downloadedBytes: 0,
-			totalBytes: 0,
-			speedBps: 0,
-			paused: false,
-		});
+		expect(seeded).toBeUndefined();
 
 		await Promise.resolve();
 		expect(invokeCalls).toContainEqual({
@@ -153,12 +150,12 @@ describe("useQuantActions", () => {
 			"realtime",
 		);
 
-		expect(
-			useDownloadStore.getState().quantDownloads["whisper-base@q4"]?.owner,
-		).toBe("realtime");
+		expect(useDownloadStore.getState().quantOwners["whisper-base@q4"]).toBe(
+			"realtime",
+		);
 	});
 
-	test("action 'pause' optimistically flips the local entry AND fires pause IPC", async () => {
+	test("action 'pause' preserves authoritative state and fires pause IPC", async () => {
 		useDownloadStore.setState({
 			quantDownloads: {
 				"whisper-base@q4": makeQuantEntry("whisper-base", "q4", false),
@@ -167,11 +164,10 @@ describe("useQuantActions", () => {
 		const { result } = renderHook(() => useQuantActions());
 		result.current.handleDownloadAction("pause", "whisper-base", Q4);
 
-		// Optimistic local flip so the badge re-renders before the server's
-		// confirmation event lands.
+		// The lifecycle event owns the phase change; the local frame is untouched.
 		expect(
 			useDownloadStore.getState().quantDownloads["whisper-base@q4"]?.paused,
-		).toBe(true);
+		).toBe(false);
 
 		await Promise.resolve();
 		expect(invokeCalls).toContainEqual({
@@ -194,7 +190,7 @@ describe("useQuantActions", () => {
 		});
 	});
 
-	test("action 'resume' clears the local paused flag AND fires resume IPC", async () => {
+	test("action 'resume' preserves authoritative state and fires resume IPC", async () => {
 		useDownloadStore.setState({
 			quantDownloads: {
 				"whisper-base@q4": makeQuantEntry("whisper-base", "q4", true),
@@ -205,7 +201,7 @@ describe("useQuantActions", () => {
 
 		expect(
 			useDownloadStore.getState().quantDownloads["whisper-base@q4"]?.paused,
-		).toBe(false);
+		).toBe(true);
 
 		await Promise.resolve();
 		expect(invokeCalls).toContainEqual({
@@ -227,21 +223,20 @@ describe("useQuantActions", () => {
 		});
 	});
 
-	test("action 'cancel' discards progress and fires delete IPC", async () => {
+	test("action 'cancel' preserves state until cancellation and fires cancel IPC", async () => {
 		const entry = makeQuantEntry("whisper-base", "q4", false);
 		useDownloadStore.setState({ quantDownloads: { "whisper-base@q4": entry } });
 		const { result } = renderHook(() => useQuantActions());
 		result.current.handleDownloadAction("cancel", "whisper-base", Q4);
 
-		// Cancel is discard, not pause: the local progress badge disappears
-		// immediately while the backend wipes the partial/cache files.
+		// The terminal lifecycle frame clears the badge; cancellation is not deletion.
 		expect(
 			useDownloadStore.getState().quantDownloads["whisper-base@q4"],
-		).toBeUndefined();
+		).toEqual(entry);
 
 		await Promise.resolve();
 		expect(invokeCalls).toContainEqual({
-			channel: IPC.STT_DELETE_MODEL_QUANTIZATION,
+			channel: IPC.STT_DOWNLOAD_CANCEL_QUANT,
 			payload: { modelId: "whisper-base", quantization: "q4" },
 		});
 	});

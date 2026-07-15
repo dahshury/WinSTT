@@ -10,6 +10,7 @@ const PROVIDER_NAME_ALIASES: Record<string, string> = {
 	meta: "meta-llama",
 	mistral: "mistralai",
 	phi: "microsoft",
+	"prism-ml": "prismml",
 	qwq: "qwen",
 	xai: "x-ai",
 };
@@ -27,9 +28,14 @@ const getProviderIcon = createProviderIconResolver(PROVIDER_NAME_ALIASES);
 export function makerFromModelId(model: string): string {
 	const modelId = parseModelSelection(model).modelId;
 	const withoutPin = modelId.split("::")[0] ?? modelId;
-	const vendor = withoutPin.includes("/")
-		? withoutPin.split("/")[0]
-		: withoutPin;
+	const pathParts = withoutPin.split("/").filter(Boolean);
+	// Ollama preserves direct Hugging Face pulls as
+	// `hf.co/<owner>/<repo>:<tag>`. The owner, not the transport host, is the
+	// maker whose brand mark should be shown.
+	if (pathParts[0]?.toLowerCase() === "hf.co" && pathParts[1]) {
+		return pathParts[1];
+	}
+	const vendor = withoutPin.includes("/") ? pathParts[0] : withoutPin;
 	return (vendor ?? withoutPin).split(":")[0]?.trim() ?? "";
 }
 

@@ -13,7 +13,7 @@
 // `drop` as a backstop (covers webviews/platforms where `enter` lacks paths) and
 // keep the map keyed by name (+size when available) for collision safety.
 //
-// Extracted from native-bridge-adapter.ts (behavior-preserving move).
+// Shared by the native runtime bootstrap and synchronous file-path helper.
 
 import { emitFileDragDropEvent } from "../file-drag-drop";
 

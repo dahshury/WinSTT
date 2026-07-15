@@ -333,9 +333,14 @@ fn is_comfortable_on_gpu(
     if needed == 0 {
         return true;
     }
+    // Fit against the LARGEST GPU: the model loads on one adapter, and DML picks the
+    // discrete card. Requiring `.all()` GPUs made any iGPU+dGPU host (tiny iGPU VRAM)
+    // fail almost every model. Matches the renderer fit-assessor's `largestGpu`.
     sys.gpus
         .iter()
-        .all(|g| g.total_vram_bytes as f64 >= needed as f64 * GPU_HEADROOM)
+        .map(|g| g.total_vram_bytes)
+        .max()
+        .is_some_and(|largest| largest as f64 >= needed as f64 * GPU_HEADROOM)
 }
 
 fn is_comfortable_on_cpu(
@@ -604,6 +609,33 @@ pub(crate) fn to_state_entry(
         .cloned()
         .unwrap_or_else(ModelCacheInfo::not_cached);
 
+    // Where each PUBLISHED quant actually runs under the user's primary accelerator, per the
+    // engine device pin matrix. This is the renderer's pool selector: a CPU-pinned engine (or a
+    // per-quant DML demotion) consumes RAM, never VRAM, so its fit must be judged against RAM
+    // even on a GPU host. "gpu" only for a VRAM-backed EP (DirectML/CUDA) — mirrors the
+    // `on_gpu` routing check inside `fit_aware_auto_quant`.
+    let device_by_quantization: BTreeMap<String, String> = entry
+        .available_quantizations
+        .iter()
+        .map(|q_str| {
+            let q = crate::winstt::stt::Quantization::parse(q_str)
+                .unwrap_or(crate::winstt::stt::Quantization::Default);
+            let routed = crate::winstt::stt::override_dml_to_cpu_for_kind(
+                crate::winstt::stt::providers_for_accelerator(primary),
+                kind,
+                q,
+            );
+            let device = match routed.first() {
+                Some(
+                    crate::winstt::stt::Accelerator::DirectMl
+                    | crate::winstt::stt::Accelerator::Cuda,
+                ) => "gpu",
+                _ => "cpu",
+            };
+            (q_str.clone(), device.to_string())
+        })
+        .collect();
+
     // The fit flags measure the model at the precision it will ACTUALLY load at (the effective
     // quant), not fp32 — a 2 B model that loads at int8 needs ~2.4 GB, not ~8 GB.
     let eff_quant = crate::winstt::stt::Quantization::parse(&eff)
@@ -617,6 +649,7 @@ pub(crate) fn to_state_entry(
         estimated_bytes: estimate_runtime_bytes(entry.param_count),
         comfortable_on_gpu: is_comfortable_on_gpu(entry.param_count, eff_quant, sys),
         comfortable_on_cpu: is_comfortable_on_cpu(entry.param_count, eff_quant, sys),
+        device_by_quantization,
     }
 }
 
@@ -986,6 +1019,104 @@ mod tests {
         );
 
         assert_eq!(all_cloud_catalog_rows().len(), el.len());
+    }
+
+    #[test]
+    fn comfortable_on_gpu_fits_largest_gpu_not_all() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        let quant = crate::winstt::stt::Quantization::Default;
+        // 600 M params fp32 = 2.4 GB; × 1.5 headroom = 3.6 GB needed.
+        let params = 600_000_000u64;
+        // iGPU (1 GB) + dGPU (12 GB): the model loads on ONE adapter (DML picks the discrete
+        // card), so the tiny iGPU must not veto the fit. The old `.all()` aggregation failed
+        // almost everything on any iGPU+dGPU host.
+        let dual = SystemInfoEntry {
+            total_ram_bytes: 32 * GB,
+            gpus: vec![
+                SystemInfoGpu {
+                    name: "iGPU".into(),
+                    total_vram_bytes: GB,
+                },
+                SystemInfoGpu {
+                    name: "dGPU".into(),
+                    total_vram_bytes: 12 * GB,
+                },
+            ],
+        };
+        assert!(
+            is_comfortable_on_gpu(params, quant, &dual),
+            "fits the largest GPU — the iGPU must not veto"
+        );
+        // Still false when even the largest GPU can't hold it.
+        let igpu_only = SystemInfoEntry {
+            total_ram_bytes: 32 * GB,
+            gpus: vec![SystemInfoGpu {
+                name: "iGPU".into(),
+                total_vram_bytes: GB,
+            }],
+        };
+        assert!(!is_comfortable_on_gpu(params, quant, &igpu_only));
+        // And no GPUs at all → false.
+        let no_gpu = SystemInfoEntry {
+            total_ram_bytes: 32 * GB,
+            gpus: vec![],
+        };
+        assert!(!is_comfortable_on_gpu(params, quant, &no_gpu));
+    }
+
+    #[test]
+    fn device_by_quantization_follows_engine_pin_matrix() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        let sys = SystemInfoEntry::default();
+        let (ram, vram) = (64 * GB, 24 * GB);
+        let state = |entry: &RawCatalogEntry, accel: Accelerator| {
+            to_state_entry(entry, accel, &sys, &BTreeMap::new(), ram, vram)
+        };
+
+        // CPU-pinned engine (Cohere AED): every published quant runs on the CPU EP even on a
+        // GPU primary — its fit must be judged against RAM, never VRAM.
+        let cohere = raw_catalog()
+            .iter()
+            .find(|e| e.family == "cohere")
+            .expect("cohere present");
+        let st = state(cohere, Accelerator::DirectMl);
+        assert_eq!(
+            st.device_by_quantization.len(),
+            cohere.available_quantizations.len(),
+            "one device verdict per published quant"
+        );
+        assert!(
+            st.device_by_quantization.values().all(|d| d == "cpu"),
+            "CPU-pinned engine reports cpu for every quant on a GPU host"
+        );
+
+        // Per-QUANT demotion: streaming NeMo RNN-T keeps DML at fp32/fp16 but its int8
+        // graph's QDQ nodes demote → routed to CPU (dml_slower_than_cpu matrix).
+        let nemotron = raw_catalog()
+            .iter()
+            .find(|e| e.id == "streaming-nemotron-3.5-multi-1120ms-int8")
+            .expect("streaming nemotron 3.5 present");
+        let st = state(nemotron, Accelerator::DirectMl);
+        assert_eq!(st.device_by_quantization.get(""), Some(&"gpu".to_string()));
+        assert_eq!(
+            st.device_by_quantization.get("fp16"),
+            Some(&"gpu".to_string())
+        );
+        assert_eq!(
+            st.device_by_quantization.get("int8"),
+            Some(&"cpu".to_string())
+        );
+
+        // DML-safe engine keeps the GPU EP on a GPU primary…
+        let gigaam = raw_catalog()
+            .iter()
+            .find(|e| e.id == "gigaam-v3-e2e-ctc")
+            .expect("gigaam ctc present");
+        let st = state(gigaam, Accelerator::DirectMl);
+        assert_eq!(st.device_by_quantization.get(""), Some(&"gpu".to_string()));
+        // …and everything reports cpu when the user picked the CPU device.
+        let st_cpu = state(gigaam, Accelerator::Cpu);
+        assert!(st_cpu.device_by_quantization.values().all(|d| d == "cpu"));
     }
 
     #[test]

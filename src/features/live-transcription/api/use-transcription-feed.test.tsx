@@ -3,7 +3,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { useTranscriptionFeed } from "./use-transcription-feed";
 
 const originalApi = window.nativeBridge;

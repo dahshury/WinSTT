@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { useSettingsHydrationStore } from "@/features/update-settings";
+import { useSettingsHydrationStore } from "@/entities/setting";
 import { SettingsWarningToasts } from "./SettingsWarningToasts";
 
 afterEach(() => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import type { SoundLibraryEntry } from "@/shared/config/settings-schema";
 import { MAX_CUSTOM_SOUNDS } from "../model/recording-sound";
 import { useSoundLibrary } from "./use-sound-library";

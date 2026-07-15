@@ -34,7 +34,7 @@ const TRACKS: readonly TrackOption[] = [
 		bullets: [
 			"No API keys, no usage caps, fully private",
 			"Runs on CPU or NVIDIA GPU automatically",
-			"Choose and download one speech model during setup",
+			"One small starter model download during setup",
 		],
 	},
 	{

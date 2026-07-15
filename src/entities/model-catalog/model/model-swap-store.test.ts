@@ -8,6 +8,8 @@ import type {
 interface SwapPayload {
 	kind: ModelSwapKind;
 	name: string;
+	requestId?: string;
+	revision?: number;
 }
 interface SwapFailedPayload extends SwapPayload {
 	reason: string;
@@ -70,12 +72,9 @@ mock.module("@/shared/api/ipc-client", () => ({
 	},
 }));
 
-const {
-	useModelSwapStore,
-	initModelSwapStore,
-	_setOptimisticSwapStaleMsForTests,
-	_resetOptimisticSwapForTests,
-} = await import("./model-swap-store");
+const { useModelSwapStore, initModelSwapStore } = await import(
+	"./model-swap-store"
+);
 
 function runtimeInfo(
 	overrides: Partial<RuntimeInfoPayload>,
@@ -98,6 +97,8 @@ function resetStore(): void {
 		fromRealtime: null,
 		quantMain: null,
 		quantRealtime: null,
+		requestMain: null,
+		requestRealtime: null,
 	});
 }
 
@@ -106,7 +107,6 @@ function resetStore(): void {
 // off `activeMain`). Reset after every test to keep the singleton clean.
 afterEach(() => {
 	resetStore();
-	_resetOptimisticSwapForTests();
 	markSwapFailedCalls = 0;
 });
 
@@ -313,6 +313,52 @@ describe("initModelSwapStore", () => {
 		expect(useModelSwapStore.getState().activeMain).toBeNull();
 		unsub();
 	});
+
+	test("older correlated terminals cannot clear a newer optimistic target", () => {
+		resetStore();
+		const unsub = initModelSwapStore();
+		useModelSwapStore.getState().beginSwap("main", "A", "C", null, "request-C");
+		emitStarted({
+			kind: "main",
+			name: "B",
+			requestId: "request-B",
+			revision: 2,
+		});
+		expect(useModelSwapStore.getState().activeMain).toBe("C");
+
+		emitCompleted({
+			kind: "main",
+			name: "B",
+			requestId: "request-B",
+			revision: 2,
+		});
+		expect(useModelSwapStore.getState().activeMain).toBe("C");
+		expect(useModelSwapStore.getState().requestMain).toBe("request-C");
+
+		emitFailed({
+			kind: "main",
+			name: "B",
+			requestId: "request-B",
+			reason: "superseded",
+		});
+		expect(useModelSwapStore.getState().activeMain).toBe("C");
+		expect(markSwapFailedCalls).toBe(0);
+		unsub();
+	});
+
+	test("uncorrelated runtime info cannot clear a correlated same-target request", () => {
+		resetStore();
+		const unsub = initModelSwapStore();
+		useModelSwapStore
+			.getState()
+			.beginSwap("main", "A", "B", null, "request-new-B");
+
+		emitRuntime(runtimeInfo({ model: "B" }));
+
+		expect(useModelSwapStore.getState().activeMain).toBe("B");
+		expect(useModelSwapStore.getState().requestMain).toBe("request-new-B");
+		unsub();
+	});
 });
 
 describe("initModelSwapStore — runtime_info restart-based completion", () => {
@@ -393,72 +439,5 @@ describe("initModelSwapStore — runtime_info restart-based completion", () => {
 		expect(useModelSwapStore.getState().activeMain).toBeNull();
 		expect(useModelSwapStore.getState().activeRealtime).toBe("tiny");
 		unsub();
-	});
-});
-
-describe("optimistic swap self-heal (kills the stuck / reversed-direction spinner)", () => {
-	// Repro of the user-reported "first click shows a reversed B→A switch that
-	// spins forever": an OPTIMISTIC beginSwap (opened by useSyncActiveModel
-	// reacting to a settings change / rollback — see use-sync-active-model.ts)
-	// that no real server swap ever confirms. The server emits
-	// `model_swap_started` at the START of every genuine reload, so an
-	// optimistic open that gets no `setActive` within the window is a phantom
-	// and must auto-clear rather than strand the chip.
-
-	test("an optimistic beginSwap never confirmed by model_swap_started self-clears", async () => {
-		resetStore();
-		_setOptimisticSwapStaleMsForTests(15);
-		// Reversed phantom: from="B" (the model actually loaded), to="A".
-		useModelSwapStore.getState().beginSwap("main", "B", "A");
-		expect(useModelSwapStore.getState().activeMain).toBe("A");
-
-		await new Promise((resolve) => setTimeout(resolve, 40));
-
-		// No model_swap_started arrived → phantom heals instead of spinning forever.
-		expect(useModelSwapStore.getState().activeMain).toBeNull();
-		expect(useModelSwapStore.getState().fromMain).toBeNull();
-	});
-
-	test("a beginSwap confirmed by model_swap_started does NOT self-clear", async () => {
-		resetStore();
-		_setOptimisticSwapStaleMsForTests(15);
-		const unsub = initModelSwapStore();
-
-		useModelSwapStore.getState().beginSwap("main", "A", "B");
-		emitStarted({ kind: "main", name: "B" }); // real swap confirmed by the server
-
-		await new Promise((resolve) => setTimeout(resolve, 40));
-
-		expect(useModelSwapStore.getState().activeMain).toBe("B");
-		unsub();
-	});
-
-	test("model_swap_started arriving BEFORE the optimistic beginSwap stays confirmed (cross-window race)", async () => {
-		resetStore();
-		_setOptimisticSwapStaleMsForTests(15);
-		const unsub = initModelSwapStore();
-
-		// Non-initiating window: the broadcast `model_swap_started` lands first,
-		// then the settings-change-driven optimistic beginSwap. The second must
-		// not re-arm a self-heal that would clear an already-confirmed swap.
-		emitStarted({ kind: "main", name: "B" });
-		useModelSwapStore.getState().beginSwap("main", "A", "B");
-
-		await new Promise((resolve) => setTimeout(resolve, 40));
-
-		expect(useModelSwapStore.getState().activeMain).toBe("B");
-		expect(useModelSwapStore.getState().fromMain).toBe("A");
-		unsub();
-	});
-
-	test("realtime optimistic swaps self-heal independently of main", async () => {
-		resetStore();
-		_setOptimisticSwapStaleMsForTests(15);
-		useModelSwapStore.getState().beginSwap("realtime", "small", "base");
-
-		await new Promise((resolve) => setTimeout(resolve, 40));
-
-		expect(useModelSwapStore.getState().activeRealtime).toBeNull();
-		expect(useModelSwapStore.getState().fromRealtime).toBeNull();
 	});
 });

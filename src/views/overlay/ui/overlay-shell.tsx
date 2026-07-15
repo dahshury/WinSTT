@@ -1,4 +1,7 @@
 import { Button as BaseButton } from "@base-ui/react/button";
+import { useState } from "react";
+import { useTranslations } from "use-intl";
+import { commands } from "@/bindings";
 import { sttAbortOperation } from "@/shared/api/ipc-client";
 import { CHIP_SHADOW, GLASS_SURFACE } from "./overlay-shell.shared";
 
@@ -38,6 +41,45 @@ function CancelButton({ size = 16 }: { size?: number }) {
 	);
 }
 
+function SkipPostProcessingButton() {
+	const tOnboarding = useTranslations("onboarding");
+	const tStatus = useTranslations("statusBar");
+	const [requested, setRequested] = useState(false);
+	const label = `${tOnboarding("skip")} ${tStatus("breakdownPost")}`;
+
+	const skipPostProcessing = () => {
+		if (requested) {
+			return;
+		}
+		setRequested(true);
+		void commands.sttSkipPostProcessing(true).then(
+			(accepted) => {
+				if (!accepted) {
+					setRequested(false);
+				}
+			},
+			() => setRequested(false),
+		);
+	};
+
+	return (
+		<BaseButton
+			aria-label={`${label} (Alt+S)`}
+			className="inline-flex h-6 items-center gap-1.5 rounded-md border border-overlay-foreground/15 bg-overlay-foreground/[0.07] px-2 font-medium text-[10px] text-overlay-foreground/75 transition-colors hover:border-overlay-foreground/25 hover:bg-overlay-foreground/[0.12] hover:text-overlay-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-overlay-foreground/40 disabled:cursor-wait disabled:opacity-55"
+			data-overlay-skip-post-processing="true"
+			disabled={requested}
+			onClick={skipPostProcessing}
+			title={`${label} — Alt+S`}
+			type="button"
+		>
+			<span>{label}</span>
+			<kbd className="rounded border border-overlay-foreground/20 bg-overlay-foreground/[0.08] px-1 py-0.5 font-mono text-[9px] leading-none text-overlay-foreground/85 shadow-sm">
+				{"Alt+S"}
+			</kbd>
+		</BaseButton>
+	);
+}
+
 function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
 	return (
 		<span
@@ -52,4 +94,4 @@ function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
 	);
 }
 
-export { CancelButton, LivePulse };
+export { CancelButton, LivePulse, SkipPostProcessingButton };

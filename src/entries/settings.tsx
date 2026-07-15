@@ -12,17 +12,13 @@ import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback
 import {
 	LlmConfigPersistErrorToast,
 	SmartEndpointDisabledNotice,
-} from "@/features/surface-llm-settings-notices";
+} from "@/widgets/llm-settings";
 import { SettingsWarningToasts } from "@/features/surface-settings-warnings";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { SettingsPage } from "@/views/settings";
-// Deep import (not via the widget barrel) ON PURPOSE: the barrel re-exports the
-// heavy, lazily-loaded History panel, and pulling it into this always-mounted
-// bootstrap would defeat that code-split. This module only carries the
-// lightweight store + IPC sync, so the History panel chunk stays lazy.
-import { useTranscriptionHistorySync } from "@/widgets/transcription-history-settings/api/use-history-sync";
+import { useTranscriptionHistorySync } from "@/widgets/transcription-history-settings";
 
 installWebviewDiag("settings");
 

@@ -105,6 +105,37 @@ describe("useSettingsStore mutators", () => {
 		);
 	});
 
+	test("updateLlmAppProfiles replaces only the per-app rule list", () => {
+		const before = useSettingsStore.getState().settings.llm;
+		useSettingsStore.getState().updateLlmAppProfiles([
+			{
+				id: "gmail",
+				enabled: true,
+				appExe: "chrome.exe",
+				titlePattern: "",
+				urlPattern: "gmail.com",
+				configurationId: "builtin:formal",
+				configurationName: "Formal",
+				config: {
+					provider: "ollama",
+					model: "qwen3:4b",
+					openrouterModel: "",
+					openrouterFallbackModel: "",
+					reasoningEffort: "medium",
+					thinkingEffort: "off",
+					verbosity: "medium",
+					maxOutputTokens: null,
+					presets: [{ key: "formal" }],
+					customModifiers: [],
+				},
+			},
+		]);
+		const after = useSettingsStore.getState().settings.llm;
+		expect(after.appProfiles.rules[0]?.id).toBe("gmail");
+		expect(after.dictation).toEqual(before.dictation);
+		expect(after.endpoint).toBe(before.endpoint);
+	});
+
 	test("updateLlmDictation merges patch into the dictation sub-tree without touching other LLM branches", () => {
 		useSettingsStore
 			.getState()

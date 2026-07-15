@@ -2,7 +2,7 @@ use crate::TranscriptionCoordinator;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::shortcut;
-use log::info;
+use log::debug;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
@@ -14,7 +14,7 @@ pub use crate::winstt::commands::overlay::{hide_recording_overlay, show_recordin
 /// Centralized cancellation function that can be called from anywhere in the app.
 /// Handles cancelling both recording and transcription operations and updates UI state.
 pub fn cancel_current_operation(app: &AppHandle) -> bool {
-    info!("Initiating operation cancellation...");
+    debug!("Initiating operation cancellation");
 
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     let recording_was_active = audio_manager.is_recording();
@@ -22,7 +22,7 @@ pub fn cancel_current_operation(app: &AppHandle) -> bool {
     let dictation_was_active = recording_was_active || cancelled_through.is_some();
 
     if !dictation_was_active {
-        info!("No active dictation operation to cancel");
+        debug!("No active dictation operation to cancel");
         unregister_cancel_shortcut_if_idle(app);
         return false;
     }
@@ -60,7 +60,7 @@ pub fn cancel_current_operation(app: &AppHandle) -> bool {
 
     unregister_cancel_shortcut_if_idle(app);
 
-    info!("Operation cancellation completed - returned to idle state");
+    debug!("Operation cancellation completed; returned to idle state");
     true
 }
 

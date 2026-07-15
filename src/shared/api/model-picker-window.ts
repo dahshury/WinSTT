@@ -1,5 +1,4 @@
-import { IPC } from "./ipc-channels";
-import { ipcSend } from "./ipc-client";
+import { commands } from "@/bindings";
 
 export type ModelPickerKind =
 	| "llm-ollama"
@@ -10,10 +9,25 @@ export type ModelPickerKind =
 	| "stt-realtime"
 	| "tts";
 
+export type LlmModelPickerFeature = "dictation" | "transforms";
+type LlmModelPickerTarget = "enable-on-install" | "fallback" | "primary";
+
+type LlmModelPickerOptions =
+	| {
+			enableOnInstall?: boolean;
+			feature: LlmModelPickerFeature;
+			pickerKind: "llm-ollama";
+	  }
+	| {
+			feature: LlmModelPickerFeature;
+			pickerKind: "llm-openrouter";
+			pickerTarget: LlmModelPickerTarget;
+	  };
+
 interface OpenModelPickerOptions {
-	pickerFeature?: "dictation" | "transforms";
+	pickerFeature?: LlmModelPickerFeature;
 	pickerKind?: ModelPickerKind;
-	pickerTarget?: "fallback" | "primary";
+	pickerTarget?: LlmModelPickerTarget;
 }
 
 export function openModelPickerAtRect(
@@ -22,9 +36,9 @@ export function openModelPickerAtRect(
 ): void {
 	const payload: {
 		height: number;
-		pickerFeature?: "dictation" | "transforms";
+		pickerFeature?: LlmModelPickerFeature;
 		pickerKind?: ModelPickerKind;
-		pickerTarget?: "fallback" | "primary";
+		pickerTarget?: LlmModelPickerTarget;
 		width: number;
 		x: number;
 		y: number;
@@ -43,9 +57,34 @@ export function openModelPickerAtRect(
 	if (options.pickerTarget !== undefined) {
 		payload.pickerTarget = options.pickerTarget;
 	}
-	ipcSend(IPC.MODEL_PICKER_OPEN, payload);
+	void commands.openWindow(
+		"model-picker",
+		payload.x,
+		payload.y,
+		payload.width,
+		payload.height,
+		payload.pickerKind ?? null,
+		payload.pickerFeature ?? null,
+		payload.pickerTarget ?? null,
+	);
+}
+
+/** Open either LLM selector in the shared detached picker window. */
+export function openLlmModelPickerAtRect(
+	rect: Pick<DOMRect, "height" | "width" | "x" | "y">,
+	options: LlmModelPickerOptions,
+): void {
+	openModelPickerAtRect(rect, {
+		pickerKind: options.pickerKind,
+		pickerFeature: options.feature,
+		...(options.pickerKind === "llm-openrouter"
+			? { pickerTarget: options.pickerTarget }
+			: options.enableOnInstall
+				? { pickerTarget: "enable-on-install" as const }
+				: {}),
+	});
 }
 
 export function closeModelPicker(): void {
-	ipcSend(IPC.MODEL_PICKER_CLOSE);
+	void commands.closeWindow("model-picker");
 }

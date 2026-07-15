@@ -39,11 +39,13 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::managers::transcription::TranscriptionManager;
-use crate::winstt::managers::transcode::{
-    TARGET_SAMPLE_RATE, decode_audio_to_pcm, format_transcript,
+use crate::winstt::managers::transcode::{TARGET_SAMPLE_RATE, decode_audio_to_pcm};
+use crate::winstt::managers::transcript_export::{
+    TranscriptDocument, serialize as serialize_transcript,
 };
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{FileSaveLocation, FileTranscriptionFormat};
+use crate::winstt::stt::Transcription;
 use crate::winstt::sync_ext::MutexExt;
 
 /// Auto-clear delay: once every row is terminal the queue clears itself after
@@ -511,11 +513,24 @@ impl FileTranscribeManager {
         // Mid-file progress tick so the bar moves before the (blocking) transcribe.
         self.tick_progress(&item.id, 0.5, "transcribing");
 
-        match self.transcription.transcribe(&audio) {
-            Ok(text) => self.finish(
+        let settings = crate::winstt::settings_store::read_settings_raw(&self.app);
+        let formats = settings.general.effective_file_transcription_formats();
+        let result = if formats == [FileTranscriptionFormat::Txt] {
+            self.transcription
+                .transcribe(&audio)
+                .map(|text| Transcription {
+                    text,
+                    ..Default::default()
+                })
+        } else {
+            self.transcription.transcribe_file(&audio)
+        };
+
+        match result {
+            Ok(transcription) => self.finish(
                 &item.id,
                 QueueStatus::Complete,
-                Some(&text),
+                Some(&transcription),
                 Some(duration_secs),
                 None,
             ),
@@ -562,13 +577,13 @@ impl FileTranscribeManager {
         self: &Arc<Self>,
         id: &str,
         mut status: QueueStatus,
-        text: Option<&str>,
+        transcription: Option<&Transcription>,
         duration_secs: Option<f64>,
         error: Option<&str>,
     ) {
         let mut error_message = error.map(str::to_string);
         if status == QueueStatus::Complete
-            && let Some(text) = text
+            && let Some(transcription) = transcription
         {
             let output_target = {
                 let st = self.lock_state();
@@ -581,7 +596,7 @@ impl FileTranscribeManager {
                 && let Err(e) = self.write_transcript_file(
                     &source_path,
                     &file_name,
-                    text,
+                    transcription,
                     duration_secs.unwrap_or(0.0),
                 )
             {
@@ -604,7 +619,7 @@ impl FileTranscribeManager {
                         QueueStatus::Complete => {
                             it.progress = 1.0;
                             it.stage = "complete".into();
-                            it.text = text.map(str::to_string);
+                            it.text = transcription.map(|result| result.text.clone());
                         }
                         QueueStatus::Error => {
                             it.stage = "error".into();
@@ -709,33 +724,68 @@ impl FileTranscribeManager {
         &self,
         source_path: &Path,
         file_name: &str,
-        text: &str,
+        transcription: &Transcription,
         duration_secs: f64,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<Vec<PathBuf>, String> {
         let settings = crate::winstt::settings_store::read_settings_raw(&self.app);
-        let format = settings.general.file_transcription_format;
-        let output_path = self.resolve_transcript_output_path(
+        let formats = settings.general.effective_file_transcription_formats();
+        let language = settings.model.language.trim();
+        let language = (!settings.model.auto_detect_language && !language.is_empty())
+            .then(|| language.to_string());
+        let document = TranscriptDocument::from_transcription(
+            transcription,
+            chrono::Utc::now().to_rfc3339(),
+            settings.model.model.clone(),
+            language,
+            duration_secs,
+            file_name.to_string(),
+        );
+        let output_paths = self.resolve_transcript_output_paths(
             source_path,
             file_name,
-            format,
+            &formats,
             settings.general.file_transcription_save_location,
         )?;
-        let body = format_transcript(format, text, duration_secs);
-        std::fs::write(&output_path, body)
-            .map_err(|e| format!("Failed to write {}: {e}", output_path.display()))?;
-        Ok(output_path)
+        for (format, output_path) in formats.into_iter().zip(&output_paths) {
+            let body = serialize_transcript(format, &document);
+            std::fs::write(output_path, body)
+                .map_err(|e| format!("Failed to write {}: {e}", output_path.display()))?;
+        }
+        Ok(output_paths)
     }
 
-    fn resolve_transcript_output_path(
+    fn resolve_transcript_output_paths(
         &self,
         source_path: &Path,
         file_name: &str,
-        format: FileTranscriptionFormat,
+        formats: &[FileTranscriptionFormat],
         save_location: FileSaveLocation,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<Vec<PathBuf>, String> {
+        let Some(first_format) = formats.first().copied() else {
+            return Err("At least one transcript format is required".into());
+        };
         match save_location {
-            FileSaveLocation::Auto => Ok(auto_transcript_output_path(source_path, format)),
-            FileSaveLocation::Ask => self.pick_transcript_output_path(file_name, format),
+            FileSaveLocation::Auto => Ok(formats
+                .iter()
+                .copied()
+                .map(|format| auto_transcript_output_path(source_path, format))
+                .collect()),
+            FileSaveLocation::Ask => {
+                let first_path = self.pick_transcript_output_path(file_name, first_format)?;
+                Ok(formats
+                    .iter()
+                    .copied()
+                    .map(|format| {
+                        if format == first_format {
+                            first_path.clone()
+                        } else {
+                            let mut sibling = first_path.clone();
+                            sibling.set_extension(transcript_extension(format));
+                            sibling
+                        }
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -789,6 +839,9 @@ fn transcript_extension(format: FileTranscriptionFormat) -> &'static str {
     match format {
         FileTranscriptionFormat::Txt => "txt",
         FileTranscriptionFormat::Srt => "srt",
+        FileTranscriptionFormat::Vtt => "vtt",
+        FileTranscriptionFormat::Json => "json",
+        FileTranscriptionFormat::Csv => "csv",
     }
 }
 
@@ -796,6 +849,9 @@ fn transcript_filter_name(format: FileTranscriptionFormat) -> &'static str {
     match format {
         FileTranscriptionFormat::Txt => "Text",
         FileTranscriptionFormat::Srt => "SubRip subtitles",
+        FileTranscriptionFormat::Vtt => "WebVTT subtitles",
+        FileTranscriptionFormat::Json => "JSON transcript",
+        FileTranscriptionFormat::Csv => "CSV table",
     }
 }
 

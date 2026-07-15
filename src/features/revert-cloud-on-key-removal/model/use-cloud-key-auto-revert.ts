@@ -1,12 +1,7 @@
 import { useEffect, useRef } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
-import {
-	useCatalogStore,
-	useModelStateStore,
-	useModelSwapStore,
-} from "@/entities/model-catalog";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
-import { sttReloadModel } from "@/shared/api/ipc-client";
 import {
 	affectedProviders,
 	type ClearableProvider,
@@ -17,6 +12,7 @@ import {
 	type RevertPlan,
 	resolveLocalSttTarget,
 } from "./cloud-revert-decision";
+import { revertSttToLocalAtomic } from "./atomic-local-revert";
 import { useRevertNoticeStore } from "./revert-notice-store";
 
 /** Debounce after the last key/surface change before evaluating a revert.
@@ -28,21 +24,14 @@ const REVERT_DEBOUNCE_MS = 600;
 
 /**
  * Swap the main STT slot from a now-keyless cloud model back to a local one.
- * Reuses the swap primitives the picker uses (`applyMainSwap` + `maybeHotReload`
- * in `use-model-swap-controller.ts`): open the in-flight chip, write the
- * `{ model, backend }` pair, then fire the server reload. A bare settings write
- * would NOT reload the server — `sync-actions.ts` deliberately skips
- * `model.model`, leaving the reload to `sttReloadModel`.
+ * Uses the same backend-owned atomic transaction as the picker, so load, warm,
+ * persistence, and rollback remain one operation.
  */
 function revertSttToLocal(currentCloudModel: string): void {
 	const { models } = useCatalogStore.getState();
 	const { statesById } = useModelStateStore.getState();
 	const target = resolveLocalSttTarget(models, statesById);
-	useModelSwapStore
-		.getState()
-		.beginSwap("main", currentCloudModel, target.model);
-	useSettingsStore.getState().updateModelSettings({ model: target.model });
-	sttReloadModel("main", target.model);
+	revertSttToLocalAtomic(currentCloudModel, target.model);
 }
 
 /** Apply every surface revert the plan calls for. */

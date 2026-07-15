@@ -15,6 +15,7 @@ interface GetDataGridSelectColumnOptions<TData>
 
 export function getDataGridSelectColumn<TData>({
 	size = 40,
+	minSize = size,
 	hitboxSize = "default",
 	enableHiding = false,
 	enableResizing = false,
@@ -45,6 +46,7 @@ export function getDataGridSelectColumn<TData>({
 			/>
 		),
 		size,
+		minSize,
 		enableHiding,
 		enableResizing,
 		enableSorting,

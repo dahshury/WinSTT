@@ -12,7 +12,7 @@ use super::{
 };
 use crate::winstt::stt::{NativeStreamUpdate, SttResult};
 use crate::winstt::sync_ext::MutexExt;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
@@ -69,7 +69,7 @@ impl NativeStreamFinalizeWatchdog {
                 if let Some(model_id) = &model_id {
                     issue = issue.model_id(model_id.clone());
                 }
-                issue.record(Some(&app_handle));
+                issue.record_without_log(Some(&app_handle));
             }
         });
         Self { stop }
@@ -153,7 +153,7 @@ impl TranscriptionManager {
         let text = match decoded {
             Ok(text) => text,
             Err(_) => {
-                warn!("Realtime decode panicked — skipping tick");
+                warn!("Realtime decode panicked -- skipping tick");
                 None
             }
         };
@@ -241,7 +241,7 @@ impl TranscriptionManager {
             final_tail.len(),
             started,
         );
-        info!(
+        debug!(
             "[realtime-final] native stream finalizing captured_tail_samples={} silence_pad_ms={} fed_tail_samples={} fed_tail_ms={}",
             tail.len(),
             NATIVE_STREAM_FINAL_SILENCE_PAD_MS,
@@ -272,7 +272,7 @@ impl TranscriptionManager {
         if trimmed.is_empty() {
             None
         } else {
-            info!(
+            debug!(
                 "[realtime-final] native stream finalized in {}ms final_chars={}",
                 started.elapsed().as_millis(),
                 trimmed.chars().count()
@@ -521,7 +521,7 @@ impl TranscriptionManager {
         // cannot, so speech-bearing tail must fall back to a fresh final decode.
         let covered = entry.covered.min(samples.len());
         let tail = &samples[covered..];
-        info!(
+        debug!(
             "[realtime-final] reuse candidate generation={} native={} covered_samples={} total_samples={} tail_samples={} cached_chars={}",
             generation,
             capabilities.native_streaming,
@@ -541,7 +541,7 @@ impl TranscriptionManager {
                 && finalized.chars().count() <= entry.raw_text.chars().count()
                 && dc_immune_rms(tail) >= SILENCE_AC_FLOOR
             {
-                info!(
+                debug!(
                     "[realtime-final] native stream final text did not grow despite speech-bearing tail; falling back to fresh decode"
                 );
                 return None;

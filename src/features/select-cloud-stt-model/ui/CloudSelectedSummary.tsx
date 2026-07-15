@@ -10,12 +10,12 @@ import {
 import type { OpenRouterModel } from "@/shared/api/models";
 import { brandLogoFor } from "@/shared/ui/brand-logo";
 import {
-	AuthorBadge,
-	OpenRouterSelectedSummary,
 	type SelectedModelMetaItem,
 	type SelectedModelNameParts,
 	SelectedModelSummary,
-} from "@/widgets/model-picker";
+} from "@/shared/ui/model-picker/ui/SelectedModelSummary";
+import { AuthorBadge } from "@/shared/ui/model-picker/ui/AuthorBadge";
+import { OpenRouterSelectedSummary } from "@/shared/ui/model-picker/ui/OpenRouterSelectedSummary";
 
 // ElevenLabs' curated catalog carries no accuracy/speed scores, so surface the
 // one fact its in-list cards lead with: multilingual transcription.

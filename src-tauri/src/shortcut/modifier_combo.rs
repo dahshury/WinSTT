@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 mod platform {
-    use log::{debug, error, info, warn};
+    use log::{debug, error, warn};
     use once_cell::sync::Lazy;
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::sync::{
@@ -148,7 +148,7 @@ mod platform {
         // the observe-only polling listener when the hook cannot be installed.
         let backend = match start_hook_listener(app, &combo) {
             Ok(handle) => {
-                info!(
+                debug!(
                     "registered modifier-only PTT shortcut '{}' (blocking keyboard hook)",
                     binding.current_binding
                 );
@@ -156,16 +156,12 @@ mod platform {
             }
             Err(err) => {
                 warn!(
-                    "modifier-only PTT hook unavailable ({err}); falling back to polling listener — the combo will still reach other apps"
+                    "modifier-only PTT hook unavailable ({err}); falling back to polling listener -- the combo will still reach other apps"
                 );
                 ListenerBackend::Poll(start_poll_listener(app, combo)?)
             }
         };
 
-        debug!(
-            "registered modifier-only PTT shortcut '{}'",
-            binding.current_binding
-        );
         *listener = Some(ListenerHandle {
             accelerator: binding.current_binding.clone(),
             _backend: backend,

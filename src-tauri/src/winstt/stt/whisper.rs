@@ -64,7 +64,7 @@ use token_select::{
     select_whisper_token_from_allowed,
 };
 
-use super::mel::{HOP_LENGTH, MelExtractor};
+use super::mel::{HOP_LENGTH, MelExtractor, N_FRAMES};
 use super::whisper_tokenizer::WhisperTokenizer;
 use super::{
     Accelerator, EngineConfig, EngineKind, Segment, SttError, SttResult, TranscribeOptions,
@@ -380,13 +380,43 @@ impl WhisperEngine {
     fn encode(&mut self, audio: &[f32]) -> SttResult<DynValue> {
         // Dynlen-capable encoder → smallest bucket that holds the audio + tail pad; stock
         // static export → the classic full 30 s window.
-        let (feats, n_mels, n_frames) = if self.enc_dynlen {
+        if self.enc_dynlen {
             let n_audio_frames = audio.len().div_ceil(HOP_LENGTH);
-            self.mel
-                .extract_frames(audio, enc_bucket_frames(n_audio_frames))
-        } else {
-            self.mel.extract(audio)
-        };
+            let bucket = enc_bucket_frames(n_audio_frames);
+            let (feats, n_mels, n_frames) = self.mel.extract_frames(audio, bucket);
+            match self.encode_frames(feats, n_mels, n_frames) {
+                Ok(hidden) => return Ok(hidden),
+                // MISDETECTED dynlen: some exports (e.g. onnx-community `*_timestamped`)
+                // declare `input_features` dim 2 symbolically while the graph's positional
+                // embedding is still the fixed 1500-frame constant — a sub-3000 bucket then
+                // fails the pos-emb Add broadcast ("500 by 1500"). The symbolic dim alone is
+                // therefore NOT proof of dynlen support; treat the first sub-window failure
+                // as the real capability probe: pin the engine to the static full window and
+                // re-encode. A full-window (3000-frame) failure is a genuine error either way,
+                // so only the shortened path retries.
+                Err(e) if n_frames < N_FRAMES => {
+                    log::debug!(
+                        "[whisper] '{}' rejected the dynamic {n_frames}-frame capability probe; using static 30 s encode ({e})",
+                        self.model_name
+                    );
+                    self.enc_dynlen = false;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let (feats, n_mels, n_frames) = self.mel.extract(audio);
+        self.encode_frames(feats, n_mels, n_frames)
+    }
+
+    /// One encoder run over already-extracted mel features → device-resident hidden state.
+    /// Split out of [`Self::encode`] so the dynlen path can retry with the full static window
+    /// when a shortened bucket turns out to be unsupported by the export.
+    fn encode_frames(
+        &mut self,
+        feats: Vec<f32>,
+        n_mels: usize,
+        n_frames: usize,
+    ) -> SttResult<DynValue> {
         // input_features: (1, n_mels, T).
         let input = Tensor::from_array(([1usize, n_mels, n_frames], feats.into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("encoder input tensor: {e}")))?;
@@ -935,9 +965,9 @@ impl WhisperEngine {
         let (s0t, s0top, s0run) = state.step0.unwrap_or((-1, f32::NAN, f32::NAN));
         let dom_text = self.tokenizer.decode_text(&[dom_tok]);
         log::warn!(
-            "[whisper-garbage] DEGENERATE DECODE — model='{}' ep={:?} thread={:?} | {} generated \
+            "[whisper-garbage] DEGENERATE DECODE; model='{}' ep={:?} thread={:?} | {} generated \
              tokens, {:.0}% are token {} ({:?}), NO EOS (hit {}-token cap) | step0: token={} \
-             top_logit={:.2} margin={:.2} (tiny margin ⇒ garbage encoder output; large ⇒ \
+             top_logit={:.2} margin={:.2} (tiny margin => garbage encoder output; large => \
              decoder/KV-cache fault) | LIKELY CAUSE: unreleased/overlapped DirectML ORT \
              session state across model swaps (lite-whisper low-rank encoder is the fragile \
              case). Copy this line for the next debugging session.",

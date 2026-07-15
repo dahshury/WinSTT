@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook, waitFor } from "@testing-library/react";
 import { useConnectionStore } from "@/entities/connection";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { useConnectionListener } from "./use-connection-listener";
 
 const originalApi = window.nativeBridge;

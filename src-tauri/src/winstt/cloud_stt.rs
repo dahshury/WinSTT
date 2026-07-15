@@ -110,8 +110,8 @@ impl CloudSttErrorCode {
     }
 }
 
-/// Map the internal taxonomy code to the renderer fan-out token the
-/// `native-bridge-adapter` `shouldDeliver` routes on. `timeout` and
+/// Map the internal taxonomy code to the renderer fan-out token that the
+/// direct native event boundary routes on. `timeout` and
 /// `audio_too_large` have no dedicated WinSTT channel, so they ride the
 /// network / provider channels respectively. `aborted` is suppressed by callers.
 pub fn cloud_error_fanout_code(code: CloudSttErrorCode) -> &'static str {

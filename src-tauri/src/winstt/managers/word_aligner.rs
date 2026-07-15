@@ -198,7 +198,7 @@ impl WordAligner {
                     Some(engine)
                 } else {
                     log::debug!(
-                        "[word-aligner] {DEFAULT_ALIGN_MODEL} loaded but exposes no cross_attentions.* — word timestamps unavailable"
+                        "[word-aligner] {DEFAULT_ALIGN_MODEL} loaded but exposes no cross_attentions.*; word timestamps unavailable"
                     );
                     None
                 }

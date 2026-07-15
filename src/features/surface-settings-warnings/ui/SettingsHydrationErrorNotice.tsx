@@ -4,7 +4,7 @@ import { AlertCircleIcon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
-import { useSettingsHydrationStore } from "@/features/update-settings";
+import { useSettingsHydrationStore } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";

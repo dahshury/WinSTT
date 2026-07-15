@@ -9,7 +9,7 @@
 
 /// Secret-at-rest seal/open (`enc:v1:` envelope) for the three secret settings
 /// (`llm.openrouterApiKey` + the two `integrations.*.apiKey`):
-/// `winstt_set_settings` seals on write, `read_settings` opens on read so every
+/// `winstt_patch_settings` seals on write, `read_settings` opens on read so every
 /// internal consumer (LLM / cloud-STT / verify) and the renderer see plaintext.
 pub mod secret_storage;
 pub mod settings;
@@ -27,6 +27,9 @@ pub mod catalog_data;
 pub mod download;
 /// Encoder dictionary model download (start/pause/resume/cancel/status) for the non-LLM fallback.
 pub mod encoder_dict;
+/// Authoritative, revisioned STT acquisition + activation lifecycle shared by
+/// the download manager and atomic model-switch transaction.
+pub mod model_lifecycle;
 /// Runtime + fitness commands (get_runtime_info / stt_list_models_with_state / assess_dictation_fit /
 /// assess_ollama_fit / gpu_get_info). Registered in lib.rs collect_commands![].
 pub mod runtime;
@@ -40,8 +43,8 @@ pub mod swap_events;
 /// → overlay X / Escape). Wraps the centralized `utils::cancel_current_operation`
 /// + emits `stt:session-aborted`. Registered in lib.rs collect_commands![].
 pub mod cancel;
-/// STT_SET/GET_PARAMETER + STT_CALL_METHOD + STT_RELOAD_MODEL command seam the
-/// reused renderer drives, plus the SttEvents lifecycle/level emit façade
+/// STT_SET/GET_PARAMETER + STT_CALL_METHOD command seam the reused renderer drives,
+/// plus the SttEvents lifecycle/level emit façade
 /// (recording/vad/full-sentence/no-audio/audio-level/connection/server-status/
 /// session-aborted) + `winstt_emit_ready`. Registered in lib.rs collect_commands![].
 pub mod dictation;
@@ -160,6 +163,12 @@ pub mod tray_indicator_window;
 /// `settings:changed`, then hides the wizard + shows main. Ports the reference
 /// `onboarding-window.ts` FINISH handler. Registered in lib.rs collect_commands![].
 pub mod onboarding;
+
+/// Recurring OS permission preflight. Owns the startup/runtime gate for
+/// microphone access (Windows/macOS) and accessibility access (macOS), and
+/// reuses the onboarding window as a focused recovery surface when a returning
+/// user has revoked either permission.
+pub mod permission;
 
 /// Snippet expansion: `winstt_expand_snippets` (read-only preview/playground seam) +
 /// `install_snippet_reload_bridge` setup hook that keeps the snippet cache warm from

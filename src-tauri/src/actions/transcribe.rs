@@ -5,14 +5,16 @@ use crate::managers::transcription::{TranscriptionManager, is_silent_recording_w
 use crate::shortcut;
 use crate::tray::{TrayIconState, change_tray_icon};
 use crate::utils::{self, show_recording_overlay};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
-use super::post_process::{process_transcription_output, should_run_winstt_dictation_llm_from_app};
+use super::post_process::{
+    PostProcessingSkipGuard, process_transcription_output, should_run_winstt_dictation_llm_from_app,
+};
 use super::{
     FinishGuard, RecordingErrorEvent, ShortcutAction, cancelled_session_cleanup,
     set_last_transcription,
@@ -65,7 +67,7 @@ fn persist_history_after_wav(
 ) {
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
-        info!(
+        debug!(
             "[history] wav_persist_start file='{file_name}' samples={sample_count} audio_ms={}",
             samples_to_ms(sample_count)
         );
@@ -108,7 +110,7 @@ fn persist_history_after_wav(
             .context("fileName", file_name.clone())
             .context("samples", sample_count.to_string())
             .context("audioMs", samples_to_ms(sample_count).to_string())
-            .record(Some(&app));
+            .record_without_log(Some(&app));
         }
 
         if !wav_saved {
@@ -156,7 +158,8 @@ impl ShortcutAction for TranscribeAction {
         // recording modes (PTT / toggle / wake-word) reach this start endpoint, so
         // pinning here covers every mode. The pin is re-validated at capture time
         // and superseded by the next start.
-        super::pinned_foreground::pin();
+        let pinned_hwnd = super::pinned_foreground::pin();
+        super::app_profile::resolve_at_start(app, pinned_hwnd);
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -202,6 +205,7 @@ impl ShortcutAction for TranscribeAction {
             );
             crate::transcription_coordinator::finish_dictation_session(session_id);
             super::pinned_foreground::clear();
+            super::app_profile::clear();
             utils::unregister_cancel_shortcut_if_idle(app);
             show_recording_overlay(app);
             crate::winstt::stt::fallback::emit_stt_pipeline_unavailable(
@@ -283,6 +287,7 @@ impl ShortcutAction for TranscribeAction {
             if crate::transcription_coordinator::is_dictation_session_cancelled(session_id) {
                 rm.cancel_recording();
                 super::pinned_foreground::clear();
+                super::app_profile::clear();
                 let _ = cancelled_session_cleanup(app, session_id, "recording start");
                 utils::unregister_cancel_shortcut_if_idle(app);
                 return;
@@ -312,6 +317,7 @@ impl ShortcutAction for TranscribeAction {
             // attempt — drop the pin taken above rather than leaving it to be
             // re-validated (and superseded) later.
             super::pinned_foreground::clear();
+            super::app_profile::clear();
             utils::unregister_cancel_shortcut_if_idle(app);
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
@@ -360,11 +366,11 @@ impl ShortcutAction for TranscribeAction {
         let generation = rm.recording_generation();
 
         let stop_recording_time = Instant::now();
-        info!("[stt-ui] recorder_stop_start binding_id='{binding_id}' generation={generation}");
+        debug!("[stt-ui] recorder_stop_start binding_id='{binding_id}' generation={generation}");
         let stopped_capture = rm.stop_recording(&binding_id);
         let stop_recording_elapsed = stop_recording_time.elapsed();
         let stopped_sample_count = stopped_capture.as_ref().map_or(0, |c| c.samples.len());
-        info!(
+        debug!(
             "[stt-ui] recorder_stop_complete binding_id='{binding_id}' duration_ms={} result={} samples={} audio_ms={}",
             stop_recording_elapsed.as_millis(),
             if stopped_capture.is_some() {
@@ -564,13 +570,17 @@ impl ShortcutAction for TranscribeAction {
                             if cancelled_session_cleanup(&ah, session_id, "post-processing start") {
                                 return;
                             }
+                            let skip_guard = will_run_post_stt_llm
+                                .then(|| PostProcessingSkipGuard::new(&ah, session_id));
                             let post_process_started = Instant::now();
-                            info!(
+                            debug!(
                                 "[stt-ui] post_process_start session_id={session_id} raw_chars={}",
                                 transcription.chars().count()
                             );
-                            let processed = process_transcription_output(&ah, &transcription).await;
-                            info!(
+                            let processed =
+                                process_transcription_output(&ah, &transcription, session_id).await;
+                            drop(skip_guard);
+                            debug!(
                                 "[stt-ui] post_process_complete session_id={session_id} duration_ms={} final_chars={} post_processed={}",
                                 post_process_started.elapsed().as_millis(),
                                 processed.final_text.chars().count(),
@@ -710,11 +720,11 @@ impl ShortcutAction for TranscribeAction {
                                         let final_text = processed.final_text;
                                         let paste_chars = final_text.chars().count();
                                         ah.run_on_main_thread(move || {
-                                        info!(
+                                        debug!(
                                             "[stt-ui] paste_start target=main_thread chars={paste_chars}"
                                         );
                                         match utils::paste(final_text, ah_clone.clone()) {
-                                            Ok(()) => info!(
+                                            Ok(()) => debug!(
                                                 "[stt-ui] paste_complete target=main_thread duration_ms={}",
                                                 paste_time.elapsed().as_millis()
                                             ),
@@ -750,11 +760,11 @@ impl ShortcutAction for TranscribeAction {
                                             }
 
                                             let paste_time = Instant::now();
-                                            info!(
+                                            debug!(
                                                 "[stt-ui] paste_start target=worker chars={paste_chars}"
                                             );
                                             match utils::paste(final_text, ah_clone.clone()) {
-                                                Ok(()) => info!(
+                                                Ok(()) => debug!(
                                                     "[stt-ui] paste_complete target=worker duration_ms={}",
                                                     paste_time.elapsed().as_millis()
                                                 ),

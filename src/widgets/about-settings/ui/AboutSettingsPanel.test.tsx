@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { describe, expect, test } from "bun:test";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { AboutSettingsPanel } from "./AboutSettingsPanel";
 
 interface TauriInternals {
@@ -21,34 +21,23 @@ interface TauriInternals {
 
 describe("AboutSettingsPanel", () => {
 	test("auto-checks updates once when the About tab has no updater history", async () => {
-		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
-		const secureInvokeCalls: Array<{ channel: string; payload: unknown }> = [];
+		const tauriCalls: string[] = [];
 		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;
 		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
 
-		window.nativeBridge = {
-			...previousNativeBridge,
-			invoke: async (channel: string, ...args: unknown[]) => {
-				nativeInvokeCalls.push({ channel, args });
-				if (channel === IPC.UPDATER_CHECK_NOW) {
-					return { triggered: false };
-				}
-				return undefined;
-			},
-			secureInvoke: async (channel: string, payload?: unknown) => {
-				secureInvokeCalls.push({ channel, payload });
-				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
-					return [];
-				}
-				return undefined;
-			},
-		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			tauriCalls.push(cmd);
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			if (cmd === "winstt_updater_get_status_history") {
+				return [];
+			}
+			if (cmd === "winstt_updater_check_and_download") {
+				return { triggered: false };
 			}
 			return undefined;
 		};
@@ -74,13 +63,13 @@ describe("AboutSettingsPanel", () => {
 
 			await waitFor(() => {
 				expect(
-					secureInvokeCalls.filter(
-						(call) => call.channel === IPC.UPDATER_GET_STATUS_HISTORY,
+					tauriCalls.filter(
+						(command) => command === "winstt_updater_get_status_history",
 					),
 				).toHaveLength(1);
 				expect(
-					nativeInvokeCalls.filter(
-						(call) => call.channel === IPC.UPDATER_CHECK_NOW,
+					tauriCalls.filter(
+						(command) => command === "winstt_updater_check_and_download",
 					),
 				).toHaveLength(1);
 			});
@@ -89,8 +78,8 @@ describe("AboutSettingsPanel", () => {
 				await Promise.resolve();
 			});
 			expect(
-				nativeInvokeCalls.filter(
-					(call) => call.channel === IPC.UPDATER_CHECK_NOW,
+				tauriCalls.filter(
+					(command) => command === "winstt_updater_check_and_download",
 				),
 			).toHaveLength(1);
 
@@ -109,28 +98,20 @@ describe("AboutSettingsPanel", () => {
 	});
 
 	test("renders the latest-version status beside a single refresh button", async () => {
-		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
+		const tauriCalls: string[] = [];
 		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;
 		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
 
-		window.nativeBridge = {
-			...previousNativeBridge,
-			invoke: async (channel: string, ...args: unknown[]) => {
-				nativeInvokeCalls.push({ channel, args });
-			},
-			secureInvoke: async (channel: string) => {
-				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
-					return [{ status: "not-available", timestamp: 1 }];
-				}
-				return undefined;
-			},
-		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			tauriCalls.push(cmd);
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			if (cmd === "winstt_updater_get_status_history") {
+				return [{ status: "not-available", timestamp: 1 }];
 			}
 			return undefined;
 		};
@@ -157,8 +138,8 @@ describe("AboutSettingsPanel", () => {
 			).toBeDefined();
 			expect(within(updateToolbar).getAllByRole("button")).toHaveLength(1);
 			expect(
-				nativeInvokeCalls.filter(
-					(call) => call.channel === IPC.UPDATER_CHECK_NOW,
+				tauriCalls.filter(
+					(command) => command === "winstt_updater_check_and_download",
 				),
 			).toHaveLength(0);
 		} finally {
@@ -168,26 +149,20 @@ describe("AboutSettingsPanel", () => {
 	});
 
 	test("runs the open-logs action from the About tab", async () => {
-		const nativeInvokeCalls: Array<{ args: unknown[]; channel: string }> = [];
+		const tauriCalls: string[] = [];
 		const tauriWindow = window as unknown as Window & {
 			__TAURI_INTERNALS__: TauriInternals;
 		};
 		const previousNativeBridge = window.nativeBridge;
 		const previousTauriInvoke = tauriWindow.__TAURI_INTERNALS__.invoke;
 
-		window.nativeBridge = {
-			...previousNativeBridge,
-			invoke: async (channel: string, ...args: unknown[]) => {
-				nativeInvokeCalls.push({ channel, args });
-				if (channel === IPC.DIAG_OPEN_LOGS_FOLDER) {
-					return { ok: true, path: "C:\\logs" };
-				}
-				return undefined;
-			},
-		};
 		tauriWindow.__TAURI_INTERNALS__.invoke = async (cmd) => {
+			tauriCalls.push(cmd);
 			if (cmd === "about_get_app_info") {
 				return { version: "1.2.3", copyright: "Copyright WinSTT" };
+			}
+			if (cmd === "diag_open_logs_folder") {
+				return { ok: true, path: "C:\\logs" };
 			}
 			if (cmd === "diag_save_bundle") {
 				return { ok: true, path: "C:\\winstt-diag.zip" };
@@ -208,11 +183,7 @@ describe("AboutSettingsPanel", () => {
 				);
 				await Promise.resolve();
 			});
-			expect(
-				nativeInvokeCalls.some(
-					(call) => call.channel === IPC.DIAG_OPEN_LOGS_FOLDER,
-				),
-			).toBe(true);
+			expect(tauriCalls.includes("diag_open_logs_folder")).toBe(true);
 		} finally {
 			window.nativeBridge = previousNativeBridge;
 			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;

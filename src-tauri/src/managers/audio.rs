@@ -7,7 +7,7 @@ use crate::helpers::clamshell;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
 use crate::winstt::settings_store::read_settings_raw;
 use crate::winstt::sync_ext::MutexExt;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -616,9 +616,9 @@ impl AudioRecordingManager {
                 // stop_microphone_stream does not acquire the state lock,
                 // so holding it here is safe (no deadlock).
                 if delay > Duration::from_millis(0) {
-                    info!("Closing idle microphone stream after {:?}", delay);
+                    debug!("Closing idle microphone stream after {:?}", delay);
                 } else {
-                    info!("Closing idle microphone stream after recording stop");
+                    debug!("Closing idle microphone stream after recording stop");
                 }
                 rm.stop_microphone_stream();
             }
@@ -754,7 +754,7 @@ impl AudioRecordingManager {
         // host audio device is producing samples yet; the first input callback
         // fires asynchronously one buffer period later (hardware dependent,
         // typically ~10–200ms on macOS, longer on Bluetooth/USB).
-        info!(
+        debug!(
             "Microphone stream initialized in {:?}",
             start_time.elapsed()
         );

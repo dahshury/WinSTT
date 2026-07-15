@@ -75,8 +75,8 @@ pub(crate) fn catalog_accelerator(accel: crate::winstt::stt::Accelerator) -> Cat
 /// `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
 ///
 /// NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
-/// is `stt_list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
-/// here and `STT_LIST_MODELS_WITH_STATE` → `stt_list_models_with_state` (native-bridge-adapter.ts ROUTE).
+/// is `stt_list_models_with_state` (commands/runtime.rs). The renderer calls each
+/// generated binding directly.
 #[tauri::command]
 #[specta::specta]
 pub fn stt_list_models(app: AppHandle) -> Vec<CatalogModelInfo> {
@@ -136,6 +136,13 @@ pub fn picker_quantizations_for(app: AppHandle, model_id: String) -> Vec<String>
 #[specta::specta]
 pub fn get_live_resources(_app: AppHandle, force_refresh: Option<bool>) -> LiveResources {
     let _ = force_refresh;
+    live_resources_snapshot()
+}
+
+/// Capture one current host-resource snapshot. Window-opening code reuses this
+/// so the prewarmed model-footprint renderer receives the value it should paint
+/// before its native window becomes visible.
+pub(crate) fn live_resources_snapshot() -> LiveResources {
     let (ram_available_bytes, ram_total_bytes, cpu_percent) = live_cpu_ram_snapshot();
     LiveResources {
         cpu_count_logical: num_cpus::get() as u32,

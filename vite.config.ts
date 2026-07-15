@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
@@ -15,6 +16,34 @@ import {
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const host = process.env["TAURI_DEV_HOST"];
 const devServerHost = host || "127.0.0.1";
+
+const CORE_PRELOAD_PREFIXES = [
+	"react-",
+	"globals-",
+	"ipc-client-",
+	"setting-",
+	"springs-",
+	"audio-visualizer-",
+	"update-settings-",
+	"connect-server-",
+	"transcription-",
+	"listen-mode-",
+] as const;
+
+function resolveModulePreloads(
+	_filename: string,
+	dependencies: string[],
+	context: { hostId: string; hostType: "html" | "js" },
+): string[] {
+	if (context.hostType !== "html") {
+		return dependencies;
+	}
+
+	return dependencies.filter((dependency) => {
+		const fileName = dependency.slice(dependency.lastIndexOf("/") + 1);
+		return CORE_PRELOAD_PREFIXES.some((prefix) => fileName.startsWith(prefix));
+	});
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
 	res.statusCode = status;
@@ -48,6 +77,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+let devSettingsRevision = 0;
+
 function winsttDevSettingsBridge() {
 	return {
 		name: "winstt-dev-settings-bridge",
@@ -66,6 +97,7 @@ function winsttDevSettingsBridge() {
 						if (req.method === "GET") {
 							sendJson(res, 200, {
 								appDataDir: resolveWinsttAppDataDir(),
+								revision: devSettingsRevision,
 								settings: await readDevSettings(),
 							});
 							return;
@@ -73,7 +105,29 @@ function winsttDevSettingsBridge() {
 						if (req.method === "POST" || req.method === "PATCH") {
 							const body = await readJsonBody(req);
 							const patch = isRecord(body) ? body["settings"] : undefined;
-							sendJson(res, 200, { settings: await writeDevSettings(patch) });
+							const baseRevision = isRecord(body)
+								? body["baseRevision"]
+								: undefined;
+							if (
+								typeof baseRevision === "number" &&
+								baseRevision !== devSettingsRevision
+							) {
+								sendJson(res, 200, {
+									applied: false,
+									changedSections: [],
+									revision: devSettingsRevision,
+									settings: await readDevSettings(),
+								});
+								return;
+							}
+							const settings = await writeDevSettings(patch);
+							devSettingsRevision += 1;
+							sendJson(res, 200, {
+								applied: true,
+								changedSections: isRecord(patch) ? Object.keys(patch) : [],
+								revision: devSettingsRevision,
+								settings,
+							});
 							return;
 						}
 						sendJson(res, 405, { error: "Method not allowed" });
@@ -84,6 +138,93 @@ function winsttDevSettingsBridge() {
 					}
 				})();
 			});
+		},
+	};
+}
+
+const hugeiconsBarrelImport =
+	/import\s*\{([^}]+)\}\s*from\s*["']@hugeicons\/core-free-icons["'];?/g;
+let hugeiconsExportModules: Map<string, string> | undefined;
+
+function hugeiconsModuleFor(exportName: string): string {
+	if (!hugeiconsExportModules) {
+		const indexSource = readFileSync(
+			resolve(
+				rootDir,
+				"node_modules/@hugeicons/core-free-icons/dist/esm/index.js",
+			),
+			"utf8",
+		);
+		hugeiconsExportModules = new Map();
+		for (const match of indexSource.matchAll(
+			/export \{([^}]+)\} from ['"]\.\/([^'"]+)\.js['"];/g,
+		)) {
+			const [, specifiers, moduleName] = match;
+			if (!specifiers || !moduleName) {
+				continue;
+			}
+			for (const exportMatch of specifiers.matchAll(/default as (\w+)/g)) {
+				const exportName = exportMatch[1];
+				if (exportName) {
+					hugeiconsExportModules.set(exportName, moduleName);
+				}
+			}
+		}
+	}
+
+	const moduleName = hugeiconsExportModules.get(exportName);
+	if (!moduleName) {
+		throw new Error(`Hugeicons export ${exportName} has no direct ESM module`);
+	}
+	return moduleName;
+}
+
+/**
+ * The Hugeicons root barrel re-exports several thousand icon modules. Rolldown
+ * must parse all of them even though WinSTT uses only a small subset. Keep the
+ * ergonomic, type-checked named imports in source and lower them to direct ESM
+ * modules before Vite resolves dependencies.
+ */
+function hugeiconsDirectImports() {
+	return {
+		name: "winstt-hugeicons-direct-imports",
+		// Rolldown handles the large barrel efficiently in production, while the
+		// dev server benefits from avoiding thousands of eagerly scanned modules.
+		apply: "serve" as const,
+		enforce: "pre" as const,
+		transform: {
+			// Rolldown evaluates these native filters before crossing into this JS
+			// hook. Without them, calling an otherwise-cheap transform for every
+			// module costs more than the barrel optimization saves.
+			filter: {
+				id: { include: /\.[cm]?[jt]sx?$/, exclude: /node_modules/ },
+				code: /@hugeicons\/core-free-icons/,
+			},
+			handler(code: string, id: string) {
+				let transformed = false;
+				const output = code.replace(
+					hugeiconsBarrelImport,
+					(_match, names: string) => {
+						const directImports = names
+							.split(",")
+							.map((name) => name.trim())
+							.filter(Boolean)
+							.map((specifier) => {
+								const [imported, local = imported] =
+									specifier.split(/\s+as\s+/);
+								if (!imported) {
+									throw new Error(`Invalid Hugeicons import in ${id}`);
+								}
+								const moduleName = hugeiconsModuleFor(imported);
+								return `import ${local} from "@hugeicons/core-free-icons/${moduleName}";`;
+							});
+						transformed = directImports.length > 0;
+						return directImports.join("\n");
+					},
+				);
+
+				return transformed ? { code: output, map: null } : undefined;
+			},
 		},
 	};
 }
@@ -114,6 +255,7 @@ export default defineConfig(({ command }) => {
 		// vite-tsconfig-paths.
 		resolve: { tsconfigPaths: true },
 		plugins: [
+			hugeiconsDirectImports(),
 			// `messages/*.json` are pulled in via a dynamic `import()` in
 			// IntlProvider (`shared/i18n/loadMessages`), which HMR does NOT re-run on
 			// a JSON edit — so adding/changing a key otherwise leaves the running app
@@ -155,6 +297,14 @@ export default defineConfig(({ command }) => {
 		clearScreen: false,
 		envPrefix: ["VITE_", "TAURI_ENV_*"],
 		optimizeDeps: {
+			// Settings panels are lazy modules, so their component entry points are
+			// discovered after the initial dependency crawl unless Vite expands the
+			// package exports up front. A late optimizer rebuild invalidates dynamic
+			// imports that are already in flight (most visibly the Appearance panel).
+			// Hugeicons is already lowered to small direct ESM imports by the plugin
+			// above; excluding its full package prefix keeps each newly seen icon from
+			// triggering another optimizer rebuild.
+			exclude: ["@hugeicons/core-free-icons"],
 			include: [
 				"react",
 				"react-dom",
@@ -175,8 +325,8 @@ export default defineConfig(({ command }) => {
 				"class-variance-authority",
 				"double-metaphone",
 				"@hugeicons/react",
-				"@hugeicons/core-free-icons",
 				"@base-ui/react",
+				"@base-ui/react/*",
 				"@tauri-apps/api/core",
 				"@tauri-apps/api/event",
 				"@tauri-apps/api/window",
@@ -185,18 +335,44 @@ export default defineConfig(({ command }) => {
 		build: {
 			outDir: "dist",
 			emptyOutDir: true,
+			// Keep a machine-readable graph beside the HTML so CI can enforce the
+			// real main-window startup budget (static imports only; lazy surfaces are
+			// intentionally excluded).
+			manifest: true,
 			sourcemap: false,
 			// Tauri's webview (WebView2 / WebKitGTK) supports the modern ES surface.
 			target: "esnext",
-			modulePreload: false,
+			// All supported Tauri webviews implement native modulepreload. Restore a
+			// bounded set of graph-specific hints without shipping Vite's compatibility
+			// polyfill. Each HTML entry receives only core chunks from its own static
+			// graph, avoiding both cross-window leakage and an eager request per tiny
+			// icon/helper chunk. Dynamic feature imports retain Vite's normal on-demand
+			// dependency preloading when the user opens them.
+			modulePreload: {
+				polyfill: false,
+				resolveDependencies: resolveModulePreloads,
+			},
 			reportCompressedSize: false,
-			rollupOptions: {
+			rolldownOptions: {
+				onLog(level, log, handler) {
+					// Hugeicons publishes array literals with a misplaced PURE marker.
+					// Rolldown safely ignores it, but reporting the same third-party
+					// warning thousands of times floods and slows release-build output.
+					if (
+						log.code === "INVALID_ANNOTATION" &&
+						log.id?.includes("@hugeicons/core-free-icons")
+					) {
+						return;
+					}
+					handler(level, log);
+				},
 				input: {
 					// `main` stays at the root so the Tauri dev server serves it from `/`.
 					// Secondary windows live under `windows/`; build output mirrors
 					// the input layout (dist/windows/*).
 					main: resolve(rootDir, "index.html"),
 					settings: resolve(rootDir, "windows/settings.html"),
+					"whats-new": resolve(rootDir, "windows/whats-new.html"),
 					overlay: resolve(rootDir, "windows/overlay.html"),
 					"tray-menu": resolve(rootDir, "windows/tray-menu.html"),
 					"tray-indicator": resolve(rootDir, "windows/tray-indicator.html"),
@@ -214,41 +390,12 @@ export default defineConfig(({ command }) => {
 							}
 						: {}),
 				},
-				output: {
-					manualChunks: (id) => {
-						const normalizedId = id.replaceAll("\\", "/");
-						if (normalizedId.includes("node_modules")) {
-							if (normalizedId.includes("@base-ui/")) {
-								return "vendor-base-ui";
-							}
-							if (
-								normalizedId.includes("react-dom") ||
-								normalizedId.includes("/react/")
-							) {
-								return "vendor-react";
-							}
-							if (
-								normalizedId.includes("/motion/") ||
-								normalizedId.includes("framer-motion")
-							) {
-								return "vendor-motion";
-							}
-							if (normalizedId.includes("@hugeicons/")) {
-								return "vendor-hugeicons";
-							}
-							if (
-								normalizedId.includes("use-intl") ||
-								normalizedId.includes("@formatjs/")
-							) {
-								return "vendor-intl";
-							}
-							if (normalizedId.includes("zustand")) {
-								return "vendor-zustand";
-							}
-						}
-						return undefined;
-					},
-				},
+				// Let Rolldown split by the actual multi-entry import graph. Broad
+				// package-level vendor chunks make the small main pill download and
+				// parse Base UI, Motion, and icon modules that are only used by
+				// settings/onboarding windows. Automatic shared chunks preserve reuse
+				// where graphs overlap without pulling secondary-window code into the
+				// startup path.
 			},
 		},
 		server: {
@@ -275,8 +422,10 @@ export default defineConfig(({ command }) => {
 					}
 				: {}),
 			watch: {
-				// Tell Vite to ignore watching `src-tauri`.
-				ignored: ["**/src-tauri/**"],
+				// These repo-local trees are outside the renderer. In particular, Vite
+				// does not inherit `.gitignore`, so vendored apps under `examples/`
+				// otherwise trigger unrelated full-page reloads when their HTML changes.
+				ignored: ["**/src-tauri/**", "**/examples/**"],
 			},
 			// Warm only the main entry so its module graph is transformed in the
 			// background; warming every entry regresses first-paint.

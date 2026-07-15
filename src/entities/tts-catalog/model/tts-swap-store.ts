@@ -3,6 +3,7 @@ import {
 	onTtsInstallFailed,
 	onTtsInstallStatus,
 } from "@/shared/api/ipc-client";
+import { hasNativeRuntime } from "@/shared/api/native-boundary";
 
 /**
  * In-flight TTS engine swap — the TTS analogue of `useModelSwapStore`, but
@@ -122,6 +123,6 @@ export function initTtsSwapStore(): () => void {
 	};
 }
 
-if (typeof window !== "undefined" && window.nativeBridge != null) {
+if (hasNativeRuntime()) {
 	initTtsSwapStore();
 }

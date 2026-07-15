@@ -2,13 +2,11 @@
 	"$schema": "https://schema.tauri.app/config/2",
 	"bundle": {
 		"resources": {
-			"../LICENSE": "_up_/LICENSE",
-			"../THIRD_PARTY_NOTICES.md": "_up_/THIRD_PARTY_NOTICES.md",
 			"resources/*.png": "resources/",
-			"resources/*.wav": "resources/",
-			"resources/models/*": "resources/models/",
-			"binaries/winstt-context.exe": "binaries/winstt-context.exe",
-			"binaries/runtime/*.dll": "./"
+			"resources/recording_sound_default.wav": "resources/recording_sound_default.wav",
+			"resources/error_sound.wav": "resources/error_sound.wav",
+			"resources/marimba_start.wav": "resources/marimba_start.wav",
+			"resources/models/*": "resources/models/"
 		}
 	}
 }

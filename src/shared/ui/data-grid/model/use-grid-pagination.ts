@@ -5,7 +5,7 @@ import {
 } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 
-/** Rows per page for the settings grids (Dictionary / Snippets). */
+/** Rows per page for editable settings grids (Dictionary / Snippets / app profiles). */
 const GRID_PAGE_SIZE = 5;
 
 /**

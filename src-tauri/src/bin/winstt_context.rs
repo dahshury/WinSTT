@@ -117,6 +117,7 @@ enum NwMode {
     Selection,
     Split,
     Tree,
+    Meta,
 }
 
 /// Parse the mode from the process args — the same `--selection` / `--split` /
@@ -130,6 +131,7 @@ fn nw_parse_mode() -> NwMode {
             "--selection" => mode = NwMode::Selection,
             "--split" => mode = NwMode::Split,
             "--tree" => mode = NwMode::Tree,
+            "--meta" => mode = NwMode::Meta,
             _ => {}
         }
     }
@@ -260,6 +262,7 @@ mod windows_impl {
         selection_only: bool,
         split: bool,
         tree: bool,
+        meta: bool,
         hwnd: Option<isize>,
         /// `--serve`: persistent JSON-per-line loop over stdin/stdout (COM/UIA
         /// warm once at startup, one request per line). The other flags are the
@@ -275,6 +278,7 @@ mod windows_impl {
             selection_only: false,
             split: false,
             tree: false,
+            meta: false,
             hwnd: None,
             serve: false,
             ocr: false,
@@ -285,6 +289,7 @@ mod windows_impl {
                 "--selection" => cli.selection_only = true,
                 "--split" => cli.split = true,
                 "--tree" => cli.tree = true,
+                "--meta" => cli.meta = true,
                 "--serve" => cli.serve = true,
                 "--ocr" => cli.ocr = true,
                 "--hwnd" => {
@@ -325,6 +330,7 @@ mod windows_impl {
         Selection,
         Split,
         Tree,
+        Meta,
     }
 
     impl Mode {
@@ -334,6 +340,7 @@ mod windows_impl {
                 "selection" => Mode::Selection,
                 "split" => Mode::Split,
                 "tree" => Mode::Tree,
+                "meta" => Mode::Meta,
                 _ => Mode::Focused,
             }
         }
@@ -354,7 +361,9 @@ mod windows_impl {
             std::process::exit(3);
         });
 
-        let mode = if cli.tree {
+        let mode = if cli.meta {
+            Mode::Meta
+        } else if cli.tree {
             Mode::Tree
         } else if cli.split {
             Mode::Split
@@ -625,6 +634,12 @@ mod windows_impl {
                     // uses --split, and the URL is what (a) lets the LLM tell
                     // Gmail from Docs and (b) drives the host-based privacy
                     // deny-list (e.g. *.bankofamerica.com). axHtml stays empty.
+                    url = find_browser_url(uia, fg, &app_exe);
+                }
+                Mode::Meta => {
+                    // Identity-only capture: targeted omnibox lookup plus the
+                    // Win32 title/exe collected above. Do not read the focused
+                    // element's Value/Text patterns or walk its subtree.
                     url = find_browser_url(uia, fg, &app_exe);
                 }
                 Mode::Focused | Mode::Selection => {
@@ -1803,6 +1818,7 @@ mod windows_impl {
             assert!(Mode::parse_mode("selection") == Mode::Selection);
             assert!(Mode::parse_mode("split") == Mode::Split);
             assert!(Mode::parse_mode("tree") == Mode::Tree);
+            assert!(Mode::parse_mode("meta") == Mode::Meta);
             assert!(Mode::parse_mode("focused") == Mode::Focused);
             // Unknown / empty → focused (the safe default).
             assert!(Mode::parse_mode("") == Mode::Focused);
@@ -2249,6 +2265,10 @@ mod macos_impl {
             snap.window_title = copy_attr_string(app.get(), "AXTitle").unwrap_or_default();
         }
 
+        if mode == NwMode::Meta {
+            return Some(snap);
+        }
+
         // Password guard: secure text fields carry the AXSecureTextField subrole.
         // Their (masked) contents are never read — mirror the Windows guard.
         if copy_attr_string(felem, "AXSubrole").as_deref() == Some("AXSecureTextField") {
@@ -2283,6 +2303,7 @@ mod macos_impl {
             NwMode::Focused => {
                 snap.focused_text = copy_attr_string(felem, "AXValue").unwrap_or_default();
             }
+            NwMode::Meta => {}
         }
 
         Some(snap)
@@ -2453,7 +2474,7 @@ mod linux_impl {
     use atspi::connection::AccessibilityConnection;
     use atspi::proxy::accessible::{AccessibleProxy, ObjectRefExt};
     use atspi::proxy::text::TextProxy;
-    use atspi::{Interface, InterfaceSet, ObjectRef, Role, State};
+    use atspi::{Interface, InterfaceSet, ObjectRefOwned, Role, State};
     use zbus::proxy::CacheProperties;
 
     use super::{
@@ -2522,6 +2543,10 @@ mod linux_impl {
         snap.element_name = focused.name().await.unwrap_or_default();
         snap.window_title = window_title(bus, &focused).await;
 
+        if mode == NwMode::Meta {
+            return Some(snap);
+        }
+
         // Password guard: AT-SPI exposes secure entries as Role::PasswordText.
         if focused.get_role().await.unwrap_or(Role::Invalid) == Role::PasswordText {
             snap.is_password = true;
@@ -2530,9 +2555,9 @@ mod linux_impl {
 
         // Text interface on the focused object (offsets are in characters).
         let text = TextProxy::builder(bus)
-            .destination(focused_ref.name.clone())
+            .destination(focused_ref.name()?.clone())
             .ok()?
-            .path(focused_ref.path.clone())
+            .path(focused_ref.path().clone())
             .ok()?
             .cache_properties(CacheProperties::No)
             .build()
@@ -2543,7 +2568,7 @@ mod linux_impl {
 
         match mode {
             NwMode::Selection => {
-                if text.get_nselections().await.unwrap_or(0) > 0
+                if text.get_n_selections().await.unwrap_or(0) > 0
                     && let Ok((start, end)) = text.get_selection(0).await
                     && end > start
                 {
@@ -2567,6 +2592,7 @@ mod linux_impl {
                     snap.focused_text = text.get_text(0, end).await.unwrap_or_default();
                 }
             }
+            NwMode::Meta => {}
         }
 
         Some(snap)
@@ -2577,8 +2603,8 @@ mod linux_impl {
     async fn find_focused_text(
         bus: &zbus::Connection,
         root: &AccessibleProxy<'_>,
-    ) -> Option<ObjectRef> {
-        let mut stack: Vec<(ObjectRef, usize)> = root
+    ) -> Option<ObjectRefOwned> {
+        let mut stack: Vec<(ObjectRefOwned, usize)> = root
             .get_children()
             .await
             .ok()?

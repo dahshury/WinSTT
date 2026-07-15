@@ -11,13 +11,15 @@ use tauri::Manager;
 
 use crate::managers::audio::AudioRecordingManager;
 
+mod app_profile;
 mod misc_actions;
 mod pinned_foreground;
 mod post_process;
 mod transcribe;
 
 use misc_actions::{
-    CancelAction, PostProcessingProfileSwapAction, ReadAloudAction, RepasteAction, TransformAction,
+    CancelAction, PostProcessingProfileSwapAction, ReadAloudAction, RepasteAction,
+    SkipPostProcessingAction, TransformAction,
 };
 use transcribe::TranscribeAction;
 
@@ -51,6 +53,10 @@ pub(super) fn last_transcription() -> String {
         .lock()
         .map(|slot| slot.clone())
         .unwrap_or_default()
+}
+
+pub(crate) fn request_post_processing_skip(app: &AppHandle, restore_focus: bool) -> bool {
+    post_process::request_post_processing_skip(app, restore_focus)
 }
 
 pub(super) fn cancelled_session_cleanup(app: &AppHandle, session_id: u64, phase: &str) -> bool {
@@ -114,6 +120,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "post_processing_profile_swap".to_string(),
         Arc::new(PostProcessingProfileSwapAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "skip_post_processing".to_string(),
+        Arc::new(SkipPostProcessingAction) as Arc<dyn ShortcutAction>,
     );
     map
 });

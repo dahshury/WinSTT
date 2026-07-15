@@ -335,7 +335,7 @@ impl RealtimeManager {
     /// per-tick `process_tick` that returns a `TickAction` (continue immediately or sleep then
     /// continue). All decode/emit logic lives in `process_tick` and its named sub-steps.
     fn run_loop(&self) {
-        log::info!("[realtime] worker started");
+        log::debug!("[realtime] worker started");
         let mut state = RealtimeLoopState::new();
         loop {
             match self.process_tick(&mut state) {

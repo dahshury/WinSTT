@@ -21,20 +21,26 @@ import "@/shared/ui/searchable-select/searchable-select.css";
 
 const COLLAPSED_SELECTION_THRESHOLD = 3;
 
-export interface LanguageMultiComboboxProps {
+export type MultiComboboxOption<T extends string = string> = SelectOption & {
+	id: T;
+};
+
+export interface MultiComboboxProps<T extends string = string> {
 	ariaLabel: string;
 	disabled?: boolean;
 	emptyLabel: string;
-	onChange: (value: string[]) => void;
-	options: readonly SelectOption[];
+	onChange: (value: T[]) => void;
+	options: readonly MultiComboboxOption<T>[];
 	placeholder: string;
-	/** Heading shown above the selected-language summary inside the open popup. */
+	/** Heading shown above the selected-item summary inside the open popup. */
 	selectedHeading: string;
 	selectedCountLabel: (count: number) => string;
 	/** aria-label for a chip's remove button, e.g. "Remove English". */
-	removeLabel: (language: string) => string;
-	value: readonly string[];
+	removeLabel: (item: string) => string;
+	value: readonly T[];
 }
+
+export type LanguageMultiComboboxProps = MultiComboboxProps;
 
 function SelectedChip({
 	label,
@@ -43,7 +49,7 @@ function SelectedChip({
 }: {
 	label: string;
 	onRemove: () => void;
-	removeLabel: (language: string) => string;
+	removeLabel: (item: string) => string;
 }) {
 	return (
 		<span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-surface-1 py-0.5 pr-0.5 pl-1.5 text-body-sm text-foreground">
@@ -52,7 +58,7 @@ function SelectedChip({
 				aria-label={removeLabel(label)}
 				className="flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-xs border-none bg-transparent p-0 text-foreground-dim transition-colors hover:bg-error-dim hover:text-error"
 				// Keep focus on the combobox input so removing a chip doesn't
-				// blur/close the popup; the click still toggles the language off.
+				// blur/close the popup; the click still toggles the item off.
 				onMouseDown={(event) => event.preventDefault()}
 				onClick={onRemove}
 				type="button"
@@ -93,7 +99,7 @@ function summarizeSelection(
 	return selectedCountLabel(labels.length);
 }
 
-export function LanguageMultiCombobox({
+export function MultiCombobox<T extends string>({
 	ariaLabel,
 	disabled = false,
 	emptyLabel,
@@ -104,7 +110,7 @@ export function LanguageMultiCombobox({
 	selectedCountLabel,
 	removeLabel,
 	value,
-}: LanguageMultiComboboxProps) {
+}: MultiComboboxProps<T>) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
 	const selected = new Set(value);
@@ -112,10 +118,10 @@ export function LanguageMultiCombobox({
 		optionMatchesQuery(option, query),
 	);
 	// Selected chips reflect the full selection in selection order, independent
-	// of the search query, so the summary always shows every chosen language.
+	// of the search query, so the summary always shows every chosen item.
 	const selectedOptions = value
 		.map((id) => options.find((option) => option.id === id))
-		.filter((option): option is SelectOption => Boolean(option));
+		.filter((option): option is MultiComboboxOption<T> => Boolean(option));
 	const selectedLabels = selectedOptions.map((option) => option.label);
 	const checkedIndices = new Set<number>();
 	visibleOptions.forEach((option, index) => {
@@ -143,7 +149,7 @@ export function LanguageMultiCombobox({
 	const selectedSummaryCollapsed =
 		selectedLabels.length >= COLLAPSED_SELECTION_THRESHOLD;
 
-	const toggleOption = (id: string): void => {
+	const toggleOption = (id: T): void => {
 		const next = selected.has(id)
 			? value.filter((candidate) => candidate !== id)
 			: [...value, id];
@@ -278,4 +284,8 @@ export function LanguageMultiCombobox({
 			</ComboboxPopupShell>
 		</Combobox.Root>
 	);
+}
+
+export function LanguageMultiCombobox(props: LanguageMultiComboboxProps) {
+	return <MultiCombobox {...props} />;
 }

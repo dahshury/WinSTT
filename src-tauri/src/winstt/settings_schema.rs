@@ -9,14 +9,12 @@
 //
 // CONVENTIONS (locked, do not drift):
 //   * Field NAMES on the wire are camelCase — the renderer reads/writes the
-//     exact same keys WinSTT's persisted store used. Every struct therefore
+//     exact keys used by the current renderer. Every struct therefore
 //     carries `#[serde(rename_all = "camelCase")]` and every enum that needs a
 //     specific JSON spelling carries an explicit `#[serde(rename...)]`.
 //   * Every field is `#[serde(default = "...")]` (or `#[serde(default)]` for
-//     type-default values) so a partial / older persisted JSON never fails the
-//     whole parse. This reproduces Zod's per-field `.default()` + `.catch()`
-//     "never wipe a whole section on one bad value" guarantee. The matching
-//     `Default for WinsttSettings` returns the canonical defaults.
+//     type-default values), and `Default for WinsttSettings` returns the
+//     canonical fresh-install tree.
 //   * Secrets (`integrations.*.apiKey`, `llm.openrouterApiKey`) are plaintext
 //     in this struct but MUST be encrypted at rest by the persistence layer
 //     (`SecretMap` / Tauri `safeStorage` equivalent).
@@ -76,12 +74,15 @@ pub enum MicrophoneRelease {
     Min5,
 }
 
-/// `general.fileTranscriptionFormat`.
+/// One entry in `general.fileTranscriptionFormats`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum FileTranscriptionFormat {
     Txt,
     Srt,
+    Vtt,
+    Json,
+    Csv,
 }
 
 /// `general.fileTranscriptionSaveLocation`. `auto` = beside source, `ask` = dialog.
@@ -199,11 +200,8 @@ pub enum AutoSubmitKey {
 pub enum RecordingRetention {
     Never,
     Cap,
-    #[serde(alias = "days_3")]
     Days3,
-    #[serde(alias = "weeks_2")]
     Weeks2,
-    #[serde(alias = "months_3")]
     Months3,
 }
 
@@ -263,6 +261,7 @@ pub enum PresetLevel {
     Light,
     Medium,
     High,
+    Caveman,
 }
 
 /// `tts.source` — local Kokoro vs cloud ElevenLabs.
@@ -295,7 +294,7 @@ pub struct DictionaryEntry {
     pub id: String,
     pub term: String,
     /// True when the entry was inserted by the LLM dictionary tool rather than
-    /// typed manually in Settings. Omitted for manual/legacy entries.
+    /// typed manually in Settings. Omitted for manually added entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_added: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -311,8 +310,9 @@ pub struct SnippetEntry {
     pub expansion: String,
 }
 
-/// `presetEntrySchema`. `level` valid only for summarize/concise; `targetLang`
-/// valid only for translate (cross-field constraints enforced at the app layer).
+/// `presetEntrySchema`. `level` valid only for summarize/concise, with Caveman
+/// restricted to concise; `targetLang` valid only for translate (cross-field
+/// constraints enforced at the app layer).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PresetEntry {
@@ -338,6 +338,7 @@ pub struct CustomModifier {
     #[serde(default)]
     pub enabled: bool,
     /// When true a Low/Medium/High switcher tunes the prompt's intensity hint.
+    /// Caveman is reserved for the built-in Concise modifier.
     #[serde(default)]
     pub levels_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -413,34 +414,8 @@ pub struct ModelSettings {
     /// "translate to English"; NeMo Canary honors the concrete target token and
     /// can render any→any among its languages. Every other family silently falls
     /// through to normal transcription. HOT-SWAP.
-    ///
-    /// Migrates the legacy boolean `translateToEnglish` (`true` → `"en"`).
-    #[serde(
-        default,
-        alias = "translateToEnglish",
-        deserialize_with = "deserialize_translate_target_language"
-    )]
+    #[serde(default)]
     pub translate_target_language: String,
-}
-
-/// Accept either the legacy `translateToEnglish` boolean (`true` → `"en"`,
-/// `false`/absent → `""`) or the current string target, so old settings files
-/// keep their translate preference after the field was generalized.
-fn deserialize_translate_target_language<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum BoolOrString {
-        Bool(bool),
-        String(String),
-    }
-    Ok(match Option::<BoolOrString>::deserialize(deserializer)? {
-        Some(BoolOrString::Bool(true)) => "en".to_string(),
-        Some(BoolOrString::Bool(false)) | None => String::new(),
-        Some(BoolOrString::String(value)) => value,
-    })
 }
 
 impl ModelSettings {
@@ -527,15 +502,9 @@ pub struct QualitySettings {
     /// Rule-based sentence casing/final-period cleanup for raw recognizer output.
     #[serde(default)]
     pub format_basic_punctuation_casing: bool,
-    /// Convert explicit spoken punctuation commands ("comma", "new line", ...).
+    /// Convert spoken punctuation, quote, layout, and technical symbol commands.
     #[serde(default)]
-    pub format_spoken_punctuation_commands: bool,
-    /// Convert explicit technical symbol commands in obvious flags/URLs/paths.
-    #[serde(default)]
-    pub format_spoken_symbol_commands: bool,
-    /// Convert paired quote/unquote commands to literal quotes.
-    #[serde(default)]
-    pub format_quote_commands: bool,
+    pub format_spoken_commands: bool,
     /// Remove exact fillers and adjacent duplicate words.
     #[serde(default)]
     pub format_filler_repeat_cleanup: bool,
@@ -589,9 +558,7 @@ impl Default for QualitySettings {
             init_realtime_after_seconds: Self::default_init_realtime_after_seconds(),
             early_transcription_on_silence: Self::default_early_transcription_on_silence(),
             format_basic_punctuation_casing: false,
-            format_spoken_punctuation_commands: false,
-            format_spoken_symbol_commands: false,
-            format_quote_commands: false,
+            format_spoken_commands: false,
             format_filler_repeat_cleanup: false,
             smart_endpoint: true,
             smart_endpoint_speed: Self::default_smart_endpoint_speed(),
@@ -749,9 +716,9 @@ pub struct GeneralSettings {
     /// User-uploaded chime clips (copied into `userData/sounds/`). HOT-SWAP. Zod `.catch([])`.
     #[serde(default)]
     pub recording_sound_library: Vec<SoundLibraryEntry>,
-    /// Output format for file transcription. HOT-SWAP.
-    #[serde(default)]
-    pub file_transcription_format: FileTranscriptionFormat,
+    /// Output formats for file transcription. HOT-SWAP.
+    #[serde(default = "GeneralSettings::default_file_transcription_formats")]
+    pub file_transcription_formats: Vec<FileTranscriptionFormat>,
     /// `auto` = beside source, `ask` = save dialog. HOT-SWAP.
     #[serde(default)]
     pub file_transcription_save_location: FileSaveLocation,
@@ -934,6 +901,25 @@ pub struct GeneralSettings {
 }
 
 impl GeneralSettings {
+    pub fn effective_file_transcription_formats(&self) -> Vec<FileTranscriptionFormat> {
+        let configured = if self.file_transcription_formats.is_empty() {
+            Self::default_file_transcription_formats()
+        } else {
+            self.file_transcription_formats.clone()
+        };
+        let mut formats = Vec::with_capacity(configured.len());
+        for format in configured {
+            if !formats.contains(&format) {
+                formats.push(format);
+            }
+        }
+        formats
+    }
+
+    fn default_file_transcription_formats() -> Vec<FileTranscriptionFormat> {
+        vec![FileTranscriptionFormat::Txt]
+    }
+
     fn default_repaste_hotkey() -> String {
         "LCtrl+LShift+V".to_string()
     }
@@ -1086,7 +1072,7 @@ impl Default for GeneralSettings {
             recording_sound: true,
             recording_sound_path: String::new(),
             recording_sound_library: Vec::new(),
-            file_transcription_format: FileTranscriptionFormat::default(),
+            file_transcription_formats: Self::default_file_transcription_formats(),
             file_transcription_save_location: FileSaveLocation::default(),
             recording_mode: RecordingMode::default(),
             manual_toggle_stop: false,
@@ -1172,8 +1158,6 @@ pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Alt+Space";
 /// OS — so the committed fixture must NOT depend on the builder's platform. See
 /// `default_fixture_json`.
 const FIXTURE_PUSH_TO_TALK_KEY: &str = "LCtrl+LMeta";
-
-const TEMPORARY_TAURI_PUSH_TO_TALK_KEY: &str = "LCtrl+LAlt+D";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
@@ -1342,6 +1326,74 @@ impl Default for LlmTransforms {
     }
 }
 
+/// A denormalized saved-configuration snapshot used by a per-app rule. The
+/// global `enabled` and dictionary-auto-add switches deliberately do not live
+/// here: an app rule changes how enabled post-processing runs, never whether it
+/// runs.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AppProfileConfig {
+    #[serde(flatten)]
+    pub base: LlmFeatureBase,
+    #[serde(default = "default_neutral_presets")]
+    pub presets: Vec<PresetEntry>,
+    #[serde(default)]
+    pub custom_modifiers: Vec<CustomModifier>,
+}
+
+impl Default for AppProfileConfig {
+    fn default() -> Self {
+        Self {
+            base: LlmFeatureBase::default(),
+            presets: default_neutral_presets(),
+            custom_modifiers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AppProfileRule {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default = "bool_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub app_exe: String,
+    #[serde(default)]
+    pub title_pattern: String,
+    #[serde(default)]
+    pub url_pattern: String,
+    #[serde(default)]
+    pub configuration_id: String,
+    #[serde(default)]
+    pub configuration_name: String,
+    #[serde(default)]
+    pub config: AppProfileConfig,
+}
+
+impl Default for AppProfileRule {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enabled: true,
+            app_exe: String::new(),
+            title_pattern: String::new(),
+            url_pattern: String::new(),
+            configuration_id: String::new(),
+            configuration_name: String::new(),
+            config: AppProfileConfig::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AppProfilesSettings {
+    #[serde(default)]
+    pub rules: Vec<AppProfileRule>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmSettings {
@@ -1358,9 +1410,11 @@ pub struct LlmSettings {
     pub dictation: LlmDictation,
     #[serde(default)]
     pub transforms: LlmTransforms,
+    #[serde(default)]
+    pub app_profiles: AppProfilesSettings,
     /// Client request timeout (ms). Range 1000..30000. Applied (via
     /// `llm::llm_request_timeout`) to every cloud LLM round-trip: the
-    /// dictation/transform OpenRouter attempts and the legacy post-process path.
+    /// dictation and transform OpenRouter attempts.
     #[serde(default = "LlmSettings::default_timeout")]
     pub timeout: i64,
 }
@@ -1385,6 +1439,7 @@ impl Default for LlmSettings {
             profile_swap_hotkey: Self::default_profile_swap_hotkey(),
             dictation: LlmDictation::default(),
             transforms: LlmTransforms::default(),
+            app_profiles: AppProfilesSettings::default(),
             timeout: Self::default_timeout(),
         }
     }
@@ -1592,9 +1647,6 @@ impl Default for ProviderIntegrationStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationsSettings {
-    // OpenAI was removed as a direct cloud STT provider (its models are served by
-    // OpenRouter as `openai/*`). A persisted `integrations.openai` key from an
-    // older build is simply ignored on load (unknown field).
     #[serde(default)]
     pub elevenlabs: ProviderIntegrationStatus,
 }
@@ -1611,32 +1663,15 @@ impl Default for IntegrationsSettings {
 // TOP-LEVEL: WinsttSettings  (appSettingsSchema)
 // ===========================================================================
 
-/// Persisted settings schema version (finding #20). Bumped when a breaking shape
-/// change needs a migration step; persisting it makes a downgrade/upgrade
-/// detectable and gives future migrations an anchor. Kept in lockstep with the
-/// zod `SETTINGS_SCHEMA_VERSION` constant (and the import/export envelope) so the
-/// Rust↔zod defaults-parity fixture agrees.
-pub const SCHEMA_VERSION: u32 = 1;
-
-fn default_schema_version() -> u32 {
-    SCHEMA_VERSION
-}
-
 /// The complete WinSTT settings tree, nested by the settings sections, ported
 /// 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
 /// the reused React renderer expects.
 ///
 /// Persisted via the Tauri store (one JSON value). Secrets are encrypted at
 /// rest by the persistence layer — they are plaintext on this struct.
-#[derive(Serialize, Debug, Clone, PartialEq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WinsttSettings {
-    /// Persisted schema version (finding #20). Anchors future migrations and lets
-    /// a downgrade/upgrade be detected. An older/newer persisted value survives a
-    /// read (serde `default` only fills an ABSENT key), so a downgrade can never
-    /// silently reset it.
-    #[serde(default = "default_schema_version")]
-    pub schema_version: u32,
     #[serde(default)]
     pub global: GlobalSettings,
     #[serde(default)]
@@ -1649,7 +1684,6 @@ pub struct WinsttSettings {
     pub general: GeneralSettings,
     #[serde(default)]
     pub hotkey: HotkeySettings,
-    /// `[]` default; Zod `.catch([])` (pre-v10 entries fail the parser → wiped).
     #[serde(default)]
     pub dictionary: Vec<DictionaryEntry>,
     #[serde(default)]
@@ -1660,17 +1694,10 @@ pub struct WinsttSettings {
     pub tts: TtsSettings,
     #[serde(default)]
     pub integrations: IntegrationsSettings,
-    /// SINGLE-STORE MIGRATION: the formerly-separate `settings_store.json`
-    /// (`AppSettings`) is now embedded here so `winstt-settings.json` is the ONE
-    /// persisted settings file. This sub-section carries every backend-only field
-    /// that has no renderer-facing WinsttSettings home: the hotkey `bindings` map,
-    /// the audio-feedback subsystem, the paste/clipboard subsystem, the legacy
-    /// `post_process_*` LLM subsystem (with the `post_process_api_keys` SecretMap
-    /// sealed at rest), the keyboard implementation, accelerators, and the
-    /// tray/debug/update-check toggles. The renderer never reads/writes `core`
-    /// (it is masked out of the renderer-facing snapshot); the backend reaches it
-    /// through `crate::settings::get_settings`, which now derives an `AppSettings`
-    /// view from this field. Seeded once from the old store (see `seed_defaults`).
+    /// Backend-only fields that have no renderer-facing settings section: the hotkey
+    /// `bindings` map, audio-feedback and paste/clipboard settings, the keyboard
+    /// implementation, accelerators, and tray/debug/update-check toggles.
+    /// The renderer never reads or writes `core`.
     #[serde(default = "crate::settings::get_default_settings")]
     pub core: crate::settings::AppSettings,
 }
@@ -1678,7 +1705,6 @@ pub struct WinsttSettings {
 impl Default for WinsttSettings {
     fn default() -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
             global: GlobalSettings::default(),
             model: ModelSettings::default(),
             quality: QualitySettings::default(),
@@ -1703,11 +1729,8 @@ impl Default for WinsttSettings {
 /// embedded `AppSettings` view, which the renderer never sees (zod strips it),
 /// and which also carries machine-dependent (`core.appLanguage` reads the host
 /// locale) and `HashMap`-ordered fields that cannot live in a byte-stable
-/// committed fixture. `schemaVersion` (finding #20) is part of the SHARED
-/// surface: both this struct and the zod `appSettingsSchema` model it, so it
-/// stays in the fixture and parity fails CI if either side's version constant
-/// drifts. Both the `cargo run --example export_settings_fixture` regenerator
-/// and the Rust parity test go through this one function so they never drift.
+/// committed fixture. Both the fixture regenerator and the Rust parity test go
+/// through this function so they cannot drift.
 pub fn default_fixture_json() -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(WinsttSettings::default())?;
     if let Some(map) = value.as_object_mut() {
@@ -1726,166 +1749,6 @@ pub fn default_fixture_json() -> Result<String, serde_json::Error> {
     let mut json = serde_json::to_string_pretty(&value)?;
     json.push('\n');
     Ok(json)
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WinsttSettingsWire {
-    #[serde(default = "default_schema_version")]
-    schema_version: u32,
-    #[serde(default)]
-    global: GlobalSettings,
-    #[serde(default)]
-    model: ModelSettings,
-    #[serde(default)]
-    quality: QualitySettings,
-    #[serde(default)]
-    audio: AudioSettings,
-    #[serde(default)]
-    general: GeneralSettings,
-    #[serde(default)]
-    hotkey: HotkeySettings,
-    #[serde(default)]
-    dictionary: Vec<DictionaryEntry>,
-    #[serde(default)]
-    snippets: Vec<SnippetEntry>,
-    #[serde(default)]
-    llm: LlmSettings,
-    #[serde(default)]
-    tts: TtsSettings,
-    #[serde(default)]
-    integrations: IntegrationsSettings,
-    // The embedded legacy AppSettings view. Absent in pre-migration stores → the
-    // canonical defaults, which `seed_defaults` then overwrites once from the old
-    // `settings_store.json` so existing users keep their bindings / API keys / etc.
-    #[serde(default = "crate::settings::get_default_settings")]
-    core: crate::settings::AppSettings,
-}
-
-impl From<WinsttSettingsWire> for WinsttSettings {
-    fn from(w: WinsttSettingsWire) -> Self {
-        Self {
-            schema_version: w.schema_version,
-            global: w.global,
-            model: w.model,
-            quality: w.quality,
-            audio: w.audio,
-            general: w.general,
-            hotkey: w.hotkey,
-            dictionary: w.dictionary,
-            snippets: w.snippets,
-            llm: w.llm,
-            tts: w.tts,
-            integrations: w.integrations,
-            core: w.core,
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for WinsttSettings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let mut value = serde_json::Value::deserialize(deserializer)?;
-        migrate_legacy_global_settings(&mut value);
-        migrate_push_to_talk_default(&mut value);
-        let wire = WinsttSettingsWire::deserialize(value).map_err(serde::de::Error::custom)?;
-        Ok(wire.into())
-    }
-}
-
-fn migrate_legacy_global_settings(value: &mut serde_json::Value) {
-    let Some(root) = value.as_object_mut() else {
-        return;
-    };
-    let legacy_timeout = root
-        .get("model")
-        .and_then(|model| model.get("modelUnloadTimeout"))
-        .cloned();
-    let Some(legacy_timeout) = legacy_timeout else {
-        return;
-    };
-    let global = root
-        .entry("global")
-        .or_insert_with(|| serde_json::json!({}));
-    let Some(global_obj) = global.as_object_mut() else {
-        return;
-    };
-    global_obj
-        .entry("modelUnloadTimeout")
-        .or_insert(legacy_timeout);
-}
-
-fn migrate_push_to_talk_default(value: &mut serde_json::Value) {
-    let Some(root) = value.as_object_mut() else {
-        return;
-    };
-    let hotkey = root
-        .entry("hotkey")
-        .or_insert_with(|| serde_json::json!({}));
-    let Some(hotkey_obj) = hotkey.as_object_mut() else {
-        return;
-    };
-    let default = HotkeySettings::default_push_to_talk_key();
-    let current = hotkey_obj
-        .get("pushToTalkKey")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    if current.trim().is_empty() || is_temporary_tauri_push_to_talk_default(current) {
-        hotkey_obj.insert("pushToTalkKey".to_string(), serde_json::json!(default));
-    }
-
-    migrate_core_transcribe_binding(root, &default);
-}
-
-fn migrate_core_transcribe_binding(
-    root: &mut serde_json::Map<String, serde_json::Value>,
-    default: &str,
-) {
-    let Some(transcribe) = root
-        .get_mut("core")
-        .and_then(|core| core.get_mut("bindings"))
-        .and_then(|bindings| bindings.get_mut("transcribe"))
-        .and_then(|binding| binding.as_object_mut())
-    else {
-        return;
-    };
-
-    for field in ["default_binding", "current_binding"] {
-        let current = transcribe
-            .get(field)
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        if current.trim().is_empty() || is_temporary_tauri_push_to_talk_default(current) {
-            transcribe.insert(field.to_string(), serde_json::json!(default));
-        }
-    }
-}
-
-fn is_temporary_tauri_push_to_talk_default(accelerator: &str) -> bool {
-    normalized_accelerator(accelerator) == normalized_accelerator(TEMPORARY_TAURI_PUSH_TO_TALK_KEY)
-}
-
-fn normalized_accelerator(accelerator: &str) -> String {
-    let mut tokens = accelerator
-        .split('+')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(normalized_accelerator_token)
-        .collect::<Vec<_>>();
-    tokens.sort();
-    tokens.join("+")
-}
-
-fn normalized_accelerator_token(token: &str) -> String {
-    match token.to_ascii_lowercase().as_str() {
-        "lctrl" | "rctrl" | "ctrl_left" | "ctrl_right" | "control" => "ctrl".to_string(),
-        "lalt" | "ralt" | "alt_left" | "alt_right" | "altgr" | "opt" | "option" => {
-            "alt".to_string()
-        }
-        other => other.to_string(),
-    }
 }
 
 // ===========================================================================
@@ -1991,24 +1854,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn app_profiles_default_to_no_rules() {
+        assert!(LlmSettings::default().app_profiles.rules.is_empty());
+    }
+
+    #[test]
+    fn app_profile_rule_accepts_partial_camel_case_json() {
+        let profiles: AppProfilesSettings = serde_json::from_value(serde_json::json!({
+            "rules": [{
+                "id": "gmail",
+                "urlPattern": "gmail.com",
+                "config": { "model": "qwen3:4b" }
+            }]
+        }))
+        .expect("partial app-profile JSON should receive current defaults");
+        let rule = &profiles.rules[0];
+        assert!(rule.enabled);
+        assert_eq!(rule.url_pattern, "gmail.com");
+        assert_eq!(rule.config.base.model, "qwen3:4b");
+        assert_eq!(rule.config.presets, default_neutral_presets());
+    }
+
+    #[test]
+    fn app_profile_rule_round_trips_camel_case_field_names() {
+        let mut rule = AppProfileRule::default();
+        rule.id = "mail".into();
+        rule.title_pattern = "Inbox".into();
+        rule.configuration_id = "builtin:formal".into();
+        let value = serde_json::to_value(rule).expect("app profile should serialize");
+        assert_eq!(value["titlePattern"], "Inbox");
+        assert_eq!(value["configurationId"], "builtin:formal");
+        assert!(value.get("title_pattern").is_none());
+    }
+
+    #[test]
+    fn effective_formats_default_to_txt_and_dedupe() {
+        let mut general = GeneralSettings::default();
+        assert_eq!(
+            general.effective_file_transcription_formats(),
+            vec![FileTranscriptionFormat::Txt]
+        );
+        general.file_transcription_formats = vec![
+            FileTranscriptionFormat::Vtt,
+            FileTranscriptionFormat::Json,
+            FileTranscriptionFormat::Vtt,
+        ];
+        assert_eq!(
+            general.effective_file_transcription_formats(),
+            vec![FileTranscriptionFormat::Vtt, FileTranscriptionFormat::Json]
+        );
+    }
+
+    #[test]
     fn recording_retention_uses_frontend_wire_values() {
         assert_eq!(
             serde_json::to_value(RecordingRetention::Days3).unwrap(),
             serde_json::json!("days3")
-        );
-        assert_eq!(
-            serde_json::from_value::<RecordingRetention>(serde_json::json!("days_3")).unwrap(),
-            RecordingRetention::Days3
         );
     }
 
     #[test]
     fn defaults_match_zod_schema() {
         let s = WinsttSettings::default();
-
-        // schema version (finding #20)
-        assert_eq!(s.schema_version, SCHEMA_VERSION);
-        assert_eq!(s.schema_version, 1);
 
         // model
         assert_eq!(s.model.model, "tiny");
@@ -2027,9 +1934,7 @@ mod tests {
         assert_eq!(s.quality.init_realtime_after_seconds, 0.2);
         assert_eq!(s.quality.early_transcription_on_silence, 0.2);
         assert!(!s.quality.format_basic_punctuation_casing);
-        assert!(!s.quality.format_spoken_punctuation_commands);
-        assert!(!s.quality.format_spoken_symbol_commands);
-        assert!(!s.quality.format_quote_commands);
+        assert!(!s.quality.format_spoken_commands);
         assert!(!s.quality.format_filler_repeat_cleanup);
         assert!(s.quality.smart_endpoint);
         assert_eq!(s.quality.smart_endpoint_speed, 2.0);
@@ -2159,61 +2064,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_model_unload_timeout_migrates_to_global_section() {
-        let s: WinsttSettings = serde_json::from_value(serde_json::json!({
-            "model": { "modelUnloadTimeout": "hour1" }
-        }))
-        .unwrap();
-        let serialized = serde_json::to_value(&s).unwrap();
-        assert_eq!(
-            serialized["global"]["modelUnloadTimeout"],
-            serde_json::json!("hour1")
-        );
-        assert!(serialized["model"].get("modelUnloadTimeout").is_none());
-    }
-
-    #[test]
-    fn temporary_tauri_push_to_talk_default_migrates_back_to_original() {
-        let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
-        value["hotkey"]["pushToTalkKey"] = serde_json::json!("LCtrl+LAlt+D");
-        value["core"]["bindings"]["transcribe"]["default_binding"] =
-            serde_json::json!("ctrl+alt+d");
-        value["core"]["bindings"]["transcribe"]["current_binding"] =
-            serde_json::json!("Ctrl+Alt+D");
-
-        let s: WinsttSettings = serde_json::from_value(value).unwrap();
-        assert_eq!(s.hotkey.push_to_talk_key, DEFAULT_PUSH_TO_TALK_KEY);
-        let transcribe = s.core.bindings.get("transcribe").unwrap();
-        assert_eq!(transcribe.default_binding, DEFAULT_PUSH_TO_TALK_KEY);
-        assert_eq!(transcribe.current_binding, DEFAULT_PUSH_TO_TALK_KEY);
-    }
-
-    #[test]
     fn modifier_only_push_to_talk_survives_deserialize() {
-        // A user who explicitly saved a modifier-only combo keeps it verbatim — the
-        // migration only rewrites empty / temporary values. Assert against the literal
-        // input rather than `DEFAULT_PUSH_TO_TALK_KEY`, which is a full accelerator on
-        // non-Windows and would no longer match the persisted modifier-only combo.
+        // Assert against the literal input because the runtime default is
+        // platform-specific.
         let s: WinsttSettings = serde_json::from_value(serde_json::json!({
             "hotkey": { "pushToTalkKey": "LCtrl+LMeta" }
         }))
         .unwrap();
         assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+LMeta");
-    }
-
-    #[test]
-    fn persisted_schema_version_is_preserved_on_read() {
-        // finding #20: a persisted schemaVersion (older OR newer than the current
-        // binary's) must survive a read — serde `default` only fills an ABSENT key,
-        // so a downgrade/upgrade stays detectable and is never silently reset.
-        let s: WinsttSettings = serde_json::from_value(serde_json::json!({
-            "schemaVersion": 7
-        }))
-        .unwrap();
-        assert_eq!(s.schema_version, 7);
-        // Absent → defaults to the current version.
-        let d: WinsttSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!(d.schema_version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -2238,21 +2096,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_translate_to_english_bool_migrates_to_target_language() {
-        // A settings blob from before the field was generalized carries a boolean
-        // `translateToEnglish`; the deserializer must map it onto the string field.
-        let on: WinsttSettings =
-            serde_json::from_str(r#"{ "model": { "translateToEnglish": true } }"#)
-                .expect("legacy true must parse");
-        assert_eq!(on.model.translate_target_language, "en");
-        let off: WinsttSettings =
-            serde_json::from_str(r#"{ "model": { "translateToEnglish": false } }"#)
-                .expect("legacy false must parse");
-        assert!(off.model.translate_target_language.is_empty());
-        // The current string form is accepted verbatim.
+    fn translate_target_language_accepts_the_current_string_field() {
         let target: WinsttSettings =
             serde_json::from_str(r#"{ "model": { "translateTargetLanguage": "de" } }"#)
-                .expect("string target must parse");
+                .expect("current string target must parse");
         assert_eq!(target.model.translate_target_language, "de");
     }
 
@@ -2379,7 +2226,7 @@ mod tests {
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(v.get("replacement").is_none()); // vocab-bias word, not a pair
-        assert!(v.get("autoAdded").is_none()); // manual/legacy entry
+        assert!(v.get("autoAdded").is_none()); // manually added entry
         let pair = DictionaryEntry {
             id: "2".into(),
             term: "win s t t".into(),

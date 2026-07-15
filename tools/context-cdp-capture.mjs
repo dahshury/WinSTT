@@ -69,6 +69,13 @@ const OUT = path.join(REPO, "artifacts", "context-cdp");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function warnNonFatal(context, error) {
+	const message = error instanceof Error ? error.message : String(error);
+	process.stderr.write(`  ! ${context}: ${message}\n`);
+}
+
+const warnAndContinue = (context) => (error) => warnNonFatal(context, error);
+
 // ── Per-app recipes ────────────────────────────────────────────────────────
 // focus: an async-IIFE expression string evaluated in the page (returns a small
 // status object). Mirrors examples/.../context-harness/apps.ts selectors.
@@ -76,7 +83,7 @@ const FOCUS_HELPERS = `
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   async function waitFor(sel, ms){ const t=Date.now(); while(Date.now()-t<ms){ const el=document.querySelector(sel); if(el) return el; await sleep(150);} return null; }
   async function clickFirst(sels){ for(const s of sels){ const el=document.querySelector(s); if(el){ el.scrollIntoView&&el.scrollIntoView(); el.click(); return s; } } return null; }
-  function focusEl(el){ if(!el) return false; el.focus(); try{ const r=document.createRange(); r.selectNodeContents(el); r.collapse(false); const s=getSelection(); s.removeAllRanges(); s.addRange(r);}catch(e){} return document.activeElement===el; }
+  function focusEl(el){ if(!el) return false; el.focus(); const r=document.createRange(); r.selectNodeContents(el); r.collapse(false); const s=getSelection(); s.removeAllRanges(); s.addRange(r); return document.activeElement===el; }
 `;
 
 const APPS = {
@@ -122,7 +129,7 @@ const APPS = {
 			// formatter then emits a clean before-caret thread and prunes the inbox.
 			// Verified: body length 0 to 589 with an On...wrote: quote.
 			const trimmed = document.querySelector('.ajR[aria-label=\\'Show trimmed content\\'], .ajR');
-			if(trimmed){ try{ trimmed.click(); }catch(e){} await sleep(700); }
+			if(trimmed){ trimmed.click(); await sleep(700); }
 			if(body){ body.scrollIntoView&&body.scrollIntoView({block:'center'}); body.click(); }
 			return { focused: focusEl(body), replyFound: !!reply, expandedQuote: !!trimmed, opened: conv?subjOf(conv).slice(0,40):null };
 		})()`,
@@ -186,7 +193,7 @@ const APPS = {
 		// timeout (the prior recipe's 18s+15s+8s+15s polls overran it → timeout →
 		// stuck on the Friends home).
 		focus: `(async()=>{ ${FOCUS_HELPERS}
-			const fire=el=>{ for(const t of ['pointerdown','mousedown','pointerup','mouseup','click']){ try{ el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); }catch(e){} } };
+			const fire=el=>{ for(const t of ['pointerdown','mousedown','pointerup','mouseup','click']) el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); };
 			// (1) DISMISS the open-in-app interstitial, then require the guild rail.
 			const dismissInterstitial = ()=>{ const nodes=[...document.querySelectorAll('a[role=\\'button\\'],button,a')]; const hit=nodes.find(n=>/continue in browser/i.test((n.textContent||'').trim())); if(hit){ hit.click(); return true; } return false; };
 			const tInt=Date.now(); let dismissed=false; while(Date.now()-tInt<4000){ if(dismissInterstitial()){ dismissed=true; await sleep(400); } if(document.querySelector('[data-list-item-id^=\\'guildsnav___\\']')) break; await sleep(200); }
@@ -268,8 +275,8 @@ const APPS = {
 			// real thread + composer sit behind it. Click its Close, press Escape, and
 			// click outside; poll a few times since it re-asserts.
 			for(let i=0;i<5;i++){ const dlg=document.querySelector('div[role=\\'dialog\\']'); if(!dlg) break;
-				for(const x of [...dlg.querySelectorAll('[aria-label=\\'Close\\'],[aria-label=\\'Not now\\']')]){ try{x.click();}catch(e){} }
-				try{document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,which:27,bubbles:true}));}catch(e){}
+				for(const x of [...dlg.querySelectorAll('[aria-label=\\'Close\\'],[aria-label=\\'Not now\\']')]) x.click();
+				document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,which:27,bubbles:true}));
 				await sleep(500);
 			}
 			// (3) poll the thread message log (Messenger's late-render) — >=2 rows for depth.
@@ -296,12 +303,12 @@ const APPS = {
 			// any role=dialog). Poll up to 4s; the Chrome "Remember Password" bubble is
 			// browser chrome (not DOM) and does not occlude the a11y tree — skip it.
 			const dismissModals = ()=>{ let did=false;
-				for(const b of [...document.querySelectorAll('div[role=\\'dialog\\'] [aria-label=\\'Close\\'], [aria-label=\\'Close\\']')]){ try{b.click();did=true;}catch(e){} }
+				for(const b of [...document.querySelectorAll('div[role=\\'dialog\\'] [aria-label=\\'Close\\'], [aria-label=\\'Close\\']')]){ b.click(); did=true; }
 				const byText=(re)=>[...document.querySelectorAll('div[role=\\'button\\'],button,[aria-label]')].find(n=>re.test((n.getAttribute('aria-label')||n.textContent||'').trim()));
-				for(const re of [/^not now$/i, /decline optional cookies/i, /^decline$/i]){ const el=byText(re); if(el){ try{el.click();did=true;}catch(e){} } }
+				for(const re of [/^not now$/i, /decline optional cookies/i, /^decline$/i]){ const el=byText(re); if(el){ el.click(); did=true; } }
 				return did; };
 			const tM=Date.now(); while(Date.now()-tM<4000){ dismissModals(); if(!document.querySelector('div[role=\\'dialog\\']')) break; await sleep(300); }
-			const fire=el=>{ for(const t of ['pointerdown','mousedown','pointerup','mouseup','click']){ try{ el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); }catch(e){} } };
+			const fire=el=>{ for(const t of ['pointerdown','mousedown','pointerup','mouseup','click']) el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); };
 			// (2) The feed comment composer is a COLLAPSED role=button placeholder
 			// ("Leave a comment" / "Comment as <name>") that EXPANDS into a real
 			// contenteditable textbox only when clicked (verified live: the article
@@ -346,7 +353,7 @@ const APPS = {
 			// the cell needs a full pointer event sequence on the cell-frame-container
 			// (verified live: row.click()=no #main; pointer sequence=#main+footer mount).
 			const cell=row.querySelector('[data-testid=\\'cell-frame-container\\']')||row.querySelector('div[role=\\'gridcell\\']')||row;
-			for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']){ try{ cell.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window})); }catch(e){} }
+			for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']) cell.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window}));
 			// wait for the conversation pane (#main + footer composer) to mount.
 			await waitFor('#main footer div[contenteditable=\\'true\\'][role=\\'textbox\\'], footer div[contenteditable=\\'true\\'][role=\\'textbox\\']', 12000);
 			await sleep(600);
@@ -406,7 +413,7 @@ const APPS = {
 			// carries a composer word. Verified live: the relabel sticks through the
 			// stream re-render (node is stable) and survives until the native UIA read.
 			let prevLabel=null;
-			if(box){ prevLabel=box.getAttribute('aria-label'); try{ box.setAttribute('aria-label','Message ChatGPT'); }catch(e){}
+			if(box){ prevLabel=box.getAttribute('aria-label'); box.setAttribute('aria-label','Message ChatGPT');
 				box.scrollIntoView&&box.scrollIntoView({block:'center'}); box.click(); }
 			return { focused: focusEl(box), turns: document.querySelectorAll('[data-message-author-role]').length, opened: hist?(hist.textContent||'').trim().slice(0,40):null, prevLabel, label: box?box.getAttribute('aria-label'):null };
 		})()`,
@@ -420,7 +427,7 @@ const APPS = {
 			if(/accounts\\.google\\.com/.test(location.host) || (!document.querySelector('rich-textarea, div.ql-editor') && [...document.querySelectorAll('a,button')].some(n=>/^sign in$/i.test((n.textContent||'').trim())))){ return { focusMiss: 'not-logged-in' }; }
 			// (2) expand the side nav if collapsed, then open the first REAL recent
 			// conversation (a /app/<hex-or-uuid> entry; skip New chat / Explore Gems / Settings).
-			const ham=document.querySelector('[data-test-id=\\'side-nav-menu-button\\'], button[aria-label*=\\'Main menu\\' i], button[aria-label*=\\'Expand\\' i]'); if(ham){ try{ham.click();}catch(e){} await sleep(500); }
+			const ham=document.querySelector('[data-test-id=\\'side-nav-menu-button\\'], button[aria-label*=\\'Main menu\\' i], button[aria-label*=\\'Expand\\' i]'); if(ham){ ham.click(); await sleep(500); }
 			const conv = await waitFor('side-nav-action-button[data-test-id=\\'conversation\\'], [data-test-id=\\'conversation\\'], .conversation-items-container .conversation, a[href*=\\'/app/\\']', 12000);
 			if(conv){ conv.scrollIntoView&&conv.scrollIntoView({block:'center'}); conv.click(); }
 			// (3) wait for the turn stream — poll until >=1 user-query AND >=1 model-response.
@@ -429,7 +436,7 @@ const APPS = {
 			// (4) dismiss any onboarding / consent overlay (best-effort, non-blocking).
 			for(let i=0;i<8;i++){ const dlg=document.querySelector('div[role=\\'dialog\\']'); if(!dlg) break;
 				const x=dlg.querySelector('[aria-label=\\'Close\\' i]') || [...dlg.querySelectorAll('button')].find(b=>/no thanks|got it|dismiss|not now/i.test((b.textContent||'').trim()));
-				if(x){ try{x.click();}catch(e){} } else break; await sleep(400);
+				if(x) x.click(); else break; await sleep(400);
 			}
 			// (5) seat the caret in the Quill ql-editor composer.
 			const box = await waitFor('rich-textarea div.ql-editor[contenteditable=\\'true\\']', 8000) || await waitFor('div[contenteditable=\\'true\\'][role=\\'textbox\\']', 4000);
@@ -537,8 +544,8 @@ function ensureExpr(sel) {
 		for(let i=0;i<4;i++){
 			if(m()) return {focused:true,attempt:i};
 			const el=document.querySelector(${S});
-			if(el){ try{el.click();}catch(e){} try{el.focus();}catch(e){}
-				try{const r=document.createRange();r.selectNodeContents(el);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r);}catch(e){} }
+			if(el){ el.click(); el.focus();
+				const r=document.createRange();r.selectNodeContents(el);r.collapse(false);const s=getSelection();s.removeAllRanges();s.addRange(r); }
 			await sleep(400);
 		}
 		const a=document.activeElement;
@@ -568,7 +575,9 @@ async function cdpComposerRect(cdp, session, sel, contextId) {
 	try {
 		const r = await evalIn(cdp, session, rectExpr, contextId);
 		rect = r?.result?.value ?? null;
-	} catch {}
+	} catch (error) {
+		warnNonFatal("read composer bounds", error);
+	}
 	if (process.env.FG_DEBUG)
 		process.stderr.write(`    [composer] rect=${JSON.stringify(rect)}\n`);
 	return rect;
@@ -704,8 +713,8 @@ async function resolvePageContext(cdp, session, host) {
 			}
 		};
 		cdp.on(cb);
-		await cdp.send("Runtime.disable", {}, session).catch(() => {});
-		await cdp.send("Runtime.enable", {}, session).catch(() => {});
+		await cdp.send("Runtime.disable", {}, session);
+		await cdp.send("Runtime.enable", {}, session);
 		await sleep(700);
 		cdp.listeners = cdp.listeners.filter((l) => l !== cb);
 		if (found != null) {
@@ -720,10 +729,8 @@ async function resolvePageContext(cdp, session, host) {
 		// to force a clean fetch path, then let the next iteration re-resolve.
 		if (attempt >= 1) {
 			ctxId = null;
-			await clearStuckServiceWorkers(cdp).catch(() => {});
-			await cdp
-				.send("Page.reload", { ignoreCache: true }, session)
-				.catch(() => {});
+			await clearStuckServiceWorkers(cdp);
+			await cdp.send("Page.reload", { ignoreCache: true }, session);
 			await sleep(3000);
 		}
 		await sleep(600);
@@ -771,10 +778,14 @@ async function clearStuckServiceWorkers(cdp) {
 						},
 						session,
 					)
-					.catch(() => {});
+					.catch(warnAndContinue("unregister service worker"));
 			}
-		} catch {}
-		await cdp.send("Target.closeTarget", { targetId: sw.id }).catch(() => {});
+		} catch (error) {
+			warnNonFatal(`inspect service worker ${sw.id}`, error);
+		}
+		await cdp
+			.send("Target.closeTarget", { targetId: sw.id })
+			.catch(warnAndContinue(`close service worker ${sw.id}`));
 	}
 	if (sws.length)
 		process.stdout.write(`  (cleared ${sws.length} stuck service worker(s))\n`);
@@ -907,13 +918,15 @@ async function captureApp(cdp, id) {
 	const session = ev?.params.sessionId;
 	if (!session) {
 		process.stderr.write("  ! failed to attach to target\n");
-		await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+		await cdp
+			.send("Target.closeTarget", { targetId })
+			.catch(warnAndContinue("close unattached target"));
 		return null;
 	}
 
-	await cdp.send("Page.enable", {}, session).catch(() => {});
-	await cdp.send("Runtime.enable", {}, session).catch(() => {});
-	await cdp.send("Page.bringToFront", {}, session).catch(() => {});
+	await cdp.send("Page.enable", {}, session);
+	await cdp.send("Runtime.enable", {}, session);
+	await cdp.send("Page.bringToFront", {}, session);
 	// settle for SPA boot
 	await sleep(2500);
 
@@ -931,7 +944,7 @@ async function captureApp(cdp, id) {
 	} catch (e) {
 		focusResult = `focus error: ${e.message}`;
 	}
-	await cdp.send("Page.bringToFront", {}, session).catch(() => {});
+	await cdp.send("Page.bringToFront", {}, session);
 	await sleep(700);
 
 	// Re-seat + verify focus in the compose field right before the UIA read.
@@ -945,7 +958,7 @@ async function captureApp(cdp, id) {
 			ensureResult = `ensure error: ${e.message}`;
 		}
 	}
-	await cdp.send("Page.bringToFront", {}, session).catch(() => {});
+	await cdp.send("Page.bringToFront", {}, session);
 	await sleep(500);
 
 	// Screenshot for diagnosis (CDP renders regardless of OS focus).
@@ -962,14 +975,18 @@ async function captureApp(cdp, id) {
 				Buffer.from(shot.data, "base64"),
 			);
 		}
-	} catch {}
+	} catch (error) {
+		warnNonFatal(`capture ${id} screenshot`, error);
+	}
 
 	// title for HWND resolution
 	let title = "";
 	try {
 		const t = await evalIn(cdp, session, "document.title", ctxId);
 		title = (t?.result?.value || "").trim();
-	} catch {}
+	} catch (error) {
+		warnNonFatal(`read ${id} page title`, error);
+	}
 	const titleLike = title.length >= 4 ? title.slice(0, 40) : app.titleHint;
 	const hwnd = await resolveHwnd(titleLike);
 
@@ -992,7 +1009,9 @@ async function captureApp(cdp, id) {
 		if (composeSel) {
 			try {
 				await evalIn(cdp, session, ensureExpr(composeSel), ctxId, true);
-			} catch {}
+			} catch (error) {
+				warnNonFatal(`re-seat ${id} composer`, error);
+			}
 			composerRect = await cdpComposerRect(cdp, session, composeSel, ctxId);
 		}
 		// (2) Briefly bring the off-screen capture window on-screen + OS-foreground
@@ -1062,9 +1081,13 @@ async function captureApp(cdp, id) {
 	let smoke = null;
 	try {
 		smoke = JSON.parse(smokeOut);
-	} catch {}
+	} catch (error) {
+		warnNonFatal(`parse ${id} smoke output`, error);
+	}
 
-	await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+	await cdp
+		.send("Target.closeTarget", { targetId })
+		.catch(warnAndContinue(`close ${id} target`));
 
 	const q = smoke?.quality ?? {};
 	const summary = {
@@ -1139,9 +1162,7 @@ async function main() {
 		ws.on("error", rej);
 	});
 	const cdp = new CDP(ws);
-	await cdp
-		.send("Target.setDiscoverTargets", { discover: true })
-		.catch(() => {});
+	await cdp.send("Target.setDiscoverTargets", { discover: true });
 
 	const results = [];
 	for (const id of list) {
@@ -1149,7 +1170,7 @@ async function main() {
 		// Clear stuck service workers BEFORE each window (a prior app's SW, or one
 		// re-registered by the app we just captured, otherwise zombifies the next
 		// window into about:blank). Cheap when there are none.
-		await clearStuckServiceWorkers(cdp).catch(() => {});
+		await clearStuckServiceWorkers(cdp);
 		// Per-app try/catch so one app's failure can't abort the whole sweep.
 		try {
 			results.push(await captureApp(cdp, id));

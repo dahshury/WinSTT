@@ -42,6 +42,16 @@ pub mod names {
     pub const LOOPBACK_STARTED: &str = "stt:loopback-started";
     /// WASAPI loopback capture stopped for Listen mode.
     pub const LOOPBACK_STOPPED: &str = "stt:loopback-stopped";
+    /// An atomic STT model transaction started.
+    pub const STT_MODEL_SWAP_STARTED: &str = "stt:model-swap-started";
+    /// An atomic STT model transaction committed.
+    pub const STT_MODEL_SWAP_COMPLETED: &str = "stt:model-swap-completed";
+    /// An atomic STT model transaction failed or was superseded.
+    pub const STT_MODEL_SWAP_FAILED: &str = "stt:model-swap-failed";
+    /// Authoritative per-model/quant acquisition and activation snapshot.
+    pub const STT_MODEL_LIFECYCLE: &str = "stt:model-lifecycle";
+    /// Authoritative selected/resident STT runtime snapshot.
+    pub const STT_RUNTIME_INFO: &str = "stt:runtime-info";
     /// The shared overlay window was shown.
     pub const OVERLAY_SHOW: &str = "overlay:show";
     /// The shared overlay window was hidden.
@@ -54,6 +64,8 @@ pub mod names {
     pub const LLM_LEARNED_PROPER_NOUNS: &str = "llm:learned-proper-nouns";
     /// Cycle to the next saved post-processing profile in renderer-owned order.
     pub const LLM_PROFILE_SWAP: &str = "llm:profile-swap";
+    /// A per-app post-processing rule matched at recording start.
+    pub const LLM_APP_PROFILE_ACTIVE: &str = "llm:app-profile-active";
     /// The transcribe (PTT) hotkey was held while ArrowUp was pressed — advance to
     /// the next recording mode (ptt → toggle → listen → wakeword → ptt). Emitted by
     /// the WinSTT-owned cycle-gesture keyboard hook; the main renderer owns the
@@ -66,6 +78,11 @@ pub mod names {
     /// animation on this — window focus/visibility are not reliably delivered
     /// by WebView2 across a native hide/show cycle.
     pub const SETTINGS_WINDOW_SHOWN: &str = "settings:window-shown";
+    /// Fresh RAM/VRAM snapshot delivered to the prewarmed footprint renderer
+    /// immediately before its hover window is shown.
+    pub const MODEL_FOOTPRINT_RESOURCES: &str = "model-footprint:resources";
+    /// One existing, privacy-gated app log record for Settings > About.
+    pub const DIAGNOSTICS_LOG_LINE: &str = "diagnostics:log-line";
 }
 
 /// Emit the shared `output:paste-error` event. Centralizes the previously

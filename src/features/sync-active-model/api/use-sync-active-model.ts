@@ -1,43 +1,11 @@
-import { useEffect, useRef } from "react";
-import { providerOf } from "@/entities/cloud-stt-provider";
+import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import {
 	type ModelInfo,
 	useCatalogStore,
 	useModelSwapStore,
 } from "@/entities/model-catalog";
-import { type ModelPatch, useSettingsStore } from "@/entities/setting";
-import {
-	type ModelSwapKind,
-	onModelSwapCompleted,
-} from "@/shared/api/ipc-client";
-import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
-import { recentSwapFailedAt } from "@/shared/lib/swap-failure-timing";
-
-// How long after an IPC settingsLoad we consider a settings.model transition
-// as "load-induced" (not a user pick). Crash + state-revert investigation
-// showed the death-spiral pattern: localStorage hydrates with stale model,
-// runtime adoption fixes it, settingsLoad's setSettings(loaded) reverts the
-// renderer back to the disk value, which fires this hook's beginSwap with a
-// "wrong" destination — activeMain gets stuck on the stale value and the
-// shouldAdoptRuntimeModel branch is blocked from re-correcting because
-// activeMain != null. 500 ms covers the worst-case window from settingsLoad
-// resolution through every dependent effect re-render under StrictMode
-// double-mount; longer than typical user-pick reaction time so no real
-// user action gets skipped.
-const IPC_LOAD_GUARD_WINDOW_MS = 500;
-
-// How long after a `model_swap_failed` we treat the next settings.model
-// transition as a failure-induced ROLLBACK (revert to the previous model)
-// rather than a user pick. The rollback flips settings B → A while
-// runtimeInfo.model can still be the stale B, which would otherwise make the
-// transition guard fire `beginSwap("main", B, A)` — a reversed, never-
-// completing "switch to the already-loaded model" that strands the chip on
-// "B → A" forever (the user-reported "first click spins backwards" bug). No
-// real reload is in flight for a rollback, so the implicit beginSwap must be
-// skipped. Same generous window as the IPC-load guard — covers the failure →
-// restore → runtime_info → rollback-setSettings re-render chain.
-const SWAP_FAILURE_GUARD_WINDOW_MS = 500;
+import { useSettingsStore } from "@/entities/setting";
 
 /**
  * Reconcile the locally-persisted ``settings.model.model`` with the server's
@@ -126,55 +94,6 @@ function shouldAdoptRuntimeModel(
 	);
 }
 
-export interface ImplicitSwapInputs {
-	/** Timestamps from the two timing guards (``recentIpcLoadAt`` /
-	 *  ``recentSwapFailedAt``). */
-	lastIpcLoadAt: number;
-	lastSwapFailedAt: number;
-	/** ``Date.now()`` at decision time. */
-	now: number;
-	/** ``settings.model`` observed on the previous effect run (the ``from`` leg).
-	 *  ``undefined`` on the very first run — no transition to interpret yet. */
-	previousModel: string | null | undefined;
-	/** Server's actually-loaded model. A transition whose target already
-	 *  equals this isn't a real swap. */
-	runtimeModel: string | null;
-	/** Current ``settings.model`` (the candidate ``to`` leg). */
-	settingsModel: string | null;
-}
-
-/**
- * Whether a ``settings.model`` transition should be treated as a *real* user
- * swap and open the in-flight chip via ``beginSwap``. Pure so it can be unit
- * tested without standing up the render + IPC machinery.
- *
- * Suppressed when the transition is:
- *   - the first observation (no ``from`` yet),
- *   - a no-op (``from === to``),
- *   - load-induced (a ``settingsLoad`` revert — see ipc-load-timing),
- *   - rollback-induced (a ``model_swap_failed`` revert — see
- *     swap-failure-timing; this is the fix for the reversed "B → A" chip that
- *     spun forever after a failed first swap),
- *   - or a transition to the already-loaded runtime model (not a swap).
- */
-export function shouldOpenImplicitSwap(inputs: ImplicitSwapInputs): boolean {
-	const { previousModel, settingsModel, runtimeModel, now } = inputs;
-	if (
-		previousModel === undefined ||
-		previousModel === settingsModel ||
-		!settingsModel
-	) {
-		return false;
-	}
-	if (now - inputs.lastIpcLoadAt < IPC_LOAD_GUARD_WINDOW_MS) {
-		return false;
-	}
-	if (now - inputs.lastSwapFailedAt < SWAP_FAILURE_GUARD_WINDOW_MS) {
-		return false;
-	}
-	return settingsModel !== runtimeModel;
-}
-
 /**
  * Build the ``ModelPatch`` that adopts a just-completed swap's model into
  * settings, or ``null`` when nothing should change.
@@ -236,70 +155,6 @@ function reconcileAdoptedQuant(
 	return entry.availableQuantizations.includes(currentQuant) ? null : "";
 }
 
-/** Fold a reconciled-quant override into a ``{ model }`` patch. */
-function withReconciledQuant(
-	patch: ModelPatch,
-	name: string,
-	currentQuant: string,
-	catalogModels: readonly ModelInfo[],
-): ModelPatch {
-	const override = reconcileAdoptedQuant(name, currentQuant, catalogModels);
-	return override === null ? patch : { ...patch, onnxQuantization: override };
-}
-
-export function resolveSwapCompletedPatch(
-	kind: ModelSwapKind,
-	name: string,
-	settingsModel: string | null,
-	settingsRealtimeModel: string | null,
-	catalogModels: readonly ModelInfo[],
-	settingsQuantization: string,
-): ModelPatch | null {
-	if (!name) {
-		return null;
-	}
-	if (kind === "realtime") {
-		return name === settingsRealtimeModel ? null : { realtimeModel: name };
-	}
-	if (name === settingsModel) {
-		return null;
-	}
-	const catalogEntry = catalogModels.find((m) => m.id === name);
-	if (catalogEntry) {
-		return withReconciledQuant(
-			{ model: name },
-			name,
-			settingsQuantization,
-			catalogModels,
-		);
-	}
-	if (providerOf(name) !== null) {
-		return { model: name };
-	}
-	return null;
-}
-
-/**
- * Side-effecting half of the completion adoption: read the live settings +
- * catalog stores, compute the patch via {@link resolveSwapCompletedPatch}, and
- * commit it. Split out from the subscription so it can be unit-tested directly
- * (no renderer/IPC machinery) and so the effect stays a one-line forwarder.
- */
-export function adoptCompletedSwap(kind: ModelSwapKind, name: string): void {
-	const store = useSettingsStore.getState();
-	const patch = resolveSwapCompletedPatch(
-		kind,
-		name,
-		store.settings.model?.model ?? null,
-		store.settings.model?.realtimeModel ?? null,
-		useCatalogStore.getState().models,
-		store.settings.model?.onnxQuantization ?? "",
-	);
-	if (patch !== null) {
-		store.updateModelSettings(patch);
-	}
-}
-
 export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
@@ -309,63 +164,7 @@ export function useSyncActiveModel(): void {
 	);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 
-	// Tracks the previously-observed settings.model so we can distinguish
-	// "initial mount value" from "subsequent change". `undefined` is the
-	// sentinel for "first observation" — only after the first effect run
-	// is the ref populated, so a same-launch settings.model change can be
-	// detected as such.
-	const prevSettingsModelRef = useRef<string | null | undefined>(undefined);
-
 	useEffect(() => {
-		// Cross-window swap-pending guard. When the user picks a new model in
-		// ANOTHER window (e.g. the detached settings panel), this window
-		// receives the change via the `settings:changed` broadcast — but the
-		// local `useModelSwapStore.activeMain` is null (`beginSwap` was only
-		// called synchronously in the source window's swap controller, see
-		// `use-model-swap-controller.ts::applyMainSwap`). Without the branch
-		// below, the next render sees `settings.model != runtime.model` and
-		// `activeMain == null`, trips `shouldAdoptRuntimeModel`, and reverts
-		// the picker back to whatever the server is still loading. The
-		// visible symptom is the "main-window picker stays on the old model
-		// after a settings pick" desync (user reported on a canary pick).
-		//
-		// We treat any cross-render change to `settings.model` (after the
-		// first observation) as an implicit `beginSwap` on this window's
-		// swap store. The server will subsequently emit `model_swap_started`
-		// (which the module-level listener in model-swap-store.ts pins via
-		// `setActive`) and finally `model_swap_completed` (which clears it).
-		// Initial mount — where the ref is still `undefined` — is
-		// intentionally NOT treated as a swap; the reconciliation below
-		// handles the cold-boot fallback case the original comment block
-		// documents.
-		const previousModel = prevSettingsModelRef.current;
-		if (
-			shouldOpenImplicitSwap({
-				previousModel,
-				settingsModel,
-				runtimeModel,
-				now: Date.now(),
-				lastIpcLoadAt: recentIpcLoadAt(),
-				lastSwapFailedAt: recentSwapFailedAt(),
-			})
-		) {
-			useModelSwapStore
-				.getState()
-				.beginSwap("main", previousModel ?? "", settingsModel ?? "");
-		}
-		prevSettingsModelRef.current = settingsModel;
-
-		// Read `activeMain` AFTER the implicit beginSwap above, never before.
-		// Reading it first handed `shouldAdoptRuntimeModel` a STALE null for the
-		// very transition the implicit swap just opened: a fresh user pick
-		// (settings A → B, runtime still A) sailed past the `activeMain === null`
-		// guard and the adoption branch REVERTED the store to the stale runtime
-		// model ~5ms after the pick. The revert then won the 300ms save debounce
-		// (diff vs last-saved became empty), so the pick was BOTH visually undone
-		// ("switching back to <old model> immediately") and never persisted —
-		// the root of the "model reverts to cohere on every boot" loop. A
-		// load-induced revert opens no implicit swap (see shouldOpenImplicitSwap's
-		// ipc-load guard), so the boot-time fallback adoption below still runs.
 		const activeMain = useModelSwapStore.getState().activeMain;
 		if (
 			shouldAdoptRuntimeModel(
@@ -408,17 +207,4 @@ export function useSyncActiveModel(): void {
 		settingsModel,
 		updateModelSettings,
 	]);
-
-	// Authoritative post-swap adoption. ``model-swap-completed`` is broadcast to
-	// EVERY window with the loaded model ``name``; adopt it into settings so all
-	// surfaces (footer chip, settings trigger, detached picker) converge on the
-	// new model even when the initiating detached picker closed before its
-	// ``settings:changed`` broadcast landed. ``adoptCompletedSwap`` reads stores
-	// via ``getState()`` so the subscription is install-once (no stale-closure
-	// deps). See ``resolveSwapCompletedPatch`` for the full rationale.
-	useEffect(
-		() =>
-			onModelSwapCompleted(({ kind, name }) => adoptCompletedSwap(kind, name)),
-		[],
-	);
 }

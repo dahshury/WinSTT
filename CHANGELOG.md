@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.3-alpha.7] - 2026-07-15
+
+Changes since `v0.1.3-alpha.6`.
+
+### Added
+
+- Added per-app LLM profiles, permission preflight, searchable transcription history, transcript export support, live diagnostics, and an in-app What's New surface.
+- Added suggested-model recommendations and shared model-picker primitives used across local STT, cloud STT, TTS, Ollama, onboarding, and settings flows.
+- Added a context sidecar workspace, Windows accelerator support, ARM64 planning, and package/performance audit tooling for release validation.
+
+### Changed
+
+- Completed the renderer migration from the legacy string-channel IPC funnel to the typed native boundary and generated Tauri bindings.
+- Reorganized model selection into Feature-Sliced Design boundaries, consolidating common catalog, filtering, hardware-fit, and presentation behavior while removing the legacy model-picker widget tree.
+- Improved startup deferral, bundle composition, segmented downloads, audio resampling, transcription coordination, settings transfer, and cross-platform packaging.
+- Expanded documentation, localization, onboarding, history, settings, diagnostics, and release workflows for the current desktop experience.
+
+### Fixed
+
+- Fixed model switching, cloud-key fallback, settings hydration, history playback/search, overlay startup, push-to-talk, TTS installation, and file-transcription edge cases covered by the expanded frontend and Rust test suites.
+
+### Maintenance
+
+- Promoted Windows and Linux package audits to required CI gates and expanded macOS/Linux/Windows release verification.
+- Bumped the application version from `0.1.3-alpha.6` to `0.1.3-alpha.7` while keeping the alpha release policy.
+
 ## [0.1.3-alpha.6] - 2026-07-12
 
 Changes since `v0.1.3-alpha.5`.

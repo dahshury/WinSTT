@@ -6,7 +6,7 @@ import {
 } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { Switcher } from "@/shared/ui/switcher";
-import { TtsModelSelector } from "@/widgets/model-picker/tts";
+import { TtsModelSelector } from "@/features/tts-model-picker";
 import { OUT_OF_CREDITS_NOTE } from "../lib/cloud-gate";
 import {
 	SUPERTONIC_DEFAULT_LANG,
@@ -86,10 +86,11 @@ export function TtsModelSection() {
 			onToggle={handleEnabledToggle}
 			title={t("title")}
 			// The toggle shows the user's choice immediately but LOCKS while the
-			// voice model warms into / drains out of memory — the dimmed body +
-			// locked toggle ARE the pending signal (no spinner); both release
-			// only when the backend confirms the transition finished.
-			toggleDisabled={installing || unloadingLocalModel}
+			// voice model warms into / drains out of memory, wearing the shared
+			// corner spinner badge (same as the post-processing toggle) for the
+			// whole window; both release only when the backend confirms the
+			// transition finished (or the pending state's safety bound expires).
+			togglePending={installing || unloadingLocalModel}
 			toggled={enabled}
 		>
 			<div className="flex flex-col">

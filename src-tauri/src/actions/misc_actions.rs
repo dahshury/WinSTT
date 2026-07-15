@@ -28,6 +28,19 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+/// Temporary Alt+S action, armed only while dictation LLM cleanup is running.
+/// Unlike Escape it preserves the dictation session and asks the pipeline to
+/// finish normally with the raw STT transcript.
+pub(super) struct SkipPostProcessingAction;
+
+impl ShortcutAction for SkipPostProcessingAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        super::post_process::request_post_processing_skip(app, false);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Transform Action (WinSTT transforms.hotkey, default LCtrl+LShift+T): capture selection ->
 // transform over the configured provider -> paste-replace -> emit transforms:applied.
 pub(super) struct TransformAction;
@@ -69,7 +82,7 @@ impl ShortcutAction for RepasteAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         let text = last_transcription();
         if text.trim().is_empty() {
-            debug!("RepasteAction: no transcription recorded yet — ignoring");
+            debug!("RepasteAction: no transcription recorded yet -- ignoring");
             return;
         }
         // This hotkey fires on key-DOWN while the user is STILL holding the combo
@@ -130,7 +143,7 @@ impl ShortcutAction for ReadAloudAction {
             .tts
             .enabled;
         if !enabled {
-            debug!("ReadAloudAction: TTS disabled — ignoring");
+            debug!("ReadAloudAction: TTS disabled -- ignoring");
             return;
         }
         let app = app.clone();

@@ -3,7 +3,9 @@ use std::sync::atomic::Ordering;
 use env_filter::Filter;
 use tauri::{Builder, Wry};
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
+use tauri_plugin_log::{
+    Builder as LogBuilder, RotationStrategy, Target, TargetKind, TimezoneStrategy,
+};
 
 use crate::cli::CliArgs;
 use crate::startup::{FILE_LOG_LEVEL, level_filter_from_u8};
@@ -39,7 +41,7 @@ pub(crate) fn install_runtime_plugins(
 
     #[cfg(debug_assertions)]
     {
-        log::info!(
+        log::debug!(
             "single-instance plugin disabled for debug builds so packaged WinSTT can run beside tauri dev"
         );
     }
@@ -48,7 +50,6 @@ pub(crate) fn install_runtime_plugins(
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_macos_permissions::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -63,6 +64,9 @@ pub(crate) fn install_runtime_plugins(
 fn build_log_plugin(console_filter: Filter) -> tauri::plugin::TauriPlugin<Wry> {
     LogBuilder::new()
         .level(log::LevelFilter::Trace)
+        // Match the user's clock (and Vite's timestamps) instead of mixing UTC
+        // backend lines with local-time renderer lines in the same console.
+        .timezone_strategy(TimezoneStrategy::UseLocal)
         // `rusqlite_migration` logs an INFO "Database migrated to version N" on
         // EVERY `to_latest()` call — even when zero migrations run (it just
         // reports the current schema version). The DB is never re-migrated
@@ -92,6 +96,7 @@ fn build_log_plugin(console_filter: Filter) -> tauri::plugin::TauriPlugin<Wry> {
                 let file_level = FILE_LOG_LEVEL.load(Ordering::Relaxed);
                 metadata.level() <= level_filter_from_u8(file_level)
             }),
+            crate::winstt::commands::diag::live_log_target(),
         ])
         .build()
 }

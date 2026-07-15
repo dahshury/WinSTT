@@ -1,19 +1,16 @@
 import { useEffect } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useLlmCatalogStore } from "@/entities/llm-catalog";
-import {
-	useCatalogStore,
-	useModelStateStore,
-	useModelSwapStore,
-} from "@/entities/model-catalog";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useTtsModelStateStore } from "@/entities/tts-catalog";
-import { IPC } from "@/shared/api/ipc-channels";
-import { ipcOn, sttReloadModel } from "@/shared/api/ipc-client";
+import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
+import { ipcOn } from "@/shared/api/ipc-client";
 import {
 	type ClearableProvider,
 	resolveLocalSttTarget,
 } from "./cloud-revert-decision";
+import { revertSttToLocalAtomic } from "./atomic-local-revert";
 import { useRevertNoticeStore } from "./revert-notice-store";
 
 /** `cloud:connectivity` payload — the backend's per-provider offline/online signal. */
@@ -47,18 +44,13 @@ function firstInstalledOllamaModel(): string | null {
 	return models[0]?.name ?? null;
 }
 
-/** Swap the main STT slot from the offline cloud model back to a cached local one.
- *  Mirrors `useCloudKeyAutoRevert`'s revert: the swap primitives (not a bare
- *  settings write) so `sttReloadModel` actually reloads the server engine. */
+/** Swap the main STT slot from the offline cloud model back to a cached local one
+ * through the backend-owned atomic transaction. */
 function revertSttToLocal(currentCloudModel: string): void {
 	const { models } = useCatalogStore.getState();
 	const { statesById } = useModelStateStore.getState();
 	const target = resolveLocalSttTarget(models, statesById);
-	useModelSwapStore
-		.getState()
-		.beginSwap("main", currentCloudModel, target.model);
-	useSettingsStore.getState().updateModelSettings({ model: target.model });
-	sttReloadModel("main", target.model);
+	revertSttToLocalAtomic(currentCloudModel, target.model);
 }
 
 /**

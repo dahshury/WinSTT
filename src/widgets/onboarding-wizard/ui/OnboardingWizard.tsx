@@ -163,9 +163,9 @@ function stepMeta(step: OnboardingStepId, t: OnboardingT): StepMeta {
 			short: t("stepCapabilitiesShort"),
 		},
 		"stt-model": {
-			title: "Choose a local speech model",
+			title: "Download the starter model",
 			subtitle:
-				"Download one model before finishing setup. WinSTT does not ship with STT weights.",
+				"WinSTT does not ship with speech weights — one small download and you're ready to dictate.",
 			short: "Model",
 		},
 		mic: {
@@ -320,7 +320,7 @@ export function OnboardingWizard() {
 			<div className="absolute inset-0 flex flex-col">
 				{/* Heading strip — matches SettingSection's header row: icon badge,
 			    title, subtitle. Step indicator floats on the trailing edge. */}
-				<header className="flex shrink-0 items-start gap-4 px-6 pt-6 pb-4">
+				<header className="flex shrink-0 items-start gap-4 pt-6 pe-12 pb-4 ps-6">
 					<span
 						aria-hidden
 						className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-accent/12 text-accent ring-1 ring-accent/30"

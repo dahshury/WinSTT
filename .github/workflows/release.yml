@@ -61,6 +61,9 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Verify README download badges are current
+        run: node tools/release/sync-readme-download-badges.mjs --check
+
       - name: Decide release mode
         id: gate
         env:
@@ -193,6 +196,13 @@ jobs:
         shell: pwsh
         run: tools\windows\tauri-portable.ps1 -SkipBuild
 
+      - name: Enforce main-window startup bundle budget
+        run: bun run check:startup-bundle
+
+      - name: Audit Windows package contents and headless boot
+        shell: pwsh
+        run: tools\release\audit-windows-packages.ps1
+
       - name: Upload Windows artifacts to workflow run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -240,6 +250,7 @@ jobs:
             install -y --no-install-recommends \
             build-essential \
             curl \
+            cpio \
             file \
             fuse \
             libasound2-dev \
@@ -280,6 +291,12 @@ jobs:
 
       - name: Build Linux artifacts
         run: bash tools/linux/tauri-bundles.sh
+
+      - name: Enforce main-window startup bundle budget
+        run: bun run check:startup-bundle
+
+      - name: Audit Linux package contents and headless boot
+        run: bash tools/release/audit-linux-packages.sh
 
       - name: Upload Linux artifacts to workflow run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -334,6 +351,12 @@ jobs:
 
       - name: Build macOS artifacts
         run: bash tools/macos/tauri-bundles.sh "${{ matrix.target }}" "${{ matrix.arch }}"
+
+      - name: Enforce main-window startup bundle budget
+        run: bun run check:startup-bundle
+
+      - name: Audit macOS package contents and headless boot
+        run: bash tools/release/audit-macos-packages.sh "dist/macos/${{ matrix.arch }}"
 
       - name: Upload macOS artifacts to workflow run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

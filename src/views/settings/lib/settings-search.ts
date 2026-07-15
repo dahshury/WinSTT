@@ -101,7 +101,7 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			ta("outputDevice"),
 			tg("systemAudioSection"),
 			tg("muteSystemAudio"),
-			"auto submit paste delivery clipboard file export output srt txt playback device speaker audio ducking system audio",
+			"auto submit paste delivery clipboard file export output srt txt vtt webvtt json csv subtitles playback device speaker audio ducking system audio",
 		].join(" "),
 		readAloud: [
 			tTts("title"),

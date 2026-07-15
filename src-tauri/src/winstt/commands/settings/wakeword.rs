@@ -173,10 +173,7 @@ fn arm_wakeword_runtime(app: &AppHandle, settings: &WinsttSettings) {
         }
         WakewordArmReadiness::DetectorUnavailable => {
             wakeword.set_armed(false);
-            log::warn!(
-                "[wakeword] detector unavailable for '{}' even though the KWS model bundle exists",
-                settings.general.wake_word
-            );
+            log::warn!("[wakeword] detector unavailable even though the KWS model bundle exists");
             return;
         }
     }
@@ -191,10 +188,7 @@ fn arm_wakeword_runtime(app: &AppHandle, settings: &WinsttSettings) {
 
     wakeword.set_armed(true);
     let _ = app.emit("stt:wakeword-detection-start", ());
-    log::info!(
-        "[wakeword] listening for '{}' via live microphone stream",
-        wakeword.current_phrase()
-    );
+    log::info!("[wakeword] detection started via live microphone stream");
 }
 
 fn disarm_wakeword_runtime(app: &AppHandle) {

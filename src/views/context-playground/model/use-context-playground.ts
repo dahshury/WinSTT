@@ -45,24 +45,27 @@ export function useContextPlayground(): ContextPlaygroundController {
 		};
 		void Promise.all([
 			// eslint-disable-next-line react-hooks-js/todo -- dynamic import is intentional code-splitting; compiler cannot lower it but behavior is correct
-			import("@/shared/api/ipc-channels"),
+			import("@/shared/api/native-events"),
 			// eslint-disable-next-line react-hooks-js/todo -- dynamic import is intentional code-splitting; compiler cannot lower it but behavior is correct
 			import("@/shared/api/ipc-client"),
-		]).then(([{ IPC }, { contextPlaygroundSetLive, ipcOn }]) => {
+		]).then(([{ NATIVE_EVENTS }, { contextPlaygroundSetLive, ipcOn }]) => {
 			if (cancelled) {
 				contextPlaygroundSetLive(false);
 				return;
 			}
-			unsubscribe = ipcOn(IPC.CONTEXT_PLAYGROUND_REPORT, (payload) => {
-				const push = payload as ContextPlaygroundPush;
-				if (push.kind === "report") {
-					setReport(push.report);
-					setWaiting(null);
-					setDeepArmed(false);
-				} else {
-					setWaiting(push.reason);
-				}
-			});
+			unsubscribe = ipcOn(
+				NATIVE_EVENTS.CONTEXT_PLAYGROUND_REPORT,
+				(payload) => {
+					const push = payload as ContextPlaygroundPush;
+					if (push.kind === "report") {
+						setReport(push.report);
+						setWaiting(null);
+						setDeepArmed(false);
+					} else {
+						setWaiting(push.reason);
+					}
+				},
+			);
 			contextPlaygroundSetLive(true);
 		});
 		return () => {

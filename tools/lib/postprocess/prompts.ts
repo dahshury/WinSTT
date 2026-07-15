@@ -1,42 +1,39 @@
 import type { PresetEntry } from "../../../src/shared/lib/preset-prompts";
 
-// User-prompt assembly for the modifier benchmark. Mirrors the shape the
-// runtime composes (`active_modifier_user_prompt` in
-// src-tauri/src/winstt/llm/prompts.rs): a base cleanup instruction plus a
-// summary of each active operation. Everything here is general — no phrase is
-// lifted from the corpus inputs.
-
-export const BASE_USER_CLEANUP =
-	'First apply base cleanup: fix punctuation, capitalization, grammar, spelling, spacing, and sentence boundaries; split run-on speech into natural sentences and keep dictated questions as questions; convert spoken numbers, dates, times, currency, percentages, units, versions, and equations to figures and symbols (for example, "one" -> "1", "twenty five dollars" -> "$25", "one percent" -> "1%", "one plus one equals two" -> "1 + 1 = 2"); preserve compact product/model/API/release version labels, keeping v plus a number joined and normalizing model/release "version N" to vN when clearly part of a name; convert spoken flags and separators inside code, command lines, URLs, file paths, email addresses, identifiers, and sensitive values to literal characters while preserving the spoken flag form (for example, "dash dash save" -> "--save", "dash m" -> "-m", and "c colon backslash temp backslash logs" -> "C:\\\\temp\\\\logs" in the final text for a backslash-based path) without masking the value; if the whole dictation is a bare email, URL, file path, command, code token, identifier, or field value, return only that literal after separator conversion without prose casing or terminal punctuation; never canonicalize, alias, or expand short CLI flags into long aliases (for example, "git commit dash m" must stay "git commit -m", not "git commit --message"); quote literal labels, values, error messages, and quote/unquote text, keeping punctuation outside quoted literals unless it was part of the literal; remove fillers, repeats, false starts, and adjacent restatements where a later clause replaces earlier words; later means the second or last adjacent alternative, never the first; when the same action, field, sentence frame, or predicate repeats back-to-back with a different subject, object, or value, keep only the later one unless additive wording clearly asks for both; abstract pattern: old value plus repeated frame followed immediately by new value plus same repeated frame means keep only the new-value frame; if both adjacent alternatives remain in the output, fix it before returning; the earlier replaced value is not a separate idea to preserve, even when it is a name, role, team, product, or other durable term; preserve the speaker\'s meaning and every idea.';
+function custom(
+	entry: PresetEntry,
+): entry is Extract<PresetEntry, { id: string }> {
+	return "id" in entry;
+}
 
 export function operationSummary(entry: PresetEntry): string | null {
-	if ("id" in entry) {
-		const label = entry.name.trim() || "custom modifier";
-		return `apply the custom modifier "${label}" while preserving durable names, literal values, and identifiers`;
+	if (custom(entry)) {
+		const label = entry.name.trim() || "modifier";
+		return `apply custom "${label}"`;
 	}
 	switch (entry.key) {
 		case "neutral":
 			return null;
 		case "formal":
-			return "rewrite in a polished, formal, professional tone";
+			return "formal professional tone";
 		case "friendly":
-			return "visibly rewrite in a warmer, friendly, conversational tone";
+			return "warm friendly conversational tone";
 		case "technical":
-			return "rewrite with precise technical terminology and rigorous structure while preserving product/model names, compact version labels, code identifiers, and literal values";
+			return "exact technical terminology and rigorous structure";
 		case "concise":
-			return "make the text concise while preserving every important idea";
+			return entry.level === "caveman"
+				? "FINAL CAVEMAN PASS, highest priority after all other operations: rewrite ordinary prose as terse telegraphic text; remove a/an/the, filler, pleasantries, hedging, repeated meaning, optional conjunctions; prefer fragments and direct commands; target 40–60% fewer prose tokens; if polite framing or normal conversational sentences remain, rewrite again; keep every fact and intent; preserve every technical literal exactly"
+				: `concise ${entry.level ?? "medium"}; keep every distinct idea`;
 		case "summarize":
-			return "shorten lightly while preserving the key points, durable names, literal values, and point of view";
+			return `summarize ${entry.level === "caveman" ? "high" : (entry.level ?? "medium")}`;
 		case "reorder":
-			return "reorder for logical flow only when it improves the sequence while keeping all content";
+			return "reorder only for clearer logical flow; keep all content";
 		case "restructure":
-			return "actively structure announced counts, ordered steps, parallel items, inventories, and label-value mappings into numbered or `* ` bullet lists with the lead-in kept as prose, ending each list where the speech moves to a new topic, and keeping everything else prose";
+			return "number counted/ordered items; bullet parallel items; keep narrative prose";
 		case "rewordForClarity":
-			return "visibly rewrite unclear or awkward phrasing into clearer natural language while preserving meaning, point of view, names, literal values, and trailing fragments";
-		case "translate": {
-			const target = entry.targetLang?.trim() || "English";
-			return `translate the final result into ${target} while preserving people names, organization names, product names, project names, app names, code, command lines, URLs, file paths, email addresses, identifiers, and quoted UI labels exactly unless the quoted text is ordinary prose being translated; button, menu, mode, value, and error labels introduced by phrases like "button says" or "labeled" must still be in quote marks after translation`;
-		}
+			return "visibly rewrite awkward wording clearly; keep voice and meaning";
+		case "translate":
+			return `translate result into ${entry.targetLang?.trim() || "English"}`;
 	}
 }
 
@@ -44,26 +41,47 @@ export function buildUserPromptForPresets(
 	before: string,
 	presets: readonly PresetEntry[],
 ): string {
-	const operations = presets
+	const operations = [...presets]
+		.sort((left, right) => {
+			const finalPass = (entry: PresetEntry) =>
+				!custom(entry) && entry.key === "concise" && entry.level === "caveman";
+			return Number(finalPass(left)) - Number(finalPass(right));
+		})
 		.map(operationSummary)
 		.filter((value): value is string => value !== null);
-	if (operations.length === 0) {
-		return [
-			BASE_USER_CLEANUP,
-			"Before returning, check that adjacent self-correction alternatives keep only the later restatement.",
-			"Transform the following text according to the style guide above. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
-			"",
-			`Text to transform:\n${before}`,
-		].join("\n");
-	}
-	const opLabel =
-		operations.length === 1 ? "Active operation" : "Active operations";
-	return [
-		BASE_USER_CLEANUP,
-		`${opLabel} to apply exactly: ${operations.join("; ")}.`,
-		"Apply the active operation visibly unless the input is empty or pure noise. Before returning, do a final check: durable names, literal quoted text, code, command lines, URLs, file paths, email addresses, identifiers, and the speaker's meaning are preserved, except earlier adjacent self-correction alternatives that were replaced by a later restatement; run-on sentences are split; no markdown emphasis or highlighting is added unless explicitly dictated.",
-		"Transform the following text according to the style guide above and these active operations. Return ONLY the transformed text with no commentary, explanations, labels, or JSON formatting.",
-		"",
-		`Text to transform:\n${before}`,
-	].join("\n");
+	const has = (key: string) =>
+		presets.some((entry) => !custom(entry) && entry.key === key);
+	const translate = presets.find(
+		(entry) => !custom(entry) && entry.key === "translate",
+	);
+	const reminders = [
+		operations.length > 0
+			? `ACTIVE: ${operations.join("; ")}. Apply visibly.`
+			: null,
+		has("restructure")
+			? 'Structure mandatory. "There are two choices: first wait, second retry" becomes "There are two choices:\n\n1. Wait.\n2. Retry." Parallel actions use `* ` lines; new topic returns to prose.'
+			: null,
+		has("technical")
+			? 'Technical must be visible: remove casual/vague wording such as "basically".'
+			: null,
+		has("friendly") && has("concise")
+			? "Friendly affects word choice only; Caveman still controls final sentence shape and length."
+			: null,
+		translate && !custom(translate)
+			? `FINAL OUTPUT LANGUAGE: ${translate.targetLang?.trim() || "English"}. Translate all ordinary prose.`
+			: null,
+		presets.some(
+			(entry) =>
+				!custom(entry) && entry.key === "concise" && entry.level === "caveman",
+		)
+			? 'FINAL CAVEMAN PASS NOW: output must look telegraphic, not conversational. Drop a/an/the, polite framing, filler, hedges, repeated meaning, optional conjunctions. Prefer fragments/direct commands. Aim 40–60% fewer prose tokens. If normal full sentences remain, rewrite. Examples: "I would like you to check the logs and restart the service." => "Check logs. Restart service." "The API is failing because the token has expired." => "API fails: token expired." Compress prose only. Copy every technical term/code/API/command/path/identifier/flag/URL/email/version/exact-error literal word-for-word after spoken conversion. Never shorten or pluralize technical terms. Never invent abbreviations: "authentication" stays "authentication", not "auth"; "configuration" stays "configuration", not "config".'
+			: null,
+	].filter((value): value is string => value !== null);
+	return `Apply system rules.${reminders.length ? `\n${reminders.join("\n")}` : ""}
+Final check: last correction wins; all other meaning and durable literals survive; spoken forms convert.
+Patterns: "owner is Kim, owner is Lee" keeps only "owner is Lee"; "tool dash dash force" becomes "tool --force"; "tool dash m note" becomes "tool -m note", never "--message"; "engine version two" becomes "engine v2"; "button says retry" becomes 'button says "Retry"'.
+Return only transformed text. No commentary, label, reasoning, or JSON wrapper.
+
+TEXT:
+${before}`;
 }

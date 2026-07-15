@@ -110,11 +110,7 @@ mod platform {
             watchdog_script(pid, &state_path, &script_path),
         )?;
 
-        let watchdog_pid = spawn_watchdog_process(&script_path)?;
-
-        log::info!(
-            "[model-watchdog] installed hard-exit Ollama cleanup watcher pid {watchdog_pid} for WinSTT pid {pid}"
-        );
+        spawn_watchdog_process(&script_path)?;
         Ok(())
     }
 
@@ -141,7 +137,7 @@ mod platform {
         for (label, flags) in attempts {
             match spawn_watchdog_with_flags(&exe, &script_arg, flags) {
                 Ok(pid) => {
-                    log::info!("[model-watchdog] spawned watcher with {label} flags (pid {pid})");
+                    log::debug!("[model-watchdog] spawned watcher with {label} flags (pid {pid})");
                     return Ok(pid);
                 }
                 Err(err) => {

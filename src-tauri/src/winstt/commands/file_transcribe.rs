@@ -1,9 +1,8 @@
 // Wraps managers::FileTranscribeManager.
 //
 // The multi-file transcription queue command surface. The renderer
-// (`features/file-transcription` + `widgets/audio-display`) drives these via the
-// `window.nativeBridge` polyfill (native-bridge-adapter.ts), which routes the
-// WinSTT `file:queue-*` channels to these commands with BYTE-IDENTICAL arg shapes:
+// (`features/file-transcription` + `widgets/audio-display`) calls these generated
+// commands directly with byte-identical argument shapes:
 //
 //   file:transcribe        → file_transcribe_enqueue   { files: [{ filePath, fileName }] }
 //   file:queue-enqueue     → file_transcribe_enqueue   { files: [{ filePath, fileName }] }

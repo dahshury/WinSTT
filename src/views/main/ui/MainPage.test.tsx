@@ -49,7 +49,7 @@ describe("MainPage", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
-	test("keeps the normal main-window shell while listen mode is idle", () => {
+	test("keeps the normal main-window shell while listen mode is idle", async () => {
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
@@ -63,7 +63,7 @@ describe("MainPage", () => {
 		renderMainPage();
 
 		expect(screen.getByRole("region").className).toContain("rounded-lg");
-		expect(screen.getByText("Loopback Idle")).not.toBeNull();
+		expect(await screen.findByText("Loopback Idle")).not.toBeNull();
 		expect(
 			screen.getByRole("button", { name: "Switch to Push-to-Talk" }),
 		).not.toBeNull();

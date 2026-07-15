@@ -9,7 +9,7 @@ use super::{
     is_degenerate_decode_error, is_device_lost_error, is_silent_recording_with_mask,
     next_transcription_request_id,
 };
-use crate::winstt::stt::BackendRoute;
+use crate::winstt::stt::{BackendRoute, Segment, Transcription};
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -68,7 +68,7 @@ impl TranscriptionWatchdog {
                 .context("thresholdMs", threshold_ms.to_string())
                 .context("rawSamples", raw_samples.to_string())
                 .context("rawAudioMs", samples_to_ms(raw_samples).to_string())
-                .record(Some(&app_handle));
+                .record_without_log(Some(&app_handle));
             }
         });
         Self { stop }
@@ -114,7 +114,7 @@ impl TranscriptionManager {
             .request_id(request_id)
             .duration_ms(elapsed_ms)
             .severity("error")
-            .record(Some(&self.app_handle));
+            .record_without_log(Some(&self.app_handle));
         let _ = self.app_handle.emit(
             crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
             ModelStateEvent {
@@ -142,12 +142,20 @@ impl TranscriptionManager {
         speech_mask: Option<&[bool]>,
     ) -> Result<String> {
         let desired = self.desired_model_id();
-        self.transcribe_with_selected_model(&desired, audio, speech_mask)
+        self.transcribe_with_selected_model(&desired, audio, speech_mask, false)
+            .map(|result| result.text)
+    }
+
+    /// File-only rich decode preserving segment and optional word timestamps.
+    pub fn transcribe_file(&self, audio: &[f32]) -> Result<Transcription> {
+        let desired = self.desired_model_id();
+        self.transcribe_with_selected_model(&desired, audio, None, true)
     }
 
     pub fn transcribe_with_model(&self, model_id: &str, audio: &[f32]) -> Result<String> {
         let desired = crate::winstt::catalog::canonical_model_id(model_id).to_string();
-        self.transcribe_with_selected_model(&desired, audio, None)
+        self.transcribe_with_selected_model(&desired, audio, None, false)
+            .map(|result| result.text)
     }
 
     fn transcribe_with_selected_model(
@@ -155,7 +163,8 @@ impl TranscriptionManager {
         desired: &str,
         audio: &[f32],
         speech_mask: Option<&[bool]>,
-    ) -> Result<String> {
+        file_mode: bool,
+    ) -> Result<Transcription> {
         let request_id = next_transcription_request_id();
 
         #[cfg(debug_assertions)]
@@ -176,7 +185,7 @@ impl TranscriptionManager {
         if audio.is_empty() {
             debug!("[stt][{request_id}] empty audio vector");
             self.maybe_unload_immediately("empty audio");
-            return Ok(String::new());
+            return Ok(Transcription::default());
         }
 
         // SILENCE GATE (all engine paths: cloud / winstt-catalog)
@@ -200,11 +209,11 @@ impl TranscriptionManager {
                 speech_mask.is_some()
             );
             debug!(
-                "Recording RMS {rms:.6} below speech floor (ac_floor {SILENCE_AC_FLOOR}) — \
+                "Recording RMS {rms:.6} below speech floor (ac_floor {SILENCE_AC_FLOOR}); \
                  no audio (skipping decode)"
             );
             self.maybe_unload_immediately("silent audio");
-            return Ok(String::new());
+            return Ok(Transcription::default());
         }
 
         // ── Cloud STT route ──────────────────────────────────────────────
@@ -246,6 +255,7 @@ impl TranscriptionManager {
                                 &local_id,
                                 audio,
                                 speech_mask,
+                                file_mode,
                             );
                         }
                         // No local model to fall back to — tell the overlay so it can show an
@@ -268,12 +278,22 @@ impl TranscriptionManager {
                     .model_id(desired.to_string())
                     .request_id(request_id.as_str())
                     .duration_ms(st.elapsed().as_millis() as u64)
-                    .record(Some(&self.app_handle));
+                    .record_without_log(Some(&self.app_handle));
                     return Err(e);
                 }
             };
             self.maybe_unload_immediately("cloud transcription");
-            return Ok(filtered);
+            return Ok(Transcription {
+                text: filtered.clone(),
+                segments: file_mode.then(|| {
+                    vec![Segment {
+                        start: 0.0,
+                        end: audio.len() as f32 / TRANSCRIPTION_SAMPLE_RATE as f32,
+                        text: filtered,
+                    }]
+                }),
+                words: file_mode.then(Vec::new),
+            });
         }
 
         self.load_model_blocking(desired).map_err(|e| {
@@ -325,7 +345,7 @@ impl TranscriptionManager {
                 .model_id(desired.to_string())
                 .request_id(request_id.as_str())
                 .severity("error")
-                .record(Some(&self.app_handle));
+                .record_without_log(Some(&self.app_handle));
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
@@ -359,7 +379,7 @@ impl TranscriptionManager {
                     .model_id(desired.to_string())
                     .request_id(request_id.as_str())
                     .severity("error")
-                    .record(Some(&self.app_handle));
+                    .record_without_log(Some(&self.app_handle));
                     return Err(anyhow::anyhow!(
                         "Model failed to load after auto-load attempt. Please check your model settings."
                     ));
@@ -376,15 +396,31 @@ impl TranscriptionManager {
                 audio.len(),
                 st,
             );
-            let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
+            let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<Transcription> {
                 match &mut engine {
-                    LoadedEngine::Winstt(winstt_engine) => backend.decode(
-                        &app_handle,
-                        winstt_engine.as_mut(),
-                        audio,
-                        speech_mask,
-                        &request_id,
-                    ),
+                    LoadedEngine::Winstt(winstt_engine) => {
+                        if file_mode {
+                            backend.decode_file(
+                                &app_handle,
+                                winstt_engine.as_mut(),
+                                audio,
+                                &request_id,
+                            )
+                        } else {
+                            backend
+                                .decode(
+                                    &app_handle,
+                                    winstt_engine.as_mut(),
+                                    audio,
+                                    speech_mask,
+                                    &request_id,
+                                )
+                                .map(|text| Transcription {
+                                    text,
+                                    ..Default::default()
+                                })
+                        }
+                    }
                 }
             }));
             match transcribe_result {
@@ -397,10 +433,7 @@ impl TranscriptionManager {
                         // not be mistaken for a model-quality failure (which demotes DirectML → CPU).
                         if is_device_lost_error(e) {
                             error!(
-                                "[stt][{request_id}] transcription failed for model '{desired}': {e}"
-                            );
-                            warn!(
-                                "[stt][{request_id}] dropping engine for model '{desired}' after GPU device loss/suspension; next load rebuilds the DirectML device"
+                                "[stt][{request_id}] transcription failed for model '{desired}' after GPU device loss/suspension: {e}; dropping engine so the next load rebuilds the DirectML device"
                             );
                             return Err(self.unload_engine_after_fatal_decode(
                                 engine,
@@ -413,10 +446,7 @@ impl TranscriptionManager {
                         }
                         if is_degenerate_decode_error(e) {
                             error!(
-                                "[stt][{request_id}] transcription failed for model '{desired}': {e}"
-                            );
-                            warn!(
-                                "[stt][{request_id}] dropping corrupted engine for model '{desired}' after degenerate decode; next load will recycle DirectML unless repeated failures trigger CPU fallback"
+                                "[stt][{request_id}] transcription failed for model '{desired}' after a degenerate decode: {e}; dropping the corrupted engine so the next load can recycle DirectML or fall back to CPU after repeated failures"
                             );
                             return Err(self.unload_engine_after_fatal_decode(
                                 engine,
@@ -444,7 +474,7 @@ impl TranscriptionManager {
                         .model_id(desired.to_string())
                         .request_id(request_id.clone())
                         .duration_ms(st.elapsed().as_millis() as u64)
-                        .record(Some(&self.app_handle));
+                        .record_without_log(Some(&self.app_handle));
                         e
                     })?
                 }
@@ -473,7 +503,7 @@ impl TranscriptionManager {
                     .model_id(desired.to_string())
                     .request_id(request_id.clone())
                     .duration_ms(st.elapsed().as_millis() as u64)
-                    .record(Some(&self.app_handle));
+                    .record_without_log(Some(&self.app_handle));
                     engine.shutdown();
 
                     // Clear the model ID so it will be reloaded on next attempt
@@ -503,7 +533,7 @@ impl TranscriptionManager {
 
         let et = std::time::Instant::now();
         let final_result = result;
-        let output_chars = final_result.chars().count();
+        let output_chars = final_result.text.chars().count();
         self.mark_model_warmed_if_current(desired);
 
         info!(

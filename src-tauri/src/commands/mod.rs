@@ -136,7 +136,7 @@ pub fn initialize_enigo(app: AppHandle) -> Result<(), String> {
     match EnigoState::new() {
         Ok(enigo_state) => {
             app.manage(enigo_state);
-            log::info!("Enigo initialized successfully after permission grant");
+            log::debug!("Enigo initialized successfully after permission grant");
             Ok(())
         }
         Err(e) => {
@@ -179,6 +179,6 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     // Mark as initialized
     app.manage(ShortcutsInitialized);
 
-    log::info!("Shortcuts initialized successfully");
+    log::debug!("Shortcuts initialized successfully");
     Ok(())
 }

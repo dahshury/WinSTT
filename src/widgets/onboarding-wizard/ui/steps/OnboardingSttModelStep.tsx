@@ -3,250 +3,309 @@ import {
 	Download04Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import {
 	resolveEffectiveQuant,
 	resolveQuantCache,
-	SttModelSelector,
-} from "@/widgets/model-picker";
-import { useEffect } from "react";
-import {
-	isVisibleSttModel,
 	useCatalogStore,
 	useModelStateStore,
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useDownloadStore } from "@/features/model-download";
-import type { ModelStateEntry } from "@/shared/api/ipc-client";
-import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
-import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { quantDownloadSeedFromCache } from "@/shared/lib/download-progress-core";
+import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
+import { SurfaceProvider } from "@/shared/lib/surface";
+import {
+	DownloadActions,
+	type DownloadPhase,
+	DownloadProgressBar,
+} from "@/shared/ui/download";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
 import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 /**
- * Open the detached model-picker window — the SAME canonical picker the settings
- * Main-model selector uses (`MainModelSection`) — anchored to the trigger's
- * on-screen rect. That window owns selection, download-gating, the engine
- * swap/reload, and its own close, so onboarding never re-implements any of it.
- * Crucially, picking there drives the real engine swap, so the chosen model is
- * actually loaded (not just persisted) by the time the wizard finishes.
+ * First-run model step: ONE clear action — download the starter model — instead
+ * of the full model picker (which new users had no way of knowing they had to
+ * open). The starter model is whatever `settings.model` points at, which on a
+ * fresh install is the schema default `"tiny"` — the same model the backend
+ * spawn is already configured for (`--model tiny`). So no picker and no engine
+ * swap are needed here: the engine's configured model just needs its weights on
+ * disk, and the wizard's Next gate flips as soon as they land. Users who want a
+ * bigger model switch in Settings after setup (the step says so).
+ *
+ * The download itself is the SAME per-quant background predownload the picker's
+ * precision badges and the settings download dialog drive — pause/resume/cancel
+ * capable, progress broadcast to every window via `useDownloadListener` (mounted
+ * by OnboardingPage).
  */
-/** Selection is owned by the detached picker window, so the in-window `onChange`
- *  is never invoked in this (detached) mode — the prop is still required by the
- *  selector's contract. */
-const noopChange = () => undefined;
-
-function isCachedTarget(
-	state: ModelStateEntry | undefined,
-	targetQuantization: string,
-): boolean {
-	return resolveQuantCache(state, targetQuantization)?.state === "cached";
-}
-
 export function OnboardingSttModelStep() {
-	const catalogModels = useCatalogStore((s) => s.models);
+	const t = useTranslations("download");
 	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
 	const getModel = useCatalogStore((s) => s.getModel);
 	const statesById = useModelStateStore((s) => s.statesById);
 	const modelStatesLoaded = useModelStateStore((s) => s.isLoaded);
-	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
 	const setSttModelReady = useOnboardingWizardStore((s) => s.setSttModelReady);
 	const settingsModel = useSettingsStore((s) => s.settings.model);
 	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
+	const predownloadQuant = useDownloadStore((s) => s.predownloadQuant);
+	const pauseQuantDownload = useDownloadStore((s) => s.pauseQuantDownload);
+	const resumeQuantDownload = useDownloadStore((s) => s.resumeQuantDownload);
+	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
 
 	useEffect(() => {
 		refreshModelState();
 	}, [refreshModelState]);
 
-	// The chosen model lives in `settings.model` — written by the detached picker
-	// (through its swap controller) and broadcast back to this window via
-	// `useSyncSettings`. We only READ it here to drive the readiness gate; the
-	// picker is the sole writer.
-	const selectedModelId = settingsModel.model;
-	const selectedInfo = selectedModelId ? getModel(selectedModelId) : undefined;
-	const selectedState = selectedModelId
-		? statesById[selectedModelId]
-		: undefined;
-	const selectedQuantization = settingsModel.onnxQuantization;
+	const modelId = settingsModel.model;
+	const info = modelId ? getModel(modelId) : undefined;
+	const state = modelId ? statesById[modelId] : undefined;
+	// The precision that will actually load: "auto" re-resolves to the server's
+	// RAM/VRAM-aware pick (`effective_quantization`), mirroring the download
+	// dialog so we fetch the file set the engine will really use.
 	const targetQuantization = resolveEffectiveQuant(
-		selectedState,
-		selectedQuantization,
+		state,
+		settingsModel.onnxQuantization,
 	);
 	const downloadQuantization =
 		targetQuantization === "auto" ? "" : targetQuantization;
-	const targetCache = resolveQuantCache(selectedState, targetQuantization);
-	const ready =
-		selectedInfo !== undefined &&
-		isCachedTarget(selectedState, targetQuantization);
-	const downloadSnapshot =
-		quantDownloads[`${selectedModelId}@${downloadQuantization}`];
-	const busyDownloading =
-		downloadSnapshot !== undefined && !downloadSnapshot.paused;
+	const targetCache = resolveQuantCache(state, targetQuantization);
+	const cacheSeed = quantDownloadSeedFromCache(targetCache);
+	const ready = info !== undefined && targetCache?.state === "cached";
+	const loading = !(catalogLoaded && modelStatesLoaded);
 
 	useEffect(() => {
 		setSttModelReady(ready);
 	}, [ready, setSttModelReady]);
 
-	const downloadProgress = busyDownloading
-		? { modelId: selectedModelId, percent: downloadSnapshot?.progress ?? null }
-		: null;
+	const snapshot = quantDownloads[`${modelId}@${downloadQuantization}`];
+	const downloading = snapshot !== undefined && !snapshot.paused;
+	// "Paused" covers both an explicitly-paused live entry and a partial left on
+	// disk from a previous session (resumable from the bytes already written).
+	const partialOnDisk =
+		targetCache?.state === "partial" || (snapshot?.paused ?? false);
+	const phase: DownloadPhase = downloading
+		? "active"
+		: partialOnDisk
+			? "paused"
+			: "idle";
+
+	const handleDownload = () => {
+		predownloadQuant(modelId, downloadQuantization, "main", cacheSeed);
+	};
+	const handleStop = () => {
+		pauseQuantDownload(modelId, downloadQuantization);
+	};
+	const handleResume = () => {
+		// A live paused entry resumes in place; a partial-on-disk with no live
+		// entry restarts the stream, which continues from the bytes on disk.
+		if (snapshot?.paused) {
+			resumeQuantDownload(modelId, downloadQuantization, "main", cacheSeed);
+			return;
+		}
+		predownloadQuant(modelId, downloadQuantization, "main", cacheSeed);
+	};
+	const handleDiscard = () => {
+		discardQuantCache(modelId, downloadQuantization);
+	};
+
+	// Exact HF download bytes for the target precision, baked into the catalog.
+	// Zero / missing (fresh entries) just omits the size from the caption.
+	const downloadSize = formatBytes(
+		info?.sizeBytesByQuantization?.[downloadQuantization],
+	);
 
 	return (
 		<div className="flex flex-col gap-3">
 			<FormControl
-				caption="Pick the model WinSTT should use for your first dictation."
-				label="Speech-to-text model"
+				caption="One small download and dictation works. You can switch to a larger, more accurate model anytime in Settings."
+				label="Starter speech model"
 				layout="stacked"
 			>
-				<ElevatedSurface inline>
-					<SttModelSelector
-						currentQuantization={
-							(selectedQuantization || "") as OnnxQuantization
-						}
-						downloadProgress={downloadProgress}
-						isLoading={!(catalogLoaded && modelStatesLoaded)}
-						kind="main"
-						models={catalogModels}
-						onChange={noopChange}
-						onOpenDetached={openModelPickerAtRect}
-						placeholder="Select a speech model"
-						prefilter={isVisibleSttModel}
-						statesById={statesById}
-						systemInfo={systemInfo}
-						value={selectedModelId}
-					/>
-				</ElevatedSurface>
+				{/* The card paints surface-2 explicitly; re-anchor the surface context
+				    so the nested download controls (+1 lifts) land on surface-3, matching
+				    the icon chip. */}
+				<SurfaceProvider value={2}>
+					<div
+						className={cn(
+							"flex flex-col gap-2.5 rounded-md px-3 py-2.5 ring-1",
+							ready
+								? "bg-success/10 ring-success/25"
+								: "bg-surface-2 ring-divider",
+						)}
+					>
+						<div className="flex items-center justify-between gap-3">
+							<div className="flex min-w-0 items-center gap-2.5">
+								<span
+									aria-hidden
+									className={cn(
+										"flex size-8 shrink-0 items-center justify-center rounded-md",
+										ready
+											? "bg-success/15 text-success ring-1 ring-success/30"
+											: "bg-surface-3 text-foreground-muted ring-1 ring-divider",
+									)}
+								>
+									{loading ? (
+										<Spinner className="size-3 border" />
+									) : (
+										<HugeiconsIcon
+											icon={ready ? CheckmarkCircle02Icon : Download04Icon}
+											size={14}
+										/>
+									)}
+								</span>
+								<span className="min-w-0">
+									<span
+										className={cn(
+											"block truncate font-medium text-body",
+											ready ? "text-success" : "text-foreground",
+										)}
+									>
+										{info?.displayName ?? modelId ?? "Loading models"}
+									</span>
+									<span className="block text-body-sm text-foreground-muted">
+										{cardSubline({
+											downloadSize,
+											loading,
+											phase,
+											ready,
+											targetQuantization,
+										})}
+									</span>
+								</span>
+							</div>
+							{loading || ready ? null : (
+								<DownloadActions
+									labels={{
+										download: t("actionDownload"),
+										stop: t("actionStop"),
+										discard: t("actionDiscard"),
+										resume: t("actionResume"),
+									}}
+									onDiscard={handleDiscard}
+									onDownload={handleDownload}
+									onResume={handleResume}
+									onStop={handleStop}
+									phase={phase}
+									size="sm"
+								/>
+							)}
+						</div>
+						{!ready && phase !== "idle" ? (
+							<CardProgress
+								cacheSeed={cacheSeed}
+								phase={phase}
+								snapshot={snapshot}
+								t={t}
+							/>
+						) : null}
+					</div>
+				</SurfaceProvider>
 			</FormControl>
-
-			<ModelReadinessCard
-				busyDownloading={busyDownloading}
-				cacheState={targetCache?.state ?? "not_cached"}
-				catalogLoaded={catalogLoaded}
-				modelStatesLoaded={modelStatesLoaded}
-				progress={downloadSnapshot?.progress ?? null}
-				ready={ready}
-				selectedName={selectedInfo?.displayName ?? selectedModelId}
-				targetQuantization={targetQuantization}
-			/>
 		</div>
 	);
 }
 
-/**
- * Read-only readiness reflector for the model in `settings.model`. The detached
- * picker owns downloading + selecting; this card just tells the user whether the
- * chosen model is on disk (which is what gates the wizard's Next button).
- */
-function ModelReadinessCard({
-	busyDownloading,
-	cacheState,
-	catalogLoaded,
-	modelStatesLoaded,
-	progress,
+type DownloadT = ReturnType<typeof useTranslations<"download">>;
+type QuantSnapshot = ReturnType<
+	typeof useDownloadStore.getState
+>["quantDownloads"][string];
+type CacheSeed = ReturnType<typeof quantDownloadSeedFromCache>;
+
+function quantLabel(targetQuantization: string): string {
+	if (targetQuantization === "auto") {
+		return "auto precision";
+	}
+	return targetQuantization || "default precision";
+}
+
+function cardSubline({
+	downloadSize,
+	loading,
+	phase,
 	ready,
-	selectedName,
 	targetQuantization,
 }: {
-	busyDownloading: boolean;
-	cacheState: "cached" | "partial" | "not_cached";
-	catalogLoaded: boolean;
-	modelStatesLoaded: boolean;
-	progress: number | null;
+	downloadSize: string | null;
+	loading: boolean;
+	phase: DownloadPhase;
 	ready: boolean;
-	selectedName: string;
 	targetQuantization: string;
-}) {
-	const loading = !(catalogLoaded && modelStatesLoaded && selectedName);
-	const statusLabel = resolveStatusLabel({
-		busyDownloading,
-		cacheState,
-		loading,
-		progress,
-		ready,
-	});
-
-	return (
-		<div
-			className={cn(
-				"flex items-center justify-between gap-3 rounded-md px-3 py-2 ring-1",
-				ready
-					? "bg-success/10 text-success ring-success/25"
-					: "bg-surface-2 text-foreground-secondary ring-divider",
-			)}
-		>
-			<div className="flex min-w-0 items-center gap-2.5">
-				<span
-					aria-hidden
-					className={cn(
-						"flex size-8 shrink-0 items-center justify-center rounded-md",
-						ready
-							? "bg-success/15 text-success ring-1 ring-success/30"
-							: "bg-surface-3 text-foreground-muted ring-1 ring-divider",
-					)}
-				>
-					<ReadinessIcon loading={loading} ready={ready} />
-				</span>
-				<span className="min-w-0">
-					<span className="block truncate font-medium text-body">
-						{selectedName || "Loading models"}
-					</span>
-					<span className="block text-body-sm text-foreground-muted">
-						{targetQuantization === "auto"
-							? "auto precision"
-							: targetQuantization || "default precision"}{" "}
-						- {statusLabel}
-					</span>
-				</span>
-			</div>
-		</div>
-	);
-}
-
-function ReadinessIcon({
-	loading,
-	ready,
-}: {
-	loading: boolean;
-	ready: boolean;
-}) {
-	if (loading) {
-		return <Spinner className="size-3 border" />;
-	}
-	return (
-		<HugeiconsIcon
-			icon={ready ? CheckmarkCircle02Icon : Download04Icon}
-			size={14}
-		/>
-	);
-}
-
-function resolveStatusLabel({
-	busyDownloading,
-	cacheState,
-	loading,
-	progress,
-	ready,
-}: {
-	busyDownloading: boolean;
-	cacheState: "cached" | "partial" | "not_cached";
-	loading: boolean;
-	progress: number | null;
-	ready: boolean;
 }): string {
 	if (loading) {
 		return "checking local cache";
 	}
+	const quant = quantLabel(targetQuantization);
 	if (ready) {
-		return "downloaded and ready";
+		return `${quant} - downloaded and ready`;
 	}
-	if (busyDownloading) {
-		return progress === null ? "download starting" : `downloading ${progress}%`;
+	if (phase === "active") {
+		return `${quant} - downloading`;
 	}
-	if (cacheState === "partial") {
-		return "partial download found";
+	if (phase === "paused") {
+		return `${quant} - download paused`;
 	}
-	return "click above to choose and download";
+	return downloadSize === null
+		? `${quant} - ready to download`
+		: `${quant} - ${downloadSize} download`;
+}
+
+/** "12 MB / 30 MB · 2 MB/s" — same composition as the download dialog's bar. */
+function statsLine(downloaded: number, total: number, speed: number): string {
+	const parts: string[] = [];
+	if (total > 0) {
+		parts.push(
+			`${formatBytes(downloaded) ?? "0 B"} / ${formatBytes(total) ?? "0 B"}`,
+		);
+	}
+	const speedText = formatBytesPerSecond(speed, {
+		minUnit: "B",
+		mbDecimals: 1,
+	});
+	if (speedText) {
+		parts.push(speedText);
+	}
+	return parts.join(" · ");
+}
+
+function CardProgress({
+	cacheSeed,
+	phase,
+	snapshot,
+	t,
+}: {
+	cacheSeed: CacheSeed;
+	phase: DownloadPhase;
+	snapshot: QuantSnapshot | undefined;
+	t: DownloadT;
+}) {
+	// A partial left on disk with no live entry has no snapshot — fall back to
+	// the cache-derived seed so the paused bar still shows real byte counts.
+	const percent = snapshot?.progress ?? cacheSeed?.progress ?? null;
+	const downloadedBytes =
+		snapshot !== undefined && snapshot.downloadedBytes > 0
+			? snapshot.downloadedBytes
+			: (cacheSeed?.downloadedBytes ?? 0);
+	const totalBytes =
+		snapshot !== undefined && snapshot.totalBytes > 0
+			? snapshot.totalBytes
+			: (cacheSeed?.totalBytes ?? 0);
+	const activeLabel = percent === null ? t("progressStarting") : `${percent}%`;
+	const pausedLabel =
+		percent === null ? t("progressPaused") : t("progressPausedAt", { percent });
+	return (
+		<DownloadProgressBar
+			label={phase === "active" ? activeLabel : pausedLabel}
+			percent={percent}
+			statsLabel={statsLine(
+				downloadedBytes,
+				totalBytes,
+				phase === "active" ? (snapshot?.speedBps ?? 0) : 0,
+			)}
+			variant={phase === "active" ? "active" : "paused"}
+		/>
+	);
 }

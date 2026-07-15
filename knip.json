@@ -7,11 +7,11 @@
     "src/**/*.{test,spec}.{ts,tsx}",
     "tools/**/*.ts",
     "test/**/*.ts",
-    "src/widgets/model-picker/index.ts",
     "src/shared/ui/data-grid/index.ts",
     "src/shared/ui/pending/index.ts"
   ],
   "project": ["src/**/*.{ts,tsx}"],
+  "ignoreBinaries": ["powershell"],
   "ignoreExportsUsedInFile": {
     "interface": true,
     "type": true

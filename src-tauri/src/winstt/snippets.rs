@@ -24,7 +24,7 @@
 //   * `expand_snippets`   — read settings → apply expansion (the relay seam).
 //
 // CRUD has NO dedicated IPC command in the reference: the snippets array is part
-// of the settings tree, edited wholesale via `winstt_set_settings({ snippets })`
+// of the settings tree, edited wholesale via revisioned `winstt_patch_settings`
 // (the renderer's SnippetsTable is fully controlled). We expose one read-only
 // command (`winstt_expand_snippets`) so the context playground / a future preview
 // can render exactly what the recorder would expand, matching `getPostProcessingVocab`.

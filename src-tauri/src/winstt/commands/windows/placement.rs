@@ -72,7 +72,7 @@ fn monitor_for_point(app: &AppHandle, point: (f64, f64)) -> Option<tauri::Monito
 }
 
 /// Logical-pixel monitor rect (x, y, width, height) for a point.
-fn work_area_for_point(app: &AppHandle, point: (f64, f64)) -> (f64, f64, f64, f64) {
+pub(crate) fn work_area_for_point(app: &AppHandle, point: (f64, f64)) -> (f64, f64, f64, f64) {
     if let Some(monitor) = monitor_for_point(app, point) {
         let scale = monitor.scale_factor();
         let PhysicalPosition { x, y } = *monitor.position();
@@ -435,8 +435,11 @@ fn place_anchored_popup(app: &AppHandle, window: &tauri::WebviewWindow, state: P
     let _ = window.set_position(LogicalPosition::new(panel.x, panel.y));
     let _ = window.set_size(LogicalSize::new(panel.width, panel.height));
     let _ = window.show();
+    // The footprint is informational. Keep pointer ownership on the trigger
+    // underneath it, including on Linux where click-through cannot be applied
+    // while the prewarmed native window is still hidden/unrealized.
+    let _ = window.set_ignore_cursor_events(true);
     let _ = window.set_always_on_top(true);
-    let _ = window.set_focus();
 }
 
 /// Tell the device-picker RENDERER whether its window is actually on screen.

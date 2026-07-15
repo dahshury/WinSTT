@@ -474,68 +474,6 @@ function mergeSections(
 	return { merged: result as AppSettings, preserved };
 }
 
-export const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
-
-// Text fields that make a dictionary/snippet row meaningful. A row whose known
-// text fields are all blank is an unfilled "Add row" leftover, not real data.
-const COLLECTION_TEXT_FIELDS = ["term", "trigger", "expansion"] as const;
-
-function isMeaningfulCollectionEntry(entry: unknown): boolean {
-	if (!entry || typeof entry !== "object") {
-		return true;
-	}
-	const record = entry as Record<string, unknown>;
-	const present = COLLECTION_TEXT_FIELDS.filter((field) => field in record);
-	// Unknown shape (no recognised text fields) — keep it rather than guess.
-	if (present.length === 0) {
-		return true;
-	}
-	return present.some(
-		(field) =>
-			typeof record[field] === "string" &&
-			(record[field] as string).trim() !== "",
-	);
-}
-
-function meaningfulEntries(value: unknown): unknown[] {
-	return Array.isArray(value) ? value.filter(isMeaningfulCollectionEntry) : [];
-}
-
-function shouldMigrateLocalCollection(
-	loadedValue: unknown,
-	currentValue: unknown,
-	loadBaselineValue: unknown,
-): boolean {
-	return (
-		Array.isArray(loadedValue) &&
-		loadedValue.length === 0 &&
-		// Only migrate when there's REAL local data — never resurrect blank
-		// "Add row" leftovers over the empty backend collection.
-		meaningfulEntries(currentValue).length > 0 &&
-		settingsSectionsEqual(currentValue, loadBaselineValue)
-	);
-}
-
-function applyLocalCollectionMigrations(
-	merged: AppSettings,
-	loaded: AppSettings,
-	current: AppSettings,
-	loadBaseline: AppSettings,
-): { merged: AppSettings; migrated: boolean } {
-	let migrated = false;
-	const next: Record<string, unknown> = { ...merged };
-	for (const key of LOCAL_CACHE_COLLECTION_KEYS) {
-		if (
-			shouldMigrateLocalCollection(loaded[key], current[key], loadBaseline[key])
-		) {
-			// Drop any trailing blank rows so the migration carries real data only.
-			next[key] = meaningfulEntries(current[key]);
-			migrated = true;
-		}
-	}
-	return { merged: next as AppSettings, migrated };
-}
-
 export function mergeBroadcastPreservingUserDirty(
 	decoded: AppSettings,
 	current: AppSettings,
@@ -595,14 +533,8 @@ export function deriveIpcLoadUpdate(
 	loadBaseline: AppSettings,
 ): { merged: AppSettings; nextFromIpcLoad: boolean } {
 	const { merged, preserved } = mergeSections(loaded, current, loadBaseline);
-	const migrated = applyLocalCollectionMigrations(
-		merged,
-		loaded,
-		current,
-		loadBaseline,
-	);
 	return {
-		merged: migrated.merged,
-		nextFromIpcLoad: !(preserved || migrated.migrated),
+		merged,
+		nextFromIpcLoad: !preserved,
 	};
 }

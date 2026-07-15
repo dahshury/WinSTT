@@ -28,24 +28,18 @@ import {
 } from "react";
 import { useTranslations } from "use-intl";
 import {
+	type SettingsHydrationStatus,
 	subscribePendingSettingsSection,
 	takePendingSettingsSection,
+	useSettingsHydrationStore,
 	useSettingsStore,
 	useSettingsTabStore,
 } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { useModelAssistanceAutoEnable } from "@/features/model-assistance";
 import { useCloudKeyAutoRevert } from "@/features/revert-cloud-on-key-removal";
-import {
-	type SettingsHydrationStatus,
-	useSettingsHydrationStore,
-} from "@/features/update-settings";
-import { IPC } from "@/shared/api/ipc-channels";
-import {
-	ipcOn,
-	settingsWindowReady,
-	windowCloseSelf,
-} from "@/shared/api/ipc-client";
+import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
+import { ipcOn, windowCloseSelf } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
@@ -191,8 +185,8 @@ const OutputTab = lazy(async () => {
 		default() {
 			return (
 				<>
-					<OutputSettingsPanel />
 					<PlaybackSettingsPanel />
+					<OutputSettingsPanel />
 				</>
 			);
 		},
@@ -390,13 +384,6 @@ function LlmModelPickerHost() {
 			/>
 		</Suspense>
 	);
-}
-
-function SettingsReadySignal() {
-	useEffect(() => {
-		settingsWindowReady();
-	}, []);
-	return null;
 }
 
 /** Mounts only once its sibling lazy panel has resolved (Suspense reveals all
@@ -877,7 +864,6 @@ export function SettingsPage() {
 	const canRenderSettings =
 		isLoaded &&
 		(hydrationStatus === "ready" || hydrationStatus === "unavailable");
-	const shouldSignalReady = canRenderSettings || hydrationStatus === "error";
 	// Auto-revert any cloud surface (STT model / LLM provider / cloud TTS) to a
 	// local engine when its API key is removed. Mounted HERE (not the main
 	// window) because keys are edited in this window and the OpenRouter key
@@ -1078,7 +1064,6 @@ export function SettingsPage() {
 							</Elevated>
 						</div>
 					</Tabs.Root>
-					{shouldSignalReady ? <SettingsReadySignal /> : null}
 					{canRenderSettings ? <LlmModelPickerHost /> : null}
 					{canRenderSettings ? (
 						<Suspense fallback={null}>

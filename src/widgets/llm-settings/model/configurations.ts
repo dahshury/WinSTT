@@ -1,15 +1,13 @@
 import { z } from "zod";
 import { create } from "zustand";
-import type {
-	BuiltinPresetEntry,
-	CustomModifier,
-} from "@/entities/llm-catalog";
+import { useSettingsStore } from "@/entities/setting";
+import type { BuiltinPresetEntry } from "@/entities/llm-catalog";
 import {
 	INDEPENDENT_PRESETS,
 	PRESET_LEVELS,
+	STANDARD_PRESET_LEVELS,
 	TONE_GROUP,
 } from "@/entities/llm-catalog";
-import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import {
 	createTransientNotificationStore,
 	type TransientNotificationMeta,
@@ -21,6 +19,16 @@ import {
 	writePersistedSelectorState,
 } from "@/shared/lib/persisted-selector-state";
 import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
+import { syncRuleSnapshots } from "./app-profile-rules";
+import type {
+	LlmConfiguration,
+	SavedConfiguration,
+} from "./configuration-types";
+
+export type {
+	LlmConfiguration,
+	SavedConfiguration,
+} from "./configuration-types";
 
 /** Which saved-configuration mutation failed to reach localStorage. Drives the
  *  toast so a "saved"/"deleted" that never actually persisted is observable
@@ -49,48 +57,6 @@ function reportPersistenceFailure(
 	action: ConfigurationPersistenceAction,
 ): void {
 	useConfigurationPersistenceErrorStore.getState().show({ action });
-}
-
-type LlmProvider = AppSettingsOutput["llm"]["dictation"]["provider"];
-type ThinkingEffort = "off" | "low" | "medium" | "high";
-type EffortLevel = "low" | "medium" | "high";
-
-/**
- * A full, self-contained LLM configuration — tone + modifiers + provider/model.
- *
- * One unified concept drives two places: the per-feature **tone row** (which
- * applies only the tone + modifiers half to its section) and the **Playground**
- * (which additionally drives the provider/model picker). Structurally a superset
- * of the panel's `LlmFeatureDraft & PresetCarrier`, so the SAME provider/model
- * picker (`ProviderSection`) drives this config directly. `enabled` /
- * `reasoningEffort` / `verbosity` / `maxOutputTokens` are carried to satisfy the
- * picker's prop shape — the tone row ignores them.
- */
-export interface LlmConfiguration {
-	customModifiers: CustomModifier[];
-	enabled: boolean;
-	maxOutputTokens: number | null;
-	model: string;
-	openrouterFallbackModel: string;
-	openrouterModel: string;
-	presets: BuiltinPresetEntry[];
-	provider: LlmProvider;
-	// Shares the off/low/medium/high scale with `thinkingEffort` (`off` →
-	// reasoning disabled). Verbosity stays low/medium/high.
-	reasoningEffort: ThinkingEffort;
-	thinkingEffort: ThinkingEffort;
-	verbosity: EffortLevel;
-}
-
-/** A user-saved, named configuration (tone + modifiers + provider/model). The
- *  same saved entry is offered in every Configuration combobox. */
-export interface SavedConfiguration {
-	config: LlmConfiguration;
-	id: string;
-	name: string;
-	/** Persisted-shape version, stamped on save for future migrations. Optional
-	 *  because entries written before versioning existed omit it. */
-	version?: number;
 }
 
 export type ConfigurationDropPlacement = "before" | "after";
@@ -261,6 +227,7 @@ const PRESET_KEYS = [...TONE_GROUP, ...INDEPENDENT_PRESETS] as const;
 
 const presetKeySchema = z.enum(PRESET_KEYS);
 const presetLevelSchema = z.enum(PRESET_LEVELS);
+const standardPresetLevelSchema = z.enum(STANDARD_PRESET_LEVELS);
 const thinkingEffortSchema = z.enum(["off", "low", "medium", "high"]);
 const effortLevelSchema = z.enum(["low", "medium", "high"]);
 const llmProviderSchema = z.enum([
@@ -278,7 +245,7 @@ const builtinPresetEntrySchema = z.object({
 const customModifierSchema = z.object({
 	enabled: z.boolean().default(false),
 	id: z.string(),
-	level: presetLevelSchema.optional(),
+	level: standardPresetLevelSchema.optional(),
 	levelsEnabled: z.boolean().default(false),
 	name: z.string().default(""),
 	prompt: z.string().default(""),
@@ -761,6 +728,14 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 			if (!ok) {
 				reportPersistenceFailure("delete");
 			}
+			const settings = useSettingsStore.getState();
+			const synced = syncRuleSnapshots(
+				settings.settings.llm.appProfiles.rules,
+				next,
+			);
+			if (synced.changed) {
+				settings.updateLlmAppProfiles(synced.rules);
+			}
 		},
 		updateConfiguration: (id, config) => {
 			const next = get().configurations.map((c) =>
@@ -779,6 +754,14 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 			});
 			if (!ok) {
 				reportPersistenceFailure("update");
+			}
+			const settings = useSettingsStore.getState();
+			const synced = syncRuleSnapshots(
+				settings.settings.llm.appProfiles.rules,
+				next,
+			);
+			if (synced.changed) {
+				settings.updateLlmAppProfiles(synced.rules);
 			}
 		},
 	}),

@@ -135,7 +135,13 @@ impl IssueBuilder {
     }
 
     pub fn record(self, app: Option<&AppHandle>) -> ObservabilityIssue {
-        record_issue(app, self)
+        record_issue(app, self, true)
+    }
+
+    /// Store and emit the issue to diagnostics without writing a second log line.
+    /// Use this when the caller already logged the same failure with richer context.
+    pub fn record_without_log(self, app: Option<&AppHandle>) -> ObservabilityIssue {
+        record_issue(app, self, false)
     }
 
     #[cfg(test)]
@@ -298,6 +304,23 @@ fn severity_for_kind(kind: &str) -> &'static str {
 }
 
 fn issue_log_fields(issue: &ObservabilityIssue) -> serde_json::Value {
+    let context = issue
+        .context
+        .iter()
+        .map(|(key, value)| {
+            let normalized = key.to_ascii_lowercase();
+            let value = if normalized == "phrase"
+                || normalized == "filename"
+                || normalized == "path"
+                || normalized.ends_with("path")
+            {
+                "[redacted]".to_string()
+            } else {
+                value.clone()
+            };
+            (key.clone(), value)
+        })
+        .collect::<BTreeMap<_, _>>();
     serde_json::json!({
         "id": issue.id,
         "area": issue.area,
@@ -307,7 +330,7 @@ fn issue_log_fields(issue: &ObservabilityIssue) -> serde_json::Value {
         "provider": issue.provider,
         "requestId": issue.request_id,
         "durationMs": issue.duration_ms,
-        "context": issue.context,
+        "context": context,
     })
 }
 
@@ -372,7 +395,11 @@ fn build_issue(input: IssueBuilder) -> ObservabilityIssue {
     }
 }
 
-fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityIssue {
+fn record_issue(
+    _app: Option<&AppHandle>,
+    input: IssueBuilder,
+    should_log: bool,
+) -> ObservabilityIssue {
     let issue = build_issue(input);
     if let Ok(mut issues) = issue_store().lock() {
         while issues.len() >= MAX_ISSUES {
@@ -380,7 +407,9 @@ fn record_issue(_app: Option<&AppHandle>, input: IssueBuilder) -> ObservabilityI
         }
         issues.push_back(issue.clone());
     }
-    log_issue(&issue);
+    if should_log {
+        log_issue(&issue);
+    }
     issue
 }
 
@@ -510,6 +539,24 @@ mod tests {
             assert_eq!(fields["provider"], "github");
             assert_eq!(fields["requestId"], "update-1");
             assert_eq!(fields["context"]["version"], "1.2.3");
+        });
+    }
+
+    #[test]
+    fn log_fields_redact_private_context_values() {
+        with_clean_issue_store(|| {
+            let issue = IssueBuilder::new("file_transcribe", "decode", "decode failed")
+                .context("fileName", "private-meeting.wav")
+                .context("path", r"C:\Users\person\private-meeting.wav")
+                .context("phrase", "custom wake phrase")
+                .context("attempt", "2")
+                .build_for_test();
+
+            let fields = issue_log_fields(&issue);
+            assert_eq!(fields["context"]["fileName"], "[redacted]");
+            assert_eq!(fields["context"]["path"], "[redacted]");
+            assert_eq!(fields["context"]["phrase"], "[redacted]");
+            assert_eq!(fields["context"]["attempt"], "2");
         });
     }
 }

@@ -1,21 +1,25 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { asInvalid } from "@test/lib/cast";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import type {
+	ModelStateEntry,
+	SttModelLifecycleSnapshot,
+	SystemInfoEntry,
+} from "@/shared/api/ipc-client";
 
 // Per-test overrides so different cases can flip what fetchModelsWithState
 // resolves with and capture the callbacks wired by onModelCacheChanged /
-// onModelSwapCompleted. Bun's `mock.module` installs a PROCESS-GLOBAL cache,
+// onSttModelLifecycle. Bun's `mock.module` installs a PROCESS-GLOBAL cache,
 // so the implementations defined here are also visible to other tests that
 // import `@/shared/api/ipc-client` — keep the surface in sync with catalog-store.test.ts.
 const ipcOverrides: {
 	payload: { states: ModelStateEntry[]; system_info: SystemInfoEntry } | null;
 	cacheCb: ((id: string) => void) | null;
-	swapCb: (() => void) | null;
+	lifecycleCb: ((snapshot: SttModelLifecycleSnapshot) => void) | null;
 } = {
 	payload: null,
 	cacheCb: null,
-	swapCb: null,
+	lifecycleCb: null,
 };
 
 const fetchSpy = mock(async () => ipcOverrides.payload);
@@ -35,10 +39,10 @@ mock.module("@/shared/api/ipc-client", () => ({
 			ipcOverrides.cacheCb = null;
 		};
 	},
-	onModelSwapCompleted: (cb: () => void) => {
-		ipcOverrides.swapCb = cb;
+	onSttModelLifecycle: (cb: (snapshot: SttModelLifecycleSnapshot) => void) => {
+		ipcOverrides.lifecycleCb = cb;
 		return () => {
-			ipcOverrides.swapCb = null;
+			ipcOverrides.lifecycleCb = null;
 		};
 	},
 }));
@@ -226,13 +230,13 @@ describe("useModelStateStore.refresh", () => {
 });
 
 describe("initModelStateStore", () => {
-	test("subscribes to cache + swap pushes and triggers refresh on callback", async () => {
+	test("subscribes to cache + lifecycle pushes and triggers refresh on callback", async () => {
 		resetStore();
 		ipcOverrides.cacheCb = null;
-		ipcOverrides.swapCb = null;
+		ipcOverrides.lifecycleCb = null;
 		const unsub = initModelStateStore();
 		expect(ipcOverrides.cacheCb).not.toBeNull();
-		expect(ipcOverrides.swapCb).not.toBeNull();
+		expect(ipcOverrides.lifecycleCb).not.toBeNull();
 
 		// Cache-changed push should trigger a fresh refresh().
 		ipcOverrides.payload = {
@@ -247,19 +251,21 @@ describe("initModelStateStore", () => {
 			useModelStateStore.getState().statesById["from-cache"],
 		).toBeDefined();
 
-		// Swap-completed push should also trigger a refresh().
+		// A terminal lifecycle push should also trigger a refresh().
 		ipcOverrides.payload = {
 			states: [makeEntry("from-swap")],
 			system_info: SYSTEM_INFO,
 		};
-		const swapCb = ipcOverrides.swapCb as (() => void) | null;
-		swapCb?.();
+		const lifecycleCb = ipcOverrides.lifecycleCb as
+			| ((snapshot: SttModelLifecycleSnapshot) => void)
+			| null;
+		lifecycleCb?.({ phase: "active" } as SttModelLifecycleSnapshot);
 		await new Promise((r) => setTimeout(r, 0));
 		expect(useModelStateStore.getState().statesById["from-swap"]).toBeDefined();
 
 		// Unsubscribing tears both callbacks down.
 		unsub();
 		expect(ipcOverrides.cacheCb).toBeNull();
-		expect(ipcOverrides.swapCb).toBeNull();
+		expect(ipcOverrides.lifecycleCb).toBeNull();
 	});
 });

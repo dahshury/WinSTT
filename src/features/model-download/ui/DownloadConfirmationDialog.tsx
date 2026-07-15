@@ -350,7 +350,6 @@ function DownloadConfirmationContent({
 	const downloadKey = `${pending?.modelId ?? ""}@${targetQuant}`;
 	const quant = useDownloadStore((s) => s.quantDownloads[downloadKey]);
 	const predownloadQuant = useDownloadStore((s) => s.predownloadQuant);
-	const pauseQuantEntry = useDownloadStore((s) => s.pauseQuantEntry);
 	const pauseQuantDownload = useDownloadStore((s) => s.pauseQuantDownload);
 	const resumeQuantDownload = useDownloadStore((s) => s.resumeQuantDownload);
 	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
@@ -435,9 +434,6 @@ function DownloadConfirmationContent({
 		if (!pending) {
 			return;
 		}
-		// Optimistic local flip so the badge/dialog re-render as paused before
-		// the server's confirmation lands; the partial bytes stay on disk.
-		pauseQuantEntry(pending.modelId, targetQuant);
 		pauseQuantDownload(pending.modelId, targetQuant);
 	};
 

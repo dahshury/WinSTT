@@ -2,17 +2,13 @@ import {
 	type AppDataUsageEntry,
 	commands,
 	type MicrophoneLevelMonitorTarget,
+	type Result,
 } from "@/bindings";
-import { IPC } from "../ipc-channels";
-import {
-	commandOrDefault,
-	invoke,
-	invokeOrDefault,
-	on,
-	onCast,
-	onTyped,
-	send,
-} from "../ipc-transport";
+import { decodeSettingsPayload } from "@/shared/config/settings-codec";
+import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
+import { NATIVE_EVENTS as IPC } from "../native-events";
+import { callPlugin, windowOp } from "../adapter/plugins";
+import { commandOrDefault, on, onCast, onTyped } from "../native-boundary";
 import type {
 	AllowedMethod,
 	AllowedParameter,
@@ -21,9 +17,26 @@ import type {
 	GpuInfo,
 	ServerStatus,
 } from "../models";
-import { decodeSettingsPayload } from "@/shared/config/settings-codec";
-
 type AppSettings = ReturnType<typeof decodeSettingsPayload>;
+
+export interface SettingsSnapshotPayload {
+	revision: number;
+	settings: AppSettings;
+}
+
+export interface SettingsPatchAck extends SettingsSnapshotPayload {
+	applied: boolean;
+	changedSections: string[];
+}
+
+let lastKnownSettingsSnapshot: SettingsSnapshotPayload | null = null;
+
+function unwrapResult<T, E>(result: Result<T, E>): T {
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw result.error;
+}
 
 interface AudioDevicesChangedPayload {
 	devices: AudioDevice[];
@@ -67,20 +80,24 @@ export interface ContextAppEntry {
 
 // STT commands
 export const sttSetParameter = (parameter: AllowedParameter, value: unknown) =>
-	send(IPC.STT_SET_PARAMETER, { parameter, value });
+	void commands.winsttSetParameter(parameter, value as never);
 
 export const sttGetParameter = (parameter: AllowedParameter) =>
-	invokeOrDefault<unknown>(IPC.STT_GET_PARAMETER, null, { parameter });
+	commandOrDefault(
+		"winstt_get_parameter",
+		() => commands.winsttGetParameter(parameter),
+		null,
+	);
 
 export const sttCallMethod = (method: AllowedMethod, args?: unknown[]) =>
-	send(IPC.STT_CALL_METHOD, { method, args });
+	void commands.winsttCallMethod(method, (args as never[] | undefined) ?? null);
 
 /**
  * Cancel the in-flight dictation session — discards the recording, aborts any
  * running LLM cleanup, and hides the overlay. Mirrors what Escape does; used
  * by the X button on the overlay pill.
  */
-export const sttAbortOperation = () => send(IPC.STT_ABORT_OPERATION);
+export const sttAbortOperation = () => void commands.cancelCurrentOperation();
 
 /**
  * Subscribe to the "user-initiated cancel just landed" event broadcast by
@@ -94,25 +111,46 @@ export const onSttSessionAborted = (cb: () => void) =>
 
 // Hotkey
 export const hotkeyRegister = (accelerator: string) =>
-	invokeOrDefault<boolean>(IPC.HOTKEY_REGISTER, false, { accelerator });
+	commandOrDefault(
+		"hotkey_register",
+		() => commands.hotkeyRegister(accelerator),
+		false,
+	);
 
 export const hotkeyUnregister = (accelerator: string) =>
-	send(IPC.HOTKEY_UNREGISTER, { accelerator });
+	void commands.hotkeyUnregister(accelerator);
 
 export const hotkeyStartRecording = () =>
-	invokeOrDefault<boolean>(IPC.HOTKEY_START_RECORDING, false);
+	commandOrDefault(
+		"hotkey_start_recording",
+		() => commands.hotkeyStartRecording(),
+		false,
+	);
 
-export const hotkeyStopRecording = () => send(IPC.HOTKEY_STOP_RECORDING);
+export const hotkeyStopRecording = () => void commands.hotkeyStopRecording();
 
 // System
-export const autostartSet = (enabled: boolean) =>
-	send(IPC.AUTOSTART_SET, { enabled });
+export const autostartSet = (enabled: boolean) => {
+	void callPlugin("autostart:set", { enabled });
+};
 export const autostartGet = () =>
-	invokeOrDefault<boolean>(IPC.AUTOSTART_GET, false);
+	commandOrDefault(
+		"autostart_get",
+		async () => Boolean(await callPlugin("autostart:get", undefined)),
+		false,
+	);
 export const audioGetDevices = () =>
-	invokeOrDefault<AudioDevice[]>(IPC.AUDIO_GET_DEVICES, []);
+	commandOrDefault(
+		"get_audio_devices",
+		async () => (await commands.getAudioDevices()) as AudioDevice[],
+		[],
+	);
 export const audioRefreshDevices = () =>
-	invokeOrDefault<AudioDevice[]>(IPC.AUDIO_REFRESH_DEVICES, []);
+	commandOrDefault(
+		"refresh_audio_devices",
+		async () => (await commands.refreshAudioDevices()) as AudioDevice[],
+		[],
+	);
 export const onAudioDevicesChanged = (cb: (devices: AudioDevice[]) => void) =>
 	onTyped<AudioDevicesChangedPayload, AudioDevice[]>(
 		IPC.AUDIO_DEVICES_CHANGED,
@@ -122,9 +160,18 @@ export const onAudioDevicesChanged = (cb: (devices: AudioDevice[]) => void) =>
 export const onAudioDeviceChangeDetected = (cb: () => void) =>
 	on(IPC.AUDIO_DEVICECHANGE_DETECTED, () => cb());
 export const audioGetOutputDevices = () =>
-	invokeOrDefault<AudioOutputDevice[]>(IPC.AUDIO_GET_OUTPUT_DEVICES, []);
+	commandOrDefault(
+		"get_audio_output_devices",
+		async () => (await commands.getAudioOutputDevices()) as AudioOutputDevice[],
+		[],
+	);
 export const audioRefreshOutputDevices = () =>
-	invokeOrDefault<AudioOutputDevice[]>(IPC.AUDIO_REFRESH_OUTPUT_DEVICES, []);
+	commandOrDefault(
+		"refresh_audio_output_devices",
+		async () =>
+			(await commands.refreshAudioOutputDevices()) as AudioOutputDevice[],
+		[],
+	);
 export const onAudioOutputDevicesChanged = (
 	cb: (devices: AudioOutputDevice[]) => void,
 ) =>
@@ -134,24 +181,42 @@ export const onAudioOutputDevicesChanged = (
 		cb,
 	);
 export const audioSetSelectedMicrophone = (deviceName: string) =>
-	invoke<void>(IPC.AUDIO_SET_SELECTED_MICROPHONE, { deviceName });
+	commands.setSelectedMicrophone(deviceName).then(unwrapResult);
 export const startMicrophoneLevelMonitor = (
 	targets: MicrophoneLevelMonitorTarget[],
 ) =>
-	invokeOrDefault<void>(IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR, undefined, {
-		targets,
-	});
+	commandOrDefault(
+		"start_microphone_level_monitor",
+		() => commands.startMicrophoneLevelMonitor(targets),
+		undefined,
+	);
 export const stopMicrophoneLevelMonitor = () =>
-	invokeOrDefault<void>(IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR, undefined);
+	commandOrDefault(
+		"stop_microphone_level_monitor",
+		() => commands.stopMicrophoneLevelMonitor(),
+		undefined,
+	);
 export const onMicrophoneLevels = (
 	cb: (payload: MicrophoneLevelsPayload) => void,
 ) => onCast<MicrophoneLevelsPayload>(IPC.AUDIO_MICROPHONE_LEVELS, cb);
 export const gpuGetInfo = () =>
-	invokeOrDefault<GpuInfo[]>(IPC.GPU_GET_INFO, []);
+	commandOrDefault(
+		"gpu_get_info",
+		async () => (await commands.gpuGetInfo()) as GpuInfo[],
+		[],
+	);
 export const getSystemLocale = () =>
-	invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, "");
+	commandOrDefault(
+		"app_get_system_locale",
+		async () => String(await callPlugin("os:locale", undefined)),
+		"",
+	);
 export const listContextApps = () =>
-	invokeOrDefault<ContextAppEntry[]>(IPC.CONTEXT_LIST_APPS, []);
+	commandOrDefault(
+		"context_list_apps",
+		async () => (await commands.contextListApps()) as ContextAppEntry[],
+		[],
+	);
 
 // Settings
 //
@@ -162,7 +227,9 @@ export const listContextApps = () =>
 // clobber a section (e.g. `general.overlayMode`) that the user just changed in
 // the settings panel but hasn't debounce-saved yet.
 export const settingsSave = (settings: Partial<AppSettings>) =>
-	send(IPC.SETTINGS_SAVE, { settings: settings as AppSettingsSaveInput });
+	void saveWithOneConflictRebase(settings).catch((error) => {
+		console.error("[settings] save failed:", error);
+	});
 
 /**
  * Acknowledged settings save (audit #46). Resolves once the backend confirms
@@ -170,23 +237,153 @@ export const settingsSave = (settings: Partial<AppSettings>) =>
  * "last saved" baseline ONLY on confirmed success and keep the section dirty
  * (retry) on failure — the fire-and-forget `settingsSave` above swallowed
  * rejections, letting a section read "clean" after a rejected write and never
- * be re-sent. The backend's fallible `winstt_set_settings` command surfaces a
+ * be re-sent. The backend's fallible `winstt_patch_settings` command surfaces a
  * `Result::Err` on failure, which `invoke` unwraps into a rejected promise.
  */
 export const settingsSaveAck = (
 	settings: Partial<AppSettings>,
-): Promise<void> =>
-	invoke<unknown>(IPC.SETTINGS_SAVE, {
-		settings: settings as AppSettingsSaveInput,
-	}).then(() => undefined);
-export const settingsLoad = async (): Promise<AppSettings> => {
-	const payload = await invokeOrDefault<unknown>(IPC.SETTINGS_LOAD, {});
-	return decodeSettingsPayload(payload);
-};
-export const settingsLoadStrict = async (): Promise<AppSettings> => {
-	const payload = await invoke<unknown>(IPC.SETTINGS_LOAD);
-	return decodeSettingsPayload(payload ?? {});
-};
+	baseRevision?: number,
+): Promise<SettingsPatchAck> =>
+	saveSettings(
+		settings as AppSettingsSaveInput,
+		baseRevision ?? lastKnownSettingsSnapshot?.revision,
+	);
+export const settingsLoad = async (): Promise<AppSettings> =>
+	(await settingsLoadSnapshot()).settings;
+export const settingsLoadStrict = async (): Promise<AppSettings> =>
+	(await settingsLoadSnapshotStrict()).settings;
+
+export const settingsLoadSnapshot =
+	async (): Promise<SettingsSnapshotPayload> => {
+		try {
+			return await settingsLoadSnapshotStrict();
+		} catch {
+			return {
+				revision: lastKnownSettingsSnapshot?.revision ?? 0,
+				settings: decodeSettingsPayload({}),
+			};
+		}
+	};
+
+export const settingsLoadSnapshotStrict =
+	async (): Promise<SettingsSnapshotPayload> => {
+		const snapshot = await loadSettingsSnapshot();
+		lastKnownSettingsSnapshot = snapshot;
+		return snapshot;
+	};
+
+function canUseDevSettingsBridge(): boolean {
+	return (
+		typeof window !== "undefined" &&
+		window.location.port === "1420" &&
+		!hasTauriRuntime()
+	);
+}
+
+async function readDevSettingsResponse(
+	response: Response,
+): Promise<Record<string, unknown>> {
+	let body: unknown = {};
+	try {
+		body = await response.json();
+	} catch {
+		// The HTTP status below remains the useful error signal.
+	}
+	if (!response.ok) {
+		const message =
+			body !== null &&
+			typeof body === "object" &&
+			"error" in body &&
+			typeof body.error === "string"
+				? body.error
+				: `HTTP ${response.status}`;
+		throw new Error(message);
+	}
+	return body !== null && typeof body === "object"
+		? (body as Record<string, unknown>)
+		: {};
+}
+
+async function loadSettingsSnapshot(): Promise<SettingsSnapshotPayload> {
+	if (!canUseDevSettingsBridge()) {
+		const snapshot = await commands.winsttGetSettingsSnapshot();
+		return {
+			revision: snapshot.revision,
+			settings: decodeSettingsPayload(snapshot.settings),
+		};
+	}
+	const response = await fetch("/__winstt/settings", {
+		headers: { Accept: "application/json" },
+	});
+	const body = await readDevSettingsResponse(response);
+	return {
+		revision: typeof body["revision"] === "number" ? body["revision"] : 0,
+		settings: decodeSettingsPayload(body["settings"] ?? {}),
+	};
+}
+
+async function saveSettings(
+	settings: AppSettingsSaveInput,
+	baseRevision?: number,
+): Promise<SettingsPatchAck> {
+	const base =
+		baseRevision ??
+		lastKnownSettingsSnapshot?.revision ??
+		(await loadSettingsSnapshot()).revision;
+	if (!canUseDevSettingsBridge()) {
+		const response = unwrapResult(
+			await commands.winsttPatchSettings({
+				baseRevision: base,
+				settings: settings as never,
+			}),
+		);
+		const ack: SettingsPatchAck = {
+			applied: response.applied,
+			changedSections: response.changedSections,
+			revision: response.snapshot.revision,
+			settings: decodeSettingsPayload(response.snapshot.settings),
+		};
+		lastKnownSettingsSnapshot = ack;
+		return ack;
+	}
+	const response = await fetch("/__winstt/settings", {
+		method: "PATCH",
+		headers: {
+			Accept: "application/json",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ baseRevision: base, settings }),
+	});
+	const body = await readDevSettingsResponse(response);
+	const ack: SettingsPatchAck = {
+		applied: body["applied"] !== false,
+		changedSections: Array.isArray(body["changedSections"])
+			? body["changedSections"].filter(
+					(value): value is string => typeof value === "string",
+				)
+			: Object.keys(settings),
+		revision:
+			typeof body["revision"] === "number" ? body["revision"] : base + 1,
+		settings: decodeSettingsPayload(body["settings"] ?? settings),
+	};
+	lastKnownSettingsSnapshot = ack;
+	return ack;
+}
+
+async function saveWithOneConflictRebase(
+	settings: Partial<AppSettings>,
+): Promise<void> {
+	const first = await settingsSaveAck(settings);
+	if (first.applied) {
+		return;
+	}
+	const retry = await settingsSaveAck(settings, first.revision);
+	if (!retry.applied) {
+		throw new Error(
+			"Settings changed concurrently twice; local update was not persisted",
+		);
+	}
+}
 
 export interface RemoveApplicationDataResult {
 	deletePortableAppDir: boolean;
@@ -204,45 +401,28 @@ export interface RemoveDownloadedModelsResult {
 	errors: string[];
 }
 
-export const removeApplicationData = (deleteOllamaModels: boolean) =>
-	invokeOrDefault<RemoveApplicationDataResult>(
-		IPC.SETTINGS_REMOVE_APPLICATION_DATA,
-		{
-			deletePortableAppDir: false,
-			deletedOllamaModels: [],
-			ollamaErrors: [],
-			portable: false,
-			scheduled: false,
-		},
-		{ deleteOllamaModels },
-	);
+export const removeApplicationData = async (deleteOllamaModels: boolean) =>
+	(await unwrapResult(
+		await commands.removeApplicationData(deleteOllamaModels),
+	)) as RemoveApplicationDataResult;
 
-export const removeDownloadedModels = (deleteOllamaModels: boolean) =>
-	invokeOrDefault<RemoveDownloadedModelsResult>(
-		IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS,
-		{
-			deletedModelCaches: 0,
-			disabledFeatures: [],
-			deletedOllamaModels: [],
-			ollamaErrors: [],
-			errors: [],
-		},
-		{ deleteOllamaModels },
-	);
+export const removeDownloadedModels = async (deleteOllamaModels: boolean) =>
+	(await unwrapResult(
+		await commands.removeDownloadedModels(deleteOllamaModels),
+	)) as RemoveDownloadedModelsResult;
 
 // Connection status
-export const sttIsConnected = () =>
-	invokeOrDefault<boolean>(IPC.STT_IS_CONNECTED, false);
+export const sttIsConnected = () => Promise.resolve(hasTauriRuntime());
 
 export const notifyRendererReady = () => commands.winsttEmitReady();
 
 // Window controls
-export const windowMinimize = () => send(IPC.WINDOW_MINIMIZE);
-export const windowMaximize = () => send(IPC.WINDOW_MAXIMIZE);
-export const windowClose = () => send(IPC.WINDOW_CLOSE);
-export const windowOpenSettings = () => send(IPC.WINDOW_OPEN_SETTINGS);
-export const settingsWindowReady = () => send(IPC.SETTINGS_WINDOW_READY);
-export const windowCloseSelf = () => send(IPC.WINDOW_CLOSE_SELF);
+export const windowMinimize = () => void windowOp("minimize", []);
+export const windowMaximize = () => void windowOp("maximize", []);
+export const windowClose = () => void windowOp("hide", []);
+export const windowOpenSettings = () => void trayWindowOpenSettings();
+export const windowCloseSelf = () =>
+	void runWindowCommand("close_self_window", () => commands.closeSelfWindow());
 
 function commandResultError(value: unknown): unknown | null {
 	if (
@@ -488,10 +668,38 @@ export const onHotkeyRecordingDone = (cb: (combo: string | null) => void) =>
 	);
 
 export const onSettingsChanged = (cb: (settings: AppSettings) => void) =>
+	onSettingsChangedSnapshot(({ settings }) => cb(settings));
+
+export const onSettingsChangedSnapshot = (
+	cb: (
+		snapshot: SettingsSnapshotPayload & { changedSections: string[] },
+	) => void,
+) =>
 	onTyped(
 		IPC.SETTINGS_CHANGED,
-		(d: { settings: AppSettings }) => d.settings,
-		cb,
+		(d: {
+			changedSections?: string[];
+			revision?: number;
+			settings: AppSettings;
+		}) => {
+			const snapshot = {
+				changedSections: d.changedSections ?? [],
+				revision: d.revision ?? lastKnownSettingsSnapshot?.revision ?? 0,
+				settings: decodeSettingsPayload(d.settings),
+			};
+			if (
+				lastKnownSettingsSnapshot === null ||
+				snapshot.revision >= lastKnownSettingsSnapshot.revision
+			) {
+				lastKnownSettingsSnapshot = snapshot;
+			}
+			return snapshot;
+		},
+		(snapshot) => {
+			if (snapshot.revision >= (lastKnownSettingsSnapshot?.revision ?? 0)) {
+				cb(snapshot);
+			}
+		},
 	);
 
 export const onSettingsSaveError = (cb: (error: string) => void) =>

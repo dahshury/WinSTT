@@ -1,0 +1,14 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"bundle": {
+		"resources": {
+			"resources/*.png": "resources/",
+			"resources/recording_sound_default.wav": "resources/recording_sound_default.wav",
+			"resources/error_sound.wav": "resources/error_sound.wav",
+			"resources/marimba_start.wav": "resources/marimba_start.wav",
+			"resources/models/*": "resources/models/",
+			"binaries/runtime/*.dll": "./",
+			"target/release/winstt_context.exe": "./"
+		}
+	}
+}

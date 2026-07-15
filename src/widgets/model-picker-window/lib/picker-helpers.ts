@@ -1,15 +1,12 @@
-import { providerOf } from "@/entities/cloud-stt-provider/model/catalog";
+import { providerOf } from "@/entities/cloud-stt-provider";
+import { commands } from "@/bindings";
 import type { ModelStatesById as StatesById } from "@/entities/model-catalog";
 import type { useQuantActions } from "@/features/model-download";
-import { IPC } from "@/shared/api/ipc-channels";
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
-import { ipcSend } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { isRecord } from "@/shared/lib/is-record";
-import {
-	resolveEffectiveQuant,
-	STT_PICKER_WIDTH_PX,
-} from "@/widgets/model-picker";
+import { resolveEffectiveQuant } from "@/entities/model-catalog";
+import { STT_PICKER_WIDTH_PX } from "@/features/select-local-stt-model";
 
 export type {
 	CatalogModels,
@@ -99,7 +96,11 @@ export type DetachedModelPickerMode =
 	 *  Not a model at all — reuses this detached backdrop window purely so the
 	 *  device list can escape the 420×150 main window. */
 	| { kind: "output-device" }
-	| { feature: DetachedLlmFeature; kind: "llm-ollama" }
+	| {
+			enableOnInstall?: true;
+			feature: DetachedLlmFeature;
+			kind: "llm-ollama";
+	  }
 	| {
 			feature: DetachedLlmFeature;
 			kind: "llm-openrouter";
@@ -124,6 +125,9 @@ export function normalizeDetachedModelPickerMode(
 		return {
 			kind: "llm-ollama",
 			feature: normalizeFeature(value["feature"]),
+			...(value["target"] === "enable-on-install"
+				? { enableOnInstall: true as const }
+				: {}),
 		};
 	}
 	if (value["kind"] === "llm-openrouter") {
@@ -174,7 +178,7 @@ export function desiredSizeForMode(mode: DetachedModelPickerMode): {
 }
 
 export function close(): void {
-	ipcSend(IPC.MODEL_PICKER_CLOSE);
+	void commands.closeWindow("model-picker");
 }
 
 export type QuantActions = ReturnType<typeof useQuantActions>;

@@ -96,6 +96,7 @@ export function useTtsModelSection() {
 		installPhase,
 		installError,
 		handleEnabledToggle: handleLocalEnabledToggle,
+		markWarmupPending,
 		retryInstall,
 	} = useTtsInstallGate();
 
@@ -353,6 +354,17 @@ export function useTtsModelSection() {
 				update({ enabled: false });
 				return;
 			}
+			// Lock in the same click (mirror of `markWarmupPending` on the enable
+			// edge): the backend's `tts:unload-status` ping only lands after an
+			// IPC round-trip, and until it did the toggle sat interactive and then
+			// flashed disabled for the tail of the drop — the turn-OFF flicker.
+			// The `inProgress: false` ping (or the 15 s safety bound) releases it.
+			// Strictly `source !== "cloud"` — the backend's unload edge keys off
+			// the PERSISTED source, so a cloud-source-but-cloud-locked state
+			// (frontend-effective local) emits no unload pings at all.
+			if (tts?.source !== "cloud") {
+				setUnloadingLocalModel(true);
+			}
 			handleLocalEnabledToggle(false);
 			return;
 		}
@@ -369,6 +381,10 @@ export function useTtsModelSection() {
 				...buildTtsEnablePatch(hotkey, DEFAULT_SETTINGS.tts.hotkey),
 				model: cachedLocalModel,
 			});
+			// Same immediate lock as the gate's cached-enable path: this commit
+			// starts a local warm-up too, and the toggle must not sit ON and
+			// interactive while the first install-status ping is in flight.
+			markWarmupPending();
 			return;
 		}
 		if (ttsStatesLoaded) {

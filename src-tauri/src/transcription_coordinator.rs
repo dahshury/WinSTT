@@ -3,12 +3,29 @@ use crate::managers::audio::AudioRecordingManager;
 use log::{debug, error, warn};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
+const RELEASE_GRACE: Duration = Duration::from_millis(50);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PttAction {
+    Passthrough,
+    DeferRelease,
+    CancelRelease,
+    IgnoreDuplicateRelease,
+}
+
+struct PendingRelease {
+    binding_id: String,
+    hotkey_string: String,
+    session_id: u64,
+    recording_generation: u64,
+    deadline: Instant,
+}
 
 static CURRENT_DICTATION_SESSION: AtomicU64 = AtomicU64::new(0);
 static CANCELLED_DICTATION_THROUGH: AtomicU64 = AtomicU64::new(0);
@@ -79,6 +96,60 @@ enum Stage {
     Processing { session_id: u64 },
 }
 
+enum CoordinatorWake {
+    Command(Command),
+    ReleaseDeadline,
+    Disconnected,
+}
+
+fn classify_ptt_event(
+    pending_release_binding: Option<&str>,
+    is_pressed: bool,
+    push_to_talk: bool,
+    binding_id: &str,
+    recording_binding: Option<&str>,
+) -> PttAction {
+    if !push_to_talk {
+        return PttAction::Passthrough;
+    }
+
+    if is_pressed {
+        if pending_release_binding == Some(binding_id) {
+            PttAction::CancelRelease
+        } else {
+            PttAction::Passthrough
+        }
+    } else if recording_binding == Some(binding_id) {
+        if pending_release_binding == Some(binding_id) {
+            PttAction::IgnoreDuplicateRelease
+        } else if pending_release_binding.is_none() {
+            PttAction::DeferRelease
+        } else {
+            PttAction::Passthrough
+        }
+    } else {
+        PttAction::Passthrough
+    }
+}
+
+fn receive_next(
+    rx: &Receiver<Command>,
+    pending_release: Option<&PendingRelease>,
+) -> CoordinatorWake {
+    let Some(pending) = pending_release else {
+        return match rx.recv() {
+            Ok(command) => CoordinatorWake::Command(command),
+            Err(_) => CoordinatorWake::Disconnected,
+        };
+    };
+
+    match rx.recv_timeout(pending.deadline.saturating_duration_since(Instant::now())) {
+        Ok(command) => CoordinatorWake::Command(command),
+        Err(RecvTimeoutError::Timeout) => CoordinatorWake::ReleaseDeadline,
+        Err(RecvTimeoutError::Disconnected) => CoordinatorWake::Disconnected,
+    }
+}
+
 /// Serialises all transcription lifecycle events through a single thread
 /// to eliminate race conditions between keyboard shortcuts, signals, and
 /// the async transcribe-paste pipeline.
@@ -101,8 +172,14 @@ impl TranscriptionCoordinator {
             // stuck far longer than any real decode can self-heal instead of ignoring the
             // hotkey forever. See `recover_wedged_stage`.
             let mut processing_since: Option<Instant> = None;
+            let mut pending_release: Option<PendingRelease> = None;
 
-            while let Ok(cmd) = rx.recv() {
+            loop {
+                let wake = receive_next(&rx, pending_release.as_ref());
+                if matches!(&wake, CoordinatorWake::Disconnected) {
+                    break;
+                }
+
                 // Process EACH command inside catch_unwind. `start`/`stop` run the synchronous
                 // action body (open mic, tray/overlay, emits) on THIS thread — if any of that
                 // panics (e.g. a flaky audio device faulting in cpal while a recorder lock is
@@ -110,21 +187,31 @@ impl TranscriptionCoordinator {
                 // a permanent "PTT does nothing until the app is restarted" wedge: the hotkey
                 // events still arrived but nothing consumed them. On a caught panic we snap the
                 // Stage back to Idle so the very next press records again.
-                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    handle_command(
-                        &app,
-                        cmd,
-                        &mut stage,
-                        &mut last_press,
-                        &mut processing_since,
-                    );
-                }));
+                let outcome =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match wake {
+                        CoordinatorWake::Command(cmd) => handle_command(
+                            &app,
+                            cmd,
+                            &mut stage,
+                            &mut last_press,
+                            &mut processing_since,
+                            &mut pending_release,
+                        ),
+                        CoordinatorWake::ReleaseDeadline => expire_pending_release(
+                            &app,
+                            &mut stage,
+                            &mut processing_since,
+                            &mut pending_release,
+                        ),
+                        CoordinatorWake::Disconnected => {}
+                    }));
                 if let Err(e) = outcome {
                     error!(
                         "Transcription coordinator recovered from a panic in command handling: {e:?}"
                     );
                     stage = Stage::Idle;
                     processing_since = None;
+                    pending_release = None;
                 }
             }
             debug!("Transcription coordinator exited");
@@ -203,6 +290,7 @@ fn handle_command(
     stage: &mut Stage,
     last_press: &mut Option<Instant>,
     processing_since: &mut Option<Instant>,
+    pending_release: &mut Option<PendingRelease>,
 ) {
     match cmd {
         Command::Input {
@@ -211,8 +299,76 @@ fn handle_command(
             is_pressed,
             push_to_talk,
         } => {
+            if !push_to_talk && pending_release.take().is_some() {
+                debug!("Cleared deferred PTT release before toggle input for '{binding_id}'");
+            }
+
+            let pending_release_binding = pending_release
+                .as_ref()
+                .map(|pending| pending.binding_id.as_str());
+            let recording_binding = match &*stage {
+                Stage::Recording { binding_id, .. } => Some(binding_id.as_str()),
+                Stage::Idle | Stage::Processing { .. } => None,
+            };
+
+            match classify_ptt_event(
+                pending_release_binding,
+                is_pressed,
+                push_to_talk,
+                &binding_id,
+                recording_binding,
+            ) {
+                PttAction::CancelRelease => {
+                    let release_is_current = pending_release.as_ref().is_some_and(|pending| {
+                        pending_release_matches_recording(
+                            pending,
+                            stage,
+                            recorder_generation(app),
+                            recorder_is_recording(app),
+                        )
+                    });
+                    *pending_release = None;
+                    if release_is_current {
+                        debug!("Cancelled deferred PTT release for '{binding_id}'");
+                        return;
+                    }
+                    debug!(
+                        "Discarded stale deferred PTT release for '{binding_id}'; processing press"
+                    );
+                }
+                PttAction::DeferRelease => {
+                    let session_id = match &*stage {
+                        Stage::Recording {
+                            binding_id: recording_binding,
+                            session_id,
+                        } if recording_binding == &binding_id => Some(*session_id),
+                        Stage::Idle | Stage::Recording { .. } | Stage::Processing { .. } => None,
+                    };
+                    if let (Some(session_id), Some(recording_generation)) =
+                        (session_id, recorder_generation(app))
+                    {
+                        *pending_release = Some(PendingRelease {
+                            binding_id,
+                            hotkey_string,
+                            session_id,
+                            recording_generation,
+                            deadline: Instant::now() + RELEASE_GRACE,
+                        });
+                        return;
+                    }
+                    debug!(
+                        "Could not snapshot recording state for deferred PTT release; stopping immediately"
+                    );
+                }
+                PttAction::IgnoreDuplicateRelease => {
+                    debug!("Ignored duplicate deferred PTT release for '{binding_id}'");
+                    return;
+                }
+                PttAction::Passthrough => {}
+            }
+
             // Debounce rapid-fire press events (key repeat / double-tap).
-            // Releases always pass through for push-to-talk.
+            // Push-to-talk releases may be deferred above to absorb synthetic auto-repeat.
             if is_pressed {
                 let now = Instant::now();
                 if last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE) {
@@ -254,6 +410,7 @@ fn handle_command(
             recording_was_active,
             cancelled_through,
         } => {
+            *pending_release = None;
             // Escape cancels the active session immediately; stale workers self-suppress by id.
             let stage_cancelled = match stage {
                 Stage::Recording { session_id, .. } | Stage::Processing { session_id } => {
@@ -273,6 +430,7 @@ fn handle_command(
             binding_id,
             recording_generation,
         } => {
+            clear_pending_release_for_stop(pending_release, &binding_id, recording_generation);
             recover_wedged_stage(app, stage, processing_since);
             if matches!(&*stage, Stage::Recording { binding_id: id, .. } if id == &binding_id)
                 && recorder_generation(app) == Some(recording_generation)
@@ -287,6 +445,7 @@ fn handle_command(
             }
         }
         Command::ProcessingFinished { session_id } => {
+            clear_pending_release_for_session(pending_release, session_id);
             if matches!(&*stage, Stage::Processing { session_id: id } if *id == session_id) {
                 *stage = Stage::Idle;
                 *processing_since = None;
@@ -294,6 +453,85 @@ fn handle_command(
                 crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
             }
         }
+    }
+}
+
+fn pending_release_matches_recording(
+    pending: &PendingRelease,
+    stage: &Stage,
+    recording_generation: Option<u64>,
+    recorder_is_recording: bool,
+) -> bool {
+    recorder_is_recording
+        && recording_generation == Some(pending.recording_generation)
+        && matches!(
+            stage,
+            Stage::Recording {
+                binding_id,
+                session_id,
+            } if binding_id == &pending.binding_id && *session_id == pending.session_id
+        )
+}
+
+fn pending_release_matches_stop_request(
+    pending: &PendingRelease,
+    binding_id: &str,
+    recording_generation: u64,
+) -> bool {
+    pending.binding_id == binding_id && pending.recording_generation == recording_generation
+}
+
+fn pending_release_matches_session(pending: &PendingRelease, session_id: u64) -> bool {
+    pending.session_id == session_id
+}
+
+fn clear_pending_release_for_stop(
+    pending_release: &mut Option<PendingRelease>,
+    binding_id: &str,
+    recording_generation: u64,
+) {
+    if pending_release.as_ref().is_some_and(|pending| {
+        pending_release_matches_stop_request(pending, binding_id, recording_generation)
+    }) {
+        *pending_release = None;
+    }
+}
+
+fn clear_pending_release_for_session(
+    pending_release: &mut Option<PendingRelease>,
+    session_id: u64,
+) {
+    if pending_release
+        .as_ref()
+        .is_some_and(|pending| pending_release_matches_session(pending, session_id))
+    {
+        *pending_release = None;
+    }
+}
+
+fn expire_pending_release(
+    app: &AppHandle,
+    stage: &mut Stage,
+    processing_since: &mut Option<Instant>,
+    pending_release: &mut Option<PendingRelease>,
+) {
+    let Some(pending) = pending_release.take() else {
+        return;
+    };
+
+    if pending_release_matches_recording(
+        &pending,
+        stage,
+        recorder_generation(app),
+        recorder_is_recording(app),
+    ) {
+        stop(app, stage, &pending.binding_id, &pending.hotkey_string);
+        *processing_since = Some(Instant::now());
+    } else {
+        debug!(
+            "Ignored stale deferred PTT release for '{}' (session={}, generation={})",
+            pending.binding_id, pending.session_id, pending.recording_generation
+        );
     }
 }
 
@@ -331,7 +569,7 @@ fn recover_wedged_stage(
 ) {
     match stage {
         Stage::Recording { .. } if !recorder_is_recording(app) => {
-            debug!("Coordinator self-heal: Recording stage but recorder idle → Idle");
+            debug!("Coordinator self-heal: Recording stage but recorder idle -> Idle");
             *stage = Stage::Idle;
             *processing_since = None;
             DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
@@ -340,7 +578,7 @@ fn recover_wedged_stage(
             if processing_since.is_some_and(|t| t.elapsed() >= PROCESSING_WEDGE_TIMEOUT) =>
         {
             warn!(
-                "Coordinator self-heal: stuck in Processing for >{}s → Idle",
+                "Coordinator self-heal: stuck in Processing for >{}s -> Idle",
                 PROCESSING_WEDGE_TIMEOUT.as_secs()
             );
             *stage = Stage::Idle;
@@ -380,4 +618,229 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
     *stage = Stage::Processing {
         session_id: current_dictation_session(),
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending_release(session_id: u64, recording_generation: u64) -> PendingRelease {
+        PendingRelease {
+            binding_id: "transcribe".to_string(),
+            hotkey_string: String::new(),
+            session_id,
+            recording_generation,
+            deadline: Instant::now() + RELEASE_GRACE,
+        }
+    }
+
+    #[test]
+    fn ptt_release_while_matching_recording_is_deferred() {
+        let action = classify_ptt_event(None, false, true, "transcribe", Some("transcribe"));
+
+        assert_eq!(action, PttAction::DeferRelease);
+    }
+
+    #[test]
+    fn matching_repeat_press_cancels_deferred_release() {
+        let action = classify_ptt_event(
+            Some("transcribe"),
+            true,
+            true,
+            "transcribe",
+            Some("transcribe"),
+        );
+
+        assert_eq!(action, PttAction::CancelRelease);
+    }
+
+    #[test]
+    fn duplicate_release_keeps_existing_grace_deadline() {
+        let action = classify_ptt_event(
+            Some("transcribe"),
+            false,
+            true,
+            "transcribe",
+            Some("transcribe"),
+        );
+
+        assert_eq!(action, PttAction::IgnoreDuplicateRelease);
+    }
+
+    #[test]
+    fn different_binding_press_does_not_cancel_deferred_release() {
+        let action = classify_ptt_event(
+            Some("transcribe"),
+            true,
+            true,
+            "other-transcribe",
+            Some("transcribe"),
+        );
+
+        assert_eq!(action, PttAction::Passthrough);
+    }
+
+    #[test]
+    fn toggle_inputs_are_not_classified_as_ptt_repeats() {
+        let press = classify_ptt_event(
+            Some("transcribe"),
+            true,
+            false,
+            "transcribe",
+            Some("transcribe"),
+        );
+        let release = classify_ptt_event(None, false, false, "transcribe", Some("transcribe"));
+
+        assert_eq!(
+            (press, release),
+            (PttAction::Passthrough, PttAction::Passthrough)
+        );
+    }
+
+    #[test]
+    fn deferred_release_matches_only_its_session_and_generation() {
+        let pending = pending_release(41, 7);
+        let stage = Stage::Recording {
+            binding_id: "transcribe".to_string(),
+            session_id: 41,
+        };
+
+        assert!(pending_release_matches_recording(
+            &pending,
+            &stage,
+            Some(7),
+            true
+        ));
+    }
+
+    #[test]
+    fn stale_deferred_release_cannot_stop_new_session() {
+        let pending = pending_release(41, 7);
+        let stage = Stage::Recording {
+            binding_id: "transcribe".to_string(),
+            session_id: 42,
+        };
+
+        assert!(!pending_release_matches_recording(
+            &pending,
+            &stage,
+            Some(8),
+            true
+        ));
+    }
+
+    #[test]
+    fn stale_silence_stop_does_not_match_newer_deferred_release() {
+        let mut pending = Some(pending_release(42, 8));
+
+        clear_pending_release_for_stop(&mut pending, "transcribe", 7);
+
+        assert!(pending.is_some());
+    }
+
+    #[test]
+    fn matching_silence_stop_clears_deferred_release() {
+        let mut pending = Some(pending_release(42, 8));
+
+        clear_pending_release_for_stop(&mut pending, "transcribe", 8);
+
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn stale_processing_completion_does_not_match_newer_deferred_release() {
+        let mut pending = Some(pending_release(42, 8));
+
+        clear_pending_release_for_session(&mut pending, 41);
+
+        assert!(pending.is_some());
+    }
+
+    #[test]
+    fn matching_processing_completion_clears_deferred_release() {
+        let mut pending = Some(pending_release(42, 8));
+
+        clear_pending_release_for_session(&mut pending, 42);
+
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn expired_grace_wakes_coordinator_without_sleeping() {
+        let (_tx, rx) = mpsc::channel();
+        let mut pending = pending_release(1, 1);
+        pending.deadline = Instant::now();
+
+        let wake = receive_next(&rx, Some(&pending));
+
+        assert!(matches!(wake, CoordinatorWake::ReleaseDeadline));
+    }
+
+    #[derive(Default)]
+    struct ReleaseSequenceHarness {
+        pending: bool,
+        recording: bool,
+        stops: usize,
+    }
+
+    impl ReleaseSequenceHarness {
+        fn input(&mut self, is_pressed: bool) {
+            let action = classify_ptt_event(
+                self.pending.then_some("transcribe"),
+                is_pressed,
+                true,
+                "transcribe",
+                self.recording.then_some("transcribe"),
+            );
+            match action {
+                PttAction::Passthrough if is_pressed => self.recording = true,
+                PttAction::DeferRelease => self.pending = true,
+                PttAction::CancelRelease => self.pending = false,
+                PttAction::IgnoreDuplicateRelease | PttAction::Passthrough => {}
+            }
+        }
+
+        fn expire_grace(&mut self) {
+            if self.pending && self.recording {
+                self.pending = false;
+                self.recording = false;
+                self.stops += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn windows_repeat_burst_does_not_create_a_false_stop() {
+        // Windows global-hotkey backends may surface a release followed almost
+        // immediately by an auto-repeat press while the physical key is still
+        // held. The repeat cancels the deferred release; only the later genuine
+        // key-up crosses the grace deadline and stops exactly once.
+        let mut sim = ReleaseSequenceHarness::default();
+        sim.input(true);
+        sim.input(false);
+        sim.input(true);
+        sim.expire_grace();
+        assert!(sim.recording);
+        assert_eq!(sim.stops, 0);
+
+        sim.input(false);
+        sim.expire_grace();
+        assert!(!sim.recording);
+        assert_eq!(sim.stops, 1);
+    }
+
+    #[test]
+    fn linux_duplicate_release_burst_stops_once_at_genuine_deadline() {
+        // Linux/X11 backends can duplicate the release edge. A duplicate must
+        // retain the original deadline rather than scheduling a second stop.
+        let mut sim = ReleaseSequenceHarness::default();
+        sim.input(true);
+        sim.input(false);
+        sim.input(false);
+        assert!(sim.pending);
+        sim.expire_grace();
+        sim.expire_grace();
+        assert!(!sim.recording);
+        assert_eq!(sim.stops, 1);
+    }
 }

@@ -1,83 +1,31 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { useGpuInfo } from "@/entities/connection";
-import { useDeviceSwitchFeedback } from "@/features/audio-device-feedback";
-import { useAudioDeviceMonitor } from "@/features/audio-device-monitor";
 import { useVisualizerSync } from "@/features/audio-visualizer";
 import { useConnectionListener } from "@/features/connect-server";
-import { useFileTranscriptionListener } from "@/features/file-transcription";
-import { useListenMode } from "@/features/listen-mode";
 import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed } from "@/features/llm-processing";
-import { useDownloadListener } from "@/features/model-download";
-import {
-	useModifierOnlyHotkeyToast,
-	usePushToTalk,
-} from "@/features/push-to-talk";
+import { usePushToTalk } from "@/features/push-to-talk";
 import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
-import { useVadCalibration } from "@/features/vad-calibration";
-import {
-	audioGetDevices,
-	fetchRuntimeInfo,
-	notifyRendererReady,
-	settingsLoad,
-	webviewDiagLog,
-} from "@/shared/api/ipc-client";
+import { notifyRendererReady } from "@/shared/api/ipc-client";
+import { useAfterFirstPaint } from "@/shared/lib/use-after-first-paint";
 import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
-import { usePostProcessingProfileSwap } from "@/widgets/llm-settings/model/use-post-processing-profile-swap";
 import { useRecordingModeCycle } from "@/widgets/recording-settings";
+import { DeferredIpcEffects } from "./DeferredIpcEffects";
 
-const STARTUP_READY_PROBE_TIMEOUT_MS = 2500;
 let startupReadyPromise: Promise<void> | null = null;
-let startupProbesPromise: Promise<void> | null = null;
-
-function wait(ms: number): Promise<"timeout"> {
-	return new Promise((resolve) => {
-		window.setTimeout(() => resolve("timeout"), ms);
-	});
-}
-
-/** Fire the three startup IPC probes. Called once at module evaluation so the
- * round trips overlap React's mount instead of queueing behind it; the mount
- * effect then awaits the same shared promise, so the backend readiness signal
- * still means "React tree mounted AND first IPC settled". */
-function startStartupProbes(): Promise<void> {
-	if (startupProbesPromise) {
-		return startupProbesPromise;
-	}
-	startupProbesPromise = (async () => {
-		const probes = Promise.allSettled([
-			settingsLoad(),
-			audioGetDevices(),
-			fetchRuntimeInfo(),
-		]);
-		const result = await Promise.race([
-			probes,
-			wait(STARTUP_READY_PROBE_TIMEOUT_MS),
-		]);
-		if (result === "timeout") {
-			const message = `[IpcProvider] startup probes exceeded ${STARTUP_READY_PROBE_TIMEOUT_MS}ms; releasing renderer readiness gate`;
-			console.warn(message);
-			webviewDiagLog("main", "warn", message);
-		}
-	})();
-	return startupProbesPromise;
-}
-
-if (typeof window !== "undefined" && hasTauriRuntime()) {
-	void startStartupProbes();
-}
 
 function signalRendererStartupReady(): Promise<void> {
 	if (startupReadyPromise) {
 		return startupReadyPromise;
 	}
-	startupReadyPromise = (async () => {
-		await startStartupProbes();
-		await notifyRendererReady();
-	})().catch((error: unknown) => {
+	// Core manager registration completes before Rust builds the main webview.
+	// Settings, devices, and runtime-info hooks already perform their own real
+	// hydration; the old readiness probes duplicated those IPC calls and threw
+	// their results away. This single acknowledged command proves both that the
+	// React tree mounted and that the IPC bridge is responsive.
+	startupReadyPromise = notifyRendererReady().catch((error: unknown) => {
 		startupReadyPromise = null;
 		console.error("[IpcProvider] Failed to notify renderer readiness:", error);
 	});
@@ -85,6 +33,7 @@ function signalRendererStartupReady(): Promise<void> {
 }
 
 export function IpcProvider({ children }: { children: ReactNode }) {
+	const afterFirstPaint = useAfterFirstPaint();
 	// Initialize all IPC subscriptions
 	useConnectionListener();
 	useTranscriptionFeed();
@@ -94,18 +43,10 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useLlmProcessingFeed();
 	useVisualizerSync();
 	usePushToTalk();
-	useModifierOnlyHotkeyToast();
 	useSyncSettings();
 	useSyncActiveModel();
 	useRealtimePreviewFallback();
-	useDownloadListener();
-	useFileTranscriptionListener();
-	useListenMode();
-	usePostProcessingProfileSwap();
 	useRecordingModeCycle();
-	useDeviceSwitchFeedback();
-	useVadCalibration();
-	useAudioDeviceMonitor();
 	// Recording chime now plays NATIVELY from Rust (see
 	// winstt::commands::sound::play_recording_chime, fired by actions.rs on
 	// hotkey-start) instead of a webview Web Audio hook — the hidden-window
@@ -115,12 +56,15 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	// Model catalog bootstrap is shared by every window through HtmlLang.
 
 	useEffect(() => {
-		void signalRendererStartupReady();
+		if (hasTauriRuntime()) {
+			void signalRendererStartupReady();
+		}
 	}, []);
 
-	// GPU details are only needed by model/settings surfaces. Defer this off the
-	// immediate mount path so the main pill can paint before hardware enumeration.
-	useGpuInfo(750);
-
-	return <>{children}</>;
+	return (
+		<>
+			{children}
+			{afterFirstPaint ? <DeferredIpcEffects /> : null}
+		</>
+	);
 }

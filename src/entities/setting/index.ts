@@ -1,5 +1,11 @@
 export { useDiarizationToggleStore } from "./model/diarization-toggle-store";
 export { DEFAULT_SETTINGS } from "./model/setting";
+export {
+	type SettingsHydrationStatus,
+	type SettingsWarning,
+	type SettingsWarningKind,
+	useSettingsHydrationStore,
+} from "./model/settings-hydration-store";
 export type {
 	AudioSettings,
 	AudioT,

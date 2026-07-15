@@ -1,11 +1,15 @@
 import { AiMicIcon } from "@hugeicons/core-free-icons";
-import { SttModelSelector } from "@/widgets/model-picker";
+import { SttModelSelector } from "@/features/select-local-stt-model";
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import {
 	providerOf,
 	useOpenRouterSttCatalogStore,
 } from "@/entities/cloud-stt-provider";
+import {
+	isRuntimeModelPreparing,
+	useConnectionStore,
+} from "@/entities/connection";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	isVisibleSttModel,
@@ -22,6 +26,7 @@ import {
 	CloudModelSelect,
 	useSttSourceSwitch,
 } from "@/features/select-cloud-stt-model";
+import type { GetModelSuggestion } from "@/features/suggested-models";
 import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -59,6 +64,9 @@ interface MainModelSectionProps {
 	 *  doesn't lock down for the entire multi-GB download. */
 	downloadProgress: { modelId: string; percent: number | null } | null;
 	getFitAssessment: GetFitAssessment;
+	/** Suggested (spec-based recommender) verdict lookup — threaded to the
+	 *  STT picker the same way as `getFitAssessment`. */
+	getSuggestion?: GetModelSuggestion | undefined;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
 	languageAutoDetect: boolean;
@@ -120,6 +128,9 @@ interface SourceAreaProps {
 	downloadProgress: { modelId: string; percent: number | null } | null;
 	flags: SourceAreaFlags;
 	getFitAssessment: GetFitAssessment;
+	/** Suggested (spec-based recommender) verdict lookup — threaded to the
+	 *  STT picker the same way as `getFitAssessment`. */
+	getSuggestion?: GetModelSuggestion | undefined;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
@@ -143,6 +154,7 @@ interface SourceAreaFlags {
 	hasAnyCloudKey: boolean;
 	initialSourceIsCloud: boolean;
 	isCloud: boolean;
+	isModelPreparing: boolean;
 	isSwapping: boolean;
 }
 
@@ -164,6 +176,7 @@ function SourceArea({
 	downloadProgress,
 	flags,
 	getFitAssessment,
+	getSuggestion,
 	handleModelChange,
 	onDeleteQuant,
 	canDeleteQuant,
@@ -175,7 +188,13 @@ function SourceArea({
 	t,
 	tIntegrations,
 }: SourceAreaProps): ReactNode {
-	const { hasAnyCloudKey, initialSourceIsCloud, isCloud, isSwapping } = flags;
+	const {
+		hasAnyCloudKey,
+		initialSourceIsCloud,
+		isCloud,
+		isModelPreparing,
+		isSwapping,
+	} = flags;
 	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
 	const { cloudSelectedId, source, sourceOpts, onSourceChange } =
 		useSttSourceSwitch({
@@ -259,7 +278,9 @@ function SourceArea({
 							disabled={disabled}
 							downloadProgress={downloadProgress}
 							isLoading={!catalogLoaded || isSwapping}
+							isModelPreparing={isModelPreparing}
 							getFitAssessment={getFitAssessment}
+							getSuggestion={getSuggestion}
 							kind="main"
 							models={catalogModels}
 							onChange={handleSelectedModelChange}
@@ -574,6 +595,7 @@ export function MainModelSection({
 	disabledTooltip,
 	downloadProgress,
 	getFitAssessment,
+	getSuggestion,
 	isSwapping,
 	languageAutoDetect,
 	languageAutoDetectSupported,
@@ -591,6 +613,7 @@ export function MainModelSection({
 	translateTargetOpts,
 }: MainModelSectionProps): ReactNode {
 	const tIntegrations = useTranslations("integrations");
+	const runtimeInfo = useConnectionStore((s) => s.runtimeInfo);
 	const integrations = useSettingsStore((s) => s.settings.integrations);
 	// OpenRouter STT reuses the single LLM OpenRouter key (not an integrations entry).
 	const openrouterKey = useSettingsStore(
@@ -617,6 +640,7 @@ export function MainModelSection({
 		}
 	}, [openrouterConfigured, openrouterCatalogLoaded, scanOpenrouterModels]);
 	const isCloud = providerOf(selectedModel) !== null;
+	const isModelPreparing = !isCloud && isRuntimeModelPreparing(runtimeInfo);
 	// The Cloud tab is only reachable when at least one provider key is
 	// configured. Persisted cloud selections without a key are flipped back
 	// to the local picker — the cloud-key-removal banner already tells the
@@ -640,9 +664,11 @@ export function MainModelSection({
 						hasAnyCloudKey,
 						initialSourceIsCloud: effectiveSourceIsCloud,
 						isCloud,
+						isModelPreparing,
 						isSwapping,
 					}}
 					getFitAssessment={getFitAssessment}
+					getSuggestion={getSuggestion}
 					handleModelChange={handleModelChange}
 					key={effectiveSourceIsCloud ? "cloud" : "local"}
 					onDeleteQuant={onDeleteQuant}

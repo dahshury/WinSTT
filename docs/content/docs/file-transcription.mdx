@@ -54,16 +54,15 @@ One setting, in the **Output** tab, decides what gets written.
 
 <Screenshot
   src="sec-quality-filetx"
-  alt="The File Transcription section of the Output tab: a Format switcher between TXT and SRT."
+  alt="The File Transcription section of the Output tab with TXT, SRT, VTT, JSON, and CSV format choices."
   chrome="card"
   label="Output tab — File Transcription"
-  caption="The format switcher lives in the Output tab — TXT for plain text, SRT for timestamped subtitles."
+  caption="Choose one or more formats in the Output tab; every selected format is written from the same transcription."
 />
 
-<SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
-  **TXT** writes the transcript as plain text. **SRT** writes SubRip subtitles with
-  numbered cues and `00:00:00,000 --> ...` timecodes, ready to load into a video
-  player or editor. Set with the Format switcher in the Output tab.
+<SettingRow label="File Transcription Formats" settingKey="general.fileTranscriptionFormats" default="txt">
+  Select any combination of plain text, subtitle, and structured-data outputs.
+  At least one format always remains selected.
 </SettingRow>
 
 <ModelTable
@@ -71,14 +70,18 @@ One setting, in the **Output** tab, decides what gets written.
   rows={[
     ["TXT", "Continuous plain text, no timing", "Notes, articles, pasting into a doc"],
     ["SRT", "Numbered cues with start/end timecodes", "Captions and subtitles for video"],
+    ["VTT", "WebVTT cues with start/end timecodes", "Web players and browser captions"],
+    ["JSON", "Schema-tagged segments and optional word timings", "Automation and downstream processing"],
+    ["CSV", "One row per segment", "Spreadsheets and data analysis"],
   ]}
-  caption="The format applies to every file you transcribe until you change it."
+  caption="The selected formats apply to every file you transcribe until you change them. SRT, VTT, and CSV use segment timings. JSON includes word timings when the selected timestamp-capable Whisper export provides them; otherwise each segment has an empty words array."
 />
 
 ## Where files land
 
 The output filename is the source path with the format appended — transcribing
-`interview.mp3` produces `interview.mp3.txt` (or `interview.mp3.srt`). Where that
+`interview.mp3` produces outputs such as `interview.mp3.txt`, `interview.mp3.srt`,
+or `interview.mp3.json`. Where each
 file is written depends on one setting.
 
 <SettingRow label="Save Location" settingKey="general.fileTranscriptionSaveLocation" default="auto">

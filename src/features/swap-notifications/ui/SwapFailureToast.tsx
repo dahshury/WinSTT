@@ -11,10 +11,13 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useEffect } from "react";
 import { useTranslations } from "use-intl";
+import { useModelSwapStore } from "@/entities/model-catalog";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	type ModelSwapFailedCategory,
+	nextSttSwitchRequestId,
 	onModelSwapFailed,
-	sttReloadModel,
+	requestSttModelSwitch,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -108,7 +111,34 @@ export function SwapFailureToast() {
 	}
 
 	const handleRetry = () => {
-		sttReloadModel(current.kind, current.modelName);
+		const model = useSettingsStore.getState().settings.model;
+		const requestId = nextSttSwitchRequestId("retry");
+		const from =
+			current.kind === "main"
+				? (model?.model ?? "")
+				: (model?.realtimeModel ?? "");
+		useModelSwapStore
+			.getState()
+			.beginSwap(current.kind, from, current.modelName, null, requestId);
+		void requestSttModelSwitch({
+			kind: current.kind,
+			modelId: current.modelName,
+			quantization: model?.onnxQuantization ?? "",
+			device: model?.device ?? "auto",
+			realtimeModel:
+				current.kind === "main" ? (model?.realtimeModel ?? "") : null,
+			requestId,
+			forceReload: true,
+		})
+			.then((result) => {
+				if (result.status !== "completed") {
+					useModelSwapStore.getState().clear(current.kind, result.requestId);
+				}
+			})
+			.catch((error: unknown) => {
+				console.error("Atomic STT retry failed", error);
+				useModelSwapStore.getState().clear(current.kind, requestId);
+			});
 		clear();
 	};
 

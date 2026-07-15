@@ -13,6 +13,29 @@ text-to-speech.
   <img src="docs/public/screenshots/main.png" alt="WinSTT main window with a live audio visualizer, hotkey, microphone, and model footer." width="840">
 </p>
 
+## Download
+
+One click, straight to the file — no scrolling through the releases page.
+
+<!-- DOWNLOAD_BADGES:START -->
+
+<p align="center">
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.7/WinSTT.exe"><img alt="Download WinSTT for Windows" src="https://img.shields.io/badge/Download--Windows-0A66C2?style=for-the-badge&logo=windows11&logoColor=white&labelColor=0A66C2"></a>
+  &nbsp;
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.7/WinSTT_0.1.3-alpha.7_aarch64.dmg"><img alt="Download WinSTT for macOS" src="https://img.shields.io/badge/Download--macOS-111111?style=for-the-badge&logo=apple&logoColor=white&labelColor=111111"></a>
+  &nbsp;
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.7/WinSTT_0.1.3-alpha.7_amd64.AppImage"><img alt="Download WinSTT for Linux" src="https://img.shields.io/badge/Download--Linux-F5B700?style=for-the-badge&logo=linux&logoColor=black&labelColor=F5B700"></a>
+</p>
+
+<p align="center">
+  <sub><a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.7/WinSTT-portable.zip">Windows portable (.zip)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.7/WinSTT_0.1.3-alpha.7_amd64.deb">Debian / Ubuntu (.deb)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.7/WinSTT-0.1.3-alpha.7-1.x86_64.rpm">Fedora / RHEL (.rpm)</a> · <a href="https://github.com/dahshury/WinSTT/releases/tag/v0.1.3-alpha.7">All v0.1.3-alpha.7 assets</a></sub>
+</p>
+
+<!-- DOWNLOAD_BADGES:END -->
+
+Windows x64 builds, including the portable zip, require an AVX2-capable processor
+(Intel Haswell/Broadwell or AMD Zen, or newer) because the bundled ONNX Runtime targets x86-64-v3.
+
 ## What It Looks Like
 
 The recording overlay can sit at the bottom of the screen or dock at the top as

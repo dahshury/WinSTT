@@ -5,6 +5,7 @@ import {
 	onTtsModelCacheChanged,
 	type TtsModelStateEntry,
 } from "@/shared/api/ipc-client";
+import { hasNativeRuntime } from "@/shared/api/native-boundary";
 
 /**
  * How the model handles voice cloning, mirroring the server's
@@ -232,7 +233,7 @@ function initTtsCatalogStore(): () => void {
 	};
 }
 
-// Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-bridge environments (SSR / tests w/o nativeBridge).
-if (typeof window !== "undefined" && window.nativeBridge != null) {
+// Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-native environments (SSR / browser preview).
+if (hasNativeRuntime()) {
 	initTtsCatalogStore();
 }

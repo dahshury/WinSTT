@@ -141,6 +141,19 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     Ok(())
 }
 
+/// Report whether this exact accelerator is currently registered with Tauri.
+/// Callers use this only after confirming that the requested binding matches the
+/// persisted binding id, so an already-active registration is a safe no-op.
+pub fn is_registered(app: &AppHandle, binding: &ShortcutBinding) -> Result<bool, String> {
+    let shortcut = binding.current_binding.parse::<Shortcut>().map_err(|e| {
+        format!(
+            "Failed to parse shortcut '{}': {e}",
+            binding.current_binding
+        )
+    })?;
+    Ok(app.global_shortcut().is_registered(shortcut))
+}
+
 /// Unregister a shortcut from Tauri's global-shortcut plugin
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let shortcut = match binding.current_binding.parse::<Shortcut>() {

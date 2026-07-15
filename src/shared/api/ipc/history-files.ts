@@ -1,25 +1,33 @@
 import {
 	commands,
 	type ObservabilityIssue as BindingObservabilityIssue,
+	type Result,
 } from "@/bindings";
-import { IPC } from "../ipc-channels";
+import { callPlugin } from "../adapter/plugins";
 import {
-	commandOrDefault,
-	invokeOrDefault,
-	invokeSecureOrDefault,
-	noop,
-	onCast,
-} from "../ipc-transport";
+	checkAndDownloadUpdate,
+	installPendingUpdateAndRelaunch,
+} from "../adapter/updater";
+import { NATIVE_EVENTS as IPC } from "../native-events";
+import { commandOrDefault, noop, onCast } from "../native-boundary";
+
+function unwrapResult<T, E>(result: Result<T, E>): T {
+	if (result.status === "ok") {
+		return result.data;
+	}
+	throw result.error;
+}
 
 // Dialog
 export const dialogOpenFile = (
 	filters?: Array<{ name: string; extensions: string[] }>,
 	title?: string,
 ) =>
-	invokeOrDefault<string | null>(IPC.DIALOG_OPEN_FILE, null, {
-		filters,
-		title,
-	});
+	commandOrDefault(
+		"dialog_open_file",
+		async () => (await callPlugin("dialog:open", { filters, title })) as string,
+		null,
+	);
 
 // Sound library — custom recording-sound files persisted under userData/sounds/.
 interface SoundLibraryEntryDTO {
@@ -41,30 +49,43 @@ export interface SoundLibraryRemoveResult {
 }
 
 export const soundLibraryAdd = (sourcePath: string, name?: string) =>
-	invokeOrDefault<SoundLibraryAddResult>(
-		IPC.SOUND_LIBRARY_ADD,
+	commandOrDefault<SoundLibraryAddResult>(
+		"sound_library_add",
+		async () =>
+			(await commands.soundLibraryAdd(
+				sourcePath,
+				name ?? null,
+			)) as SoundLibraryAddResult,
 		{ ok: false, error: "IPC unavailable" },
-		{ sourcePath, name },
 	);
 
 export const soundLibraryPickAndAdd = (name?: string) =>
-	invokeOrDefault<SoundLibraryAddResult>(
-		IPC.SOUND_LIBRARY_PICK_AND_ADD,
+	commandOrDefault<SoundLibraryAddResult>(
+		"sound_library_pick_and_add",
+		async () =>
+			(await commands.soundLibraryPickAndAdd(
+				name ?? null,
+			)) as SoundLibraryAddResult,
 		{ ok: false, error: "IPC unavailable" },
-		{ name },
 	);
 
 export const soundLibraryRemove = (filePath: string) =>
-	invokeOrDefault<SoundLibraryRemoveResult>(
-		IPC.SOUND_LIBRARY_REMOVE,
+	commandOrDefault<SoundLibraryRemoveResult>(
+		"sound_library_remove",
+		async () =>
+			(await commands.soundLibraryRemove(filePath)) as SoundLibraryRemoveResult,
 		{ ok: false, error: "IPC unavailable" },
-		{ path: filePath },
 	);
 
 export const soundLibraryReadFile = (filePath: string) =>
-	invokeOrDefault<Uint8Array | null>(IPC.SOUND_LIBRARY_READ_FILE, null, {
-		path: filePath,
-	});
+	commandOrDefault(
+		"sound_library_read_file",
+		async () => {
+			const bytes = await commands.soundLibraryReadFile(filePath);
+			return bytes === null ? null : new Uint8Array(bytes);
+		},
+		null,
+	);
 
 type ClipboardOperateResponse =
 	| { operation: "readText"; text: string }
@@ -72,32 +93,37 @@ type ClipboardOperateResponse =
 	| { operation: "clear" };
 
 export const clipboardReadText = async () => {
-	const result = await invokeSecureOrDefault<ClipboardOperateResponse>(
-		IPC.CLIPBOARD_OPERATE,
-		{
-			operation: "readText",
-		},
+	const result = await commandOrDefault<ClipboardOperateResponse>(
+		"clipboard_read_text",
+		async () =>
+			(await callPlugin("clipboard:operate", {
+				operation: "readText",
+			})) as ClipboardOperateResponse,
 		{ operation: "readText", text: "" },
 	);
-	return result.operation === "readText" ? result.text : "";
+	return result.operation === "readText" && typeof result.text === "string"
+		? result.text
+		: "";
 };
 
 export const clipboardWriteText = (text: string) =>
-	invokeSecureOrDefault<ClipboardOperateResponse>(
-		IPC.CLIPBOARD_OPERATE,
-		{
-			operation: "writeText",
-			text,
-		},
+	commandOrDefault<ClipboardOperateResponse>(
+		"clipboard_write_text",
+		async () =>
+			(await callPlugin("clipboard:operate", {
+				operation: "writeText",
+				text,
+			})) as ClipboardOperateResponse,
 		{ operation: "writeText" },
 	);
 
 export const clipboardClear = () =>
-	invokeSecureOrDefault<ClipboardOperateResponse>(
-		IPC.CLIPBOARD_OPERATE,
-		{
-			operation: "clear",
-		},
+	commandOrDefault<ClipboardOperateResponse>(
+		"clipboard_clear",
+		async () =>
+			(await callPlugin("clipboard:operate", {
+				operation: "clear",
+			})) as ClipboardOperateResponse,
 		{ operation: "clear" },
 	);
 
@@ -122,16 +148,20 @@ export interface UpdaterStatusEntry {
 }
 
 export const updaterGetStatusHistory = () =>
-	invokeSecureOrDefault<UpdaterStatusEntry[]>(
-		IPC.UPDATER_GET_STATUS_HISTORY,
-		{},
+	commandOrDefault<UpdaterStatusEntry[]>(
+		"winstt_updater_get_status_history",
+		async () =>
+			(await commands.winsttUpdaterGetStatusHistory()) as UpdaterStatusEntry[],
 		[],
 	);
 
 export const updaterClearStatusHistory = () =>
-	invokeSecureOrDefault<{ cleared: true }>(
-		IPC.UPDATER_CLEAR_STATUS_HISTORY,
-		{},
+	commandOrDefault<{ cleared: true }>(
+		"winstt_updater_clear_status_history",
+		async () => ({
+			cleared: (await commands.winsttUpdaterClearStatusHistory())
+				.cleared as true,
+		}),
 		{ cleared: true },
 	);
 
@@ -148,12 +178,15 @@ export interface UpdaterCheckNowOptions {
 }
 
 export const updaterCheckNow = (options?: UpdaterCheckNowOptions) =>
-	invokeOrDefault<UpdaterCheckNowResult>(
-		IPC.UPDATER_CHECK_NOW,
+	commandOrDefault<UpdaterCheckNowResult>(
+		"winstt_updater_check_and_download",
+		async () =>
+			(await checkAndDownloadUpdate(
+				options?.includePrereleaseUpdates,
+			)) as UpdaterCheckNowResult,
 		{
 			triggered: false,
 		},
-		options,
 	);
 
 export interface UpdaterQuitAndInstallResult {
@@ -169,9 +202,12 @@ export interface UpdaterQuitAndInstallResult {
  * wasn't initialized (dev mode / disabled).
  */
 export const updaterQuitAndInstall = () =>
-	invokeOrDefault<UpdaterQuitAndInstallResult>(IPC.UPDATER_QUIT_AND_INSTALL, {
-		triggered: false,
-	});
+	commandOrDefault<UpdaterQuitAndInstallResult>(
+		"winstt_updater_install",
+		async () =>
+			(await installPendingUpdateAndRelaunch()) as UpdaterQuitAndInstallResult,
+		{ triggered: false },
+	);
 
 // Transcription history
 export interface TranscriptionHistoryEntry {
@@ -241,16 +277,29 @@ export interface TranscriptionHistoryEntry {
 }
 
 export const fetchTranscriptionHistory = () =>
-	invokeOrDefault<TranscriptionHistoryEntry[]>(IPC.HISTORY_GET_ALL, []);
+	commandOrDefault(
+		"history_get_all",
+		async () =>
+			unwrapResult(
+				await commands.historyGetAll(),
+			) as TranscriptionHistoryEntry[],
+		[],
+	);
 
 export const clearTranscriptionHistory = () =>
-	invokeOrDefault<{ cleared: true }>(IPC.HISTORY_CLEAR, { cleared: true });
+	commandOrDefault<{ cleared: true }>(
+		"history_clear",
+		async () => ({
+			cleared: unwrapResult(await commands.historyClear()).cleared as true,
+		}),
+		{ cleared: true },
+	);
 
 export const deleteTranscriptionHistoryEntry = (id: string) =>
-	invokeOrDefault<{ deleted: boolean }>(
-		IPC.HISTORY_DELETE,
+	commandOrDefault<{ deleted: boolean }>(
+		"history_delete",
+		async () => unwrapResult(await commands.historyDelete(id)),
 		{ deleted: false },
-		id,
 	);
 
 export interface TransformHistoryEntry extends TranscriptionHistoryEntry {
@@ -259,18 +308,30 @@ export interface TransformHistoryEntry extends TranscriptionHistoryEntry {
 }
 
 export const fetchTransformHistory = () =>
-	invokeOrDefault<TransformHistoryEntry[]>(IPC.TRANSFORM_HISTORY_GET_ALL, []);
+	commandOrDefault(
+		"transform_history_get_all",
+		async () =>
+			unwrapResult(
+				await commands.transformHistoryGetAll(),
+			) as TransformHistoryEntry[],
+		[],
+	);
 
 export const clearTransformHistory = () =>
-	invokeOrDefault<{ cleared: true }>(IPC.TRANSFORM_HISTORY_CLEAR, {
-		cleared: true,
-	});
+	commandOrDefault<{ cleared: true }>(
+		"transform_history_clear",
+		async () => ({
+			cleared: unwrapResult(await commands.transformHistoryClear())
+				.cleared as true,
+		}),
+		{ cleared: true },
+	);
 
 export const deleteTransformHistoryEntry = (id: string) =>
-	invokeOrDefault<{ deleted: boolean }>(
-		IPC.TRANSFORM_HISTORY_DELETE,
+	commandOrDefault<{ deleted: boolean }>(
+		"transform_history_delete",
+		async () => unwrapResult(await commands.transformHistoryDelete(id)),
 		{ deleted: false },
-		{ id },
 	);
 
 /** One text-to-speech read-aloud run, listed in the History tab beside STT. */
@@ -303,18 +364,27 @@ export interface TtsHistoryEntry {
 }
 
 export const fetchTtsHistory = () =>
-	invokeOrDefault<TtsHistoryEntry[]>(IPC.TTS_HISTORY_GET_ALL, []);
+	commandOrDefault(
+		"tts_history_get_all",
+		async () =>
+			unwrapResult(await commands.ttsHistoryGetAll()) as TtsHistoryEntry[],
+		[],
+	);
 
 export const clearTtsHistory = () =>
-	invokeOrDefault<{ cleared: true }>(IPC.TTS_HISTORY_CLEAR, {
-		cleared: true,
-	});
+	commandOrDefault<{ cleared: true }>(
+		"tts_history_clear",
+		async () => ({
+			cleared: unwrapResult(await commands.ttsHistoryClear()).cleared as true,
+		}),
+		{ cleared: true },
+	);
 
 export const deleteTtsHistoryEntry = (id: string) =>
-	invokeOrDefault<{ deleted: boolean }>(
-		IPC.TTS_HISTORY_DELETE,
+	commandOrDefault<{ deleted: boolean }>(
+		"tts_history_delete",
+		async () => unwrapResult(await commands.ttsHistoryDelete(id)),
 		{ deleted: false },
-		{ id },
 	);
 
 export const onTtsHistoryAdded = (cb: (entry: TtsHistoryEntry) => void) =>
@@ -325,11 +395,19 @@ export const onTtsHistoryDeleted = (cb: (payload: { id: string }) => void) =>
 
 /** Load the WAV for an entry as a data URI ready for an `<audio src>`. */
 export const loadTranscriptionHistoryAudio = (id: string) =>
-	invokeOrDefault<string | null>(IPC.HISTORY_LOAD_AUDIO, null, id);
+	commandOrDefault(
+		"history_load_audio",
+		async () => unwrapResult(await commands.historyLoadAudio(id)),
+		null,
+	);
 
 /** Load a TTS run's saved synthesis audio as a data URI (WAV or MP3), or null. */
 export const loadTtsHistoryAudio = (id: string) =>
-	invokeOrDefault<string | null>(IPC.TTS_HISTORY_LOAD_AUDIO, null, id);
+	commandOrDefault(
+		"tts_history_load_audio",
+		async () => unwrapResult(await commands.ttsHistoryLoadAudio(id)),
+		null,
+	);
 
 /** Per-word playback timing (seconds) for highlight-while-playing. */
 export interface WordTiming {
@@ -344,7 +422,11 @@ export interface WordTiming {
  * entry has no audio or alignment fails — highlighting is best-effort.
  */
 export const alignTranscriptionHistoryAudio = (id: string) =>
-	invokeOrDefault<WordTiming[]>(IPC.HISTORY_ALIGN_AUDIO, [], id);
+	commandOrDefault(
+		"align_words",
+		async () => unwrapResult(await commands.alignWords(id)) as WordTiming[],
+		[],
+	);
 
 export interface HistoryListPage<TEntry = unknown> {
 	entries: TEntry[];
@@ -355,28 +437,35 @@ export const historyListPage = <TEntry = unknown>(options: {
 	limit: number;
 	offset: number;
 }) =>
-	invokeOrDefault<HistoryListPage<TEntry>>(
-		IPC.HISTORY_LIST,
+	commandOrDefault<HistoryListPage<TEntry>>(
+		"history_list",
+		async () =>
+			unwrapResult(
+				await commands.historyList(options.offset, options.limit),
+			) as HistoryListPage<TEntry>,
 		{ entries: [], hasMore: false },
-		options,
 	);
 
 export const historyDeleteRow = (id: number) =>
-	invokeOrDefault<{ deleted: boolean }>(
-		IPC.HISTORY_DELETE_ROW,
+	commandOrDefault<{ deleted: boolean }>(
+		"history_delete_row",
+		async () => unwrapResult(await commands.historyDeleteRow(id)),
 		{ deleted: false },
-		{ id },
 	);
 
 export const historyToggleRow = (id: number) =>
-	invokeOrDefault<{ saved: boolean | null }>(
-		IPC.HISTORY_TOGGLE,
+	commandOrDefault<{ saved: boolean | null }>(
+		"history_toggle",
+		async () => unwrapResult(await commands.historyToggle(id)),
 		{ saved: null },
-		{ id },
 	);
 
 export const historyLoadAudioByRow = (id: number) =>
-	invokeOrDefault<string | null>(IPC.HISTORY_LOAD_AUDIO_BY_ROW, null, { id });
+	commandOrDefault(
+		"history_load_audio_by_row",
+		async () => unwrapResult(await commands.historyLoadAudioByRow(id)),
+		null,
+	);
 
 export const onHistoryRowAdded = <TEntry = unknown>(
 	cb: (entry: TEntry) => void,
@@ -447,35 +536,89 @@ export interface FileQueueDroppedFile {
 }
 
 export const fileQueueEnqueue = (files: FileQueueDroppedFile[]) =>
-	invokeOrDefault<string[]>(IPC.FILE_QUEUE_ENQUEUE, [], { files });
+	commandOrDefault(
+		"file_transcribe_enqueue",
+		() => commands.fileTranscribeEnqueue(files as never[]),
+		[],
+	);
 
 export const fileQueuePickAndEnqueue = () =>
-	invokeOrDefault<string[]>(IPC.FILE_QUEUE_PICK_AND_ENQUEUE, []);
+	commandOrDefault(
+		"file_transcribe_pick_and_enqueue",
+		() => commands.fileTranscribePickAndEnqueue(),
+		[],
+	);
 
 export const fileQueueCancel = (id: string) =>
-	invokeOrDefault<null>(IPC.FILE_QUEUE_CANCEL, null, { id });
+	commandOrDefault(
+		"file_transcribe_cancel",
+		async () => {
+			await commands.fileTranscribeCancel(id);
+			return null;
+		},
+		null,
+	);
 
 export const fileQueueRetry = (id: string) =>
-	invokeOrDefault<null>(IPC.FILE_QUEUE_RETRY, null, { id });
+	commandOrDefault(
+		"file_transcribe_retry",
+		async () => {
+			await commands.fileTranscribeRetry(id);
+			return null;
+		},
+		null,
+	);
 
 export const fileQueueCopy = (id: string) =>
-	invokeOrDefault<null>(IPC.FILE_QUEUE_COPY, null, { id });
+	commandOrDefault(
+		"file_transcribe_copy",
+		async () => {
+			await commands.fileTranscribeCopy(id);
+			return null;
+		},
+		null,
+	);
 
 /** Pause ONE file (the in-flight one); it parks and the queue moves to the next. */
 export const fileQueuePause = (id: string) =>
-	invokeOrDefault<null>(IPC.FILE_QUEUE_PAUSE, null, { id });
+	commandOrDefault(
+		"file_transcribe_pause",
+		async () => {
+			await commands.fileTranscribePause(id);
+			return null;
+		},
+		null,
+	);
 
 /** Resume ONE paused file — continues from where it stopped. */
 export const fileQueueResume = (id: string) =>
-	invokeOrDefault<null>(IPC.FILE_QUEUE_RESUME, null, { id });
+	commandOrDefault(
+		"file_transcribe_resume",
+		async () => {
+			await commands.fileTranscribeResume(id);
+			return null;
+		},
+		null,
+	);
 
 /** Discard the whole queue (cancels the in-flight file) and return to the visualizer. */
 export const fileQueueDiscardAll = () =>
-	invokeOrDefault<null>(IPC.FILE_QUEUE_DISCARD_ALL, null);
+	commandOrDefault(
+		"file_transcribe_discard_all",
+		async () => {
+			await commands.fileTranscribeDiscardAll();
+			return null;
+		},
+		null,
+	);
 
 /** One-shot read of the busy flag — for windows mounted after the edge-triggered broadcast. */
 export const fileQueueGetActive = () =>
-	invokeOrDefault<boolean>(IPC.FILE_QUEUE_GET_ACTIVE, false);
+	commandOrDefault(
+		"file_transcribe_get_active",
+		() => commands.fileTranscribeGetActive(),
+		false,
+	);
 
 export const onFileQueueUpdate = (
 	cb: (data: { items: FileQueueItem[] }) => void,
@@ -496,7 +639,7 @@ export const copyLastTranscript = (): Promise<boolean> =>
 	commandOrDefault("copy_last_transcript", commands.copyLastTranscript, false);
 
 // ── Diagnostics ──────────────────────────────────────────────────────
-// Open the log folder in the OS file explorer through the native adapter route.
+// Open the log folder in the OS file explorer through the direct native helper.
 // The backend resolves, creates, and opens the portable-aware directory;
 // `{ ok:false }` is a no-bridge/dev fallback.
 export interface DiagOpenLogsFolderResult {
@@ -506,10 +649,12 @@ export interface DiagOpenLogsFolderResult {
 }
 
 export const diagOpenLogsFolder = (): Promise<DiagOpenLogsFolderResult> =>
-	invokeOrDefault(IPC.DIAG_OPEN_LOGS_FOLDER, {
-		ok: false,
-		error: "IPC unavailable",
-	});
+	commandOrDefault(
+		"diag_open_logs_folder",
+		async () =>
+			(await callPlugin("opener:logs", undefined)) as DiagOpenLogsFolderResult,
+		{ ok: false, error: "IPC unavailable" },
+	);
 
 // Prompt the user to save a zip containing debug.log + stt-server.log +
 // system-info.txt. `cancelled === true` means the user dismissed the save
@@ -571,10 +716,15 @@ export interface OpenCustomModelsFolderResult {
 
 export const openCustomModelsFolder =
 	(): Promise<OpenCustomModelsFolderResult> =>
-		invokeOrDefault(IPC.CUSTOM_MODELS_OPEN_FOLDER, {
-			ok: false,
-			error: "IPC unavailable",
-		});
+		commandOrDefault(
+			"open_custom_models_folder",
+			async () =>
+				(await callPlugin(
+					"opener:custom-models",
+					undefined,
+				)) as OpenCustomModelsFolderResult,
+			{ ok: false, error: "IPC unavailable" },
+		);
 
 // ── About ───────────────────────────────────────────────────────────
 export interface AboutAppInfo {

@@ -13,6 +13,9 @@ pub(super) enum StreamOutcome {
     Cancelled,
     Paused,
     Failed,
+    /// A cryptographic content identity supplied by HF did not match the completed artifact.
+    /// Unlike `Failed`, this must not silently fall back and claim a successful install.
+    IntegrityFailed(String),
 }
 
 pub(super) fn is_safe_hf_cache_component(value: &str) -> bool {

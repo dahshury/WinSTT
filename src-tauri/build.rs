@@ -5,64 +5,7 @@ fn main() {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
-    ensure_context_sidecar_resource_placeholder();
-    ensure_runtime_dll_resource_placeholder();
-
     tauri_build::build()
-}
-
-/// `tauri.windows.conf.json` maps `binaries/runtime/*.dll` into the install dir
-/// (DirectML + the MSVC CRT). Those DLLs are staged ONLY by the release build
-/// (`tools/windows/tauri-build.ps1`, which wipes and repopulates the dir), so on
-/// a plain `cargo clippy`/`cargo test` checkout the glob matches zero files and
-/// `tauri_build::build()` aborts. Drop a placeholder DLL when the dir has none so
-/// the resource glob resolves for clean cargo checks; the release build removes
-/// the whole `runtime/` dir before staging the real DLLs, so this never ships.
-fn ensure_runtime_dll_resource_placeholder() {
-    use std::fs;
-    use std::path::Path;
-
-    let dir = Path::new("binaries").join("runtime");
-    println!("cargo:rerun-if-changed={}", dir.display());
-
-    let has_dll = fs::read_dir(&dir).is_ok_and(|entries| {
-        entries.filter_map(Result::ok).any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
-        })
-    });
-    if has_dll {
-        return;
-    }
-
-    fs::create_dir_all(&dir).expect("failed to create generated runtime resource dir");
-    fs::write(
-        dir.join("_placeholder.dll"),
-        b"Generated placeholder for clean cargo checks. Release builds wipe this dir and stage the real runtime DLLs.\n",
-    )
-    .expect("failed to create generated runtime DLL placeholder");
-}
-
-fn ensure_context_sidecar_resource_placeholder() {
-    use std::fs;
-    use std::path::Path;
-
-    let path = Path::new("binaries").join("winstt-context.exe");
-    println!("cargo:rerun-if-changed={}", path.display());
-    if path.exists() {
-        return;
-    }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("failed to create generated sidecar resource dir");
-    }
-    fs::write(
-        &path,
-        b"Generated placeholder for clean cargo checks. Release builds overwrite this with the real winstt_context sidecar.\n",
-    )
-    .expect("failed to create generated sidecar resource placeholder");
 }
 
 #[cfg(target_os = "windows")]

@@ -10,7 +10,7 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
-import { IPC } from "@/shared/api/ipc-channels";
+import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
 import { ipcOn, windowOpenSettings } from "@/shared/api/ipc-client";
 import type { CloudSttProvider } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";

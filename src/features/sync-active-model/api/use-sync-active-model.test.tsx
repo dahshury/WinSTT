@@ -2,25 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { RuntimeInfo } from "@/entities/connection";
 import { useConnectionStore } from "@/entities/connection";
-import {
-	_resetOptimisticSwapForTests,
-	type ModelInfo,
-	useCatalogStore,
-	useModelSwapStore,
-} from "@/entities/model-catalog";
+import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import {
-	_resetIpcLoadTimingForTests,
-	markIpcLoadResolved,
-} from "@/shared/lib/ipc-load-timing";
-import { _resetSwapFailureTimingForTests } from "@/shared/lib/swap-failure-timing";
-import {
-	adoptCompletedSwap,
-	type ImplicitSwapInputs,
-	resolveSwapCompletedPatch,
-	shouldOpenImplicitSwap,
-	useSyncActiveModel,
-} from "./use-sync-active-model";
+import { useSyncActiveModel } from "./use-sync-active-model";
 
 // adoptRuntime now requires a catalog entry so it can pair the model with its
 // backend (the typed ModelPatch refuses model-only patches). Seed the catalog
@@ -126,8 +110,6 @@ beforeEach(() => {
 		},
 		isLoaded: true,
 	});
-	_resetSwapFailureTimingForTests();
-	_resetIpcLoadTimingForTests();
 	seedCatalog();
 });
 
@@ -140,10 +122,6 @@ afterEach(() => {
 	// adoption order. (Surfaced when Pattern F tightened ``adoptRuntime``
 	// to require a catalog hit.)
 	cleanup();
-	// Cancel any pending optimistic-swap self-heal timer the reconciler armed
-	// via beginSwap — a leaked default-window timer would fire after happy-dom
-	// teardown ("window is not defined" between test files).
-	_resetOptimisticSwapForTests();
 	window.nativeBridge = originalApi;
 });
 
@@ -228,35 +206,6 @@ describe("useSyncActiveModel", () => {
 		);
 	});
 
-	test("a bare settings.model change is NOT reverted by stale runtime (regression #3: stale activeMain read)", async () => {
-		// The exact live-traced revert: a model pick lands as a PLAIN settings
-		// change (adoptCompletedSwap / cross-window broadcast) with this window's
-		// swap store still empty (`activeMain: null` — beginSwap only ran in the
-		// initiating picker window). The effect opens the implicit swap itself,
-		// but it used to read `activeMain` BEFORE that beginSwap, so the adoption
-		// branch saw the stale null and reverted the store to the lagging
-		// runtime model ~5ms after the pick — which also emptied the debounced
-		// save's diff, so the pick never persisted (the "reverts to cohere on
-		// every boot" root cause).
-		useConnectionStore.setState({ runtimeInfo: withModel("tiny") });
-		renderHook(() => useSyncActiveModel());
-		// Pick a new model WITHOUT touching the swap store — the pure transition.
-		useSettingsStore.setState({
-			settings: {
-				...DEFAULT_SETTINGS,
-				model: { ...DEFAULT_SETTINGS.model, model: "large-v3-turbo" },
-			},
-			isLoaded: true,
-		});
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		// Not reverted to the stale runtime model…
-		expect(useSettingsStore.getState().settings.model.model).toBe(
-			"large-v3-turbo",
-		);
-		// …and the transition opened the implicit in-flight swap guard.
-		expect(useModelSwapStore.getState().activeMain).toBe("large-v3-turbo");
-	});
-
 	test("swap completion alone does NOT trigger reconciliation against stale runtime (regression #2)", async () => {
 		// Second-order regression: when mainSwapping was a dep, the
 		// transition from true → false (clearing on swap_completed) re-fired
@@ -328,7 +277,6 @@ describe("useSyncActiveModel", () => {
 		// the reconciler "this transition is a load revert, not a user pick"
 		// so it re-adopts instead of opening an implicit swap. Stamp it here
 		// to model the real sequence.
-		markIpcLoadResolved();
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
@@ -365,240 +313,5 @@ describe("useSyncActiveModel", () => {
 				"large-v3-turbo",
 			);
 		});
-	});
-});
-
-describe("shouldOpenImplicitSwap", () => {
-	const base: ImplicitSwapInputs = {
-		previousModel: "A",
-		settingsModel: "B",
-		runtimeModel: "A",
-		now: 100_000,
-		lastIpcLoadAt: 0,
-		lastSwapFailedAt: 0,
-	};
-
-	test("opens for a genuine cross-window pick (A→B, B not yet loaded)", () => {
-		expect(shouldOpenImplicitSwap(base)).toBe(true);
-	});
-
-	test("skips the first observation (no previous model yet)", () => {
-		expect(shouldOpenImplicitSwap({ ...base, previousModel: undefined })).toBe(
-			false,
-		);
-	});
-
-	test("skips a no-op transition (from === to)", () => {
-		expect(shouldOpenImplicitSwap({ ...base, previousModel: "B" })).toBe(false);
-	});
-
-	test("skips when the target already equals the runtime model", () => {
-		expect(shouldOpenImplicitSwap({ ...base, runtimeModel: "B" })).toBe(false);
-	});
-
-	test("skips a settingsLoad-induced revert (within the ipc-load guard window)", () => {
-		expect(
-			shouldOpenImplicitSwap({ ...base, lastIpcLoadAt: base.now - 200 }),
-		).toBe(false);
-	});
-
-	test("REVERSAL GUARD: skips a failure-induced rollback within the swap-failure window", () => {
-		// The reversed "B→A spins forever" bug: after a failed swap, settings
-		// roll back B→A while runtimeInfo is still the stale B. Without the
-		// guard this returns true and opens a reversed never-completing swap.
-		const rollback: ImplicitSwapInputs = {
-			previousModel: "B",
-			settingsModel: "A",
-			runtimeModel: "B", // stale — failure rollback hasn't refreshed runtime yet
-			now: 100_000,
-			lastIpcLoadAt: 0,
-			lastSwapFailedAt: 100_000 - 50, // failure 50ms ago → guard active
-		};
-		expect(shouldOpenImplicitSwap(rollback)).toBe(false);
-	});
-
-	test("re-opens normally once the swap-failure guard window has elapsed", () => {
-		expect(
-			shouldOpenImplicitSwap({ ...base, lastSwapFailedAt: base.now - 5000 }),
-		).toBe(true);
-	});
-});
-
-describe("resolveSwapCompletedPatch", () => {
-	const catalogModel = (
-		id: string,
-		availableQuantizations: string[],
-	): ModelInfo => ({
-		id,
-		displayName: id,
-		family: "nemo",
-		languages: [],
-		supportsLanguageDetection: false,
-		previewCapable: false,
-		nativeStreaming: false,
-		finalReuseSafe: false,
-		sizeLabel: "",
-		onnxModelName: null,
-		description: "",
-		availableQuantizations,
-		sizeBytesByQuantization: {},
-		available: true,
-		errorMessage: "",
-		localPath: null,
-		speedScore: 0,
-		accuracyScore: 0,
-	});
-	const catalog: ModelInfo[] = [
-		catalogModel("nemo-canary-1b-v2", []),
-		// A model that offers int8 but NOT fp16 — the shape that exposes the
-		// stale-precision rejected-save bug.
-		catalogModel("int8-only-model", ["", "int8"]),
-	];
-
-	test("main pick resolves the paired backend from the catalog", () => {
-		expect(
-			resolveSwapCompletedPatch(
-				"main",
-				"nemo-canary-1b-v2",
-				"tiny",
-				null,
-				catalog,
-				"",
-			),
-		).toEqual({ model: "nemo-canary-1b-v2" });
-	});
-
-	test("main adoption resets a precision the new model does not offer", () => {
-		expect(
-			resolveSwapCompletedPatch(
-				"main",
-				"int8-only-model",
-				"tiny",
-				null,
-				catalog,
-				"fp16",
-			),
-		).toEqual({
-			model: "int8-only-model",
-			onnxQuantization: "",
-		});
-	});
-
-	test("main adoption keeps a precision the new model does offer", () => {
-		expect(
-			resolveSwapCompletedPatch(
-				"main",
-				"int8-only-model",
-				"tiny",
-				null,
-				catalog,
-				"int8",
-			),
-		).toEqual({ model: "int8-only-model" });
-	});
-
-	test("main adoption leaves the '' / auto sentinels untouched", () => {
-		expect(
-			resolveSwapCompletedPatch(
-				"main",
-				"int8-only-model",
-				"tiny",
-				null,
-				catalog,
-				"auto",
-			),
-		).toEqual({ model: "int8-only-model" });
-	});
-
-	test("main no-op when the loaded model already matches settings", () => {
-		expect(
-			resolveSwapCompletedPatch("main", "tiny", "tiny", null, catalog, ""),
-		).toBeNull();
-	});
-
-	test("cloud main id (no catalog entry) gets the benign cloud backend", () => {
-		const patch = resolveSwapCompletedPatch(
-			"main",
-			"elevenlabs:scribe_v1",
-			"tiny",
-			null,
-			catalog,
-			"fp16",
-		);
-		expect(patch).toEqual({
-			model: "elevenlabs:scribe_v1",
-		});
-	});
-
-	test("unknown local id (not cloud, not in catalog) yields null — never a bare {model}", () => {
-		expect(
-			resolveSwapCompletedPatch(
-				"main",
-				"ghost-model",
-				"tiny",
-				null,
-				catalog,
-				"",
-			),
-		).toBeNull();
-	});
-
-	test("empty name is a no-op (e.g. realtime clear — handled by broadcast)", () => {
-		expect(
-			resolveSwapCompletedPatch("main", "", "tiny", null, catalog, ""),
-		).toBeNull();
-		expect(
-			resolveSwapCompletedPatch("realtime", "", null, "tiny", catalog, ""),
-		).toBeNull();
-	});
-
-	test("realtime pick patches only realtimeModel", () => {
-		expect(
-			resolveSwapCompletedPatch(
-				"realtime",
-				"nemo-canary-1b-v2",
-				"tiny",
-				"old-rt",
-				catalog,
-				"",
-			),
-		).toEqual({ realtimeModel: "nemo-canary-1b-v2" });
-	});
-
-	test("realtime no-op when it already matches", () => {
-		expect(
-			resolveSwapCompletedPatch("realtime", "rt", "tiny", "rt", catalog, ""),
-		).toBeNull();
-	});
-});
-
-describe("adoptCompletedSwap", () => {
-	// The reported bug: a swap committed in the detached picker window leaves
-	// every other window stuck on the previous model — the picker closes before
-	// its `settings:changed` broadcast lands, and the runtime-info reconciler
-	// never re-fires after `activeMain` clears. The global `model-swap-completed`
-	// event carries the loaded model name; adopting it must converge settings.
-	// (beforeEach leaves settings on "tiny" with the catalog seeded.)
-	test("writes the loaded main model + paired backend into settings (detached-picker fix)", () => {
-		adoptCompletedSwap("main", "nemo-canary-1b-v2");
-		const model = useSettingsStore.getState().settings.model;
-		expect(model.model).toBe("nemo-canary-1b-v2");
-	});
-
-	test("is a no-op when the loaded model already matches (initiating window)", () => {
-		adoptCompletedSwap("main", "tiny");
-		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
-	});
-
-	test("a realtime completion patches realtimeModel only, leaving main untouched", () => {
-		adoptCompletedSwap("realtime", "nemo-canary-1b-v2");
-		const model = useSettingsStore.getState().settings.model;
-		expect(model.realtimeModel).toBe("nemo-canary-1b-v2");
-		expect(model.model).toBe("tiny");
-	});
-
-	test("an unknown local id is ignored (never a bare {model} without backend)", () => {
-		adoptCompletedSwap("main", "ghost-model");
-		expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 	});
 });

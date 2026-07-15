@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { InfoTooltip } from "@/shared/ui/info-tooltip";
+import { PendingBadge } from "@/shared/ui/pending";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
@@ -59,13 +60,17 @@ export function SettingSubsection({
 	// (`busy`) — the user enabled it, but the controls shouldn't be touched until
 	// the model finishes loading.
 	const isDisabled = contentDisabled || (hasToggle && !toggled) || busy;
+	// `busy` wears the same corner spinner badge as the post-processing toggle
+	// so the in-flight transition is visible, not just a mysteriously grey pill.
 	const toggle = hasToggle ? (
-		<Toggle
-			aria-label={`Toggle ${title}`}
-			checked={toggled ?? false}
-			disabled={toggleDisabled || busy}
-			onCheckedChange={onToggle}
-		/>
+		<PendingBadge pending={busy}>
+			<Toggle
+				aria-label={`Toggle ${title}`}
+				checked={toggled ?? false}
+				disabled={toggleDisabled || busy}
+				onCheckedChange={onToggle}
+			/>
+		</PendingBadge>
 	) : null;
 
 	return (

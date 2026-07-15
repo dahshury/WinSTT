@@ -404,13 +404,14 @@ After the final text is produced (and optionally cleaned), WinSTT pastes it at y
 
 ## File transcription
 
-When you drop an audio file in for batch transcription, this setting picks the output format. It applies to file jobs only, not live dictation.
+When you drop an audio file in for batch transcription, this setting picks one or more output formats. It applies to file jobs only, not live dictation.
 
-<Screenshot src="sec-quality-filetx" alt="The File Transcription section with a Format control toggled between TXT and SRT — TXT selected." chrome="card" label="Settings → Output → File transcription" caption="Pick the batch-export format: plain TXT or timestamped SRT subtitles." />
+<Screenshot src="sec-quality-filetx" alt="The File Transcription section with its output-format selector." chrome="card" label="Settings → Output → File transcription" caption="Choose one or more batch-export formats." />
 
-<SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
-  **TXT** writes plain text; **SRT** writes SubRip subtitles with timecodes. Full details
-  on the batch workflow live in [File transcription](/docs/file-transcription).
+<SettingRow label="File Transcription Formats" settingKey="general.fileTranscriptionFormats" default='["txt"]'>
+  Choose any combination of **TXT**, **SRT**, **VTT**, **JSON**, and **CSV**. At least one
+  format is always selected. Full details on the batch workflow live in
+  [File transcription](/docs/file-transcription).
 </SettingRow>
 
 ## Shared LLM infrastructure

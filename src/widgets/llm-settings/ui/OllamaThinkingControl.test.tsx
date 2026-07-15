@@ -3,7 +3,7 @@ import {
 	fireEvent,
 	render,
 	screen,
-} from "@/widgets/model-picker/test/render-with-intl";
+} from "@/shared/ui/model-picker/test/render-with-intl";
 import { OllamaThinkingControl } from "./OllamaThinkingControl";
 
 // Switcher renders each label twice (an aria-hidden width-reserving ghost + the

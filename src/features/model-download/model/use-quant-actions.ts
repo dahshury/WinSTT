@@ -54,17 +54,14 @@ export function useQuantActions(): QuantActions {
 	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
 	const predownloadQuant = useDownloadStore((s) => s.predownloadQuant);
 	const pauseQuantDownload = useDownloadStore((s) => s.pauseQuantDownload);
-	const pauseQuantEntry = useDownloadStore((s) => s.pauseQuantEntry);
 	const resumeQuantDownload = useDownloadStore((s) => s.resumeQuantDownload);
 	const cancelQuantDownload = useDownloadStore((s) => s.cancelQuantDownload);
 	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
 
-	// Every store action below delegates to a fire-and-forget IPC wrapper
-	// (download-store → `invokeOrDefault` in ipc-client). That wrapper catches
-	// internally and resolves its fallback, so the returned promise NEVER
+	// Every store action below delegates to a tolerant generated-command wrapper.
+	// That wrapper catches internally and resolves its fallback, so the promise never
 	// rejects — there is no unhandled rejection to guard and intentionally no
-	// `.catch`/`await` here. A dropped command degrades silently to the
-	// fallback (consistent with all ~64 `invokeOrDefault` call sites); the
+	// `.catch`/`await` here. A dropped command degrades to the declared fallback; the
 	// server's broadcast events are the source of truth for the final UI state.
 	const handleDeleteQuant = (
 		modelId: string,
@@ -95,9 +92,6 @@ export function useQuantActions(): QuantActions {
 			return;
 		}
 		if (action === "pause") {
-			// Optimistic local flip so the badge re-renders before the
-			// server's confirmation event lands.
-			pauseQuantEntry(modelId, quantization);
 			pauseQuantDownload(modelId, quantization);
 			return;
 		}

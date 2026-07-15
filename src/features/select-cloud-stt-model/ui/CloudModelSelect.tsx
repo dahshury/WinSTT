@@ -1,6 +1,6 @@
 "use client";
 
-import { OpenRouterModelSelector } from "@/widgets/model-picker";
+import { OpenRouterModelSelector } from "./OpenRouterModelSelector";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type MouseEvent, type ReactNode, useLayoutEffect } from "react";

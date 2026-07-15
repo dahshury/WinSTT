@@ -11,6 +11,7 @@ const links: SidebarLink[] = [
 		label: "General",
 		icon: Settings05Icon,
 		keywords: "Recording Display Startup language wake word",
+		groupLabel: "Core",
 	},
 	{
 		key: "audio",
@@ -207,6 +208,33 @@ describe("SettingsSidebar", () => {
 		expect(screen.getByText("General")).toBeDefined();
 		expect(screen.queryByTestId("settings-export-button")).toBeNull();
 		expect(screen.queryByTestId("settings-import-button")).toBeNull();
+	});
+
+	test("keeps vertical tab slots stable and centers collapsed icons", () => {
+		const { container } = renderSidebar();
+		const list = container.querySelector(".settings-sidebar-list");
+		const general = screen.getByRole("tab", { name: /general/i });
+		const row = general.closest("[data-settings-search-result]");
+		const groupLabel = container.querySelector(".settings-sidebar-group-label");
+
+		expect(list?.className).toContain("pt-1");
+		expect(list?.className).toContain("pb-4");
+
+		fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
+		const collapsedGeneral = screen.getAllByRole("tab")[0];
+
+		expect(list?.className).toContain("pt-1");
+		expect(list?.className).toContain("pb-4");
+		expect(list?.className).toContain("items-center");
+		expect(row?.className).toContain("w-[2.4rem]");
+		expect(collapsedGeneral?.className).toContain(
+			"settings-sidebar-tab-collapsed",
+		);
+		expect(collapsedGeneral?.className).toContain("justify-center");
+		expect(groupLabel).not.toBeNull();
+		expect(groupLabel?.className).toContain(
+			"settings-sidebar-group-label-collapsed",
+		);
 	});
 
 	test("does not render the RAM or VRAM footer meter", () => {

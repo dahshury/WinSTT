@@ -69,7 +69,7 @@ pub struct SettingsImportResult {
     /// Raw saved-LLM-configurations blob (the `winstt:llm-configurations`
     /// localStorage value) recovered from the backup, if present. The renderer
     /// writes this back to localStorage — these configs live outside the backend
-    /// settings tree. `None` for older backups that predate the field.
+    /// settings tree. `None` when the export did not include saved configurations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_configurations: Option<String>,
 }
@@ -196,9 +196,8 @@ fn redact_secret(value: &mut String) {
 fn redact_export_secrets(settings: &mut WinsttSettings) {
     redact_secret(&mut settings.llm.openrouter_api_key);
     redact_secret(&mut settings.integrations.elevenlabs.api_key);
-    // The backend-only `core` blob (and any secret material it carries, e.g. the
-    // legacy `post_process_api_keys` SecretMap) is stripped wholesale in
-    // `export_file_json` — it is never re-imported (`patch_from_present` ignores
+    // The backend-only `core` blob and any secret material it carries are stripped in
+    // `export_file_json` — it is never re-imported (`full_settings_patch` ignores
     // it), so exporting it would only leak secrets/machine state.
 }
 
@@ -240,261 +239,173 @@ const IMPORT_SECTIONS: &[(&str, &str)] = &[
     ("integrations", "Integrations"),
 ];
 
-/// Result of leniently parsing an export file. `settings` is the persisted tree
-/// with the sections that were PRESENT (and valid) in the file overlaid on top —
-/// absent sections keep the machine's current value instead of resetting to a
-/// default. `present` is the set of section keys that were successfully applied
-/// (this drives both the patch and the "restored" report). `adjustments`
-/// collects envelope/version warnings, sections that were present but could not
-/// be parsed on this version, and unknown/removed section keys.
+/// A current-format settings export after exact schema validation.
+#[derive(Debug)]
 struct ParsedImport {
     settings: WinsttSettings,
-    present: BTreeSet<&'static str>,
-    adjustments: Vec<SettingsRestoreItem>,
     /// Raw saved-LLM-configurations blob recovered from the backup's
     /// `llmConfigurations` field (re-serialized to a compact string ready for
-    /// `localStorage.setItem`), or `None` when the backup predates the field.
+    /// `localStorage.setItem`), or `None` when none were exported.
     llm_configurations: Option<String>,
 }
 
-/// Port of the renderer's `migrateOpenaiSttModel`: a persisted
-/// `model.model = "openai:<id>"` selection (from before OpenAI was removed as a
-/// direct cloud STT provider) is rewritten to the equivalent OpenRouter route
-/// so it keeps working via the OpenRouter key instead of being treated as an
-/// unavailable local model. Operates on the raw settings object before the
-/// section is deserialized.
-fn migrate_openai_stt_model(settings_obj: &mut serde_json::Map<String, serde_json::Value>) {
-    let Some(model) = settings_obj
-        .get_mut("model")
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return;
-    };
-    let Some(id) = model.get("model").and_then(serde_json::Value::as_str) else {
-        return;
-    };
-    if let Some(bare) = id.strip_prefix("openai:") {
-        let rewritten = format!("openrouter:openai/{bare}");
-        model.insert("model".to_string(), serde_json::Value::String(rewritten));
+fn settings_from_envelope(root: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let root_object = root
+        .as_object()
+        .ok_or_else(|| "Invalid settings backup: expected a JSON object.".to_string())?;
+    const REQUIRED: &[&str] = &["format", "version", "appVersion", "exportedAt", "settings"];
+    const ALLOWED: &[&str] = &[
+        "format",
+        "version",
+        "appVersion",
+        "exportedAt",
+        "settings",
+        "llmConfigurations",
+    ];
+    let missing = REQUIRED
+        .iter()
+        .filter(|key| !root_object.contains_key(**key))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Invalid settings backup: missing field(s): {}.",
+            missing.join(", ")
+        ));
     }
+    let unknown = root_object
+        .keys()
+        .filter(|key| !ALLOWED.contains(&key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "Invalid settings backup: unknown field(s): {}.",
+            unknown.join(", ")
+        ));
+    }
+    if root
+        .get("appVersion")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+    {
+        return Err("Invalid settings backup: appVersion must be a string.".to_string());
+    }
+    if root
+        .get("exportedAt")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        return Err("Invalid settings backup: exportedAt must be an unsigned integer.".to_string());
+    }
+    let format = root
+        .get("format")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Invalid settings backup: missing format.".to_string())?;
+    if format != SETTINGS_EXPORT_FORMAT {
+        return Err(format!(
+            "Unsupported settings backup format '{format}'; expected '{SETTINGS_EXPORT_FORMAT}'."
+        ));
+    }
+    let version = root
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "Invalid settings backup: missing version.".to_string())?;
+    if version != u64::from(SETTINGS_EXPORT_VERSION) {
+        return Err(format!(
+            "Unsupported settings backup version {version}; expected {SETTINGS_EXPORT_VERSION}."
+        ));
+    }
+    root.get("settings")
+        .cloned()
+        .ok_or_else(|| "Invalid settings backup: missing settings payload.".to_string())
 }
 
-/// Deserialize a single top-level section value into the working settings tree.
-/// Kept per-section so one corrupt/newer section (e.g. an unknown enum value
-/// from a newer export) fails only that section rather than the whole import.
-fn apply_section(
-    settings: &mut WinsttSettings,
-    key: &str,
-    value: serde_json::Value,
-) -> Result<(), serde_json::Error> {
-    match key {
-        "global" => settings.global = serde_json::from_value(value)?,
-        "model" => settings.model = serde_json::from_value(value)?,
-        "quality" => settings.quality = serde_json::from_value(value)?,
-        "audio" => settings.audio = serde_json::from_value(value)?,
-        "general" => settings.general = serde_json::from_value(value)?,
-        "hotkey" => settings.hotkey = serde_json::from_value(value)?,
-        "dictionary" => settings.dictionary = serde_json::from_value(value)?,
-        "snippets" => settings.snippets = serde_json::from_value(value)?,
-        "llm" => settings.llm = serde_json::from_value(value)?,
-        "tts" => settings.tts = serde_json::from_value(value)?,
-        "integrations" => settings.integrations = serde_json::from_value(value)?,
+fn validate_exact_shape(
+    input: &serde_json::Value,
+    canonical: &serde_json::Value,
+    path: &str,
+) -> Result<(), String> {
+    match (input, canonical) {
+        (serde_json::Value::Object(input), serde_json::Value::Object(canonical)) => {
+            let missing = canonical
+                .keys()
+                .filter(|key| !input.contains_key(*key))
+                .cloned()
+                .collect::<Vec<_>>();
+            let unknown = input
+                .keys()
+                .filter(|key| !canonical.contains_key(*key))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() || !unknown.is_empty() {
+                return Err(format!(
+                    "Invalid settings backup at '{path}': missing [{}], unknown [{}].",
+                    missing.join(", "),
+                    unknown.join(", ")
+                ));
+            }
+            for (key, value) in input {
+                validate_exact_shape(value, &canonical[key], &format!("{path}.{key}"))?;
+            }
+        }
+        (serde_json::Value::Array(input), serde_json::Value::Array(canonical)) => {
+            for (index, (value, canonical_value)) in input.iter().zip(canonical).enumerate() {
+                validate_exact_shape(value, canonical_value, &format!("{path}[{index}]"))?;
+            }
+        }
         _ => {}
     }
     Ok(())
 }
 
-/// Serialize the just-applied typed section back to JSON so its modeled key set
-/// can be diffed against the raw input (finding #13). The array sections
-/// (`dictionary`/`snippets`) have no named fields, so they return `None` and are
-/// skipped.
-fn serialized_known_section(settings: &WinsttSettings, key: &str) -> Option<serde_json::Value> {
-    match key {
-        "global" => serde_json::to_value(settings.global).ok(),
-        "model" => serde_json::to_value(&settings.model).ok(),
-        "quality" => serde_json::to_value(&settings.quality).ok(),
-        "audio" => serde_json::to_value(&settings.audio).ok(),
-        "general" => serde_json::to_value(&settings.general).ok(),
-        "hotkey" => serde_json::to_value(&settings.hotkey).ok(),
-        "llm" => serde_json::to_value(&settings.llm).ok(),
-        "tts" => serde_json::to_value(&settings.tts).ok(),
-        "integrations" => serde_json::to_value(&settings.integrations).ok(),
-        _ => None,
-    }
-}
-
-/// Report top-level keys present in the raw `input` section but not modeled by
-/// this version's typed section (finding #13): a field removed/renamed in a newer
-/// export is otherwise dropped SILENTLY on import, since serde ignores unknown
-/// keys. Shallow by design (section top level only) — going deeper would risk
-/// false positives from `skip_serializing_if` inner fields (e.g. a dictionary
-/// entry's absent `replacement`), so nested-field drops within a section are not
-/// individually reported.
-fn report_unknown_section_keys(
-    area: &str,
-    key: &str,
-    input: &serde_json::Value,
-    settings: &WinsttSettings,
-    adjustments: &mut Vec<SettingsRestoreItem>,
-) {
-    let (Some(input_obj), Some(known)) =
-        (input.as_object(), serialized_known_section(settings, key))
-    else {
-        return;
-    };
-    let Some(known_obj) = known.as_object() else {
-        return;
-    };
-    let mut unknown: Vec<&str> = input_obj
-        .keys()
-        .filter(|name| !known_obj.contains_key(name.as_str()))
-        .map(String::as_str)
-        .collect();
-    if unknown.is_empty() {
-        return;
-    }
-    unknown.sort_unstable();
-    adjustments.push(report(
-        area,
-        "adjusted",
-        format!(
-            "This backup's '{area}' section had setting(s) not recognized on this version, which were ignored: {}.",
-            unknown.join(", ")
-        ),
-    ));
-}
-
-/// Check the export envelope's `format`/`version` and record a warning (not a
-/// hard failure) on mismatch — an older backup imports fine, and a newer backup
-/// imports on a best-effort basis with per-section recovery skipping anything
-/// this version can't read.
-fn check_envelope(root: &serde_json::Value, adjustments: &mut Vec<SettingsRestoreItem>) {
-    if let Some(format) = root.get("format").and_then(serde_json::Value::as_str)
-        && format != SETTINGS_EXPORT_FORMAT
-    {
-        adjustments.push(report(
-            "Backup format",
-            "adjusted",
-            format!(
-                "This backup declares format '{format}', not '{SETTINGS_EXPORT_FORMAT}'; it was imported on a best-effort basis."
-            ),
-        ));
-    }
-    if let Some(version) = root.get("version").and_then(serde_json::Value::as_u64)
-        && version > u64::from(SETTINGS_EXPORT_VERSION)
-    {
-        adjustments.push(report(
-            "Backup version",
-            "adjusted",
-            format!(
-                "This backup was created by a newer version (format v{version} > v{SETTINGS_EXPORT_VERSION}); any settings this version does not recognize were skipped."
-            ),
-        ));
-    }
-}
-
-fn parse_import(bytes: &[u8], current: &WinsttSettings) -> Result<ParsedImport, String> {
+fn parse_import(bytes: &[u8]) -> Result<ParsedImport, String> {
     let root: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|err| format!("Invalid settings JSON: {err}"))?;
-
-    let mut adjustments = Vec::new();
 
     // Saved LLM configurations travel alongside `settings` as the top-level
     // `llmConfigurations` field (embedded parsed JSON). Read it before `root` may
     // be moved into `settings_value` below. Re-serialize to a compact string ready
-    // for `localStorage.setItem`; absent on backups predating the field.
+    // for `localStorage.setItem`.
     let llm_configurations = root
         .get("llmConfigurations")
         .filter(|value| !value.is_null())
         .and_then(|value| serde_json::to_string(value).ok());
 
-    // Backups carry an envelope (`{ format, version, settings }`); a bare
-    // settings object is also accepted for hand-edited files.
-    let settings_value = if let Some(inner) = root.get("settings") {
-        check_envelope(&root, &mut adjustments);
-        inner.clone()
-    } else {
-        root
-    };
-    let Some(mut obj) = settings_value.as_object().cloned() else {
+    let settings_value = settings_from_envelope(&root)?;
+    let Some(_) = settings_value.as_object() else {
         return Err("Invalid settings payload: expected a JSON object.".to_string());
     };
 
-    migrate_openai_stt_model(&mut obj);
-
-    // Start from the persisted tree so sections ABSENT from the file are left
-    // untouched (a partial/older backup must not wipe unspecified sections).
-    let mut settings = current.clone();
-    let mut present = BTreeSet::new();
-    for (key, area) in IMPORT_SECTIONS {
-        let Some(section_value) = obj.get(*key) else {
-            continue;
-        };
-        match apply_section(&mut settings, key, section_value.clone()) {
-            Ok(()) => {
-                present.insert(*key);
-                report_unknown_section_keys(area, key, section_value, &settings, &mut adjustments);
-            }
-            Err(err) => adjustments.push(report(
-                area,
-                "adjusted",
-                format!(
-                    "The '{area}' section from this backup could not be read on this version and was left unchanged ({err})."
-                ),
-            )),
-        }
-    }
-
-    // Report unknown/removed top-level groups (dropped by the typed sections
-    // above) so a silent data loss is at least surfaced. `core` is the
-    // backend-only blob and is intentionally ignored, never imported.
-    for key in obj.keys() {
-        if key == "core" || IMPORT_SECTIONS.iter().any(|(known, _)| known == key) {
-            continue;
-        }
-        adjustments.push(report(
-            "Unknown",
-            "adjusted",
-            format!(
-                "Setting group '{key}' from this backup is not recognized on this version and was ignored."
-            ),
-        ));
-    }
+    let settings: WinsttSettings = serde_json::from_value(settings_value.clone())
+        .map_err(|err| format!("Invalid settings payload: {err}"))?;
+    let mut canonical = serde_json::to_value(&settings)
+        .map_err(|err| format!("Could not validate settings payload: {err}"))?;
+    canonical
+        .as_object_mut()
+        .expect("WinsttSettings serializes as an object")
+        .remove("core");
+    validate_exact_shape(&settings_value, &canonical, "settings")?;
 
     Ok(ParsedImport {
         settings,
-        present,
-        adjustments,
         llm_configurations,
     })
 }
 
-fn patch_from_present(
-    settings: &WinsttSettings,
-    present: &BTreeSet<&'static str>,
-) -> PartialWinsttSettings {
+fn full_settings_patch(settings: &WinsttSettings) -> PartialWinsttSettings {
     PartialWinsttSettings {
-        global: present.contains("global").then_some(settings.global),
-        model: present.contains("model").then(|| settings.model.clone()),
-        quality: present
-            .contains("quality")
-            .then(|| settings.quality.clone()),
-        audio: present.contains("audio").then(|| settings.audio.clone()),
-        general: present
-            .contains("general")
-            .then(|| settings.general.clone()),
-        hotkey: present.contains("hotkey").then(|| settings.hotkey.clone()),
-        dictionary: present
-            .contains("dictionary")
-            .then(|| settings.dictionary.clone()),
-        snippets: present
-            .contains("snippets")
-            .then(|| settings.snippets.clone()),
-        llm: present.contains("llm").then(|| settings.llm.clone()),
-        tts: present.contains("tts").then(|| settings.tts.clone()),
-        integrations: present
-            .contains("integrations")
-            .then(|| settings.integrations.clone()),
+        global: Some(settings.global),
+        model: Some(settings.model.clone()),
+        quality: Some(settings.quality.clone()),
+        audio: Some(settings.audio.clone()),
+        general: Some(settings.general.clone()),
+        hotkey: Some(settings.hotkey.clone()),
+        dictionary: Some(settings.dictionary.clone()),
+        snippets: Some(settings.snippets.clone()),
+        llm: Some(settings.llm.clone()),
+        tts: Some(settings.tts.clone()),
+        integrations: Some(settings.integrations.clone()),
     }
 }
 
@@ -922,10 +833,9 @@ fn reconcile_audio_device_indices(
     }
 }
 
-fn restored_report(present: &BTreeSet<&'static str>) -> Vec<SettingsRestoreItem> {
+fn restored_report() -> Vec<SettingsRestoreItem> {
     IMPORT_SECTIONS
         .iter()
-        .filter(|(key, _)| present.contains(*key))
         .map(|(_, area)| report(area, "restored", format!("{area} settings were restored.")))
         .collect()
 }
@@ -934,44 +844,26 @@ fn reconcile_imported_settings(
     parsed: ParsedImport,
     current: &WinsttSettings,
     availability: &SettingsAvailability,
-) -> (
-    WinsttSettings,
-    BTreeSet<&'static str>,
-    Vec<SettingsRestoreItem>,
-) {
+) -> (WinsttSettings, Vec<SettingsRestoreItem>) {
     let ParsedImport {
         mut settings,
-        present,
-        adjustments: mut adjusted,
         llm_configurations: _,
     } = parsed;
+    let mut adjusted = Vec::new();
     preserve_target_secrets(&mut settings, current);
 
-    // Only reconcile sections the file actually carried, so an absent section's
-    // already-valid persisted value can't produce a spurious adjustment entry.
-    if present.contains("general") {
-        reconcile_general_paths(&mut settings, &mut adjusted);
-    }
-    if present.contains("audio") {
-        reconcile_audio_devices(&mut settings, &mut adjusted);
-    }
-    if present.contains("model") {
-        reconcile_stt_model(&mut settings, current, availability, &mut adjusted);
-        reconcile_realtime_model(&mut settings, availability, &mut adjusted);
-    }
-    if present.contains("llm") {
-        reconcile_llm(&mut settings, availability, &mut adjusted);
-    }
-    if present.contains("tts") {
-        reconcile_tts(&mut settings, current, availability, &mut adjusted);
-    }
+    reconcile_general_paths(&mut settings, &mut adjusted);
+    reconcile_audio_devices(&mut settings, &mut adjusted);
+    reconcile_stt_model(&mut settings, current, availability, &mut adjusted);
+    reconcile_realtime_model(&mut settings, availability, &mut adjusted);
+    reconcile_llm(&mut settings, availability, &mut adjusted);
+    reconcile_tts(&mut settings, current, availability, &mut adjusted);
 
-    (settings, present, adjusted)
+    (settings, adjusted)
 }
 
 /// `settings_export_full` — save a JSON backup of the complete settings tree.
-/// API keys and legacy post-process secrets are represented only by the standard
-/// secret-present sentinel, never by plaintext values.
+/// API keys are represented only by the standard secret-present sentinel.
 #[tauri::command]
 #[specta::specta]
 pub async fn settings_export_full(
@@ -1075,17 +967,10 @@ pub async fn settings_import_full(
         }
     };
     let current = read_settings(&app);
-    let parsed = match parse_import(&bytes, &current) {
+    let parsed = match parse_import(&bytes) {
         Ok(parsed) => parsed,
         Err(err) => return Ok(SettingsImportResult::failed(err)),
     };
-    if parsed.present.is_empty() {
-        // Nothing recognizable to restore — surface the section problems (if any)
-        // instead of silently "succeeding" with an empty patch.
-        return Ok(SettingsImportResult::failed(
-            "No recognizable settings were found in this backup.".to_string(),
-        ));
-    }
 
     // Saved LLM configurations live outside the backend settings tree and are
     // handed back to the renderer for a localStorage write; capture the blob
@@ -1099,16 +984,15 @@ pub async fn settings_import_full(
         &current,
     )
     .await;
-    let (next, present, mut adjusted) =
-        reconcile_imported_settings(parsed, &current, &availability);
+    let (next, mut adjusted) = reconcile_imported_settings(parsed, &current, &availability);
 
-    if let Err(err) = apply_settings_patch(&app, patch_from_present(&next, &present)) {
+    if let Err(err) = apply_settings_patch(&app, full_settings_patch(&next)) {
         return Ok(SettingsImportResult::failed(format!(
             "Failed to apply imported settings: {err}"
         )));
     }
 
-    let mut restored = restored_report(&present);
+    let mut restored = restored_report();
     if llm_configurations.is_some() {
         restored.push(report(
             "AI configurations",
@@ -1152,15 +1036,26 @@ mod tests {
         }
     }
 
-    /// Wrap a full `WinsttSettings` as a `ParsedImport` where every section is
-    /// present, matching a whole-tree import for the reconcile-focused tests.
-    fn all_present(settings: WinsttSettings) -> ParsedImport {
+    fn parsed_import(settings: WinsttSettings) -> ParsedImport {
         ParsedImport {
             settings,
-            present: IMPORT_SECTIONS.iter().map(|(key, _)| *key).collect(),
-            adjustments: Vec::new(),
             llm_configurations: None,
         }
+    }
+
+    fn import_bytes(
+        settings: WinsttSettings,
+        llm_configurations: Option<serde_json::Value>,
+    ) -> Vec<u8> {
+        export_file_json(&SettingsExportFile {
+            format: SETTINGS_EXPORT_FORMAT.to_string(),
+            version: SETTINGS_EXPORT_VERSION,
+            app_version: "0.0.0-test".to_string(),
+            exported_at: 0,
+            settings,
+            llm_configurations,
+        })
+        .expect("serialize import fixture")
     }
 
     #[test]
@@ -1186,8 +1081,7 @@ mod tests {
         };
         let bytes = export_file_json(&file).expect("serialize export");
         let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parse export");
-        // The backend-only `core` blob (which carries any secret material such as
-        // the legacy post_process_api_keys) must not be present in the export.
+        // The backend-only `core` blob must not be present in the export.
         assert!(value["settings"].get("core").is_none());
         // Renderer secrets are represented only by the sentinel.
         assert_eq!(
@@ -1221,20 +1115,16 @@ mod tests {
 
     #[test]
     fn import_recovers_llm_configurations_blob() {
-        let current = WinsttSettings::default();
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "format": SETTINGS_EXPORT_FORMAT,
-            "version": SETTINGS_EXPORT_VERSION,
-            "settings": { "global": {} },
-            "llmConfigurations": {
+        let bytes = import_bytes(
+            WinsttSettings::default(),
+            Some(serde_json::json!({
                 "version": 1,
                 "configurations": [{ "id": "a", "name": "Mine" }],
                 "seededBuiltinIds": [],
-            },
-        }))
-        .unwrap();
+            })),
+        );
 
-        let parsed = parse_import(&bytes, &current).expect("parse");
+        let parsed = parse_import(&bytes).expect("parse");
         let blob = parsed.llm_configurations.expect("configs recovered");
         let reparsed: serde_json::Value = serde_json::from_str(&blob).expect("valid JSON");
         assert_eq!(reparsed["configurations"][0]["id"], serde_json::json!("a"));
@@ -1242,104 +1132,50 @@ mod tests {
 
     #[test]
     fn import_without_llm_configurations_field_is_absent_not_fatal() {
-        let current = WinsttSettings::default();
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "format": SETTINGS_EXPORT_FORMAT,
-            "version": SETTINGS_EXPORT_VERSION,
-            "settings": { "global": {} },
-        }))
-        .unwrap();
+        let bytes = import_bytes(WinsttSettings::default(), None);
 
-        let parsed = parse_import(&bytes, &current).expect("parse");
+        let parsed = parse_import(&bytes).expect("parse");
         assert!(parsed.llm_configurations.is_none());
     }
 
     #[test]
-    fn absent_sections_are_not_overwritten_and_not_reported() {
-        let mut current = WinsttSettings::default();
-        current.general.minimize_to_tray = !current.general.minimize_to_tray;
-        let expect_minimize = current.general.minimize_to_tray;
-        current.model.model = "distinct-current-model".into();
-
-        // A minimal backup that only carries the `global` section.
+    fn incomplete_settings_payload_is_rejected() {
         let bytes = serde_json::to_vec(&serde_json::json!({
             "format": SETTINGS_EXPORT_FORMAT,
             "version": SETTINGS_EXPORT_VERSION,
+            "appVersion": "0.0.0-test",
+            "exportedAt": 0,
             "settings": { "global": {} },
         }))
         .unwrap();
 
-        let parsed = parse_import(&bytes, &current).expect("parse partial backup");
-        assert!(parsed.present.contains("global"));
-        assert!(!parsed.present.contains("model"));
-        // Sections absent from the file keep the machine's current value.
-        assert_eq!(parsed.settings.model.model, "distinct-current-model");
-        assert_eq!(parsed.settings.general.minimize_to_tray, expect_minimize);
-
-        let restored = restored_report(&parsed.present);
-        assert!(restored.iter().any(|item| item.area == "General"));
-        assert!(!restored.iter().any(|item| item.area == "Transcription"));
-
-        // The patch only carries the present section.
-        let patch = patch_from_present(&parsed.settings, &parsed.present);
-        assert!(patch.global.is_some());
-        assert!(patch.model.is_none());
+        let error = parse_import(&bytes).expect_err("incomplete payload must be rejected");
+        assert!(error.contains("Invalid settings backup at 'settings'"));
     }
 
     #[test]
-    fn newer_section_enum_is_skipped_not_fatal() {
-        let current = WinsttSettings::default();
-        // `model` carries an unknown enum value for a strict field (as a newer
-        // export might); the rest of the import must still succeed.
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "format": SETTINGS_EXPORT_FORMAT,
-            "version": SETTINGS_EXPORT_VERSION + 5,
-            "settings": {
-                "global": {},
-                "model": { "device": "from-the-future" },
-            },
-        }))
-        .unwrap();
+    fn mismatched_backup_version_is_rejected() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&import_bytes(WinsttSettings::default(), None)).unwrap();
+        value["version"] = serde_json::json!(SETTINGS_EXPORT_VERSION + 5);
+        let bytes = serde_json::to_vec(&value).unwrap();
 
-        let parsed = parse_import(&bytes, &current).expect("parse should not hard-fail");
-        assert!(parsed.present.contains("global"));
-        assert!(!parsed.present.contains("model"));
-        // Both the version bump and the unreadable section are surfaced.
-        assert!(
-            parsed
-                .adjustments
-                .iter()
-                .any(|item| item.area == "Backup version")
-        );
-        assert!(
-            parsed
-                .adjustments
-                .iter()
-                .any(|item| item.area == "Transcription")
-        );
+        let error = match parse_import(&bytes) {
+            Ok(_) => panic!("mismatched version must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Unsupported settings backup version"));
     }
 
     #[test]
-    fn unknown_key_within_known_section_is_reported() {
-        // finding #13: a field removed/renamed in a newer export lives INSIDE a
-        // known section. serde drops it silently; the import must surface it.
-        let current = WinsttSettings::default();
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "settings": {
-                "model": { "language": "fr", "someRemovedField": 123 },
-            },
-        }))
-        .unwrap();
+    fn unknown_key_within_known_section_is_rejected() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&import_bytes(WinsttSettings::default(), None)).unwrap();
+        value["settings"]["model"]["someRemovedField"] = serde_json::json!(123);
+        let bytes = serde_json::to_vec(&value).unwrap();
 
-        let parsed = parse_import(&bytes, &current).expect("parse");
-        assert!(parsed.present.contains("model"));
-        assert_eq!(parsed.settings.model.language, "fr"); // known field still applied
-        let item = parsed
-            .adjustments
-            .iter()
-            .find(|item| item.area == "Transcription")
-            .expect("unknown in-section key reported");
-        assert!(item.message.contains("someRemovedField"));
+        let error = parse_import(&bytes).expect_err("unknown field must be rejected");
+        assert!(error.contains("someRemovedField"));
     }
 
     #[test]
@@ -1372,27 +1208,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_section_key_is_reported() {
-        let current = WinsttSettings::default();
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "settings": { "global": {}, "someRemovedGroup": { "x": 1 } },
-        }))
-        .unwrap();
+    fn unknown_section_key_is_rejected() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&import_bytes(WinsttSettings::default(), None)).unwrap();
+        value["settings"]["someRemovedGroup"] = serde_json::json!({ "x": 1 });
+        let bytes = serde_json::to_vec(&value).unwrap();
 
-        let parsed = parse_import(&bytes, &current).expect("parse");
-        assert!(parsed.adjustments.iter().any(|item| item.area == "Unknown"));
-    }
-
-    #[test]
-    fn openai_stt_model_migrates_to_openrouter() {
-        let current = WinsttSettings::default();
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "settings": { "model": { "model": "openai:whisper-1" } },
-        }))
-        .unwrap();
-
-        let parsed = parse_import(&bytes, &current).expect("parse");
-        assert_eq!(parsed.settings.model.model, "openrouter:openai/whisper-1");
+        let error = parse_import(&bytes).expect_err("unknown section must be rejected");
+        assert!(error.contains("someRemovedGroup"));
     }
 
     #[test]
@@ -1402,8 +1225,8 @@ mod tests {
         imported.model.model = "openrouter:openai/whisper-1".into();
         imported.model.realtime_model = "tiny".into();
 
-        let (next, _present, adjusted) = reconcile_imported_settings(
-            all_present(imported),
+        let (next, adjusted) = reconcile_imported_settings(
+            parsed_import(imported),
             &current,
             &availability(&["base"], &[], &[]),
         );
@@ -1424,8 +1247,8 @@ mod tests {
         imported.llm.dictation.base.provider = LlmProvider::Ollama;
         imported.llm.dictation.base.model = "missing:latest".into();
 
-        let (next, _present, adjusted) = reconcile_imported_settings(
-            all_present(imported),
+        let (next, adjusted) = reconcile_imported_settings(
+            parsed_import(imported),
             &current,
             &availability(&["tiny"], &["llama3.2:latest"], &[]),
         );
@@ -1443,8 +1266,8 @@ mod tests {
         imported.tts.source = TtsSource::Cloud;
         imported.tts.cloud.provider = TtsCloudProvider::Elevenlabs;
 
-        let (next, _present, adjusted) = reconcile_imported_settings(
-            all_present(imported),
+        let (next, adjusted) = reconcile_imported_settings(
+            parsed_import(imported),
             &current,
             &availability(&["tiny"], &[], &[]),
         );

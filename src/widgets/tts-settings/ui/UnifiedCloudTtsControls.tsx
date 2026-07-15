@@ -1,4 +1,4 @@
-import { OpenRouterModelSelector } from "@/widgets/model-picker";
+import { OpenRouterModelSelector } from "@/features/select-cloud-stt-model";
 import { SettingField, useSettingsStore } from "@/entities/setting";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";

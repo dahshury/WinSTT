@@ -7,7 +7,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import {
 	type ForbiddenCombo,
 	findConflict,
@@ -79,8 +79,8 @@ beforeEach(() => {
 			}
 		},
 	};
-	// `hotkeyStartRecording` routes through the TYPED `commands.hotkeyStartRecording()`
-	// (IPC.HOTKEY_START_RECORDING is in `COMMAND_INVOKERS`), which calls
+	// `hotkeyStartRecording` calls the typed `commands.hotkeyStartRecording()` directly,
+	// which calls
 	// `@tauri-apps/api/core` invoke → `window.__TAURI_INTERNALS__.invoke("hotkey_start_recording")`.
 	// With the REAL module this is the seam that fires (the leaked-fake seam is
 	// the nativeBridge.invoke above) — instrument both so either routing counts.

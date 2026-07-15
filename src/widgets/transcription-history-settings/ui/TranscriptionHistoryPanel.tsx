@@ -17,7 +17,7 @@ import { filterEntriesByDateRange } from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { HistoryDashboardSections } from "./HistoryDashboardSections";
 import { HistoryLimitsSection } from "./HistoryLimitsSection";
-import type { HistoryTableItem } from "./HistoryTable";
+import type { HistoryTableItem } from "../model/history-table-types";
 import { HistoryTableSection } from "./HistoryTableSection";
 
 export function TranscriptionHistoryPanel() {
@@ -156,7 +156,10 @@ export function TranscriptionHistoryPanel() {
 				onRangeChange={setSelectedRange}
 				selectedRange={selectedRange}
 			/>
-			<HistoryTableSection combinedHistoryEntries={combinedHistoryEntries} />
+			<HistoryTableSection
+				combinedHistoryEntries={combinedHistoryEntries}
+				selectedRange={selectedRange}
+			/>
 			<HistoryLimitsSection />
 		</div>
 	);

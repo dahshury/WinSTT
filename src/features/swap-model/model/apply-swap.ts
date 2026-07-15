@@ -6,14 +6,13 @@ import {
 	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { providerOf } from "@/entities/cloud-stt-provider";
-import { sttReloadModel } from "@/shared/api/ipc-client";
+import type { SttSwitchModelRequest, SttSwitchModelResult } from "@/bindings";
+import {
+	nextSttSwitchRequestId,
+	requestSttModelSwitch,
+} from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import type {
-	GetModelFn,
-	IssueSwapArgs,
-	UpdateModelFn,
-	UpdatePatch,
-} from "./swap-types";
+import type { GetModelFn, IssueSwapArgs, UpdatePatch } from "./swap-types";
 
 export function isQuantizationChanging(
 	quantization: OnnxQuantization | undefined,
@@ -42,6 +41,48 @@ export function swapQuantTransition(
  *  it ships with every catalog entry and the server re-resolves it per model
  *  (e.g. NeMo / parakeet → int8). */
 const DEFAULT_QUANTIZATION: OnnxQuantization = "";
+export function buildAtomicSwitchRequest(
+	args: IssueSwapArgs,
+	patch: UpdatePatch,
+): SttSwitchModelRequest {
+	const quantization =
+		"onnxQuantization" in patch
+			? (patch.onnxQuantization ?? args.currentQuantization)
+			: args.currentQuantization;
+	const realtimeModel =
+		"realtimeModel" in patch ? (patch.realtimeModel ?? null) : null;
+	return {
+		kind: args.kind,
+		modelId: args.value,
+		quantization,
+		device: args.atomicDevice ?? null,
+		realtimeModel,
+		requestId: nextSttSwitchRequestId("picker"),
+		forceReload: false,
+	};
+}
+
+function invokeAtomicMainSwitch(request: SttSwitchModelRequest): void {
+	void requestSttModelSwitch(request)
+		.then((result: SttSwitchModelResult) => {
+			// Lifecycle events normally clear this state in every window. The response
+			// is a second, correlated terminal signal for event-loss/teardown edges.
+			if (result.status !== "completed") {
+				useModelSwapStore.getState().clear("main", result.requestId);
+			}
+		})
+		.catch((error: unknown) => {
+			console.error("Atomic STT model switch failed", error);
+			useModelSwapStore.getState().clear("main", request.requestId);
+		});
+}
+
+function dispatchAtomicMainSwitch(
+	args: IssueSwapArgs,
+	request: SttSwitchModelRequest,
+): void {
+	(args.atomicInvoker ?? invokeAtomicMainSwitch)(request);
+}
 
 /** True when ``info`` ships ``quantization`` (or it's the universal default). */
 function modelOffersQuantization(
@@ -177,9 +218,12 @@ function applyMainSwap(
 	// switching the source to Cloud appears to do nothing).
 	if (!info) {
 		if (isCloudModel(args.value)) {
-			args.prevMainModelRef.current = args.previous;
-			useModelSwapStore.getState().beginSwap("main", args.previous, args.value);
-			args.update({ model: args.value });
+			const patch: UpdatePatch = { model: args.value };
+			const request = buildAtomicSwitchRequest(args, patch);
+			useModelSwapStore
+				.getState()
+				.beginSwap("main", args.previous, args.value, null, request.requestId);
+			dispatchAtomicMainSwitch(args, request);
 			return true;
 		}
 		// A genuinely-missing LOCAL id isn't a real catalog selection, so bail
@@ -189,7 +233,6 @@ function applyMainSwap(
 	if (!isVisibleSttModel(info)) {
 		return false;
 	}
-	args.prevMainModelRef.current = args.previous;
 	// Synchronously open the swap-in-flight guard BEFORE settings.model
 	// changes. ``useSyncActiveModel`` short-circuits on ``activeMain !==
 	// null``; if we wait for the server's ``model_swap_started`` echo to
@@ -198,18 +241,6 @@ function applyMainSwap(
 	// the runtime back into settings — reverting the user's pick. The
 	// regression-guard comment in use-sync-active-model.ts assumed this
 	// already happened.
-	useModelSwapStore
-		.getState()
-		.beginSwap(
-			"main",
-			args.previous,
-			args.value,
-			swapQuantTransition(
-				args.quantization,
-				quantizationChanging,
-				args.currentQuantization,
-			),
-		);
 	const patch = buildMainSwapPatch(
 		args.value,
 		info,
@@ -222,7 +253,22 @@ function applyMainSwap(
 		realtimePatchForMainSwap(info, args.currentRealtimeModel, args.getModel) ??
 			{},
 	);
-	args.update(patch);
+	const quantTransition = swapQuantTransition(
+		args.quantization,
+		quantizationChanging,
+		args.currentQuantization,
+	);
+	const request = buildAtomicSwitchRequest(args, patch);
+	useModelSwapStore
+		.getState()
+		.beginSwap(
+			"main",
+			args.previous,
+			args.value,
+			quantTransition,
+			request.requestId,
+		);
+	dispatchAtomicMainSwitch(args, request);
 	return true;
 }
 
@@ -237,13 +283,22 @@ function applyRealtimeSwap(
 		if (mainInfo && isSelectableRealtimeModel(mainInfo)) {
 			return false;
 		}
-		args.prevRealtimeModelRef.current = args.previous;
+		const patch = buildRealtimeSwapPatch(
+			"",
+			args.quantization,
+			quantizationChanging,
+		);
+		const request = buildAtomicSwitchRequest(args, patch);
 		useModelSwapStore
 			.getState()
-			.beginSwap("realtime", args.previous, args.value);
-		args.update(
-			buildRealtimeSwapPatch("", args.quantization, quantizationChanging),
-		);
+			.beginSwap(
+				"realtime",
+				args.previous,
+				args.value,
+				null,
+				request.requestId,
+			);
+		dispatchAtomicMainSwitch(args, request);
 		return true;
 	}
 	const realtimeInfo = args.getModel(args.value);
@@ -259,9 +314,14 @@ function applyRealtimeSwap(
 	) {
 		return false;
 	}
-	args.prevRealtimeModelRef.current = args.previous;
 	// See applyMainSwap — same race; the realtime slot has the same
 	// reconciler guard via ``activeRealtime``.
+	const patch = buildRealtimeSwapPatch(
+		args.value,
+		args.quantization,
+		quantizationChanging,
+	);
+	const request = buildAtomicSwitchRequest(args, patch);
 	useModelSwapStore
 		.getState()
 		.beginSwap(
@@ -273,10 +333,9 @@ function applyRealtimeSwap(
 				quantizationChanging,
 				args.currentQuantization,
 			),
+			request.requestId,
 		);
-	args.update(
-		buildRealtimeSwapPatch(args.value, args.quantization, quantizationChanging),
-	);
+	dispatchAtomicMainSwitch(args, request);
 	return true;
 }
 
@@ -291,71 +350,12 @@ function applySwapByKind(
 	return handlers[args.kind]();
 }
 
-/** Whether to fire the explicit in-place model reload for a hot swap.
- *  Skips ONLY a pure same-model quant change: the settings save owns that
- *  backend reload after the new quantization is persisted. */
-export function shouldReloadForHotSwap(
-	quantizationChanging: boolean,
-	modelChanging: boolean,
-): boolean {
-	return modelChanging || !quantizationChanging;
-}
-
-export function maybeHotReload(
-	kind: "main" | "realtime",
-	value: string,
-	quantization: OnnxQuantization | undefined,
-	quantizationChanging: boolean,
-	modelChanging: boolean,
-): void {
-	// Decide whether to fire the in-place model reload (``reload_main_model``
-	// / ``reload_realtime_model``), which loads ``value`` at the server's
-	// CURRENT onnx_quantization config.
-	//
-	// - Model changed → ALWAYS reload, even if the quant is also changing.
-	//   ``onnxQuantization`` is no longer a startup-only key. Skipping the
-	//   reload on a cross-model pick left the OLD model loaded while settings
-	//   moved to the new id, so the user's new model never loaded and the swap
-	//   chip spun forever.
-	// - Only the quant changed (same model) → skip the immediate reload here.
-	//   The Tauri settings save path observes the same-model load-input change
-	//   after persistence and reloads/unloads the resident engine with the new
-	//   quantization. Firing reload_main_model here can race ahead of that save
-	//   and rebuild the old quant.
-	if (shouldReloadForHotSwap(quantizationChanging, modelChanging)) {
-		sttReloadModel(kind, value, quantization);
-	}
-}
-
 export function runIssueSwap(args: IssueSwapArgs): void {
 	const quantizationChanging = isQuantizationChanging(
 		args.quantization,
 		args.currentQuantization,
 	);
-	const modelChanging = args.value !== args.previous;
-	const applied = applySwapByKind(args, quantizationChanging);
-	if (!applied) {
-		return;
-	}
-	maybeHotReload(
-		args.kind,
-		args.value,
-		args.quantization,
-		quantizationChanging,
-		modelChanging,
-	);
-}
-
-export function applyPureQuantSwap(
-	quantizationChanging: boolean,
-	quantization: OnnxQuantization | undefined,
-	update: UpdateModelFn,
-): void {
-	// Pure quantization swap on the already-loaded model. Persist the new value;
-	// the Tauri settings-save path reloads or unloads the resident engine after
-	// the quantization is saved.
-	const patches = quantizationChanging ? definedQuantPatches(quantization) : [];
-	patches.forEach(update);
+	applySwapByKind(args, quantizationChanging);
 }
 
 export function definedQuantPatches(

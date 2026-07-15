@@ -8,15 +8,15 @@
 // state + the persisted device, none of which needs the recorder loaded (so they answer instantly
 // during cold start — the renderer's `pre_ready` contract).
 //
-// IPC mapping (app/src/shared/api/native-bridge-adapter.ts ROUTE):
-//   IPC.STT_GET_RUNTIME_INFO        (`stt:get-runtime-info`)                         → get_runtime_info
-//   IPC.STT_LIST_MODELS_WITH_STATE  (`stt:list-models-with-state`)                   → stt_list_models_with_state  (⚠ adapter ROUTE fix)
-//   IPC.STT_ASSESS_DICTATION_FIT    (`stt:assess-dictation-fit`, { modelId, quantization, device }) → assess_dictation_fit
-//   IPC.STT_ASSESS_OLLAMA_FIT       (`stt:assess-ollama-fit`,    { sizeBytes })      → assess_ollama_fit
+// Generated renderer command mapping:
+//   getRuntimeInfo() → get_runtime_info
+//   sttListModelsWithState() → stt_list_models_with_state
+//   assessDictationFit({ modelId, quantization, device }) → assess_dictation_fit
+//   assessOllamaFit({ sizeBytes }) → assess_ollama_fit
 //   IPC.GPU_GET_INFO                (`gpu:get-info`)                                 → gpu_get_info
 //
 // The fit assessment commands are intentionally best-effort: the renderer mirrors the SAME formulas
-// client-side (entities/system-resources/lib/fit-assessor.ts) and uses `invokeOrDefault(..., null)`,
+// client-side (entities/system-resources/lib/fit-assessor.ts) and uses a typed nullable fallback,
 // so returning `None` is a valid contract — the picker renders per-row badges from its mirror and
 // only the actual selection-click round-trips here. Until the real footprint math lands they return
 // `None` (the client mirror covers the UI); the wiring + payload types are real.
@@ -45,6 +45,9 @@ pub struct RuntimeInfoPayload {
     /// "cpu" | "directml" | "cuda" | "auto" (the resolved EP label).
     pub device: String,
     pub is_gpu: bool,
+    /// True until the selected local model finishes loading and warming. Also
+    /// covers later reloads, so the renderer has one race-free readiness bit.
+    pub model_preparing: bool,
     /// The currently-loaded MAIN model id (`None` until a model loads).
     pub model: Option<String>,
     /// Active ORT execution providers (e.g. ["DmlExecutionProvider","CPUExecutionProvider"]).
@@ -170,6 +173,9 @@ pub fn runtime_info_snapshot(
     RuntimeInfoPayload {
         device: device.to_string(),
         is_gpu,
+        model_preparing: !crate::splash::is_stt_boot_done()
+            || transcription.is_model_loading()
+            || transcription.is_model_warming(),
         model,
         providers,
         realtime_model,
@@ -297,7 +303,7 @@ pub(crate) fn system_info_snapshot() -> SystemInfoEntry {
 
 /// Server-authoritative fit assessment — mirrors the renderer's `FitAssessmentEntry`. Returned as
 /// `Option` because the renderer has a full client-side mirror and tolerates `None`
-/// (`invokeOrDefault(..., null)`); the per-row badges render from the mirror regardless.
+/// through its typed wrapper; the per-row badges render from the mirror regardless.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct FitAssessmentEntry {
     pub severity: String,
@@ -344,8 +350,18 @@ pub struct GpuInfoEntry {
 /// main-window chip. Empty (true no-GPU box, or DXGI unavailable) → renderer shows "CPU only".
 #[tauri::command]
 #[specta::specta]
-pub fn gpu_get_info(_app: AppHandle) -> Vec<GpuInfoEntry> {
-    enumerate_gpus()
+pub async fn gpu_get_info(_app: AppHandle) -> Vec<GpuInfoEntry> {
+    // DXGI adapter discovery is a synchronous COM/driver call. Running it in a
+    // synchronous Tauri command executes it on the Windows event-loop thread;
+    // some DirectML drivers block that call while an execution provider is
+    // initializing, which makes every window control and IPC command appear
+    // frozen. Keep the native UI thread free regardless of driver latency.
+    tauri::async_runtime::spawn_blocking(enumerate_gpus)
+        .await
+        .unwrap_or_else(|error| {
+            log::warn!("GPU enumeration worker failed: {error}");
+            Vec::new()
+        })
 }
 
 /// Enumerate physical GPU adapters via DXGI (skips the Microsoft Basic Render Driver / WARP

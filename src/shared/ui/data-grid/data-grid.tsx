@@ -164,7 +164,12 @@ export function DataGrid<TData>({
 										data-slot="grid-header-cell"
 										tabIndex={-1}
 										className={cn("relative", {
-											grow: stretchColumns && header.column.id !== "select",
+											grow:
+												stretchColumns &&
+												(header.column.columnDef.meta?.stretch === true ||
+													(header.column.id !== "select" &&
+														header.column.id !== "actions" &&
+														header.column.columnDef.meta?.stretch !== false)),
 											"border-e":
 												showEndBorder && header.column.id !== "select",
 											"border-s":

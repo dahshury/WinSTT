@@ -5,9 +5,9 @@
 // Listen-mode commands. start_listen turns on WASAPI loopback capture (system
 // audio → the same recording pipeline); stop_listen turns it off.
 //
-// IPC mapping (app/src/shared/api/native-bridge-adapter.ts):
-//   IPC.LOOPBACK_START (`loopback:start`, payload `{ deviceIndex, modelId }`) → start_listen
-//   IPC.LOOPBACK_STOP  (`loopback:stop`)                             → stop_listen
+// Generated renderer command mapping:
+//   startListen({ deviceIndex, modelId }) → start_listen
+//   stopListen() → stop_listen
 //
 // EVENTS (plain string events, lib_wiring §4b — byte-identical to WinSTT's IPC so
 // the reused renderer's `onLoopbackStarted`/`onLoopbackStopped` listeners in

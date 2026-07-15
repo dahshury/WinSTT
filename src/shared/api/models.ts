@@ -18,7 +18,7 @@ import type {
 // sites need no churn.
 //
 // There is NO case-transform layer on the invoke path (see ipc-client.ts /
-// native-bridge-adapter.ts) so these aliases are the literal runtime shapes.
+// generated-command boundary) so these aliases are the literal runtime shapes.
 export type { AudioDevicePayload as AudioDevice };
 export type { GpuInfoEntry as GpuInfo };
 

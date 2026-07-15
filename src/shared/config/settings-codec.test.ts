@@ -49,30 +49,6 @@ describe("decodeSettingsPayload", () => {
 		expect(typeof settings.integrations.elevenlabs).toBe("object");
 		expect(settings.integrations.elevenlabs.apiKey).toBe("");
 	});
-
-	test("section fallback still migrates legacy model unload timeout to global", () => {
-		const settings = decodeSettingsPayload({
-			model: {
-				modelUnloadTimeout: "hour1",
-			},
-			integrations: {
-				elevenlabs: "",
-			},
-		});
-		expect(settings.global.modelUnloadTimeout).toBe("hour1");
-		expect("modelUnloadTimeout" in settings.model).toBe(false);
-	});
-
-	// Audit #19/#20: the OpenAI→OpenRouter STT rewrite must run on the
-	// per-section recovery path too. A corrupt unrelated section forces
-	// partialDecodeBySections, which previously bypassed this migration.
-	test("section fallback still migrates a legacy openai STT model selection", () => {
-		const settings = decodeSettingsPayload({
-			model: { model: "openai:whisper-1" },
-			integrations: { elevenlabs: "" },
-		});
-		expect(settings.model.model).toBe("openrouter:openai/whisper-1");
-	});
 });
 
 describe("decodeSettingsWithDiagnostics", () => {

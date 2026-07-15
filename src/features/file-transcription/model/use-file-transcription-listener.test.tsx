@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { useFileTranscriptionStore } from "./file-transcription-store";
 import { useFileTranscriptionListener } from "./use-file-transcription-listener";
 

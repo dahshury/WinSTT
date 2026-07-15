@@ -7,8 +7,11 @@ import {
 	type SettingsImportResult,
 	type SettingsRestoreItem,
 } from "@/bindings";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
-import { useSettingsHydrationStore } from "@/features/update-settings";
+import {
+	SettingSection,
+	useSettingsHydrationStore,
+	useSettingsStore,
+} from "@/entities/setting";
 import { settingsLoadStrict } from "@/shared/api/ipc-client";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DialogActionButton, DialogClose } from "@/shared/ui/dialog";

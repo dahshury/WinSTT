@@ -2,6 +2,7 @@ import type {
 	ModelStatesById as StatesById,
 	useCatalogStore,
 } from "@/entities/model-catalog";
+import type { SttSwitchModelRequest } from "@/bindings";
 import type { useSettingsStore } from "@/entities/setting";
 import type { useSystemResourcesStore } from "@/entities/system-resources";
 import type { FitAssessmentEntry } from "@/shared/api/ipc-client";
@@ -69,16 +70,15 @@ export interface SwapController {
 }
 
 export interface IssueSwapArgs {
+	atomicDevice?: DeviceValue | undefined;
+	atomicInvoker?: ((request: SttSwitchModelRequest) => void) | undefined;
 	currentQuantization: OnnxQuantization;
 	currentMainModel?: string | undefined;
 	currentRealtimeModel?: string | undefined;
 	getModel: GetModelFn;
 	kind: "main" | "realtime";
 	previous: string;
-	prevMainModelRef: React.MutableRefObject<string | null>;
-	prevRealtimeModelRef: React.MutableRefObject<string | null>;
 	quantization: OnnxQuantization | undefined;
-	update: UpdateModelFn;
 	value: string;
 }
 
@@ -136,6 +136,5 @@ export interface HandleChangeArgs {
 	) => void;
 	kind: "main" | "realtime";
 	quantization: OnnxQuantization | undefined;
-	update: UpdateModelFn;
 	value: string;
 }

@@ -24,7 +24,7 @@
 //                    the `#[tauri::command]` entry stays in this root.
 //   `ollama_proc`  — Ollama exe detect/spawn + pull-name validation/emit.
 
-mod conversions;
+pub(crate) mod conversions;
 mod ollama_proc;
 mod payloads;
 mod verify;
@@ -213,7 +213,8 @@ pub async fn process_text(
     text: String,
     context: String,
 ) -> Result<String, String> {
-    process_dictation_text(&app, llm_manager.inner().clone(), text, context)
+    let settings = read_settings(&app);
+    process_dictation_text(&app, llm_manager.inner().clone(), text, context, &settings)
         .await
         .map(|result| result.text)
 }
@@ -237,10 +238,10 @@ pub(crate) async fn process_dictation_text(
     llm_manager: Arc<LlmManager>,
     text: String,
     context: String,
+    settings: &WinsttSettings,
 ) -> Result<DictationProcessResult, String> {
-    let settings = read_settings(app);
-    let presets = dictation_presets(&settings);
-    let vocab = build_vocab(&settings);
+    let presets = dictation_presets(settings);
+    let vocab = build_vocab(settings);
     let tier_model = ollama_tier_model(
         settings.llm.dictation.base.provider,
         &settings.llm.dictation.base.model,

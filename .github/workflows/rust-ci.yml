@@ -18,7 +18,11 @@ on:
       - "tools/windows/**"
       - "tools/linux/**"
       - "tools/macos/**"
+      - "tools/perf/check-startup-bundle.mjs"
+      - "tools/release/audit-*-packages.*"
       - "tools/tauri-ci-artifacts.conf.json"
+      - "package.json"
+      - "vite.config.ts"
       - ".github/workflows/rust-ci.yml"
   pull_request:
     paths:
@@ -26,7 +30,11 @@ on:
       - "tools/windows/**"
       - "tools/linux/**"
       - "tools/macos/**"
+      - "tools/perf/check-startup-bundle.mjs"
+      - "tools/release/audit-*-packages.*"
       - "tools/tauri-ci-artifacts.conf.json"
+      - "package.json"
+      - "vite.config.ts"
       - ".github/workflows/rust-ci.yml"
 
 # Cancel superseded runs on the same ref — a fresh push obsoletes the
@@ -114,13 +122,11 @@ jobs:
           $env:PATH = "$PWD\target\debug;$env:PATH"
           cargo test --locked
 
-  # Optional packaged build of the shipped Windows artifacts. It surfaces a
-  # broken release bundle without bricking PRs on hosted-runner hiccups.
-  # Promote to a hard gate once it's reliably green.
+  # Build and inspect the exact shipped Windows layouts. Package completeness is
+  # a release invariant, so this job is intentionally a hard gate.
   build:
-    name: Windows artifacts (optional)
+    name: Windows artifacts (package gate)
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -177,6 +183,13 @@ jobs:
         shell: pwsh
         run: tools\windows\tauri-portable.ps1 -SkipBuild
 
+      - name: Enforce main-window startup bundle budget
+        run: bun run check:startup-bundle
+
+      - name: Audit Windows package contents and headless boot
+        shell: pwsh
+        run: tools\release\audit-windows-packages.ps1
+
       - name: Upload Windows build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -187,9 +200,8 @@ jobs:
             dist/WinSTT-portable.zip
 
   linux-artifacts:
-    name: Linux artifacts (AppImage / deb / rpm, optional)
+    name: Linux artifacts (AppImage / deb / rpm package gate)
     runs-on: ubuntu-24.04
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -199,6 +211,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            cpio \
             curl \
             file \
             fuse \
@@ -249,6 +262,12 @@ jobs:
 
       - name: Build Linux artifacts
         run: bash tools/linux/tauri-bundles.sh
+
+      - name: Enforce main-window startup bundle budget
+        run: bun run check:startup-bundle
+
+      - name: Audit Linux package contents and headless boot
+        run: bash tools/release/audit-linux-packages.sh
 
       - name: Upload Linux build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -356,7 +375,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: src-tauri/Cargo.toml
           command: check advisories licenses bans sources

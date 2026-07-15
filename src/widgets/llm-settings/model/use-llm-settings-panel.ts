@@ -187,7 +187,7 @@ export function useLlmSettingsPanel() {
 			fetchHit: s.fetchHit,
 		})),
 	);
-	const librarySearchProps: import("@/widgets/model-picker").OllamaModelSelectorProps["librarySearch"] =
+	const librarySearchProps: import("@/features/llm-model-picker").OllamaModelSelectorProps["librarySearch"] =
 		{
 			catalog: libraryState.catalog,
 			error: libraryState.error,

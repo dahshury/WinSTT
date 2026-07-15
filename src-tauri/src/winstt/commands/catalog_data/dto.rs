@@ -78,6 +78,13 @@ pub struct ModelStateEntry {
     pub estimated_bytes: u64,
     pub comfortable_on_gpu: bool,
     pub comfortable_on_cpu: bool,
+    /// Where each PUBLISHED quant actually runs under the current accelerator: "gpu" (a
+    /// VRAM-backed EP — DirectML/CUDA) or "cpu" (RAM-backed). Computed from the per-engine
+    /// device pin matrix (`override_dml_to_cpu_for_kind`), so CPU-pinned engines (Cohere,
+    /// Kaldi transducers) and per-quant DML demotions report "cpu" even on GPU hosts. The
+    /// renderer's fit filter picks the RAM-vs-VRAM pool from this (older servers omit it;
+    /// the renderer falls back to its GPU-compatible-quant heuristic).
+    pub device_by_quantization: BTreeMap<String, String>,
 }
 
 /// One GPU as the renderer's `SystemInfoEntry.gpus` expects it.

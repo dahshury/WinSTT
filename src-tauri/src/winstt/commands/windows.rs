@@ -53,7 +53,7 @@ use tauri::{
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::sync_ext::MutexExt;
 
-mod placement;
+pub(crate) mod placement;
 mod settings_modal;
 
 use placement::{
@@ -61,7 +61,7 @@ use placement::{
     dispatch_device_picker_dom_event, place_picker, resolve_opener,
     visible_picker_open_should_toggle, warm_model_picker_compositor,
 };
-use settings_modal::close_settings_window;
+use settings_modal::close_main_modal_window;
 
 /// Per-window chrome/geometry spec, ported from the reference window creators.
 struct WindowSpec {
@@ -132,6 +132,27 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         height: 680.0,
         min_width: 940.0,
         min_height: 680.0,
+        resizable: false,
+        decorations: false,
+        transparent: true,
+        always_on_top: false,
+        skip_taskbar: true,
+        shadow: false,
+        ignore_cursor: false,
+        background: None,
+    },
+    // What's New — a dedicated modal child rather than an in-page dialog. The
+    // main pill is only 420x150, so a renderer-owned modal there is necessarily
+    // clipped to that tiny native viewport. This window gives the release notes
+    // a 640x680 card plus a transparent gutter for its rounded shell/shadow.
+    WindowSpec {
+        label: "whats-new",
+        url: "windows/whats-new.html",
+        title: "WinSTT — What's New",
+        width: 680.0,
+        height: 720.0,
+        min_width: 680.0,
+        min_height: 720.0,
         resizable: false,
         decorations: false,
         transparent: true,
@@ -246,15 +267,16 @@ const WINDOW_SPECS: &[WindowSpec] = &[
     // Model-footprint — a tiny NON-FOCUSABLE hover panel, sized to its content
     // like the device picker and anchored above the footer GPU/CPU chip. It hosts
     // the model-footprint breakdown that's too tall for the 420×150 main window.
-    // `ensure_window` builds it `focusable(false)` so hovering the chip never
-    // steals keyboard focus from the user's active app, and it's content-sized
-    // (not a full-screen backdrop) so it never blocks input elsewhere.
+    // `ensure_window` builds it `focusable(false)` and click-through so showing
+    // it cannot steal focus or pointer ownership from the chip that keeps the
+    // hover open. It is content-sized (not a full-screen backdrop).
     WindowSpec {
         label: "model-footprint",
         url: "windows/model-footprint.html",
         title: "WinSTT — Model Footprint",
-        width: 280.0,
-        height: 420.0,
+        // 280×420 content plus a 6px transparent compositor gutter per edge.
+        width: 292.0,
+        height: 432.0,
         min_width: 1.0,
         min_height: 1.0,
         resizable: false,
@@ -263,28 +285,29 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         always_on_top: true,
         skip_taskbar: true,
         shadow: false,
-        ignore_cursor: false,
+        ignore_cursor: true,
         background: None,
     },
-    // Onboarding — 720×620 framed/resizable, opaque, centered on the primary
-    // display. Ported from onboarding-window.ts (ONBOARDING_WIDTH/HEIGHT +
-    // minWidth 600 / minHeight 560 / resizable: true).
+    // Onboarding — renderer-owned frameless window, matching Settings: the
+    // native viewport is transparent and provides a 20px gutter around the
+    // rounded CSS shell and its shadow. The extra 40px preserves the original
+    // 720×620 usable shell while retaining the existing resize behavior.
     WindowSpec {
         label: "onboarding",
         url: "windows/onboarding.html",
         title: "Welcome to WinSTT",
-        width: 720.0,
-        height: 620.0,
-        min_width: 600.0,
-        min_height: 560.0,
+        width: 760.0,
+        height: 660.0,
+        min_width: 640.0,
+        min_height: 600.0,
         resizable: true,
         decorations: false,
-        transparent: false,
+        transparent: true,
         always_on_top: false,
         skip_taskbar: false,
-        shadow: true,
+        shadow: false,
         ignore_cursor: false,
-        background: SUBSTRATE,
+        background: None,
     },
     WindowSpec {
         label: "history",
@@ -371,6 +394,7 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
             // `onboarding` is allowed too: its final overview step deep-links into
             // Settings so the user can configure a capability right away.
             "settings" => matches!(caller, "main" | "tray-menu" | "onboarding"),
+            "whats-new" => caller == "main",
             "history" | "onboarding" => caller == "main",
             // `onboarding` opens the SAME detached picker the settings Main-model
             // selector uses, so the wizard's model choice goes through the one
@@ -387,7 +411,7 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
         },
         WindowOperation::Close => match target {
             "main" | "overlay" => false,
-            "settings" | "history" | "onboarding" => caller == target,
+            "settings" | "whats-new" | "history" | "onboarding" => caller == target,
             "model-picker" => matches!(caller, "main" | "settings" | "model-picker"),
             "device-picker" => matches!(caller, "tray-menu" | "device-picker"),
             // Closed from the main window (chip pointer-out) or by itself.
@@ -497,7 +521,8 @@ fn picker_default_size(label: &str) -> (f64, f64) {
         "model-picker" => (600.0, 560.0),
         // Seed footprint near its content size so the first frame isn't oversized
         // before the renderer's ResizeObserver hugs the window to the breakdown.
-        "model-footprint" => (280.0, 420.0),
+        // Keep in sync with FOOTPRINT_WINDOW_GUTTER_PX in footprint-size.ts.
+        "model-footprint" => (292.0, 432.0),
         _ => (320.0, 360.0),
     }
 }
@@ -525,6 +550,17 @@ fn with_picker_state<R>(label: &'static str, f: impl FnOnce(&mut PickerState) ->
         closing: false,
     });
     f(entry)
+}
+
+fn update_picker_size(state: &mut PickerState, width: f64, height: f64) -> (bool, bool) {
+    let next_width = width.max(1.0).ceil();
+    let next_height = height.max(1.0).ceil();
+    let changed = state.width != next_width || state.height != next_height;
+    if changed {
+        state.width = next_width;
+        state.height = next_height;
+    }
+    (state.closing, changed)
 }
 
 /// Ensure the labelled window exists (creating it lazily from its spec) and
@@ -578,14 +614,14 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         builder = builder.focusable(false);
     }
 
-    // Make Settings a modal child owned by the main pill. On Windows `parent()`
-    // sets `main` as the OWNER window: Settings is always above it in the z-order,
+    // Make modal surfaces children owned by the main pill. On Windows `parent()`
+    // sets `main` as the OWNER window: the modal is always above it in the z-order,
     // is hidden when the pill is minimized, and is destroyed with it — exactly the
     // "they're the same thing" relationship we want. The pill is built in lib.rs
     // `setup` BEFORE `prewarm_windows`, so it always exists here. A failure to
     // parent (e.g. main somehow gone) degrades to a plain centered window — still
     // modal via `set_main_modal`, just not OS-owned.
-    if spec.label == "settings" {
+    if matches!(spec.label, "settings" | "whats-new") {
         match app.get_webview_window("main") {
             // `parent()` consumes the builder and doesn't hand it back on error, so
             // there's nothing to degrade to — surface the failure (it only happens
@@ -593,10 +629,13 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             Some(main) => {
                 builder = builder
                     .parent(&main)
-                    .map_err(|e| format!("parent settings to main failed: {e}"))?;
+                    .map_err(|e| format!("parent {} to main failed: {e}", spec.label))?;
             }
             None => {
-                log::warn!("ensure_window: main window missing; settings created without owner")
+                log::warn!(
+                    "ensure_window: main window missing; {} created without owner",
+                    spec.label
+                )
             }
         }
     }
@@ -692,6 +731,18 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         crate::winstt::commands::overlay::suppress_overlay_frame_paint(&window);
     }
     Ok(window)
+}
+
+/// Native lifecycle path for first-run setup and returning-user permission
+/// recovery. It intentionally bypasses renderer command authorization because
+/// the backend is the caller, while preserving the same placement/show/focus
+/// behavior as `open_window("onboarding")`.
+pub(crate) fn show_onboarding_window_internal(app: &AppHandle) -> Result<(), String> {
+    let window = ensure_window(app, "onboarding")?;
+    center_window(app, &window, false);
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.unminimize();
+    window.set_focus().map_err(|e| e.to_string())
 }
 
 const POST_STARTUP_PREWARM_DELAY_MS: u64 = 250;
@@ -833,18 +884,8 @@ pub fn winstt_diag(app: AppHandle, label: String, level: String, message: String
         if startup_probe_timeout {
             issue = issue.kind("timeout").context("phase", "startup");
         }
-        issue.record(Some(&app));
+        issue.record_without_log(Some(&app));
     }
-}
-
-/// `settings_window_ready` — emitted by the settings renderer once its page is
-/// committed. Retained as a no-op for renderer/binding compatibility; the settings
-/// window no longer uses a native opacity fade gated on this signal (the window is
-/// opaque and shows directly), so there is nothing to do here.
-#[tauri::command]
-#[specta::specta]
-pub fn settings_window_ready(_app: AppHandle) -> Result<(), String> {
-    Ok(())
 }
 
 /// `open_window` — create-if-needed, then show + focus the labelled window.
@@ -890,6 +931,24 @@ pub fn open_window(
     }
     if label == "onboarding" {
         crate::bootstrap::state::deactivate_runtime_for_onboarding(&app);
+    }
+    // Settings and What's New share the main pill's single modal lock. Never
+    // allow both to be visible at once: closing either would otherwise re-enable
+    // the pill beneath the other. Focus the existing modal and leave the newly
+    // requested one for a later interaction/startup.
+    if matches!(label, "settings" | "whats-new") {
+        for other_label in ["settings", "whats-new"] {
+            if other_label == label {
+                continue;
+            }
+            if let Some(other) = app.get_webview_window(other_label)
+                && other.is_visible().unwrap_or(false)
+            {
+                let _ = other.unminimize();
+                let _ = other.set_focus();
+                return Ok(());
+            }
+        }
     }
     // The device picker is the tray menu's submenu and takes focus as it opens;
     // stamp the open BEFORE creating/showing it so the tray menu's blur-hide
@@ -951,6 +1010,14 @@ pub fn open_window(
             let anchor = anchor_from_rect(&opener, x, y, w, h);
             with_picker_state(label, |s| s.anchor = Some(anchor));
         }
+        if label == "model-footprint" {
+            let snapshot = super::stt::live_resources_snapshot();
+            if let Err(error) =
+                window.emit(super::events::names::MODEL_FOOTPRINT_RESOURCES, snapshot)
+            {
+                log::warn!("failed to seed model-footprint resources: {error}");
+            }
+        }
         place_picker(&app, label, &window);
         return Ok(());
     }
@@ -962,14 +1029,13 @@ pub fn open_window(
     // animation (see settings_modal.rs for why the layered fade was removed).
     let was_visible = window.is_visible().unwrap_or(false);
     let show_result = (|| {
-        center_window(&app, &window, label == "settings");
+        center_window(&app, &window, matches!(label, "settings" | "whats-new"));
         window.show().map_err(|e| e.to_string())?;
         let _ = window.unminimize();
         let _ = window.set_focus();
-        // Settings is a modal child of the pill: disable the pill (after Settings has
-        // grabbed focus) so it can't be focused/clicked while open. Re-enabled when
-        // Settings closes (close_self_window / close_window / CloseRequested).
-        if label == "settings" {
+        // Main modals disable the pill after taking focus so it cannot be
+        // focused/clicked underneath. Close paths re-enable it.
+        if matches!(label, "settings" | "whats-new") {
             set_main_modal(&app, true);
             // Tell the keep-alive settings renderer it just came on screen so it
             // replays its enter animation. WebView2 does not reliably deliver
@@ -980,10 +1046,12 @@ pub fn open_window(
             // was ALREADY visible: a re-invoked open (tray click while open, or
             // mid-close-fade) must cancel any pending renderer-side hide and
             // repair to open, but never restart the animation over live content.
-            let _ = app.emit(
-                crate::winstt::commands::events::names::SETTINGS_WINDOW_SHOWN,
-                was_visible,
-            );
+            if label == "settings" {
+                let _ = app.emit(
+                    crate::winstt::commands::events::names::SETTINGS_WINDOW_SHOWN,
+                    was_visible,
+                );
+            }
         }
         Ok(())
     })();
@@ -1017,9 +1085,9 @@ pub(crate) fn close_window_internal(app: &AppHandle, name: &str) -> Result<(), S
     if label == "tray-menu" {
         return crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
     }
-    if label == "settings" {
+    if matches!(label, "settings" | "whats-new") {
         if let Some(window) = app.get_webview_window(label) {
-            return close_settings_window(app.clone(), window);
+            return close_main_modal_window(app.clone(), window);
         }
         set_main_modal(app, false);
         return Ok(());
@@ -1072,17 +1140,15 @@ pub fn close_window(
 
 /// `close_self_window` — hide the CALLING window (resolved from its own webview
 /// label), the Rust-side equivalent of the renderer's `getCurrentWindow().hide()`.
-/// The self-closing secondary windows (settings / onboarding) route their close
-/// button here instead of a bare webview hide so the Settings modal can release the
-/// pill's input lock as it closes — the renderer hide path never reached Rust, so
-/// the pill would otherwise stay disabled forever. For non-settings callers this is
-/// a plain hide, identical to the old behaviour.
+/// Self-closing secondary windows route their close button here instead of a bare
+/// webview hide so main-pill modals can release the input lock as they close. For
+/// non-modal callers this is a plain hide, identical to the old behaviour.
 #[tauri::command]
 #[specta::specta]
 pub fn close_self_window(app: AppHandle, webview: tauri::WebviewWindow) -> Result<(), String> {
     let label = webview.label().to_string();
-    if label == "settings" {
-        return close_settings_window(app, webview);
+    if matches!(label.as_str(), "settings" | "whats-new") {
+        return close_main_modal_window(app, webview);
     }
     webview.hide().map_err(|e| e.to_string())?;
     Ok(())
@@ -1108,16 +1174,16 @@ pub fn resize_window(
     authorize_window_operation(&webview, WindowOperation::Resize, label)?;
 
     if is_picker(label) {
-        let closing = with_picker_state(label, |s| {
-            s.width = width.max(1.0).ceil();
-            s.height = height.max(1.0).ceil();
-            s.closing
-        });
+        let (closing, size_changed) =
+            with_picker_state(label, |s| update_picker_size(s, width, height));
         // Never re-place during the close grace: the window is still visible
         // (the hide is delayed so the faded frame composits) and
         // `place_model_picker` would re-show it + cancel the pending hide —
-        // a closed picker that immediately reopens.
-        if !closing
+        // a closed picker that immediately reopens. Repeated ResizeObserver
+        // reports of the SAME size are also ignored: set_size would trigger a
+        // new observer report and create a visible resize/re-anchor loop.
+        if size_changed
+            && !closing
             && let Some(window) = app.get_webview_window(label)
             && window.is_visible().unwrap_or(false)
         {
@@ -1192,13 +1258,15 @@ pub fn anchor_window(
 #[cfg(test)]
 mod tests {
     use super::{
-        WindowOperation, is_picker, is_window_operation_allowed, known_window_label, spec_for,
+        PickerMode, PickerState, WindowOperation, is_picker, is_window_operation_allowed,
+        known_window_label, spec_for, update_picker_size,
     };
 
     #[test]
     fn known_labels_resolve() {
         for label in [
             "settings",
+            "whats-new",
             "onboarding",
             "history",
             "model-picker",
@@ -1214,11 +1282,61 @@ mod tests {
     }
 
     #[test]
+    fn onboarding_uses_renderer_owned_window_chrome() {
+        let spec = spec_for("onboarding").expect("onboarding spec");
+
+        assert!(!spec.decorations);
+        assert!(spec.transparent);
+        assert!(!spec.shadow);
+        assert!(spec.background.is_none());
+    }
+
+    #[test]
+    fn whats_new_has_a_dedicated_full_size_modal_viewport() {
+        let main = spec_for("main").expect("main spec");
+        let whats_new = spec_for("whats-new").expect("what's-new spec");
+
+        assert!(whats_new.width > main.width);
+        assert!(whats_new.height > main.height);
+        assert_eq!((whats_new.width, whats_new.height), (680.0, 720.0));
+        assert!(!whats_new.decorations);
+        assert!(whats_new.transparent);
+        assert!(whats_new.skip_taskbar);
+    }
+
+    #[test]
     fn only_pickers_are_pickers() {
         assert!(is_picker("model-picker"));
         assert!(is_picker("device-picker"));
         assert!(!is_picker("settings"));
+        assert!(!is_picker("whats-new"));
         assert!(!is_picker("history"));
+    }
+
+    #[test]
+    fn picker_size_updates_are_idempotent() {
+        let mut state = PickerState {
+            anchor: None,
+            width: 280.0,
+            height: 420.0,
+            mode: PickerMode::default(),
+            closing: false,
+        };
+
+        assert_eq!(update_picker_size(&mut state, 280.0, 420.0), (false, false));
+        assert_eq!(update_picker_size(&mut state, 280.1, 460.1), (false, true));
+        assert_eq!((state.width, state.height), (281.0, 461.0));
+        assert_eq!(update_picker_size(&mut state, 280.1, 460.1), (false, false));
+    }
+
+    #[test]
+    fn model_footprint_window_chrome_is_click_through() {
+        let spec = spec_for("model-footprint").expect("model-footprint spec");
+
+        assert!(spec.ignore_cursor);
+        assert_eq!((spec.width, spec.height), (292.0, 432.0));
+        assert!(!spec.resizable);
+        assert!(!spec.decorations);
     }
 
     #[test]
@@ -1244,6 +1362,7 @@ mod tests {
         assert_window_rules(
             &[
                 ("main", WindowOperation::Open, "settings"),
+                ("main", WindowOperation::Open, "whats-new"),
                 ("tray-menu", WindowOperation::Open, "settings"),
                 // The onboarding overview step deep-links into Settings sections.
                 ("onboarding", WindowOperation::Open, "settings"),
@@ -1316,6 +1435,7 @@ mod tests {
                 ("device-picker", WindowOperation::Close, "device-picker"),
                 ("tray-menu", WindowOperation::Close, "tray-menu"),
                 ("settings", WindowOperation::Close, "settings"),
+                ("whats-new", WindowOperation::Close, "whats-new"),
             ],
             true,
         );

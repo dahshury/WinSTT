@@ -3,165 +3,132 @@
 	<head>
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="icon" href="/icon.png">
 		<title>WinSTT</title>
 		<style>
-		:root {
-			--color-splash-surface: #0b0b0e;
-			--color-splash-border: #1f1f25;
-			--color-splash-text: #a1a1aa;
-			--color-splash-text-strong: #fff;
-			--color-splash-text-subtle: #71717a;
-			--color-splash-track: #1c1c22;
-			--color-splash-accent: #8b5cf6;
-			--color-splash-accent-soft: #a78bfa;
-			--shadow-splash-card:
-				0 18px 50px -12px rgba(0, 0, 0, 0.7),
-				0 0 0 1px rgba(255, 255, 255, 0.02);
-			--shadow-splash-logo: 0 4px 16px rgba(139, 92, 246, 0.45);
-		}
-		* {
-			margin: 0;
-			padding: 0;
-			box-sizing: border-box;
-		}
-		html,
-		body {
-			width: 100%;
-			height: 100%;
-			background: transparent;
-			overflow: hidden;
-			cursor: default;
-			-webkit-user-select: none;
-			user-select: none;
-			font-family:
-				ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-		}
-		body {
-			display: flex;
-			align-items: center;
-			justify-content: center;
-		}
-		.card {
-			width: 236px;
-			padding: 30px 28px 26px;
-			display: flex;
-			flex-direction: column;
-			align-items: center;
-			gap: 16px;
-			background: var(--color-splash-surface);
-			border: 1px solid var(--color-splash-border);
-			border-radius: 18px;
-			box-shadow: var(--shadow-splash-card);
-			animation: fade 0.28s ease-out;
-		}
-		@keyframes fade {
-			from {
-				opacity: 0;
-				transform: scale(0.96);
+			:root {
+				--color-splash-shadow: rgba(22, 12, 55, 0.48);
+				--color-splash-shadow-transparent: rgba(22, 12, 55, 0);
+				--color-splash-text: rgba(255, 255, 255, 0.96);
+				--color-splash-text-shadow: rgba(0, 0, 0, 0.92);
+				--color-splash-accent-glow: rgba(104, 166, 255, 0.38);
 			}
-			to {
-				opacity: 1;
-				transform: scale(1);
+
+			* {
+				box-sizing: border-box;
 			}
-		}
-		body.is-closing .card {
-			animation: splash-out 0.18s ease-in forwards;
-		}
-		@keyframes splash-out {
-			to {
-				opacity: 0;
-				filter: blur(2px);
-				transform: translateY(-4px) scale(0.98);
+
+			html,
+			body {
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				overflow: hidden;
+				background: transparent;
+				cursor: default;
+				-webkit-user-select: none;
+				user-select: none;
 			}
-		}
-		.logo {
-			width: 76px;
-			height: 76px;
-			object-fit: contain;
-			filter: drop-shadow(var(--shadow-splash-logo));
-		}
-		.word {
-			position: relative;
-			display: inline-block;
-			font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
-			font-weight: 600;
-			font-size: 13px;
-			letter-spacing: 0.28em;
-			text-indent: 0.28em;
-			color: var(--color-splash-text);
-			text-transform: uppercase;
-		}
-		.word::before {
-			position: absolute;
-			inset: 0;
-			content: attr(data-text);
-			color: transparent;
-			background: linear-gradient(
-				90deg,
-				var(--color-splash-text) 0%,
-				var(--color-splash-text) 36%,
-				var(--color-splash-text-strong) 50%,
-				var(--color-splash-text) 64%,
-				var(--color-splash-text) 100%
-			);
-			background-size: 300% 100%;
-			-webkit-background-clip: text;
-			background-clip: text;
-			animation: t-shimmer 1.8s linear infinite;
-		}
-		@keyframes t-shimmer {
-			0% {
-				background-position: 150% 0;
+
+			body {
+				display: grid;
+				place-items: center;
 			}
-			100% {
-				background-position: -150% 0;
+
+			.mark {
+				position: relative;
+				width: 168px;
+				height: 168px;
+				filter: drop-shadow(0 12px 22px var(--color-splash-shadow));
 			}
-		}
-		.track {
-			position: relative;
-			width: 160px;
-			height: 3px;
-			border-radius: 99px;
-			background: var(--color-splash-track);
-			overflow: hidden;
-		}
-		.bar {
-			position: absolute;
-			top: 0;
-			height: 100%;
-			width: 0%;
-			border-radius: 99px;
-			background: linear-gradient(
-				90deg,
-				var(--color-splash-accent),
-				var(--color-splash-accent-soft)
-			);
-			transition: width 0.28s ease;
-		}
-		.hint,
-		.phase {
-			font-size: 11px;
-			letter-spacing: 0.04em;
-			color: var(--color-splash-text-subtle);
-			text-align: center;
-			min-height: 14px;
-		}
-		@media (prefers-reduced-motion: reduce) {
-			.card,
-			.logo,
-			.word::before {
-				animation: none !important;
+
+			.mark__image,
+			.mark__color {
+				position: absolute;
+				inset: 0;
 			}
-		}
+
+			.mark__image {
+				display: block;
+				width: 100%;
+				height: 100%;
+				object-fit: contain;
+				pointer-events: none;
+			}
+
+			.mark__image--mono {
+				filter: grayscale(1) saturate(0) brightness(0.78) contrast(0.92);
+				opacity: 0.78;
+			}
+
+			.mark__color {
+				width: 0%;
+				overflow: hidden;
+				transition: width 280ms cubic-bezier(0.22, 1, 0.36, 1);
+			}
+
+			.mark__color .mark__image {
+				width: 168px;
+				max-width: none;
+			}
+
+			.mark__percent {
+				position: absolute;
+				top: 49%;
+				left: 50%;
+				z-index: 1;
+				min-width: 72px;
+				color: var(--color-splash-text);
+				font-family: "Cascadia Mono", "Cascadia Code", ui-monospace, monospace;
+				font-size: 27px;
+				font-weight: 650;
+				font-variant-numeric: tabular-nums;
+				letter-spacing: -0.08em;
+				line-height: 1;
+				text-align: center;
+				text-shadow:
+					0 2px 8px var(--color-splash-text-shadow),
+					0 0 14px var(--color-splash-accent-glow);
+				transform: translate(-50%, -50%);
+			}
+
+			body.is-closing .mark {
+				animation: splash-out 180ms ease-in forwards;
+			}
+
+			@keyframes splash-out {
+				to {
+					opacity: 0;
+					filter: blur(2px)
+						drop-shadow(0 4px 8px var(--color-splash-shadow-transparent));
+					transform: translateY(-4px) scale(0.92);
+				}
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				.mark,
+				.mark__color {
+					animation: none !important;
+					transition: none !important;
+				}
+			}
 		</style>
 	</head>
 	<body>
-		<div class="card">
-			<img class="logo" src="/icon.png" alt="">
-			<div class="word" data-text="WinSTT">WinSTT</div>
-			<div class="track"><div class="bar"></div></div>
-			<div class="hint" id="progress-text">Starting…</div>
-			<div class="phase" id="progress-phase"></div>
+		<div
+			class="mark"
+			id="splash-progress"
+			role="progressbar"
+			aria-label="Starting WinSTT"
+			aria-valuemin="0"
+			aria-valuemax="100"
+			aria-valuenow="0"
+		>
+			<img class="mark__image mark__image--mono" src="/splash-icon.png" alt="">
+			<div class="mark__color bar" aria-hidden="true">
+				<img class="mark__image" src="/splash-icon.png" alt="">
+			</div>
+			<output class="mark__percent" id="progress-text">0%</output>
 		</div>
 	</body>
 </html>

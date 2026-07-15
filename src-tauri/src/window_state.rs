@@ -3,8 +3,6 @@
 
 use tauri::{AppHandle, Manager};
 
-#[cfg(target_os = "windows")]
-use crate::commands;
 use crate::{splash, winstt};
 
 /// Dedicated store for window geometry persisted across runs. Kept separate from
@@ -117,19 +115,4 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         "Main window not found. Webview labels: {:?}",
         webview_labels
     );
-}
-
-pub(crate) fn should_force_show_permissions_window(_app: &AppHandle) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let status = commands::audio::get_windows_microphone_permission_status();
-        if status.supported && status.overall_access == commands::audio::PermissionAccess::Denied {
-            log::info!(
-                "Windows microphone permissions are denied; forcing main window visible for onboarding"
-            );
-            return true;
-        }
-    }
-
-    false
 }

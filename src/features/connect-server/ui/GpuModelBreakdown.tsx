@@ -355,8 +355,11 @@ export function GpuModelBreakdown({
 				</div>
 				{usageText ? (
 					<div className="h-[3px] w-full overflow-hidden rounded-full bg-foreground/[0.06]">
+						{/* Opening snapshots must paint at their final width; animating from
+						    the hidden window's previous width looks like a recalculation. */}
 						<div
-							className="h-full rounded-full bg-gradient-to-r from-foreground/25 to-foreground/45 transition-[width] duration-500 ease-out"
+							className="h-full rounded-full bg-gradient-to-r from-foreground/25 to-foreground/45"
+							data-slot="footprint-resource-fill"
 							style={{ width: `${usagePercent}%` }}
 						/>
 					</div>

@@ -20,6 +20,7 @@ import {
 	INDEPENDENT_PRESETS,
 	PRESETS_WITH_LEVELS,
 	type PresetLevel,
+	type StandardPresetLevel,
 	type TONE_GROUP,
 } from "@/entities/llm-catalog";
 import {
@@ -213,7 +214,7 @@ function makeDraftModifier(): CustomModifier {
 		prompt: "",
 		enabled: false,
 		levelsEnabled: false,
-		level: DEFAULT_LEVEL,
+		level: "medium",
 	};
 }
 
@@ -253,7 +254,7 @@ interface IndependentPresetListProps {
 		key: (typeof INDEPENDENT_PRESETS)[number],
 		level: PresetLevel,
 	) => void;
-	onModifierLevelChange: (id: string, level: PresetLevel) => void;
+	onModifierLevelChange: (id: string, level: StandardPresetLevel) => void;
 	onModifierRemove: (id: string) => void;
 	onModifierSave: (modifier: CustomModifier) => void;
 	onModifierToggle: (id: string, enabled: boolean) => void;
@@ -275,10 +276,10 @@ interface IndependentPresetListProps {
 
 interface CustomModifierRowProps {
 	index: number;
-	levelOpts: ReadonlyArray<{ value: PresetLevel; label: string }>;
+	levelOpts: ReadonlyArray<{ value: StandardPresetLevel; label: string }>;
 	modifier: CustomModifier;
 	onEdit: (modifier: CustomModifier) => void;
-	onLevelChange: (id: string, level: PresetLevel) => void;
+	onLevelChange: (id: string, level: StandardPresetLevel) => void;
 	onRemove: (id: string) => void;
 	onToggle: (id: string, enabled: boolean) => void;
 	t: TranslateFn;
@@ -330,7 +331,9 @@ function CustomModifierRow({
 						<Switcher
 							className="w-52"
 							fullWidth
-							onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
+							onChange={(v) =>
+								onLevelChange(modifier.id, v as StandardPresetLevel)
+							}
 							options={levelOpts}
 							size="sm"
 							value={modifier.level ?? DEFAULT_LEVEL}
@@ -562,7 +565,15 @@ function IndependentPresetList({
 		}
 	});
 
+	const standardLevelOpts = levelOpts.filter(
+		(option): option is { value: StandardPresetLevel; label: string } =>
+			option.value !== "caveman",
+	);
 	const disabledLevelOpts = levelOpts.map((opt) => ({
+		...opt,
+		disabled: true,
+	}));
+	const disabledStandardLevelOpts = standardLevelOpts.map((opt) => ({
 		...opt,
 		disabled: true,
 	}));
@@ -660,13 +671,17 @@ function IndependentPresetList({
 						</div>
 					);
 				} else if (hasLevel) {
+					const rowLevelOpts =
+						key === "concise" ? levelOpts : standardLevelOpts;
+					const rowDisabledLevelOpts =
+						key === "concise" ? disabledLevelOpts : disabledStandardLevelOpts;
 					trailing = (
 						<Switcher
-							className="w-52"
+							className={key === "concise" ? "w-64" : "w-52"}
 							fullWidth
 							onChange={(v) => handleLevel(v as PresetLevel)}
-							options={checked ? levelOpts : disabledLevelOpts}
-							size="sm"
+							options={checked ? rowLevelOpts : rowDisabledLevelOpts}
+							size={key === "concise" ? "xs" : "sm"}
 							value={displayedLevel}
 						/>
 					);
@@ -703,7 +718,7 @@ function IndependentPresetList({
 				<CustomModifierRow
 					index={builtinCount + i}
 					key={m.id}
-					levelOpts={levelOpts}
+					levelOpts={standardLevelOpts}
 					modifier={m}
 					onEdit={setDialogModifier}
 					onLevelChange={onModifierLevelChange}

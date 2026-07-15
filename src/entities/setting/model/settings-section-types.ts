@@ -9,22 +9,12 @@ import type { useSettingsStore } from "./settings-store";
  * triplet (section value + ``use-intl`` namespace + update-fn). Those verbatim
  * copies are collapsed here and re-exported from ``@/entities/setting``.
  *
- * The ``NonNullable`` wrapper is retained for backwards-compatibility with the
- * historical call sites — the store keeps each section non-optional, so it is a
- * no-op, but the wrapper keeps the resolved type identical to the deleted
- * per-widget copies.
  */
 type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>;
 
-export type GeneralSettings = NonNullable<
-	SettingsStoreState["settings"]["general"]
->;
-export type AudioSettings = NonNullable<
-	SettingsStoreState["settings"]["audio"]
->;
-export type QualitySettings = NonNullable<
-	SettingsStoreState["settings"]["quality"]
->;
+export type GeneralSettings = SettingsStoreState["settings"]["general"];
+export type AudioSettings = SettingsStoreState["settings"]["audio"];
+export type QualitySettings = SettingsStoreState["settings"]["quality"];
 
 export type GeneralT = ReturnType<typeof useTranslations<"general">>;
 export type AudioT = ReturnType<typeof useTranslations<"audio">>;

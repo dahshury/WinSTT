@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 
 // ---------------------------------------------------------------------------
 // This suite drives its data through a per-file `window.nativeBridge` stub

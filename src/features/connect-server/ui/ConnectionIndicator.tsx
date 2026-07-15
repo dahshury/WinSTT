@@ -11,7 +11,10 @@ import {
 	useRef,
 } from "react";
 import { useTranslations } from "use-intl";
-import { useConnectionStore } from "@/entities/connection";
+import {
+	isRuntimeModelPreparing,
+	useConnectionStore,
+} from "@/entities/connection";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { footprintWindowOpen, windowCloseNamed } from "@/shared/api/ipc-client";
 import type { StatusBarTranslateFn } from "@/shared/i18n/translation-types";
@@ -108,6 +111,7 @@ function OfflineChip({ t }: { t: StatusBarTranslateFn }): ReactNode {
 
 interface GpuChipProps {
 	isGpu: boolean;
+	isModelPreparing: boolean;
 	resource: RuntimeResourceFill;
 }
 
@@ -117,7 +121,11 @@ interface GpuChipProps {
  * 420×150 main window can show); leaving the chip closes it. The chip itself
  * keeps its live VRAM/RAM fill bar.
  */
-function GpuChip({ isGpu, resource }: GpuChipProps): ReactNode {
+function GpuChip({
+	isGpu,
+	isModelPreparing,
+	resource,
+}: GpuChipProps): ReactNode {
 	const { icon, label, colorClass } = resolveGpuChipConfig(isGpu);
 	const resourceLabel = usageLabel(resource);
 	const openTimer = useRef<number | null>(null);
@@ -177,8 +185,10 @@ function GpuChip({ isGpu, resource }: GpuChipProps): ReactNode {
 
 	return (
 		<output
-			aria-label={`${label}, ${resourceLabel}`}
+			aria-label={`${label}, ${isModelPreparing ? "speech model loading, " : ""}${resourceLabel}`}
+			aria-live="polite"
 			className="relative isolate flex cursor-help items-center gap-1 overflow-hidden rounded-xs px-1.5 py-[1px] shadow-[inset_0_0_0_1px_var(--color-divider)]"
+			data-preparing={isModelPreparing}
 			data-slot="gpu-footprint-trigger"
 			onPointerEnter={handleEnter}
 			onPointerLeave={handleLeave}
@@ -200,11 +210,22 @@ function GpuChip({ isGpu, resource }: GpuChipProps): ReactNode {
 				aria-hidden="true"
 				className="absolute inset-0 bg-gradient-to-b from-overlay-foreground/[0.055] to-transparent"
 			/>
-			<HugeiconsIcon
-				className={cn("relative z-raised", colorClass)}
-				icon={icon}
-				size={12}
-			/>
+			{isModelPreparing ? (
+				<span
+					aria-hidden="true"
+					className={cn(
+						"relative z-raised size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none",
+						colorClass,
+					)}
+					data-slot="model-preparing-spinner"
+				/>
+			) : (
+				<HugeiconsIcon
+					className={cn("relative z-raised", colorClass)}
+					icon={icon}
+					size={12}
+				/>
+			)}
 			<span
 				className={cn("relative z-raised font-medium text-2xs", colorClass)}
 			>
@@ -222,6 +243,7 @@ export function ConnectionIndicator() {
 	const refreshResources = useSystemResourcesStore((s) => s.refresh);
 	const t = useTranslations("statusBar");
 	const runtimeIsGpu = runtimeInfo ? runtimeInfo.is_gpu : null;
+	const isModelPreparing = isRuntimeModelPreparing(runtimeInfo);
 	const chip = resolveConnectionChip(
 		connectionStatus,
 		serverStatus,
@@ -250,6 +272,10 @@ export function ConnectionIndicator() {
 	}
 	const isGpu = runtimeIsGpu === true;
 	return (
-		<GpuChip isGpu={isGpu} resource={buildRuntimeFill(liveResources, isGpu)} />
+		<GpuChip
+			isGpu={isGpu}
+			isModelPreparing={isModelPreparing}
+			resource={buildRuntimeFill(liveResources, isGpu)}
+		/>
 	);
 }

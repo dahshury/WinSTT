@@ -10,11 +10,11 @@ import { IntlProvider } from "@/app/providers/IntlProvider";
 import { commands } from "@/bindings";
 import {
 	DEFAULT_SETTINGS,
+	useSettingsHydrationStore,
 	useSettingsStore,
 	useSettingsTabStore,
 } from "@/entities/setting";
-import { useSettingsHydrationStore } from "@/features/update-settings";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { SettingsPage } from "./SettingsPage";
 
 function renderSettingsPage() {
@@ -56,23 +56,16 @@ async function waitForOpen(): Promise<void> {
 type BridgeListener = (...args: unknown[]) => void;
 
 /** Install a minimal nativeBridge stub that captures `on` subscriptions so a
- *  test can fire main→renderer events. With the bridge present, typed `send`
- *  reaches the `commands.*` bindings, so the two the page fires
- *  (settingsWindowReady on render, closeSelfWindow on close) are stubbed with
- *  counters — without a Tauri runtime they would reject. */
+ *  test can fire main→renderer events. The close command is stubbed because
+ *  there is no Tauri runtime in this test. */
 function installNativeBridgeStub(): {
 	emit: (channel: string, ...args: unknown[]) => void;
 	closeSelfCalls: () => number;
 	restore: () => void;
 } {
 	const originalBridge = window.nativeBridge;
-	const originalReady = commands.settingsWindowReady;
 	const originalCloseSelf = commands.closeSelfWindow;
 	let closeSelfCalls = 0;
-	commands.settingsWindowReady = (async () => ({
-		status: "ok",
-		data: null,
-	})) satisfies typeof commands.settingsWindowReady;
 	commands.closeSelfWindow = (async () => {
 		closeSelfCalls += 1;
 		return { status: "ok", data: null };
@@ -107,7 +100,6 @@ function installNativeBridgeStub(): {
 		closeSelfCalls: () => closeSelfCalls,
 		restore: () => {
 			window.nativeBridge = originalBridge;
-			commands.settingsWindowReady = originalReady;
 			commands.closeSelfWindow = originalCloseSelf;
 		},
 	};

@@ -1,6 +1,5 @@
 // The renderer's user-initiated cancel — overlay X button, and (in the reference build)
-// the Escape shortcut — sends `STT_ABORT_OPERATION`, which the adapter
-// (native-bridge-adapter.ts) routes to the Tauri command `cancel_current_operation`.
+// the Escape shortcut — calls the generated `cancel_current_operation` command.
 //
 // In the reference build `handleAbortOperation` did:
 //   markSessionAborted  (→ stt:session-aborted broadcast)
@@ -42,4 +41,13 @@ pub fn cancel_current_operation(app: AppHandle) {
     if cancelled {
         SttEvents::session_aborted(&app);
     }
+}
+
+/// `stt_skip_post_processing` — cancel only the active dictation LLM cleanup
+/// and let the existing session paste/persist its untouched STT transcript.
+/// Returns `false` when no skippable cleanup window is active.
+#[tauri::command]
+#[specta::specta]
+pub fn stt_skip_post_processing(app: AppHandle, restore_focus: bool) -> bool {
+    crate::actions::request_post_processing_skip(&app, restore_focus)
 }

@@ -1,5 +1,5 @@
 import { Activity03Icon } from "@hugeicons/core-free-icons";
-import { SttModelSelector } from "@/widgets/model-picker";
+import { SttModelSelector } from "@/features/select-local-stt-model";
 import type { ReactNode } from "react";
 import {
 	isSelectableRealtimeModel,
@@ -12,6 +12,7 @@ import {
 	SettingField,
 	SettingSection,
 } from "@/entities/setting";
+import type { GetModelSuggestion } from "@/features/suggested-models";
 import { openModelPickerAtRect } from "@/shared/api/model-picker-window";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import type { SelectOption } from "@/shared/ui/select";
@@ -53,6 +54,9 @@ interface RealtimeModelSectionProps {
 	/** Reason shown on hover over the disabled switch. */
 	toggleDisabledTooltip: string | undefined;
 	getFitAssessment: GetFitAssessment;
+	/** Suggested (spec-based recommender) verdict lookup — threaded to the
+	 *  realtime STT picker the same way as `getFitAssessment`. */
+	getSuggestion?: GetModelSuggestion | undefined;
 	handleRealtimeModelChange: (
 		modelId: string,
 		quantization?: OnnxQuantization,
@@ -120,6 +124,7 @@ export function RealtimeModelSection({
 	toggleDisabledTooltip,
 	downloadProgress,
 	getFitAssessment,
+	getSuggestion,
 	isSwapping,
 	handleRealtimeModelChange,
 	mainModelId,
@@ -184,6 +189,7 @@ export function RealtimeModelSection({
 							disabled={selectorDisabled}
 							downloadProgress={downloadProgress}
 							getFitAssessment={getFitAssessment}
+							getSuggestion={getSuggestion}
 							isLoading={!catalogLoaded || isSwapping}
 							kind="realtime"
 							models={catalogModels}

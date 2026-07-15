@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import { commands } from "@/bindings";
 import { useSettingsStore } from "@/entities/setting";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import * as ipcClient from "@/shared/api/ipc-client";
 import { useHotkeyStore } from "../model/hotkey-store";
 import {
@@ -32,13 +32,11 @@ const originalCommands = {
 	winsttSetParameter: commands.winsttSetParameter,
 };
 
-// The renderer's outbound IPC for STT/hotkey channels does NOT flow through
-// `window.nativeBridge` anymore — `ipc-client.ts`'s COMMAND_INVOKERS routes those
-// channels through the typed `commands.*` (`@/bindings`), which call
+// The renderer calls typed STT/hotkey `commands.*` (`@/bindings`) directly, which call
 // `@tauri-apps/api/core` `invoke` → `window.__TAURI_INTERNALS__.invoke(cmd, args)`.
-// Event SUBSCRIPTIONS (`on`) still go through `window.nativeBridge.on`. To assert
-// on what the hook emits we therefore instrument BOTH seams: the nativeBridge `on`
-// (for the `fire(...)` listeners) AND the Tauri command boundary, translating each
+// The test harness still exposes its event fake through `window.nativeBridge.on`.
+// To assert on what the hook emits we therefore instrument BOTH seams: that test
+// event fake and the Tauri command boundary, translating each
 // recorded `(cmd, args)` back into the {channel,args} / invoke-name shape the
 // assertions read. The Tauri command names + arg keys are the source of truth in
 // `src/bindings.ts` (winstt_set_parameter {parameter,value}, winstt_call_method

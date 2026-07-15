@@ -432,6 +432,56 @@ describe("useTtsInstallGate — handleEnabledToggle ON (model already cached →
 		expect(useTtsModelPickerStore.getState().open).toBe(false);
 	});
 
+	test("enable locks the section in the SAME click (optimistic 'unknown' phase, no IPC round-trip window)", () => {
+		setModelState("cached");
+		const { result } = renderHook(() => useTtsInstallGate());
+		act(() => result.current.handleEnabledToggle(true));
+		expect(currentTts().enabled).toBe(true);
+		expect(result.current.installPhase).toBe("unknown");
+	});
+
+	test("a real backend ping replaces the optimistic phase; 'ready' releases the lock", () => {
+		setModelState("cached");
+		const { result } = renderHook(() => useTtsInstallGate());
+		act(() => result.current.handleEnabledToggle(true));
+		act(() => statusCb?.({ phase: "model" }));
+		expect(result.current.installPhase).toBe("model");
+		act(() => statusCb?.({ phase: "ready" as TtsInstallPhase }));
+		expect(result.current.installPhase).toBeNull();
+	});
+
+	test("safety timeout releases an optimistic lock the backend never confirmed", async () => {
+		setModelState("cached");
+		const { result } = renderHook(() => useTtsInstallGate(20));
+		act(() => result.current.handleEnabledToggle(true));
+		expect(result.current.installPhase).toBe("unknown");
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 40));
+		});
+		expect(result.current.installPhase).toBeNull();
+	});
+
+	test("safety timeout is cancelled once a real ping arrives (lock persists past it)", async () => {
+		setModelState("cached");
+		const { result } = renderHook(() => useTtsInstallGate(20));
+		act(() => result.current.handleEnabledToggle(true));
+		act(() => statusCb?.({ phase: "model" }));
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 40));
+		});
+		expect(result.current.installPhase).toBe("model");
+	});
+
+	test("markWarmupPending (external local-enable commits) locks and self-releases", async () => {
+		const { result } = renderHook(() => useTtsInstallGate(20));
+		act(() => result.current.markWarmupPending());
+		expect(result.current.installPhase).toBe("unknown");
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 40));
+		});
+		expect(result.current.installPhase).toBeNull();
+	});
+
 	test("enable with empty persisted hotkey folds the default binding in", () => {
 		setTtsHotkey("");
 		setModelState("cached");

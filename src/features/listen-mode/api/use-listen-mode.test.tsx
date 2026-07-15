@@ -10,7 +10,7 @@ import { _resetOutputDevicesCacheForTests } from "@/entities/audio-device/model/
 import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
-import { IPC } from "@/shared/api/ipc-channels";
+import { IPC } from "@test/mocks/legacy-ipc";
 import { parseLoopbackDevices } from "../lib/loopback-devices";
 import { useListenStore } from "../model/listen-store";
 import {
@@ -121,6 +121,7 @@ const streamingModelState = {
 	},
 	comfortable_on_cpu: true,
 	comfortable_on_gpu: true,
+	device_by_quantization: { int8: "cpu" },
 	effective_quantization: "int8",
 	estimated_bytes: 1,
 	id: STREAMING_MODEL_ID,

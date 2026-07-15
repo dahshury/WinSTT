@@ -4,7 +4,7 @@
 //
 // Snippet CRUD has NO dedicated IPC command in the reference — the snippets array
 // is part of the settings tree and is edited wholesale through
-// `winstt_set_settings({ snippets })` (the renderer's SnippetsTable is fully
+// `winstt_patch_settings({ settings: { snippets } })` (the renderer's SnippetsTable is fully
 // controlled by its parent panel). So this file deliberately exposes NO add/remove/
 // list commands; it provides:
 //
@@ -46,7 +46,7 @@ pub fn winstt_expand_snippets(app: AppHandle, text: String) -> String {
 /// This installer:
 ///   1. loads the cache once from the persisted settings, and
 ///   2. subscribes to `settings:changed` so a snippet add/remove (which the
-///      renderer posts via `winstt_set_settings`) rebuilds the cache on the very
+///      renderer posts via `winstt_patch_settings`) rebuilds the cache on the very
 ///      next utterance — the in-proc equivalent of the TS
 ///      `onDidChange("snippets", rebuildSnippets)` watcher.
 ///

@@ -1,14 +1,14 @@
 // Settings persistence + apply. Wraps
 // winstt::settings_schema (the ~150-field nested WinsttSettings tree).
 //
-// winstt_get_settings / winstt_set_settings expose the full nested WinsttSettings tree
+// winstt_get_settings_snapshot / winstt_patch_settings expose the nested settings tree
 // to the reused React renderer over tauri-specta. They are NOT thin getters/setters:
 //
-//   * winstt_get_settings → reads the persisted store, opens the three secret fields
+//   * winstt_get_settings_snapshot → reads the persisted store with its revision, opens secrets
 //     for backend use, then masks those fields before returning the full nested tree
 //     to the renderer (defaulting cleanly on a missing / partial blob).
 //
-//   * winstt_set_settings → merges the PARTIAL section patch the renderer posts over
+//   * winstt_patch_settings → rejects stale revisions, then merges the PARTIAL section patch over
 //     the persisted snapshot (so a `{ audio: ... }` calibration save can't wipe
 //     `model`/`general`), preserves the main-owned `onboarded*` fields, SEALS the
 //     secret fields at rest (`enc:v1:` envelope), persists, applies owned runtime
@@ -21,8 +21,7 @@
 // out through the reused sync layer.
 //
 // Persistence rides the existing tauri-plugin-store. WinSTT settings live under a
-// dedicated `winstt_settings` key in `winstt-settings.json` (separate from the legacy
-// `settings`) so the two schemas don't collide.
+// dedicated `winstt_settings` key in `winstt-settings.json`.
 //
 // Runtime invariant: settings saves in this port must not emit manual restart events.
 // Former restart-only settings are live-read or applied through targeted in-process
@@ -59,19 +58,17 @@ use self::recording_mode::apply_recording_mode_runtime_settings;
 use self::runtime::{
     apply_audio_runtime_settings, apply_autostart_setting, apply_encoder_dict_runtime_settings,
     apply_history_retention_settings, apply_llm_runtime_settings, apply_model_runtime_settings,
-    apply_tts_runtime_settings,
+    apply_model_runtime_settings_after_stt_switch, apply_tts_runtime_settings,
 };
 use self::wakeword::apply_wakeword_runtime_settings;
-use crate::winstt::commands::secret_storage::is_encrypted;
 use crate::winstt::settings_store::{
     normalize_cross_field_settings, preserve_masked_secrets, read_settings_for_renderer,
-    sanitize_settings_for_renderer, try_read_settings, try_seal_secrets, with_settings_write_lock,
-    word_by_word_pasting_effective, write_settings_value,
+    sanitize_settings_for_renderer, settings_revision, try_read_settings, try_seal_secrets,
+    with_settings_write_lock, word_by_word_pasting_effective, write_settings_value,
 };
 
-// Re-export the cluster items that external (out-of-this-module) code reaches at
-// the historical `crate::winstt::commands::settings::X` paths, so no import site
-// changes. Visibilities mirror each item's original declaration (crate-internal
+// Re-export the cluster items used outside this module. Visibilities mirror each
+// item's original declaration (crate-internal
 // helpers stay `pub(crate)`; the three `pub` reader entry points stay `pub`).
 // Items that are only used WITHIN their own submodule (e.g. `should_keep_stt_model_warm`,
 // `warm_llm_models_async`, `sync_wakeword_runtime_from_settings`) are intentionally
@@ -87,9 +84,7 @@ pub(crate) use self::wakeword::{
 };
 // The settings READ path + on-disk service now lives in the core
 // `crate::winstt::settings_store` module (managers depend on it DOWNWARD). These
-// re-exports keep the historical `crate::winstt::commands::settings::X` paths the
-// route-layer callers and a few legacy sites still use; the constants are also
-// re-exported here for secret sentinel consumers.
+// re-exports provide the route-layer surface and secret sentinels.
 pub(crate) use crate::winstt::settings_store::SECRET_PRESENT_SENTINEL;
 pub use crate::winstt::settings_store::WINSTT_SETTINGS_KEY;
 pub(crate) use crate::winstt::settings_store::read_settings_raw;
@@ -97,10 +92,9 @@ pub use crate::winstt::settings_store::{
     init_settings_store, read_settings, recording_mode, seed_defaults, write_core_settings,
 };
 
-/// The `settings:changed` plain event — the post-save full masked snapshot every other
-/// window re-hydrates its Zustand store from. Byte-identical to the reference
-/// IPC shape (`{ settings }`) so the reused renderer's `onSettingsChanged`
-/// listener (ipc-client.ts) needs no changes.
+/// The `settings:changed` plain event — the post-save masked snapshot plus
+/// revision and changed-section metadata. Other windows ignore stale revisions,
+/// merge their still-dirty fields, and rebase instead of overwriting blindly.
 pub(crate) const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
 
 /// The `settings:save-error` plain event — emitted on validation/persist failure
@@ -108,24 +102,42 @@ pub(crate) const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
 /// Shape `{ error }` matches `onSettingsSaveError` in ipc-client.ts.
 const SETTINGS_SAVE_ERROR_EVENT: &str = "settings:save-error";
 
-/// Result of `winstt_set_settings`: whether the change requires an engine
-/// restart, and which dot-paths drove that decision. Kept for renderer wire
-/// compatibility; the Rust port applies these changes in-process.
+/// One authoritative, renderer-safe settings snapshot and its monotonic process
+/// revision. The revision prevents two windows from silently overwriting each
+/// other with patches based on different snapshots.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct SetSettingsResult {
-    pub needs_restart: bool,
-    pub changed_startup_keys: Vec<String>,
+pub struct SettingsSnapshot {
+    pub revision: u64,
+    pub settings: WinsttSettings,
 }
 
-/// The partial section patch the renderer posts to `winstt_set_settings`.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionedSettingsPatch {
+    pub base_revision: u64,
+    pub settings: PartialWinsttSettings,
+}
+
+/// A revisioned patch always returns the latest authoritative snapshot. On a
+/// conflict `applied` is false and the caller rebases its still-dirty fields on
+/// `snapshot` before retrying; no stale write reaches disk.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsPatchResponse {
+    pub applied: bool,
+    pub snapshot: SettingsSnapshot,
+    pub changed_sections: Vec<String>,
+}
+
+/// The partial section patch the renderer posts to `winstt_patch_settings`.
 ///
 /// The renderer (`collectChangedSections` in `features/update-settings`) diffs
 /// against its last-saved baseline and sends only the changed top-level sections
 /// (e.g. VAD calibration and device-switch-feedback post just `{ audio }` after
 /// every utterance). Every field is `Option` so an absent section deserializes
 /// to `None` (= "leave the persisted value untouched") rather than resetting to a
-/// default — the clobber the old full-`WinsttSettings` parameter caused.
+/// default — preventing unrelated sections from being clobbered.
 ///
 /// Sections are always posted whole (the renderer copies the entire section
 /// value), so an `Option<Section>` round-trips losslessly.
@@ -156,49 +168,46 @@ pub struct PartialWinsttSettings {
     pub integrations: Option<IntegrationsSettings>,
 }
 
-/// `winstt_get_settings` — the full tree the renderer boots against, with
-/// secret fields masked so renderer code can know a key exists without reading
-/// the key material.
 #[tauri::command]
 #[specta::specta]
-pub fn winstt_get_settings(app: AppHandle) -> WinsttSettings {
-    read_settings_for_renderer(&app)
+pub fn winstt_get_settings_snapshot(app: AppHandle) -> SettingsSnapshot {
+    settings_snapshot(&app)
 }
 
-/// `winstt_set_settings` merges a PARTIAL section patch, validates, seals
-/// secrets, persists, applies runtime side-effects, and broadcasts.
-///
-/// The renderer sends **partial** top-level sections, not the whole tree
-/// (`collectChangedSections`), so we accept a `PartialWinsttSettings` (every section
-/// `Option`) and merge each present section over the persisted snapshot — exactly
-/// the reference's per-section `applySettings`.
-///
-/// On any failure the renderer's fire-and-forget save can't observe the `Err`, so we
-/// ALSO emit `settings:save-error { error }` (and still return `Err`).
 #[tauri::command]
 #[specta::specta]
-pub fn winstt_set_settings(
+pub fn winstt_patch_settings(
     app: AppHandle,
     window: tauri::Window,
-    settings: PartialWinsttSettings,
-) -> Result<SetSettingsResult, String> {
-    // Save-origin trace: which window posted which sections. This is the
-    // instrumentation that catches cross-window save fights (e.g. a stale
-    // window posting an all-defaults tree at boot) — correlate with the
-    // wholesale-reset warnings `merge_patch_over` logs right after.
-    log::info!(
-        "[settings] save from window '{}' sections=[{}]",
+    request: RevisionedSettingsPatch,
+) -> Result<SettingsPatchResponse, String> {
+    let base_revision = request.base_revision;
+    let sections = patch_section_names(&request.settings).join(",");
+    log::debug!(
+        "[settings] revisioned save from window '{}' base={base_revision} sections=[{sections}]",
         window.label(),
-        patch_section_names(&settings).join(",")
     );
-    match apply_settings_patch(&app, settings) {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            log::warn!(
-                "[settings] save from window '{}' REJECTED: {error}",
-                window.label()
+    match apply_settings_patch_inner(&app, request.settings, true, Some(base_revision)) {
+        Ok(applied) => Ok(SettingsPatchResponse {
+            applied: true,
+            snapshot: SettingsSnapshot {
+                revision: applied.revision,
+                settings: applied.snapshot,
+            },
+            changed_sections: applied.changed_sections,
+        }),
+        Err(ApplyPatchError::Conflict { actual, .. }) => {
+            log::debug!(
+                "[settings] rejected stale save from window '{}': base={base_revision}, current={actual}",
+                window.label(),
             );
-            // Mirror the reference's `event.sender.send("settings:save-error", { error })`.
+            Ok(SettingsPatchResponse {
+                applied: false,
+                snapshot: settings_snapshot(&app),
+                changed_sections: Vec::new(),
+            })
+        }
+        Err(ApplyPatchError::Other(error)) => {
             let _ = app.emit(
                 SETTINGS_SAVE_ERROR_EVENT,
                 serde_json::json!({ "error": error }),
@@ -208,8 +217,14 @@ pub fn winstt_set_settings(
     }
 }
 
-/// The top-level section names present in a partial save, for the save-origin
-/// trace log above.
+fn settings_snapshot(app: &AppHandle) -> SettingsSnapshot {
+    with_settings_write_lock(|| SettingsSnapshot {
+        revision: settings_revision(),
+        settings: read_settings_for_renderer(app),
+    })
+}
+
+/// The top-level section names present in a partial save.
 fn patch_section_names(patch: &PartialWinsttSettings) -> Vec<&'static str> {
     [
         ("global", patch.global.is_some()),
@@ -229,12 +244,62 @@ fn patch_section_names(patch: &PartialWinsttSettings) -> Vec<&'static str> {
     .collect()
 }
 
-/// The set-settings body, factored out so the error branch in `winstt_set_settings`
-/// can emit `settings:save-error` once for any failure (validation, merge, persist).
-pub fn apply_settings_patch(
+/// Internal patch entry point for backend-owned settings mutations.
+pub fn apply_settings_patch(app: &AppHandle, patch: PartialWinsttSettings) -> Result<(), String> {
+    apply_settings_patch_inner(app, patch, true, None)
+        .map(|_| ())
+        .map_err(ApplyPatchError::into_string)
+}
+
+/// Persist and broadcast a settings patch whose STT model lifecycle is already owned by the
+/// caller. All non-STT runtime side effects still run; only the duplicate model reload is skipped.
+pub(super) fn apply_settings_patch_after_stt_switch(
     app: &AppHandle,
     patch: PartialWinsttSettings,
-) -> Result<SetSettingsResult, String> {
+) -> Result<(), String> {
+    apply_settings_patch_inner(app, patch, false, None)
+        .map(|_| ())
+        .map_err(ApplyPatchError::into_string)
+}
+
+struct AppliedPatch {
+    revision: u64,
+    snapshot: WinsttSettings,
+    changed_sections: Vec<String>,
+}
+
+enum ApplyPatchError {
+    Conflict { expected: u64, actual: u64 },
+    Other(String),
+}
+
+impl ApplyPatchError {
+    fn into_string(self) -> String {
+        match self {
+            Self::Conflict { expected, actual } => {
+                format!("settings revision conflict: expected {expected}, current {actual}")
+            }
+            Self::Other(error) => error,
+        }
+    }
+}
+
+impl From<String> for ApplyPatchError {
+    fn from(value: String) -> Self {
+        Self::Other(value)
+    }
+}
+
+fn apply_settings_patch_inner(
+    app: &AppHandle,
+    patch: PartialWinsttSettings,
+    apply_stt_model_runtime: bool,
+    expected_revision: Option<u64>,
+) -> Result<AppliedPatch, ApplyPatchError> {
+    let changed_sections = patch_section_names(&patch)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
     // The full read→merge→seal→write span runs UNDER the process-wide settings write
     // lock so two concurrent section patches (e.g. the renderer's per-utterance
     // `{audio}` save racing the LLM learning thread's `{dictation}` append) can't both
@@ -243,14 +308,20 @@ pub fn apply_settings_patch(
     // renderer broadcast run AFTER the lock is released — they call back into
     // `get_settings` / `read_settings`, so keeping them outside the guard avoids any
     // nested settings-lock acquisition (the lock is non-reentrant).
-    let (previous, next, changed_startup, changed) = with_settings_write_lock(|| {
-        let raw_previous = read_settings_raw(app);
-        let needs_secret_seal = has_unsealed_secrets(&raw_previous);
-
+    let (previous, next, changed, revision) = with_settings_write_lock(|| {
+        let actual_revision = settings_revision();
+        if let Some(expected) = expected_revision
+            && expected != actual_revision
+        {
+            return Err(ApplyPatchError::Conflict {
+                expected,
+                actual: actual_revision,
+            });
+        }
         // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch
         // is plaintext too, so the merge + diff operate entirely in plaintext — like
         // the reference's `snapshotSettings`, which decrypts before diffing.
-        let previous = try_read_settings(app)?;
+        let previous = try_read_settings(app).map_err(ApplyPatchError::Other)?;
 
         // Merge the partial patch over the persisted full snapshot, section by section
         // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
@@ -260,40 +331,38 @@ pub fn apply_settings_patch(
         preserve_masked_secrets(&previous, &mut next);
 
         // (a) cross-field validation (the Zod `.refine` equivalents).
-        validate_settings(&next)?;
+        validate_settings(&next).map_err(ApplyPatchError::Other)?;
 
-        // (b) restart-need result for wire compatibility. The Rust port hot-applies
-        //     model, wakeword, and realtime changes in-process.
-        let changed_startup = compute_restart_keys(&previous, &next);
-
-        if next == previous && !needs_secret_seal {
-            return Ok::<_, String>((previous, next, changed_startup, false));
+        if next == previous {
+            return Ok((previous, next, false, actual_revision));
         }
 
         // (c) seal the secret fields at rest, then persist. Clone so runtime
         //     side-effects keep the plaintext `next`; only the on-disk copy is
         //     sealed and the renderer broadcast is masked below.
         let mut to_persist = next.clone();
-        try_seal_secrets(&mut to_persist)?;
+        try_seal_secrets(&mut to_persist).map_err(ApplyPatchError::Other)?;
         debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
-        write_settings_value(app, &to_persist)?;
+        write_settings_value(app, &to_persist).map_err(ApplyPatchError::Other)?;
 
-        Ok::<_, String>((previous, next, changed_startup, true))
+        Ok((previous, next, true, settings_revision()))
     })?;
-    let needs_restart = !changed_startup.is_empty();
     if !changed {
-        return Ok(SetSettingsResult {
-            needs_restart,
-            changed_startup_keys: changed_startup,
+        let mut snapshot = next;
+        sanitize_settings_for_renderer(&mut snapshot);
+        return Ok(AppliedPatch {
+            revision,
+            snapshot,
+            changed_sections,
         });
     }
     if previous.general.recording_mode != next.general.recording_mode
         || previous.general.wake_word != next.general.wake_word
     {
-        log::info!(
-            "[settings] saved recordingMode={:?} wakeWord='{}'",
+        log::debug!(
+            "[settings] saved recordingMode={:?}; wake-word setting changed={}",
             next.general.recording_mode,
-            next.general.wake_word
+            previous.general.wake_word != next.general.wake_word
         );
     }
 
@@ -306,7 +375,11 @@ pub fn apply_settings_patch(
     if winstt_hotkeys_changed(&previous, &next) {
         crate::shortcut::reconcile_winstt_hotkeys(app);
     }
-    apply_model_runtime_settings(app, &previous, &next);
+    if apply_stt_model_runtime {
+        apply_model_runtime_settings(app, &previous, &next);
+    } else {
+        apply_model_runtime_settings_after_stt_switch(app, &previous, &next);
+    }
     apply_tts_runtime_settings(app, &previous, &next);
     apply_encoder_dict_runtime_settings(app, &previous, &next);
     apply_llm_runtime_settings(app, &previous, &next);
@@ -323,35 +396,20 @@ pub fn apply_settings_patch(
     //     preserves the stored secret, while an empty string still clears it.
     let mut renderer_next = next;
     sanitize_settings_for_renderer(&mut renderer_next);
-    let snapshot = serde_json::to_value(&renderer_next).map_err(|e| e.to_string())?;
     let _ = app.emit(
         SETTINGS_CHANGED_EVENT,
-        serde_json::json!({ "settings": snapshot }),
+        serde_json::json!({
+            "revision": revision,
+            "changedSections": changed_sections,
+            "settings": renderer_next,
+        }),
     );
 
-    Ok(SetSettingsResult {
-        needs_restart,
-        changed_startup_keys: changed_startup,
+    Ok(AppliedPatch {
+        revision,
+        snapshot: renderer_next,
+        changed_sections,
     })
-}
-
-/// Compute the ordered set of restart-forcing dot-paths between two plaintext trees.
-///
-/// The Rust port hot-applies model, wakeword, and realtime changes in-process, so
-/// no current user-editable WinSTT setting should request a relaunch.
-/// Current Tauri behavior: always return no restart keys; runtime side-effects are
-/// applied by the targeted handlers above.
-fn compute_restart_keys(_prev: &WinsttSettings, _next: &WinsttSettings) -> Vec<String> {
-    Vec::new()
-}
-
-fn has_unsealed_secret(value: &str) -> bool {
-    !value.is_empty() && !is_encrypted(value)
-}
-
-fn has_unsealed_secrets(settings: &WinsttSettings) -> bool {
-    has_unsealed_secret(&settings.llm.openrouter_api_key)
-        || has_unsealed_secret(&settings.integrations.elevenlabs.api_key)
 }
 
 /// Did any WinSTT-tree global hotkey's accelerator OR enable flag change between two
@@ -512,7 +570,7 @@ fn reject_wholesale_reset<T: PartialEq + Default>(
     if *incoming == T::default() && *current != T::default() {
         log::warn!(
             "[settings] `{section}` patch resets the whole section to defaults; \
-             REJECTED — kept the persisted section (finding #21)"
+             REJECTED; kept the persisted section (finding #21)"
         );
         return true;
     }
@@ -537,7 +595,7 @@ fn preserve_main_owned_general(
 
 /// Re-run the Zod cross-field rules: no duplicate preset keys, at most one tone key,
 /// `level` only for summarize/concise, `targetLang` only for translate.
-fn validate_settings(settings: &WinsttSettings) -> Result<(), String> {
+pub(super) fn validate_settings(settings: &WinsttSettings) -> Result<(), String> {
     validate_model_settings(&settings.model)?;
     validate_quality_settings(&settings.quality)?;
     validate_audio_settings(&settings.audio)?;
@@ -980,6 +1038,14 @@ fn validate_custom_modifiers(path: &str, items: &[CustomModifier]) -> Result<(),
             false,
         )?;
         validate_text(&format!("{base}.prompt"), &modifier.prompt, MAX_PROMPT_LEN)?;
+        if matches!(
+            modifier.level,
+            Some(crate::winstt::settings_schema::PresetLevel::Caveman)
+        ) {
+            return Err(format!(
+                "{base}.level: caveman is reserved for the concise preset"
+            ));
+        }
     }
     Ok(())
 }
@@ -1371,6 +1437,13 @@ fn validate_presets(presets: &[PresetEntry]) -> Result<(), String> {
         if p.level.is_some() && !is_leveled_preset(key) {
             return Err(format!("preset {slug} does not accept a level"));
         }
+        if matches!(
+            p.level,
+            Some(crate::winstt::settings_schema::PresetLevel::Caveman)
+        ) && key != PresetKey::Concise
+        {
+            return Err("caveman level is only allowed for concise".into());
+        }
         if p.target_lang.is_some() && key != PresetKey::Translate {
             return Err(format!("preset {slug} does not accept a target language"));
         }
@@ -1411,7 +1484,6 @@ mod tests {
     // these tests now (the runtime/wakeword code that used it moved to siblings), so it
     // is imported here rather than at module scope (avoids an unused non-test import).
     use super::*;
-    use crate::winstt::settings_schema::RecordingMode;
 
     fn p(key: PresetKey) -> PresetEntry {
         PresetEntry {
@@ -1441,6 +1513,24 @@ mod tests {
             target_lang: None,
         }];
         assert!(validate_presets(&presets).is_err());
+    }
+
+    #[test]
+    fn caveman_level_is_concise_only() {
+        use crate::winstt::settings_schema::PresetLevel;
+
+        let concise = vec![PresetEntry {
+            key: PresetKey::Concise,
+            level: Some(PresetLevel::Caveman),
+            target_lang: None,
+        }];
+        let summarize = vec![PresetEntry {
+            key: PresetKey::Summarize,
+            level: Some(PresetLevel::Caveman),
+            target_lang: None,
+        }];
+        assert!(validate_presets(&concise).is_ok());
+        assert!(validate_presets(&summarize).is_err());
     }
 
     #[test]
@@ -1593,87 +1683,6 @@ mod tests {
     }
 
     #[test]
-    fn former_startup_only_key_change_does_not_force_restart() {
-        let mut a = WinsttSettings::default();
-        let mut b = WinsttSettings::default();
-        b.model.device = crate::winstt::settings_schema::DeviceType::Cpu;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-        b.quality.use_main_model_for_realtime = true;
-        b.quality.realtime_processing_pause = 0.05;
-        b.quality.init_realtime_after_seconds = 0.5;
-        b.quality.early_transcription_on_silence = 0.4;
-        b.general.send_crash_reports = false;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-        // and the reverse direction (cpu→auto) also restarts.
-        std::mem::swap(&mut a, &mut b);
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn ptt_toggle_swap_does_not_restart() {
-        // The load-bearing CONDITIONAL: a plain ptt↔toggle change must NOT restart
-        // (it touches no CLI flag) — the reference's `modeCrossesWakeword` is false.
-        let mut a = WinsttSettings::default();
-        a.general.recording_mode = RecordingMode::Ptt;
-        let mut b = a.clone();
-        b.general.recording_mode = RecordingMode::Toggle;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn entering_wakeword_does_not_force_restart() {
-        let mut a = WinsttSettings::default();
-        a.general.recording_mode = RecordingMode::Ptt;
-        let mut b = a.clone();
-        b.general.recording_mode = RecordingMode::Wakeword;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn leaving_wakeword_does_not_force_restart() {
-        let mut a = WinsttSettings::default();
-        a.general.recording_mode = RecordingMode::Wakeword;
-        let mut b = a.clone();
-        b.general.recording_mode = RecordingMode::Listen;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn wake_word_change_while_in_wakeword_does_not_force_restart() {
-        let mut a = WinsttSettings::default();
-        a.general.recording_mode = RecordingMode::Wakeword;
-        a.general.wake_word = "alexa".into();
-        let mut b = a.clone();
-        b.general.wake_word = "computer".into();
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn wake_word_change_outside_wakeword_does_not_restart() {
-        // Changing the configured wake word while in PTT (not armed) touches no
-        // live detector → no restart. the reference `staysInWakeword` is false.
-        let mut a = WinsttSettings::default();
-        a.general.recording_mode = RecordingMode::Ptt;
-        a.general.wake_word = "alexa".into();
-        let mut b = a.clone();
-        b.general.wake_word = "computer".into();
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn disabling_live_transcription_does_not_restart() {
-        // both → none disables the realtime preview. The realtime worker self-gates on
-        // the live setting (re-read every loop tick), so this is a HOT toggle — no
-        // relaunch. Regression guard for the "restart the server to disable realtime"
-        // bug (the reference restarted here; this port does not).
-        let mut a = WinsttSettings::default();
-        a.general.live_transcription_display = LiveTranscriptionDisplay::Both;
-        let mut b = a.clone();
-        b.general.live_transcription_display = LiveTranscriptionDisplay::None;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
     fn word_by_word_paste_enables_realtime_without_live_preview() {
         let mut settings = WinsttSettings::default();
         settings.general.live_transcription_display = LiveTranscriptionDisplay::None;
@@ -1741,36 +1750,7 @@ mod tests {
         assert!(effective_realtime_with_focus(&settings, false));
     }
 
-    #[test]
-    fn changing_live_transcription_display_does_not_restart() {
-        // ANY live-transcription display change is hot (in-app → both shown here; none →
-        // both, both → in-pill, … all behave the same): the worker self-gates.
-        let mut a = WinsttSettings::default();
-        a.general.live_transcription_display = LiveTranscriptionDisplay::InApp;
-        let mut b = a.clone();
-        b.general.live_transcription_display = LiveTranscriptionDisplay::Both;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn pill_overlay_toggle_does_not_restart() {
-        // display=in-pill, overlay on→off changes whether the preview renders, but the
-        // worker re-reads effective-realtime live → hot toggle, no relaunch.
-        let mut a = WinsttSettings::default();
-        a.general.live_transcription_display = LiveTranscriptionDisplay::InPill;
-        a.general.show_recording_overlay = true;
-        let mut b = a.clone();
-        b.general.show_recording_overlay = false;
-        assert!(compute_restart_keys(&a, &b).is_empty());
-    }
-
-    #[test]
-    fn no_change_no_restart() {
-        let a = WinsttSettings::default();
-        assert!(compute_restart_keys(&a, &a).is_empty());
-    }
-
-    // ── partial-patch merge (the load-bearing partial-save fix) ────────────────
+    // ── partial-patch merge ────────────────────────────────────────────────────
 
     fn patch_from_json(value: serde_json::Value) -> PartialWinsttSettings {
         serde_json::from_value(value).expect("partial patch deserialize")
@@ -1923,18 +1903,6 @@ mod tests {
         let next = merge_patch_over(&current, patch);
 
         assert_eq!(next.general.wake_word, "jarvis");
-    }
-
-    #[test]
-    fn detects_unsealed_plaintext_secrets() {
-        let mut settings = WinsttSettings::default();
-        assert!(!has_unsealed_secrets(&settings));
-
-        settings.llm.openrouter_api_key = "sk-plain".into();
-        assert!(has_unsealed_secrets(&settings));
-
-        settings.llm.openrouter_api_key = "enc:v1:feedface".into();
-        assert!(!has_unsealed_secrets(&settings));
     }
 
     #[test]

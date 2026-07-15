@@ -22,6 +22,7 @@ use tauri::AppHandle;
 
 mod cleanup;
 mod read;
+pub(crate) mod search;
 mod write;
 
 /// Database migrations for transcription and transform history.
@@ -108,6 +109,69 @@ static MIGRATIONS: &[M<'_>] = &[
     // replayable from the History tab like STT recordings. NULL on rows written
     // before audio persistence shipped and on runs where capture failed.
     M::up("ALTER TABLE tts_history ADD COLUMN audio_file_name TEXT;"),
+    M::up(
+        "CREATE VIRTUAL TABLE transcription_fts USING fts5(
+            transcription_text, post_processed_text,
+            content='transcription_history', content_rowid='id',
+            tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+        CREATE VIRTUAL TABLE transform_fts USING fts5(
+            before_text, after_text,
+            content='transform_history', content_rowid='id',
+            tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+        CREATE VIRTUAL TABLE tts_fts USING fts5(
+            text,
+            content='tts_history', content_rowid='id',
+            tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+
+        CREATE TRIGGER transcription_history_fts_ai AFTER INSERT ON transcription_history BEGIN
+            INSERT INTO transcription_fts(rowid, transcription_text, post_processed_text)
+            VALUES (new.id, new.transcription_text, coalesce(new.post_processed_text, ''));
+        END;
+        CREATE TRIGGER transcription_history_fts_ad AFTER DELETE ON transcription_history BEGIN
+            INSERT INTO transcription_fts(transcription_fts, rowid, transcription_text, post_processed_text)
+            VALUES ('delete', old.id, old.transcription_text, coalesce(old.post_processed_text, ''));
+        END;
+        CREATE TRIGGER transcription_history_fts_au AFTER UPDATE ON transcription_history BEGIN
+            INSERT INTO transcription_fts(transcription_fts, rowid, transcription_text, post_processed_text)
+            VALUES ('delete', old.id, old.transcription_text, coalesce(old.post_processed_text, ''));
+            INSERT INTO transcription_fts(rowid, transcription_text, post_processed_text)
+            VALUES (new.id, new.transcription_text, coalesce(new.post_processed_text, ''));
+        END;
+
+        CREATE TRIGGER transform_history_fts_ai AFTER INSERT ON transform_history BEGIN
+            INSERT INTO transform_fts(rowid, before_text, after_text)
+            VALUES (new.id, new.before_text, new.after_text);
+        END;
+        CREATE TRIGGER transform_history_fts_ad AFTER DELETE ON transform_history BEGIN
+            INSERT INTO transform_fts(transform_fts, rowid, before_text, after_text)
+            VALUES ('delete', old.id, old.before_text, old.after_text);
+        END;
+        CREATE TRIGGER transform_history_fts_au AFTER UPDATE ON transform_history BEGIN
+            INSERT INTO transform_fts(transform_fts, rowid, before_text, after_text)
+            VALUES ('delete', old.id, old.before_text, old.after_text);
+            INSERT INTO transform_fts(rowid, before_text, after_text)
+            VALUES (new.id, new.before_text, new.after_text);
+        END;
+
+        CREATE TRIGGER tts_history_fts_ai AFTER INSERT ON tts_history BEGIN
+            INSERT INTO tts_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+        CREATE TRIGGER tts_history_fts_ad AFTER DELETE ON tts_history BEGIN
+            INSERT INTO tts_fts(tts_fts, rowid, text) VALUES ('delete', old.id, old.text);
+        END;
+        CREATE TRIGGER tts_history_fts_au AFTER UPDATE ON tts_history BEGIN
+            INSERT INTO tts_fts(tts_fts, rowid, text) VALUES ('delete', old.id, old.text);
+            INSERT INTO tts_fts(rowid, text) VALUES (new.id, new.text);
+        END;
+
+        INSERT INTO transform_fts(rowid, before_text, after_text)
+            SELECT id, before_text, after_text FROM transform_history;
+        INSERT INTO tts_fts(rowid, text) SELECT id, text FROM tts_history;
+        CREATE TABLE IF NOT EXISTS search_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+        INSERT INTO search_meta(key, value) VALUES
+            ('fts_backfill_target', (SELECT coalesce(MAX(id), 0) FROM transcription_history)),
+            ('fts_backfill_done_id', 0);",
+    ),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -234,12 +298,13 @@ impl HistoryManager {
 
         // Initialize database and run migrations synchronously
         manager.init_database()?;
+        manager.spawn_fts_backfill();
 
         Ok(manager)
     }
 
     fn init_database(&self) -> Result<()> {
-        info!("Initializing database at {:?}", self.db_path);
+        debug!("Initializing database at {:?}", self.db_path);
 
         let mut conn = Connection::open(&self.db_path)?;
 
@@ -338,7 +403,7 @@ impl HistoryManager {
         Ok(Connection::open(&self.db_path)?)
     }
 
-    pub(super) fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
+    pub(crate) fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
         Ok(HistoryEntry {
             id: row.get("id")?,
             file_name: row.get("file_name")?,
@@ -360,7 +425,7 @@ impl HistoryManager {
         })
     }
 
-    pub(super) fn map_tts_history_entry(
+    pub(crate) fn map_tts_history_entry(
         row: &rusqlite::Row<'_>,
     ) -> rusqlite::Result<TtsHistoryDbEntry> {
         Ok(TtsHistoryDbEntry {
@@ -378,7 +443,7 @@ impl HistoryManager {
         })
     }
 
-    pub(super) fn map_transform_history_entry(
+    pub(crate) fn map_transform_history_entry(
         row: &rusqlite::Row<'_>,
     ) -> rusqlite::Result<TransformHistoryDbEntry> {
         Ok(TransformHistoryDbEntry {

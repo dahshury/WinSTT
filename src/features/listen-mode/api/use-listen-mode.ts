@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useOutputDevices, type OutputDevice } from "@/entities/audio-device";
+import { type OutputDevice, useOutputDevices } from "@/entities/audio-device";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";

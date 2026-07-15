@@ -89,6 +89,8 @@ interface EditableListComboboxProps {
 	 */
 	normalize?: (raw: string) => string;
 	onChange: (next: string[]) => void;
+	/** Called when the popup opens or closes (for example, to lazy-load suggestions). */
+	onOpenChange?: (open: boolean) => void;
 	placeholder?: string;
 	/** aria-label for a row's delete (🗑) button. */
 	removeAriaLabel: (entry: string) => string;
@@ -96,7 +98,16 @@ interface EditableListComboboxProps {
 	saveAriaLabel: string;
 	/** Closed-field text; receives the entry count (always ≥ 1 when shown). */
 	summaryLabel: (count: number) => string;
+	/** Optional values that can be added without typing, with rich app rows. */
+	suggestions?: readonly EditableListSuggestion[];
 	value: readonly string[];
+}
+
+export interface EditableListSuggestion {
+	label: string;
+	leading?: ReactNode;
+	trailing?: ReactNode;
+	value: string;
 }
 const trimNormalize = (raw: string): string => raw.trim();
 const identityLabel = (item: string): string => item;
@@ -111,10 +122,12 @@ export function EditableListCombobox({
 	inputAriaLabel,
 	normalize = trimNormalize,
 	onChange,
+	onOpenChange,
 	placeholder,
 	removeAriaLabel,
 	saveAriaLabel,
 	summaryLabel,
+	suggestions = [],
 	value,
 }: EditableListComboboxProps) {
 	const [open, setOpen] = useState(false);
@@ -127,9 +140,27 @@ export function EditableListCombobox({
 	const visibleEntries = needle
 		? value.filter((entry) => matchesFuzzySearch(entry, needle))
 		: [...value];
+	const suggestionByValue = new Map(
+		suggestions.map((suggestion) => [suggestion.value, suggestion]),
+	);
+	const visibleSuggestions = suggestions.filter(
+		(suggestion) =>
+			!value.includes(suggestion.value) &&
+			(!needle ||
+				matchesFuzzySearch([suggestion.label, suggestion.value], needle)),
+	);
+	const visibleSuggestionByValue = new Map(
+		visibleSuggestions.map((suggestion) => [suggestion.value, suggestion]),
+	);
 	const candidate = normalize(query);
-	const canCreate = candidate.length > 0 && !value.includes(candidate);
-	const items = canCreate ? [candidate] : [];
+	const canCreate =
+		candidate.length > 0 &&
+		!value.includes(candidate) &&
+		!visibleSuggestions.some((suggestion) => suggestion.value === candidate);
+	const items = [
+		...visibleSuggestions.map((suggestion) => suggestion.value),
+		...(canCreate ? [candidate] : []),
+	];
 
 	// Closed field shows the count summary (or nothing → placeholder when
 	// empty); open field shows the live search query. Mirrors CreatableCombobox
@@ -187,6 +218,7 @@ export function EditableListCombobox({
 				onInputValueChange={setQuery}
 				onOpenChange={(next) => {
 					setOpen(next);
+					onOpenChange?.(next);
 					if (!next) {
 						setQuery("");
 						setEditing(null);
@@ -222,7 +254,7 @@ export function EditableListCombobox({
 							"editable-list-combobox-popup overflow-y-auto py-1 [max-height:min(16rem,var(--available-height))]",
 						)}
 					>
-						{visibleEntries.length === 0 && !canCreate ? (
+						{visibleEntries.length === 0 && items.length === 0 ? (
 							<div className={COMBOBOX_EMPTY_CLASS}>{emptyLabel}</div>
 						) : null}
 
@@ -242,6 +274,7 @@ export function EditableListCombobox({
 									editAriaLabel={editAriaLabel(entry)}
 									entry={entry}
 									key={entry}
+									leading={suggestionByValue.get(entry)?.leading}
 									onEdit={() => setEditing(entry)}
 									onRemove={() => removeEntry(entry)}
 									removeAriaLabel={removeAriaLabel(entry)}
@@ -250,23 +283,31 @@ export function EditableListCombobox({
 						)}
 
 						<Combobox.List className="outline-none">
-							{(item: string) => (
-								<Combobox.Item
-									className={`mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)}`}
-									key={item}
-									value={item}
-								>
-									<HugeiconsIcon
-										aria-hidden="true"
-										className="shrink-0 text-accent"
-										icon={PlusSignIcon}
-										size={14}
-									/>
-									<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-										{createLabel(item)}
-									</span>
-								</Combobox.Item>
-							)}
+							{(item: string) => {
+								const suggestion = visibleSuggestionByValue.get(item);
+								return (
+									<Combobox.Item
+										className={`mx-1 flex cursor-pointer select-none items-center gap-2.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)}`}
+										key={item}
+										value={item}
+									>
+										{suggestion?.leading ?? (
+											<HugeiconsIcon
+												aria-hidden="true"
+												className="shrink-0 text-accent"
+												icon={PlusSignIcon}
+												size={14}
+											/>
+										)}
+										<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+											{suggestion?.label ?? createLabel(item)}
+										</span>
+										{suggestion?.trailing ? (
+											<span className="shrink-0">{suggestion.trailing}</span>
+										) : null}
+									</Combobox.Item>
+								);
+							}}
 						</Combobox.List>
 					</Combobox.Popup>
 				</ComboboxPopupShell>
@@ -278,12 +319,14 @@ export function EditableListCombobox({
 function EntryRow({
 	editAriaLabel,
 	entry,
+	leading,
 	onEdit,
 	onRemove,
 	removeAriaLabel,
 }: {
 	editAriaLabel: string;
 	entry: string;
+	leading?: ReactNode;
 	onEdit: () => void;
 	onRemove: () => void;
 	removeAriaLabel: string;
@@ -294,6 +337,7 @@ function EntryRow({
 		<div
 			className={`mx-1 flex min-h-8 items-center gap-1.5 rounded-xs py-0.5 ps-2.5 pe-1 ${surfaceHoverBg(hoverLevel)}`}
 		>
+			{leading ? <span className="shrink-0">{leading}</span> : null}
 			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[12px] text-foreground leading-none">
 				{entry}
 			</span>

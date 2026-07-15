@@ -32,6 +32,8 @@ beforeEach(() => {
 		etaSeconds: 0,
 		cancelled: false,
 		quantDownloads: {},
+		lifecycles: {},
+		quantOwners: {},
 	});
 });
 
@@ -46,6 +48,8 @@ afterEach(() => {
 		etaSeconds: 0,
 		cancelled: false,
 		quantDownloads: {},
+		lifecycles: {},
+		quantOwners: {},
 	});
 });
 
@@ -145,111 +149,75 @@ describe("useDownloadStore", () => {
 		expect(cancelSpy).toHaveBeenCalledTimes(1);
 	});
 
-	test("predownloadQuant preserves existing progress when re-issued", () => {
-		useDownloadStore.setState({
-			quantDownloads: {
-				"m@int8": {
-					modelId: "m",
-					quantization: "int8",
-					progress: 42,
-					downloadedBytes: 420,
-					totalBytes: 1000,
-					speedBps: 12,
-					paused: true,
-				},
-			},
-		});
-		useDownloadStore.getState().predownloadQuant("m", "int8");
-		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+	test("projects authoritative lifecycle and rejects stale revisions", () => {
+		const snapshot = {
 			modelId: "m",
 			quantization: "int8",
-			progress: 42,
+			phase: "downloading" as const,
+			requestId: "r1",
+			revision: 2,
 			downloadedBytes: 420,
 			totalBytes: 1000,
 			speedBps: 12,
-			paused: false,
-		});
-	});
-
-	test("predownloadQuant stores and progress updates preserve the initiating selector owner", () => {
-		useDownloadStore.getState().predownloadQuant("m", "int8", "realtime");
-		expect(useDownloadStore.getState().quantDownloads["m@int8"]?.owner).toBe(
-			"realtime",
+			etaSeconds: 1,
+			verificationMs: null,
+			selectedModel: null,
+			residentModel: null,
+			warm: false,
+			error: null,
+		};
+		useDownloadStore.getState().applyLifecycleSnapshot(snapshot);
+		expect(useDownloadStore.getState().quantDownloads["m@int8"]?.progress).toBe(
+			42,
 		);
-
-		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
-			progress: 0.25,
-			downloadedBytes: 250,
-			totalBytes: 1000,
-			speedBps: 5,
-		});
-
-		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
-			modelId: "m",
-			quantization: "int8",
-			owner: "realtime",
-			progress: 25,
-			downloadedBytes: 250,
-			totalBytes: 1000,
-			speedBps: 5,
-			paused: false,
-		});
+		useDownloadStore
+			.getState()
+			.applyLifecycleSnapshot({ ...snapshot, revision: 1, downloadedBytes: 1 });
+		expect(
+			useDownloadStore.getState().quantDownloads["m@int8"]?.downloadedBytes,
+		).toBe(420);
 	});
 
-	test("resumeQuantDownload can seed a resumed partial with an owner", () => {
-		useDownloadStore.getState().resumeQuantDownload("m", "int8", "realtime");
-		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+	test("terminal ready snapshot clears live download but remains queryable", () => {
+		const state = useDownloadStore.getState();
+		state.applyLifecycleSnapshot({
 			modelId: "m",
 			quantization: "int8",
-			owner: "realtime",
-			progress: null,
+			phase: "queued",
+			requestId: "r1",
+			revision: 1,
 			downloadedBytes: 0,
 			totalBytes: 0,
 			speedBps: 0,
-			paused: false,
+			etaSeconds: 0,
+			verificationMs: null,
+			selectedModel: null,
+			residentModel: null,
+			warm: false,
+			error: null,
 		});
-	});
-
-	test("setQuantDownloadProgress is monotonic and keeps pause sticky", () => {
-		useDownloadStore.setState({
-			quantDownloads: {
-				"m@int8": {
-					modelId: "m",
-					quantization: "int8",
-					progress: 72,
-					downloadedBytes: 720,
-					totalBytes: 1000,
-					speedBps: 10,
-					paused: true,
-				},
-			},
-		});
-		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
-			progress: 0.03,
-			downloadedBytes: 30,
-			totalBytes: 900,
-			speedBps: 5,
-		});
-		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+		state.applyLifecycleSnapshot({
 			modelId: "m",
 			quantization: "int8",
-			progress: 72,
-			downloadedBytes: 720,
-			totalBytes: 1000,
-			speedBps: 5,
-			paused: true,
-		});
-	});
-
-	test("setQuantDownloadProgress keeps total bytes at least downloaded bytes", () => {
-		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
-			progress: 1,
-			downloadedBytes: 1200,
-			totalBytes: 1000,
+			phase: "ready",
+			requestId: "r1",
+			revision: 2,
+			downloadedBytes: 100,
+			totalBytes: 100,
+			speedBps: 0,
+			etaSeconds: 0,
+			verificationMs: 5,
+			selectedModel: null,
+			residentModel: null,
+			warm: false,
+			error: null,
 		});
 		expect(
-			useDownloadStore.getState().quantDownloads["m@int8"]?.totalBytes,
-		).toBe(1200);
+			useDownloadStore.getState().quantDownloads["m@int8"],
+		).toBeUndefined();
+		expect(useDownloadStore.getState().lifecycles["m@int8"]?.phase).toBe(
+			"ready",
+		);
 	});
 });
 
@@ -262,6 +230,9 @@ describe("isQuantDownloading", () => {
 				"m@int8": {
 					modelId: "m",
 					quantization: "int8",
+					phase: "downloading",
+					requestId: "test-request",
+					revision: 1,
 					progress: 12,
 					downloadedBytes: 1,
 					totalBytes: 10,

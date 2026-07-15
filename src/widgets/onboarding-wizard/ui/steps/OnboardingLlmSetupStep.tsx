@@ -16,6 +16,7 @@ import {
 	type OllamaDetectResult,
 	startOllama,
 } from "@/shared/api/ipc-client";
+import { openLlmModelPickerAtRect } from "@/shared/api/model-picker-window";
 import { cn } from "@/shared/lib/cn";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { ollamaLlmSelectorUiStorageKey } from "@/shared/lib/model-picker-ui-storage-keys";
@@ -23,7 +24,7 @@ import { springs } from "@/shared/lib/springs";
 import { FormControl } from "@/shared/ui/form-control";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Toggle } from "@/shared/ui/toggle";
-import { OllamaModelSelector } from "@/widgets/model-picker";
+import { OllamaModelSelector } from "@/features/llm-model-picker";
 import { useOnboardingOllamaPicker } from "../../model/use-onboarding-ollama-picker";
 
 const OLLAMA_HOMEPAGE = "https://ollama.com/download";
@@ -257,6 +258,13 @@ export function OnboardingLlmSetupStep() {
 						<OllamaModelSelector
 							{...pickerProps}
 							onChange={handleSelectModel}
+							onOpenDetached={(rect) =>
+								openLlmModelPickerAtRect(rect, {
+									enableOnInstall: configuring && !enabled,
+									feature: "dictation",
+									pickerKind: "llm-ollama",
+								})
+							}
 							placeholder={t("noModelSelected")}
 							uiStorageKey={ollamaLlmSelectorUiStorageKey("dictation")}
 							value={selectedModel}

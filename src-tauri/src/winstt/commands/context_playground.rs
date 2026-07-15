@@ -5,12 +5,11 @@
 // DEBUG-ONLY context-awareness playground backend. Enable Cargo feature
 // `context-playground` plus the renderer flag/env var when tuning capture.
 //
-// The renderer (`views/context-playground`) drives three channels; the adapter
-// (native-bridge-adapter.ts) routes them:
-//   IPC.CONTEXT_PLAYGROUND_SET_LIVE  → command `context_playground_set_live`  ({ enabled })
-//   IPC.CONTEXT_PLAYGROUND_ARM_DEEP  → command `context_playground_arm_deep`
-//   IPC.CONTEXT_PLAYGROUND_CLOSE     → window  `close_window`  (handled by windows.rs)
-//   IPC.CONTEXT_PLAYGROUND_REPORT    → event   `context-playground:report`  (push)
+// The renderer (`views/context-playground`) calls the generated commands directly:
+//   `context_playground_set_live`  ({ enabled })
+//   `context_playground_arm_deep`
+//   `close_window` (handled by windows.rs)
+//   `context-playground:report` event (push)
 //
 // Capture model (matches the reference `decideTick` state machine exactly):
 //   - Live: every ~750ms capture the foreground field via the production tree

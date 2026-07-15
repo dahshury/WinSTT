@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { useSettingsStore } from "@/entities/setting";
 
 type LlmPickerFeature = "dictation" | "transforms";
@@ -11,7 +12,9 @@ interface LlmModelPickerState {
 	 * when the open was a turn-on request. This is the single commit point that
 	 * upholds the invariant "LLM cleanup is never enabled without a real model":
 	 * the toggle opens the picker but never flips `enabled` itself — only a
-	 * landed model does, here.
+	 * landed model does, here. While the dialog is CLOSED it only acts when a
+	 * turn-on intent was parked in `pendingFeature` (a pull that outlived the
+	 * dialog), so nothing else can silently flip a toggle on.
 	 */
 	commitInstalled: (model: string) => void;
 	/** When true, a model that installs/selects commits `enabled: true` for the
@@ -23,6 +26,13 @@ interface LlmModelPickerState {
 	feature: LlmPickerFeature | null;
 	open: boolean;
 	openFor: (feature: LlmPickerFeature, enableOnInstall: boolean) => void;
+	/** Turn-on intent parked at close time while an Ollama pull is still
+	 *  streaming: the pull's success callback (`commitInstalled`, bound in the
+	 *  dialog's `handlePull` closure) survives the dialog unmount, and this
+	 *  field lets it still enable the feature the user asked to turn on — so
+	 *  the user can switch to other apps while the download finishes instead of
+	 *  the toggle silently staying off. Cleared by any commit. */
+	pendingFeature: LlmPickerFeature | null;
 }
 
 /**
@@ -38,21 +48,43 @@ export const useLlmModelPickerStore = create<LlmModelPickerState>(
 		enableOnInstall: false,
 		feature: null,
 		open: false,
+		pendingFeature: null,
 		openFor: (feature, enableOnInstall) =>
 			set({ open: true, feature, enableOnInstall }),
-		close: () => set({ open: false, feature: null, enableOnInstall: false }),
+		close: () => {
+			const { enableOnInstall, feature, pendingFeature } = get();
+			// A pull still streaming when a turn-on session closes carries the
+			// enable intent forward; otherwise keep whatever intent an earlier
+			// session parked (its pull may still be running).
+			const pullInFlight =
+				Object.keys(useLlmCatalogStore.getState().pulls).length > 0;
+			set({
+				open: false,
+				feature: null,
+				enableOnInstall: false,
+				pendingFeature:
+					enableOnInstall && feature !== null && pullInFlight
+						? feature
+						: pendingFeature,
+			});
+		},
 		commitInstalled: (model) => {
-			const { feature, enableOnInstall } = get();
-			if (feature === null) {
+			const { feature, enableOnInstall, pendingFeature } = get();
+			const target = feature ?? pendingFeature;
+			if (target === null) {
 				return;
 			}
+			// A parked intent is always a turn-on request; a live session keeps
+			// its own flag. Any commit resolves the outstanding intent.
+			const enable = feature === null ? true : enableOnInstall;
+			set({ pendingFeature: null });
 			const settings = useSettingsStore.getState();
-			const patch = enableOnInstall
+			const patch = enable
 				? { model, provider: "ollama" as const, enabled: true }
 				: { model, provider: "ollama" as const };
-			if (feature === "dictation") {
+			if (target === "dictation") {
 				settings.updateLlmPostProcessing(patch);
-				if (enableOnInstall) {
+				if (enable) {
 					// Mutual exclusion with Smart Endpoint — mirrors the panel's
 					// `disableSmartEndpoint`: turning dictation cleanup on turns the
 					// Smart Endpoint heuristic off.

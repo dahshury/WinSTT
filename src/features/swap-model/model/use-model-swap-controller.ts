@@ -1,22 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSystemResourcesStore } from "@/entities/system-resources";
-import {
-	onModelDownloadComplete,
-	onModelSwapFailed,
-} from "@/shared/api/ipc-client";
+import { onModelDownloadComplete } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import {
-	applyPureQuantSwap,
 	applyQuantOverride,
+	buildAtomicSwitchRequest,
 	buildMainSwapPatch,
 	buildRealtimeSwapPatch,
 	definedQuantPatches,
 	isCloudModel,
 	isQuantizationChanging,
-	maybeHotReload,
 	realtimePatchForMainSwap,
 	runIssueSwap,
-	shouldReloadForHotSwap,
 	swapQuantTransition,
 	toQuantPatch,
 } from "./apply-swap";
@@ -41,12 +36,9 @@ import {
 	dispatchChange,
 	dispatchGate,
 	handleDownloadCompleteEvent,
-	handleSwapFailedEvent,
 	matchesPending,
 	resolveCurrentMainModel,
 	resolveCurrentRealtimeModel,
-	rollbackMain,
-	rollbackRealtime,
 	runConfirmPendingDownload,
 	runHandleChange,
 	toIssueSwapInvoker,
@@ -59,7 +51,6 @@ import type {
 	PendingFitWarning,
 	StatesById,
 	SwapController,
-	UpdateModelFn,
 } from "./swap-types";
 
 export type {
@@ -81,7 +72,6 @@ export function useModelSwapController(
 	deviceValue: DeviceValue,
 	getModel: GetModelFn,
 	statesById: StatesById,
-	update: UpdateModelFn,
 	// Injected (FSD: a feature can't import the model-download feature) so the
 	// controller can refuse to switch TO a model whose target precision is
 	// still downloading. Defaults to "nothing downloading" for callers/tests
@@ -100,11 +90,6 @@ export function useModelSwapController(
 		(s) => s.assessDictationFitOnServer,
 	);
 
-	// Track the previous model id for each picker so a server-side swap
-	// failure can revert the setting back to what was actually loaded.
-	const prevMainModelRef = useRef<string | null>(null);
-	const prevRealtimeModelRef = useRef<string | null>(null);
-
 	const [pendingDownload, setPendingDownload] =
 		useState<PendingDownload | null>(null);
 	const [pendingFitWarning, setPendingFitWarning] =
@@ -119,6 +104,7 @@ export function useModelSwapController(
 		quantization?: OnnxQuantization,
 	) => {
 		runIssueSwap({
+			atomicDevice: deviceValue,
 			kind,
 			value,
 			previous,
@@ -127,9 +113,6 @@ export function useModelSwapController(
 			currentMainModel,
 			currentRealtimeModel,
 			getModel,
-			update,
-			prevMainModelRef,
-			prevRealtimeModelRef,
 		});
 	};
 
@@ -208,7 +191,6 @@ export function useModelSwapController(
 			currentModel: currentMainModel,
 			currentQuantization,
 			kind: "main",
-			update,
 			issueSwap,
 			gateWithAssessment,
 		});
@@ -238,7 +220,6 @@ export function useModelSwapController(
 			currentModel: currentRealtimeModel,
 			currentQuantization,
 			kind: "realtime",
-			update,
 			issueSwap,
 			gateWithAssessment,
 		});
@@ -289,23 +270,6 @@ export function useModelSwapController(
 		[],
 	);
 
-	// Failure handler: roll the picker back to whatever was loaded before
-	// the user's selection. Uses the per-kind ref captured at click time.
-	useEffect(
-		() =>
-			onModelSwapFailed((event) =>
-				handleSwapFailedEvent(
-					event.kind,
-					event.category,
-					prevMainModelRef,
-					prevRealtimeModelRef,
-					update,
-					getModel,
-				),
-			),
-		[update, getModel],
-	);
-
 	return {
 		pendingDownload,
 		pendingFitWarning,
@@ -324,8 +288,8 @@ export function useModelSwapController(
  *  `useModelSwapController` while still satisfying the CRAP coverage gate.
  *  DO NOT import this from production code. */
 export const __testables = {
-	applyPureQuantSwap,
 	applyQuantOverride,
+	buildAtomicSwitchRequest,
 	buildMainSwapPatch,
 	buildRealtimeSwapPatch,
 	clearIfMatches,
@@ -334,14 +298,12 @@ export const __testables = {
 	dispatchChange,
 	dispatchGate,
 	handleDownloadCompleteEvent,
-	handleSwapFailedEvent,
 	isCloudModel,
 	isCriticalAssessment,
 	isQuantizationChanging,
 	isSwapBlockedByDownload,
 	mapFirstToCache,
 	matchesPending,
-	maybeHotReload,
 	needsDownloadPrompt,
 	promptDownload,
 	reportSwapGateError,
@@ -351,14 +313,11 @@ export const __testables = {
 	realtimePatchForMainSwap,
 	resolveTargetCache,
 	resolveTargetQuant,
-	rollbackMain,
-	rollbackRealtime,
 	runConfirmPendingDownload,
 	runGateWithAssessment,
 	runHandleChange,
 	runIssueSwap,
 	runProceedWithSelection,
-	shouldReloadForHotSwap,
 	surfaceFitWarning,
 	swapQuantTransition,
 	toIssueSwapInvoker,

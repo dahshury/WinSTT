@@ -20,19 +20,87 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
 use crate::command_auth;
+use crate::startup::{FILE_LOG_LEVEL, level_filter_from_u8};
+use crate::winstt::commands::events::names;
 use crate::winstt::observability::{self, IssueBuilder, ObservabilityIssue};
 
 const LOGS_FOLDER_ALLOWED_WINDOWS: &[&str] = &["settings"];
+const LIVE_LOGS_ALLOWED_WINDOWS: &[&str] = &["settings"];
+
+/// Opt-in gate for forwarding the existing app log stream to the settings
+/// webview. It starts off and is only changed by `diag_set_log_streaming`.
+static LIVE_LOG_STREAMING: AtomicBool = AtomicBool::new(false);
+static LIVE_LOG_APP: OnceLock<AppHandle> = OnceLock::new();
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveLogLinePayload {
+    level: String,
+    message: String,
+    target: String,
+    timestamp_ms: u64,
+}
+
+fn emit_live_log_record(record: &log::Record<'_>) {
+    if !LIVE_LOG_STREAMING.load(Ordering::Acquire) {
+        return;
+    }
+    let Some(app) = LIVE_LOG_APP.get() else {
+        return;
+    };
+    let Some(settings_window) = app.get_webview_window("settings") else {
+        return;
+    };
+    if !settings_window.is_visible().unwrap_or(false) {
+        // Settings windows are normally hidden rather than destroyed, so the
+        // React cleanup is not guaranteed to run when the user closes it.
+        // Turn the process-wide gate off at the next record instead of keeping
+        // a hidden diagnostic stream alive.
+        LIVE_LOG_STREAMING.store(false, Ordering::Release);
+        return;
+    }
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64);
+    let payload = LiveLogLinePayload {
+        level: record.level().as_str().to_ascii_lowercase(),
+        message: record.args().to_string(),
+        target: record.target().to_owned(),
+        timestamp_ms,
+    };
+
+    // Never log an emit failure from inside the logger target: doing so would
+    // recurse through this same dispatch. The event is scoped to Settings so no
+    // other webview receives diagnostic records.
+    let _ = settings_window.emit(names::DIAGNOSTICS_LOG_LINE, payload);
+}
+
+/// Custom tauri-plugin-log target for the privacy-gated live viewer. Reusing
+/// the logger dispatch means the viewer sees the same deliberately non-content
+/// app records as the on-disk diagnostic log; it does not inspect audio,
+/// transcripts, settings, or provider requests.
+pub(crate) fn live_log_target() -> Target {
+    let dispatch = tauri_plugin_log::fern::Dispatch::new()
+        .chain(tauri_plugin_log::fern::Output::call(emit_live_log_record));
+    Target::new(TargetKind::Dispatch(dispatch)).filter(|metadata| {
+        LIVE_LOG_STREAMING.load(Ordering::Acquire)
+            && metadata.level() <= level_filter_from_u8(FILE_LOG_LEVEL.load(Ordering::Relaxed))
+    })
+}
 
 fn record_diag_failure(
     app: &AppHandle,
@@ -390,6 +458,31 @@ pub fn diag_observability_timeline(limit: Option<usize>) -> Vec<ObservabilityIss
 #[specta::specta]
 pub fn diag_clear_observability_timeline() -> usize {
     observability::clear_issues()
+}
+
+/// Enable or disable live diagnostic log forwarding for the Settings viewer.
+/// The caller must be the Settings webview; the process-wide gate is off by
+/// default and the renderer disables it again on pause, stop, and unmount.
+#[tauri::command]
+#[specta::specta]
+pub fn diag_set_log_streaming(
+    app: AppHandle,
+    webview: WebviewWindow,
+    enabled: bool,
+) -> Result<bool, String> {
+    command_auth::authorize_webview(
+        &webview,
+        "diagnostics",
+        "change live log streaming",
+        LIVE_LOGS_ALLOWED_WINDOWS,
+        "",
+    )?;
+
+    if enabled {
+        let _ = LIVE_LOG_APP.set(app);
+    }
+    LIVE_LOG_STREAMING.store(enabled, Ordering::Release);
+    Ok(enabled)
 }
 
 /// `diag_cloud_metrics` - per-(provider, operation) cloud latency/outcome

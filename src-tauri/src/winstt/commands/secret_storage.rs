@@ -9,8 +9,7 @@
 // malformed envelopes or unavailable OS storage fail explicitly instead of being treated as
 // "empty secret".
 
-/// The at-rest envelope prefix. Legacy plaintext - anything without this prefix -
-/// is still passed through so existing unsealed settings can be re-saved sealed.
+/// The at-rest envelope prefix.
 const ENC_PREFIX: &str = "enc:v1:";
 
 /// Returns true if `value` is already a wrapped at-rest envelope.
@@ -21,8 +20,6 @@ pub fn is_encrypted(value: &str) -> bool {
 /// Seal a plaintext secret for at-rest storage.
 ///
 /// Empty input returns `""`: an empty key and an empty envelope both mean "unset".
-/// A value already wrapped is returned unchanged so re-saving the settings tree
-/// does not double-seal an encrypted value.
 pub fn encrypt_secret(plain: &str) -> Result<String, String> {
     try_encrypt_secret(plain)
 }
@@ -32,7 +29,7 @@ pub fn try_encrypt_secret(plain: &str) -> Result<String, String> {
         return Ok(String::new());
     }
     if is_encrypted(plain) {
-        return Ok(plain.to_string());
+        return Err("secret storage: expected plaintext secret".to_string());
     }
 
     let sealed = seal_bytes(plain.as_bytes()).map_err(|err| {
@@ -43,8 +40,7 @@ pub fn try_encrypt_secret(plain: &str) -> Result<String, String> {
 
 /// Open an at-rest value to plaintext.
 ///
-/// Returns plaintext for both a wrapped envelope and legacy plaintext (no prefix).
-/// Corrupt envelopes and OS storage failures are explicit failures; returning an
+/// Corrupt or unwrapped values and OS storage failures are explicit failures; returning an
 /// empty string here would hide data loss and can trick callers into persisting a
 /// cleared API key.
 pub fn decrypt_secret(stored: &str) -> Result<String, String> {
@@ -56,7 +52,7 @@ pub fn try_decrypt_secret(stored: &str) -> Result<String, String> {
         return Ok(String::new());
     }
     if !is_encrypted(stored) {
-        return Ok(stored.to_string());
+        return Err("secret storage: expected encrypted secret envelope".to_string());
     }
 
     let hex = &stored[ENC_PREFIX.len()..];
@@ -474,18 +470,21 @@ mod tests {
     }
 
     #[test]
-    fn legacy_plaintext_passes_through_on_read() {
-        let legacy = "sk-or-v1-legacy-plaintext";
-        assert!(!is_encrypted(legacy));
-        assert_eq!(decrypt_secret(legacy).as_deref(), Ok(legacy));
+    fn plaintext_is_rejected_on_read() {
+        let plaintext = "sk-or-v1-plaintext";
+        assert!(!is_encrypted(plaintext));
+        assert_eq!(
+            decrypt_secret(plaintext).unwrap_err(),
+            "secret storage: expected encrypted secret envelope"
+        );
     }
 
     #[test]
-    fn idempotent_seal() {
+    fn encrypted_input_is_rejected_by_seal() {
         let already_sealed = "enc:v1:feedface";
         assert_eq!(
-            encrypt_secret(already_sealed).as_deref(),
-            Ok(already_sealed)
+            encrypt_secret(already_sealed).unwrap_err(),
+            "secret storage: expected plaintext secret"
         );
     }
 

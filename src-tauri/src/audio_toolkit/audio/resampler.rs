@@ -1,11 +1,11 @@
-use rubato::{FftFixedIn, Resampler};
+use rubato::{Fft, FixedSync, Resampler, audioadapter_buffers::direct::InterleavedSlice};
 use std::time::Duration;
 
 // Make this a constant you can tweak
 const RESAMPLER_CHUNK_SIZE: usize = 1024;
 
 pub struct FrameResampler {
-    resampler: Option<FftFixedIn<f32>>,
+    resampler: Option<Fft<f32>>,
     chunk_in: usize,
     in_buf: Vec<f32>,
     frame_samples: usize,
@@ -37,7 +37,7 @@ impl FrameResampler {
 
         let resampler = if in_hz != out_hz {
             Some(
-                FftFixedIn::<f32>::new(in_hz, out_hz, chunk_in, 1, 1)
+                Fft::<f32>::new(in_hz, out_hz, chunk_in, 1, FixedSync::Input)
                     .map_err(|err| format!("failed to create resampler: {err}"))?,
             )
         } else {
@@ -73,9 +73,11 @@ impl FrameResampler {
 
             if self.in_buf.len() == self.chunk_in {
                 if let Some(resampler) = self.resampler.as_mut()
-                    && let Ok(out) = resampler.process(&[&self.in_buf[..]], None)
+                    && let Ok(input) =
+                        InterleavedSlice::new(self.in_buf.as_slice(), 1, self.chunk_in)
+                    && let Ok(out) = resampler.process(&input, None)
                 {
-                    self.emit_frames(&out[0], &mut emit);
+                    self.emit_frames(&out.take_data(), &mut emit);
                 }
                 self.in_buf.clear();
             }
@@ -90,7 +92,7 @@ impl FrameResampler {
     /// caller strips synthetic tail silence by truncating its accumulated output by this
     /// count. Callers that treat `finish` as a statement may ignore the return value.
     pub fn finish(&mut self, mut emit: impl FnMut(&[f32])) -> usize {
-        // `FftFixedIn` has an internal OUTPUT DELAY (`output_delay()`): the last real samples
+        // `Fft` has an internal OUTPUT DELAY (`output_delay()`): the last real samples
         // handed to `push` are still stuck inside its delay line when `finish` begins, and it
         // also emits exactly `output_delay` warmup samples at the START of every accounting
         // window (the delay line is zero-primed at construction, and this `finish` re-primes it
@@ -127,12 +129,15 @@ impl FrameResampler {
             for _ in 0..MAX_FINISH_CHUNKS {
                 let processed = {
                     let resampler = self.resampler.as_mut().unwrap();
-                    resampler.process(&[&self.in_buf[..]], None)
+                    InterleavedSlice::new(self.in_buf.as_slice(), 1, self.chunk_in)
+                        .map_err(|_| ())
+                        .and_then(|input| resampler.process(&input, None).map_err(|_| ()))
                 };
                 match processed {
                     Ok(out) => {
-                        finish_out += out[0].len();
-                        self.emit_frames(&out[0], &mut emit);
+                        let out = out.take_data();
+                        finish_out += out.len();
+                        self.emit_frames(&out, &mut emit);
                     }
                     Err(_) => break,
                 }

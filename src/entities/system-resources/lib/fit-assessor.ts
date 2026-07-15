@@ -28,8 +28,10 @@ const RAM_USABLE_FRACTION = 0.7;
 /** Runtime footprint of the on-device encoder dictionary model (the int8
  * mmBERT masked-LM, ~310 MB on disk). It isn't in the model catalog and runs
  * CPU-only (no EP registration — see `encoder_dict/engine.rs`), so its fit is a
- * fixed RAM check rather than a catalog/quant-scaled one. */
-const ENCODER_DICT_MODEL_BYTES = 310 * 1024 * 1024;
+ * fixed RAM check rather than a catalog/quant-scaled one. Exported as the
+ * SINGLE source of this size — the status-bar breakdown and the suggestion
+ * budget calculator import it rather than duplicating the constant. */
+export const ENCODER_DICT_MODEL_BYTES = 310 * 1024 * 1024;
 
 const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	"": 4,
@@ -44,7 +46,11 @@ const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	bnb4: 0.75,
 };
 
-const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set([
+/** Quantizations the DirectML/GPU execution provider can actually run — every
+ * other precision (int8/uint8/q4/…) is CPU-routed and consumes RAM, not VRAM.
+ * Exported so the model-suggestion engine's device-resolution fallback uses the
+ * same set as `predictedTarget` (single source of truth). */
+export const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set([
 	"",
 	"fp32",
 	"fp16",

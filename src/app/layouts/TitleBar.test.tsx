@@ -1,14 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { IPC } from "@/shared/api/ipc-channels";
 import { TitleBar } from "./TitleBar";
 
-// WINDOW_OPEN_SETTINGS is now a typed COMMAND_INVOKERS channel → `open_window`,
-// so the settings button reaches the backend through the generated binding
-// (TAURI invoke) rather than the adapter `nativeBridge.send`. Record both so the
-// settings click and the (still-send) minimize/close ops can each be asserted.
 const tauriCalls: Array<{ args: unknown; cmd: string }> = [];
+const windowCalls: string[] = [];
 
 mock.module("@tauri-apps/api/core", () => ({
 	invoke: (cmd: string, args?: Record<string, unknown>) => {
@@ -18,22 +14,22 @@ mock.module("@tauri-apps/api/core", () => ({
 	Channel: class {},
 }));
 
-const originalApi = window.nativeBridge;
-let sendCalls: Array<{ channel: string; args: unknown[] }>;
+mock.module("@tauri-apps/api/window", () => ({
+	getCurrentWindow: () => ({
+		minimize: () => {
+			windowCalls.push("minimize");
+			return Promise.resolve();
+		},
+		hide: () => {
+			windowCalls.push("hide");
+			return Promise.resolve();
+		},
+	}),
+}));
 
 beforeEach(() => {
-	sendCalls = [];
 	tauriCalls.length = 0;
-	window.nativeBridge = {
-		...originalApi,
-		send: (channel: string, ...args: unknown[]) => {
-			sendCalls.push({ channel, args });
-		},
-	};
-});
-
-afterEach(() => {
-	window.nativeBridge = originalApi;
+	windowCalls.length = 0;
 });
 
 function renderWithIntl() {
@@ -97,15 +93,16 @@ describe("TitleBar", () => {
 		).toBe(true);
 	});
 
-	test("clicking minimize and close sends their channels", () => {
+	test("clicking minimize and close uses native window operations", async () => {
 		renderWithIntl();
 		fireEvent.click(screen.getByRole("button", { name: /minimize/i }));
 		fireEvent.click(screen.getByRole("button", { name: /close/i }));
-		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_MINIMIZE)).toBe(true);
-		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_CLOSE)).toBe(true);
+		await Promise.resolve();
+		expect(windowCalls).toContain("minimize");
+		expect(windowCalls).toContain("hide");
 	});
 
-	test("touch tapping minimize and close sends their channels without a synthesized click", () => {
+	test("touch tapping minimize and close invokes each native operation once", async () => {
 		renderWithIntl();
 		const minimize = screen.getByRole("button", { name: /minimize/i });
 		const close = screen.getByRole("button", { name: /close/i });
@@ -113,13 +110,12 @@ describe("TitleBar", () => {
 		fireEvent.click(minimize);
 		touchTap(close, 2);
 		fireEvent.click(close);
-		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_MINIMIZE)).toBe(true);
-		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_CLOSE)).toBe(true);
+		await Promise.resolve();
 		expect(
-			sendCalls.filter((c) => c.channel === IPC.WINDOW_MINIMIZE),
+			windowCalls.filter((operation) => operation === "minimize"),
 		).toHaveLength(1);
 		expect(
-			sendCalls.filter((c) => c.channel === IPC.WINDOW_CLOSE),
+			windowCalls.filter((operation) => operation === "hide"),
 		).toHaveLength(1);
 	});
 });

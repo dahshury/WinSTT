@@ -244,8 +244,8 @@ function latestHistoryStatus(
 }
 
 const handleRestart = () => {
-	// Fire-and-forget — main will quit the app a tick later. The Promise
-	// from invokeOrDefault may never settle in practice; we don't need it,
+	// Fire-and-forget — main will quit the app a tick later. The Promise may
+	// never settle in practice; we don't need it,
 	// but `.catch(() => {})` keeps biome's no-floating-promises lint happy
 	// without the void-as-statement trick.
 	updaterQuitAndInstall().catch(() => {
