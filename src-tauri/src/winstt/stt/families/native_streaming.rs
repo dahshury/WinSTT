@@ -395,8 +395,7 @@ impl NativeNemoCtcStreamingEngine {
         };
 
         for row in logits.rows() {
-            let row_buf = row.to_vec();
-            let (best, _) = argmax_1d(&row_buf);
+            let (best, _) = argmax_iter(row.iter().copied());
             let y = best as i64;
             if y == self.blank_id {
                 self.stream.cursor.num_trailing_blanks += 1;
@@ -786,15 +785,8 @@ impl NativeZipformerStreamingEngine {
     fn decode_encoder_out(&mut self, encoder_out: &Array2<f32>) -> SttResult<()> {
         let mut decoder_out = self.run_decoder()?;
         for t in 0..encoder_out.nrows() {
-            let enc_frame = encoder_out.index_axis(Axis(0), t).to_owned();
-            let logits = self.run_joiner(&enc_frame, &decoder_out)?;
-            let take = if self.vocab_size > 0 {
-                self.vocab_size.min(logits.len())
-            } else {
-                logits.len()
-            };
-            let (best, _) = argmax_1d(&logits[..take]);
-            let token = best as i64;
+            let enc_frame = encoder_out.index_axis(Axis(0), t);
+            let token = self.run_joiner_token(enc_frame, &decoder_out)?;
             if token != self.blank_id && Some(token) != self.unk_id {
                 self.stream.cursor.tokens.push(token);
                 self.stream.cursor.num_trailing_blanks = 0;
@@ -819,13 +811,12 @@ impl NativeZipformerStreamingEngine {
         out_to_f32(&outputs["decoder_out"])
     }
 
-    fn run_joiner(
+    fn run_joiner_token(
         &mut self,
-        enc_frame: &ndarray::Array1<f32>,
+        enc_frame: ndarray::ArrayView1<'_, f32>,
         decoder_out: &ArrayD<f32>,
-    ) -> SttResult<Vec<f32>> {
+    ) -> SttResult<i64> {
         let enc = enc_frame
-            .view()
             .into_shape_with_order((1, enc_frame.len()))
             .map_err(|e| SttError::Inference(format!("zipformer joiner enc reshape: {e}")))?
             .to_owned();
@@ -841,7 +832,13 @@ impl NativeZipformerStreamingEngine {
             ])
             .map_err(|e| SttError::Inference(format!("zipformer joiner run: {e}")))?;
         let logit = out_to_f32(&outputs["logit"])?;
-        Ok(logit.iter().copied().collect())
+        let take = if self.vocab_size > 0 {
+            self.vocab_size.min(logit.len())
+        } else {
+            logit.len()
+        };
+        let (best, _) = argmax_iter(logit.iter().take(take).copied());
+        Ok(best as i64)
     }
 
     fn current_text(&self) -> String {
