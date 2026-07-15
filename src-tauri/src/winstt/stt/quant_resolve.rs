@@ -732,6 +732,14 @@ mod tests {
         assert_eq!(
             override_dml_to_cpu_for_kind(
                 vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::GraniteSpeechNar,
+                Quantization::Fp16w
+            ),
+            vec![Accelerator::Cpu]
+        );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
                 EngineKind::KaldiTransducerStreaming,
                 Quantization::Default
             ),

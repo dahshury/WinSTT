@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::winstt::app_profiles::{AppIdentity, resolve_rule};
 use crate::winstt::context::ContextMode;
 #[cfg(not(windows))]
-use crate::winstt::context::snapshot::ContextReader;
+use crate::winstt::context::ContextReader;
 use crate::winstt::managers::ContextManager;
 use crate::winstt::settings_schema::{AppProfileConfig, AppProfileRule, RecordingMode};
 

@@ -114,6 +114,9 @@ impl EngineKind {
     ///     MatMul/Softmax, zero `MultiHeadAttention` nodes) run correctly and ~2.7× FASTER than CPU
     ///     on DirectML, so `backend::resolve_catalog` probes the resolved graph
     ///     (`cohere_export_dml_safe`) and RESTORES the GPU EP when it's MHA-free.
+    ///   * `GraniteSpeechNar`: the encoder's fused attention MatMul fails at runtime in the DML
+    ///     provider with `E_INVALIDARG` (`MatMulScaleFusion`, observed with the fp16w export).
+    ///     CPU executes the same graph correctly, so the NAR engine is pinned before sessions load.
     ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: the DML session
     ///     BUILD terminates the whole process silently (exit 0, no panic, no error — reproduced
     ///     2026-07-08 via `examples/stt_dml_spike.rs`); in-app that would kill WinSTT outright.
@@ -132,6 +135,7 @@ impl EngineKind {
         matches!(
             self,
             EngineKind::CohereAsr
+                | EngineKind::GraniteSpeechNar
                 | EngineKind::KaldiTransducer
                 | EngineKind::SenseVoiceCtc
                 | EngineKind::DolphinCtc

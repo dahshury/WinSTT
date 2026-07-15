@@ -380,9 +380,12 @@ fn perform_atomic_model_switch(
         }
         SttSwitchKind::Realtime => previous.model.model.clone(),
     };
-    next.model.onnx_quantization = request.quantization.clone().unwrap_or_else(|| {
-        reconcile_persisted_quant(&load_model_id, &previous.model.onnx_quantization)
-    });
+    let requested_quantization = request
+        .quantization
+        .as_deref()
+        .unwrap_or(&previous.model.onnx_quantization);
+    next.model.onnx_quantization =
+        reconcile_persisted_quant(&load_model_id, requested_quantization);
     if let Some(device) = request.device {
         next.model.device = device;
     }
@@ -804,6 +807,22 @@ mod tests {
     fn queued_switch_is_superseded_only_before_it_mutates_the_engine() {
         assert!(!should_execute_queued_switch(7, 8));
         assert!(should_execute_queued_switch(8, 8));
+    }
+
+    #[test]
+    fn explicit_quantization_is_reconciled_against_the_loaded_main_model() {
+        assert_eq!(
+            reconcile_persisted_quant("alphacep/vosk-model-small-ru", "fp16w"),
+            ""
+        );
+    }
+
+    #[test]
+    fn explicit_quantization_is_kept_when_the_loaded_main_model_offers_it() {
+        assert_eq!(
+            reconcile_persisted_quant("granite-speech-4.1-2b-nar", "fp16w"),
+            "fp16w"
+        );
     }
 
     #[test]
