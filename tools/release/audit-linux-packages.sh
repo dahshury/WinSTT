@@ -144,8 +144,17 @@ audit_tree "$audit_root/deb" deb
 
 mkdir "$audit_root/rpm"
 rpm_cpio="$audit_root/package.cpio"
-if ! rpm2cpio "$rpm" >"$rpm_cpio"; then
-  echo "Failed to convert RPM payload to a cpio archive: $rpm" >&2
+rpm2cpio_error="$audit_root/rpm2cpio.stderr"
+set +e
+rpm2cpio "$rpm" >"$rpm_cpio" 2>"$rpm2cpio_error"
+rpm2cpio_status=$?
+set -e
+if [ "$rpm2cpio_status" -ne 0 ]; then
+  echo "rpm2cpio exited with status $rpm2cpio_status; validating its output strictly." >&2
+  cat "$rpm2cpio_error" >&2
+fi
+if [ ! -s "$rpm_cpio" ]; then
+  echo "rpm2cpio produced no RPM payload: $rpm" >&2
   exit 1
 fi
 if ! (cd "$audit_root/rpm" && cpio -idm --quiet <"$rpm_cpio"); then
