@@ -138,9 +138,10 @@ try {
     # DML EP — a load-time import — plus the MSVC CRT). The release-only bundle
     # config maps binaries/runtime/*.dll next to winstt.exe; without them the
     # installed app cannot start on a machine without a dev toolchain. The sidecar build
-    # above already compiled the dependency graph, so the ort build script has placed
-    # DirectML.dll in target\release. (tauri-portable.ps1 reuses this stage. sherpa-onnx
-    # DLLs are gone — wake-word KWS runs natively on ort since the 2026-07 port.)
+    # above carries a Windows-only ORT staging dependency, so the ort build script has
+    # placed DirectML.dll in target\release without compiling the full app first.
+    # (tauri-portable.ps1 reuses this stage. sherpa-onnx DLLs are gone — wake-word KWS
+    # runs natively on ort since the 2026-07 port.)
     $ReleaseDir = Join-Path $RepoRoot "src-tauri\target\release"
     $RuntimeDir = Join-Path $BinDir "runtime"
     if (Test-Path -LiteralPath $RuntimeDir) {
