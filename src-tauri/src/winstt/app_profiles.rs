@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::winstt::settings_schema::{
     AppProfileConfig, AppProfileRule, LlmProvider, WinsttSettings,
 };
@@ -13,9 +11,9 @@ pub struct AppIdentity {
 
 fn normalize_exe(value: &str) -> String {
     let normalized = value.trim().replace('/', "\\");
-    let basename = Path::new(&normalized)
-        .file_name()
-        .and_then(|name| name.to_str())
+    let basename = normalized
+        .rsplit('\\')
+        .next()
         .unwrap_or(&normalized)
         .trim()
         .to_lowercase();

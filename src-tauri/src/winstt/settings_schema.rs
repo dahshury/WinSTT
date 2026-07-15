@@ -2055,8 +2055,13 @@ mod tests {
         // zod side (`defaults-parity.test.ts`) must reproduce from
         // `appSettingsSchema.parse({})`. Any new field or changed default fails
         // here AND on the zod side, catching Rust↔zod drift in CI.
-        let generated = default_fixture_json().expect("default fixture serializes");
-        let committed = include_str!("../../../spec/fixtures/winstt-settings.default.json");
+        let generated: serde_json::Value =
+            serde_json::from_str(&default_fixture_json().expect("default fixture serializes"))
+                .expect("generated fixture should be valid JSON");
+        let committed: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../spec/fixtures/winstt-settings.default.json"
+        ))
+        .expect("committed fixture should be valid JSON");
         assert_eq!(
             generated, committed,
             "settings default fixture is out of date — regenerate with \
