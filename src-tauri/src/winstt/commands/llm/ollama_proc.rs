@@ -408,7 +408,6 @@ mod tests {
                 "main",
                 "overlay",
                 "tray-menu",
-                "device-picker",
                 "history",
                 "context-playground",
             ],

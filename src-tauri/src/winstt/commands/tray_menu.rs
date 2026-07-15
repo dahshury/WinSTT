@@ -49,13 +49,6 @@ static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
 static LAST_TRAY_MENU_RESIZE: Mutex<Option<Instant>> = Mutex::new(None);
 const RESIZE_BLUR_GRACE: Duration = Duration::from_millis(500);
 
-/// Instant `open_window("device-picker")` last started. The detached mic
-/// picker steals focus from the tray menu as it is created/shown, and its
-/// `Focused(false)` can reach the tray menu BEFORE the picker window reports
-/// `is_visible()` — so the visible-picker suppression alone races on open.
-static LAST_DEVICE_PICKER_OPEN: Mutex<Option<Instant>> = Mutex::new(None);
-const PICKER_OPEN_BLUR_GRACE: Duration = Duration::from_millis(1000);
-
 fn stamp_now(slot: &Mutex<Option<Instant>>) {
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(Instant::now());
@@ -74,29 +67,6 @@ fn within_grace(slot: &Mutex<Option<Instant>>, grace: Duration) -> bool {
 /// click-away.
 pub(crate) fn note_tray_menu_resize() {
     stamp_now(&LAST_TRAY_MENU_RESIZE);
-}
-
-/// Called by `open_window` when the detached device-picker submenu starts
-/// opening, before the picker window is created/shown (see
-/// `LAST_DEVICE_PICKER_OPEN`).
-pub(crate) fn note_device_picker_opening() {
-    stamp_now(&LAST_DEVICE_PICKER_OPEN);
-}
-
-/// Is the device picker still settling from its open? Its first show runs a
-/// show → ResizeObserver → resize → re-place → re-focus churn during which its
-/// OWN WebView2 focus blips; the picker's blur-close handler must not treat
-/// that as a click-away (it would close the picker AND collapse the tray menu).
-pub(crate) fn is_device_picker_settling() -> bool {
-    within_grace(&LAST_DEVICE_PICKER_OPEN, PICKER_OPEN_BLUR_GRACE)
-}
-
-/// Is the tray menu currently open (shown AND parked on-screen)? Used by the
-/// device-picker placement so the fly-out never anchors itself beside a
-/// dismissed (off-screen-parked) menu.
-pub(crate) fn is_tray_menu_open(app: &AppHandle) -> bool {
-    app.get_webview_window(TRAY_MENU_LABEL)
-        .is_some_and(|window| is_tray_menu_on_screen(&window))
 }
 
 const TRAY_MENU_WILL_OPEN_EVENT: &str = "winstt:tray-menu-will-open";
@@ -325,9 +295,7 @@ pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y
 ///      correctly-sized menu stays glued to the click point (the reference's
 ///      `reanchorMenuIfVisible`).
 ///   2. BLUR → HIDE: when the menu loses focus (user clicked elsewhere), dismiss it
-///      (the reference's `handleBlur`). The detached device-picker child is allowed to
-///      steal focus — the reference suppresses blur-hide for that, but here the picker is
-///      a separate always-on-top window and the menu staying open under it is
+///      (the reference's `handleBlur`).
 ///      acceptable for v1; the renderer also closes the menu on item clicks.
 pub fn install_tray_menu_lifecycle(app: &AppHandle) {
     if TRAY_MENU_LIFECYCLE_INSTALLED.swap(true, Ordering::SeqCst) {
@@ -366,24 +334,12 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
             if let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL)
                 && is_tray_menu_on_screen(&window)
             {
-                // SUPPRESS blur-hide when focus went to the device-picker SUBMENU:
-                // the mic row opens it as a detached always-on-top window that
-                // takes focus, and that must NOT collapse the menu. Two signals
-                // cover it — the picker being visible, plus a short grace after
-                // `open_window("device-picker")` starts (its focus steal can land
-                // here BEFORE the picker reports visible). Dismissal still works:
-                // choosing a device / Esc / clicking away closes the picker via
-                // close_window("device-picker") → hide_tray_menu.
-                let picker_open = app_handle
-                    .get_webview_window("device-picker")
-                    .is_some_and(|p| p.is_visible().unwrap_or(false))
-                    || within_grace(&LAST_DEVICE_PICKER_OPEN, PICKER_OPEN_BLUR_GRACE);
-                // ALSO suppress while a programmatic resize is in flight:
+                // Suppress while a programmatic resize is in flight:
                 // `set_size` on this window makes WebView2 momentarily drop focus
                 // before regaining it (see LAST_TRAY_MENU_RESIZE). A real
                 // click-away outside these windows still dismisses immediately.
                 let resizing = within_grace(&LAST_TRAY_MENU_RESIZE, RESIZE_BLUR_GRACE);
-                if !picker_open && !resizing {
+                if !resizing {
                     hide_tray_menu_internal(&app_handle);
                 }
             }

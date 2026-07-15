@@ -90,7 +90,7 @@ describe("TrayMenu", () => {
 		}
 	});
 
-	test("opens microphone selector as a detached tray picker", () => {
+	test("renders microphone selection inline", () => {
 		const { container } = render(
 			<IntlProvider>
 				<TrayMenu />
@@ -101,9 +101,7 @@ describe("TrayMenu", () => {
 			1,
 		);
 		fireEvent.click(screen.getByText("System Default"));
-		expect(openWindowCalls.some((call) => call.name === "device-picker")).toBe(
-			true,
-		);
+		expect(openWindowCalls).toHaveLength(0);
 		expect(container.textContent?.match(/System Default/g)?.length ?? 0).toBe(
 			1,
 		);

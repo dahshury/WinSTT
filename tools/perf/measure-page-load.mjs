@@ -9,7 +9,6 @@ const DEFAULT_PAGES = [
 	{ name: "overlay", path: "/windows/overlay.html" },
 	{ name: "tray-menu", path: "/windows/tray-menu.html" },
 	{ name: "model-picker", path: "/windows/model-picker.html" },
-	{ name: "device-picker", path: "/windows/device-picker.html" },
 	{ name: "onboarding", path: "/windows/onboarding.html" },
 	{ name: "history", path: "/windows/history.html" },
 	{ name: "context-playground", path: "/windows/context-playground.html" },

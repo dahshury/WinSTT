@@ -59,7 +59,6 @@ mod tests {
                 "main",
                 "overlay",
                 "tray-menu",
-                "device-picker",
                 "history",
                 "onboarding",
                 "context-playground",

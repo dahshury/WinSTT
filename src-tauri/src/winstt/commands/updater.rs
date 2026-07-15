@@ -660,7 +660,7 @@ mod tests {
     fn updater_check_is_limited_to_main_settings_and_tray_menu() {
         command_auth::assert_label_rules(
             &["main", "settings", "tray-menu"],
-            &["overlay", "model-picker", "device-picker", "history"],
+            &["overlay", "model-picker", "history"],
             |caller| is_updater_operation_allowed(caller, UpdaterOperation::CheckAndDownload),
         );
     }

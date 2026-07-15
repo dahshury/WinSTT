@@ -336,7 +336,7 @@ pub fn assess_ollama_fit(_app: AppHandle, size_bytes: u64) -> Option<FitAssessme
     None
 }
 
-/// One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the device-picker /
+/// One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the model picker /
 /// quality settings GPU chip. Enumerate adapters via DXGI; empty list = "no GPU detected".
 #[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
 pub struct GpuInfoEntry {

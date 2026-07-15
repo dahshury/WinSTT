@@ -1,34 +1,22 @@
 import { Separator } from "@base-ui/react/separator";
 import {
 	AppWindowIcon,
-	ArrowRight01Icon,
 	ArrowReloadHorizontalIcon,
 	Bug01Icon,
 	ClipboardCopyIcon,
 	FileAudioIcon,
 	Logout03Icon,
-	Mic01Icon,
 	Settings05Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import {
-	type MouseEvent,
-	type ReactNode,
-	useEffect,
-	useReducer,
-	useRef,
-} from "react";
+import { type ReactNode, useEffect, useReducer, useRef } from "react";
 import { useTranslations } from "use-intl";
-import {
-	useInputDevicePickerModel,
-	useInputDevices,
-} from "@/entities/audio-device";
+import { InputDeviceSelect } from "@/entities/audio-device";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsTabStore } from "@/entities/setting";
 import { resolveListenStreamingModelId } from "@/features/listen-mode";
 import {
 	copyLastTranscript,
-	devicePickerWindowOpen,
 	fileQueuePickAndEnqueue,
 	onConnectionChange,
 	onSettingsChanged,
@@ -152,10 +140,6 @@ async function handleTranscribeFile(): Promise<void> {
 	closeTrayMenu();
 }
 
-const handleOpenDevicePicker = (event: MouseEvent<HTMLButtonElement>) => {
-	devicePickerWindowOpen(event.currentTarget.getBoundingClientRect());
-};
-
 function useTrayMenuRender() {
 	const [state, dispatch] = useReducer(
 		trayMenuReducer,
@@ -171,7 +155,6 @@ function useTrayMenuRender() {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
-	const { devices, defaultDevice } = useInputDevices();
 	const refreshModelState = useModelStateStore((s) => s.refresh);
 
 	useEffect(() => {
@@ -290,6 +273,22 @@ function useTrayMenuRender() {
 		});
 	};
 
+	const handleInputDeviceChange = async (inputDeviceIndex: number | null) => {
+		const settings = await settingsLoad();
+		await settingsSave({
+			audio: { ...settings.audio, inputDeviceIndex },
+		});
+	};
+
+	const handleInputDevicePriorityChange = async (
+		inputDevicePriority: string[],
+	) => {
+		const settings = await settingsLoad();
+		await settingsSave({
+			audio: { ...settings.audio, inputDevicePriority },
+		});
+	};
+
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (
@@ -344,15 +343,6 @@ function useTrayMenuRender() {
 		{ value: "listen", label: t("modeListen") },
 		{ value: "wakeword", label: t("modeWakeWord") },
 	];
-
-	const { currentDeviceIcon, currentDeviceLabel } = useInputDevicePickerModel({
-		defaultDeviceName: defaultDevice?.name,
-		devices,
-		inputDeviceIndex,
-		inputDevicePriority,
-		monitorOpen: false,
-		systemDefaultLabel: tAudio("systemDefault"),
-	});
 
 	const menuLevel = 3;
 	const hoverLevel = Math.min(menuLevel + 1, 8);
@@ -421,37 +411,18 @@ function useTrayMenuRender() {
 
 					<MenuSeparator />
 
-					<div className="relative">
-						<Button
-							className={cn(
-								"w-full justify-between gap-2 rounded px-2.5 py-1.5 text-left transition-colors",
-								hoverBg,
-								"hover:text-foreground",
-								activeBg,
-							)}
-							onClick={handleOpenDevicePicker}
-						>
-							<span className="flex min-w-0 items-center gap-2">
-								<HugeiconsIcon
-									aria-hidden="true"
-									className="shrink-0 text-foreground-dim"
-									icon={currentDeviceIcon ?? Mic01Icon}
-									size={13}
-								/>
-								<span className="max-w-[9rem] truncate">
-									{currentDeviceLabel}
-								</span>
-							</span>
-							<HugeiconsIcon
-								aria-hidden="true"
-								className={cn(
-									"shrink-0 text-foreground-muted transition-transform",
-								)}
-								icon={ArrowRight01Icon}
-								size={11}
-							/>
-						</Button>
-					</div>
+					<InputDeviceSelect
+						aria-label={tAudio("inputDevice")}
+						className="w-full"
+						inputDeviceIndex={inputDeviceIndex}
+						inputDevicePriority={inputDevicePriority}
+						onChange={(value) => void handleInputDeviceChange(value)}
+						onPriorityChange={(value) =>
+							void handleInputDevicePriorityChange(value)
+						}
+						reorderHandleLabel={tAudio("devicePriorityHandle")}
+						systemDefaultLabel={tAudio("systemDefault")}
+					/>
 
 					<MenuSeparator />
 

@@ -17,7 +17,7 @@
 //     a fixed size, CENTERED (settings on the main pill, the rest on the primary
 //     display), opaque backgroundColor, shown + focused. Hide-on-close except for
 //     the debug-only context-playground, which is destroy-on-close.
-//   - PICKER windows (model-picker/device-picker): a frameless transparent popup
+//   - PICKER windows (model-picker/model-footprint): a frameless transparent popup
 //     anchored around the chip/row that opened it. The renderer sends the trigger's
 //     viewport rect in `open_window`; we convert it to screen space via the OPENER
 //     window's bounds, clamp the popup into the display work area, and:
@@ -26,8 +26,8 @@
 //         rect so the renderer positions the visible panel (it stays invisible
 //         until that event lands — this is why a naive `open_window` showed an
 //         empty transparent window).
-//       * device-picker → the window IS sized to the popup bounds (the renderer
-//         fills it with `h-screen w-screen items-end`); no anchor event needed.
+//       * model-footprint → the window IS sized to the popup bounds; no anchor
+//         event is needed.
 //
 // HARD-RULE-safe: this is a NEW file under winstt/commands/. The orchestrator
 // registers open_window/close_window/resize_window/anchor_window in lib.rs
@@ -57,9 +57,8 @@ pub(crate) mod placement;
 mod settings_modal;
 
 use placement::{
-    anchor_from_rect, center_window, close_model_picker_with_animation,
-    dispatch_device_picker_dom_event, place_picker, resolve_opener,
-    visible_picker_open_should_toggle, warm_model_picker_compositor,
+    anchor_from_rect, center_window, close_model_picker_with_animation, place_picker,
+    resolve_opener, warm_model_picker_compositor,
 };
 use settings_modal::close_main_modal_window;
 
@@ -244,26 +243,6 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         ignore_cursor: false,
         background: None,
     },
-    // Device-picker — frameless transparent popup sized to the device list,
-    // anchored above the mic row in the tray menu. Ported from
-    // device-picker-window.ts.
-    WindowSpec {
-        label: "device-picker",
-        url: "windows/device-picker.html",
-        title: "WinSTT — Devices",
-        width: 320.0,
-        height: 360.0,
-        min_width: 1.0,
-        min_height: 1.0,
-        resizable: false,
-        decorations: false,
-        transparent: true,
-        always_on_top: true,
-        skip_taskbar: true,
-        shadow: false,
-        ignore_cursor: false,
-        background: None,
-    },
     // Model-footprint — a tiny NON-FOCUSABLE hover panel, sized to its content
     // like the device picker and anchored above the footer GPU/CPU chip. It hosts
     // the model-footprint breakdown that's too tall for the 420×150 main window.
@@ -362,10 +341,9 @@ fn known_window_label(label: &str) -> Result<&'static str, String> {
         .ok_or_else(|| format!("unknown window '{label}'"))
 }
 
-/// Is this a transparent anchored popup (model-picker / device-picker /
-/// model-footprint)?
+/// Is this a transparent anchored popup (model-picker / model-footprint)?
 fn is_picker(label: &str) -> bool {
-    label == "model-picker" || label == "device-picker" || label == "model-footprint"
+    label == "model-picker" || label == "model-footprint"
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -400,7 +378,6 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
             // selector uses, so the wizard's model choice goes through the one
             // canonical swap/reload + download-gating path instead of a bespoke one.
             "model-picker" => matches!(caller, "main" | "settings" | "onboarding"),
-            "device-picker" => caller == "tray-menu",
             // The footer GPU/CPU chip (main window) opens the footprint hover panel.
             "model-footprint" => caller == "main",
             #[cfg(any(debug_assertions, feature = "context-playground"))]
@@ -413,7 +390,6 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
             "main" | "overlay" => false,
             "settings" | "whats-new" | "history" | "onboarding" => caller == target,
             "model-picker" => matches!(caller, "main" | "settings" | "model-picker"),
-            "device-picker" => matches!(caller, "tray-menu" | "device-picker"),
             // Closed from the main window (chip pointer-out) or by itself.
             "model-footprint" => matches!(caller, "main" | "model-footprint"),
             "tray-menu" => caller == "tray-menu",
@@ -423,7 +399,6 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
         },
         WindowOperation::Resize => match target {
             "model-picker" => caller == "model-picker",
-            "device-picker" => caller == "device-picker",
             // The footprint window's ResizeObserver hugs its own window to content.
             "model-footprint" => caller == "model-footprint",
             "tray-menu" => caller == "tray-menu",
@@ -433,12 +408,7 @@ fn is_window_operation_allowed(caller: &str, operation: WindowOperation, target:
             target == caller
                 && matches!(
                     target,
-                    "settings"
-                        | "history"
-                        | "onboarding"
-                        | "model-picker"
-                        | "device-picker"
-                        | "tray-menu"
+                    "settings" | "history" | "onboarding" | "model-picker" | "tray-menu"
                 )
         }
     }
@@ -681,7 +651,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             .map_or_else(|_| "<none>".into(), |u| u.to_string())
     );
 
-    if spec.label == "model-picker" || spec.label == "device-picker" {
+    if spec.label == "model-picker" {
         let picker_label = spec.label;
         let app_handle = app.clone();
         window.on_window_event(move |event| {
@@ -694,21 +664,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             if !window.is_visible().unwrap_or(false) {
                 return;
             }
-            // The device picker's own WebView2 focus blips during its first
-            // show → resize → re-place churn; closing on that transient would
-            // dismiss the picker AND collapse the tray menu the instant the
-            // mic row was clicked. Real click-aways after the settle grace
-            // still close it.
-            if picker_label == "device-picker"
-                && crate::winstt::commands::tray_menu::is_device_picker_settling()
-            {
-                return;
-            }
-            if picker_label == "model-picker" {
-                close_model_picker_with_animation(&app_handle, &window);
-            } else {
-                let _ = close_window_internal(&app_handle, picker_label);
-            }
+            close_model_picker_with_animation(&app_handle, &window);
         });
     }
 
@@ -752,17 +708,13 @@ static POST_STARTUP_PREWARM_SCHEDULED: AtomicBool = AtomicBool::new(false);
 ///
 /// `overlay` is included here so the first PTT session only has to reveal an
 /// already-loaded transparent webview, avoiding the first-use black rectangle.
-/// `tray-menu` has a custom off-screen lifecycle warmup. `device-picker` is the
-/// tray menu's mic submenu: creating it lazily inside the `open_window` command
-/// is exactly the on-main-thread WebView2 creation this list exists to avoid
-/// (observed to hang the first mic-row click). Lower-probability windows stay
-/// lazy.
+/// `tray-menu` has a custom off-screen lifecycle warmup. Lower-probability
+/// windows stay lazy.
 const POST_STARTUP_PREWARM_LABELS: &[&str] = &[
     "overlay",
     "settings",
     "model-picker",
     "model-footprint",
-    "device-picker",
     // Prewarmed hidden so its renderer is already subscribed to `settings:changed`
     // and can show the mode/preset pill instantly on the first hotkey switch.
     "tray-indicator",
@@ -950,14 +902,6 @@ pub fn open_window(
             }
         }
     }
-    // The device picker is the tray menu's submenu and takes focus as it opens;
-    // stamp the open BEFORE creating/showing it so the tray menu's blur-hide
-    // handler doesn't mistake that focus steal for a click-away (the blur can
-    // land before the picker window reports visible).
-    if label == "device-picker" {
-        crate::winstt::commands::tray_menu::note_device_picker_opening();
-    }
-
     let window = ensure_window(&app, label)
         .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
 
@@ -988,18 +932,6 @@ pub fn open_window(
                 s.width = default_width;
                 s.height = default_height;
             });
-        }
-
-        // Device picker open is a toggle. The model picker is a full-screen
-        // transparent backdrop with a renderer-owned panel, so a visible open
-        // should repair/re-anchor a stale invisible backdrop instead of closing.
-        if window.is_visible().unwrap_or(false) && visible_picker_open_should_toggle(label) {
-            if label == "device-picker" {
-                dispatch_device_picker_dom_event(&window, false);
-            }
-            let _ = window.hide();
-            with_picker_state(label, |s| s.anchor = None);
-            return Ok(());
         }
 
         // Stash the trigger anchor (converted to screen space via the opener =
@@ -1105,20 +1037,11 @@ pub(crate) fn close_window_internal(app: &AppHandle, name: &str) -> Result<(), S
             close_model_picker_with_animation(app, &window);
             return Ok(());
         }
-        if label == "device-picker" {
-            dispatch_device_picker_dom_event(&window, false);
-        }
         window.hide().map_err(|e| e.to_string())?;
     }
     // A closed picker forgets its anchor so a stray resize can't re-show it.
     if is_picker(label) {
         with_picker_state(label, |s| s.anchor = None);
-    }
-    // The device-picker is a tray-menu submenu: choosing a device (or Esc)
-    // collapses the WHOLE menu, matching the reference's device-picker
-    // `handleClose` (hideDevicePicker + hideTrayMenu).
-    if label == "device-picker" {
-        let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
     }
     Ok(())
 }
@@ -1270,7 +1193,7 @@ mod tests {
             "onboarding",
             "history",
             "model-picker",
-            "device-picker",
+            "model-footprint",
             "tray-menu",
             "overlay",
             #[cfg(any(debug_assertions, feature = "context-playground"))]
@@ -1307,7 +1230,7 @@ mod tests {
     #[test]
     fn only_pickers_are_pickers() {
         assert!(is_picker("model-picker"));
-        assert!(is_picker("device-picker"));
+        assert!(is_picker("model-footprint"));
         assert!(!is_picker("settings"));
         assert!(!is_picker("whats-new"));
         assert!(!is_picker("history"));
@@ -1369,7 +1292,7 @@ mod tests {
                 ("main", WindowOperation::Open, "model-picker"),
                 ("settings", WindowOperation::Open, "model-picker"),
                 ("onboarding", WindowOperation::Open, "model-picker"),
-                ("tray-menu", WindowOperation::Open, "device-picker"),
+                ("main", WindowOperation::Open, "model-footprint"),
                 #[cfg(any(debug_assertions, feature = "context-playground"))]
                 ("tray-menu", WindowOperation::Open, "context-playground"),
             ],
@@ -1382,7 +1305,7 @@ mod tests {
         assert_window_rules(
             &[
                 ("model-picker", WindowOperation::Open, "settings"),
-                ("settings", WindowOperation::Open, "device-picker"),
+                ("settings", WindowOperation::Open, "model-footprint"),
                 ("tray-menu", WindowOperation::Open, "overlay"),
                 ("main", WindowOperation::Resize, "tray-menu"),
                 ("model-picker", WindowOperation::Resize, "settings"),
@@ -1413,13 +1336,17 @@ mod tests {
             &[
                 ("tray-menu", WindowOperation::Resize, "tray-menu"),
                 ("model-picker", WindowOperation::Resize, "model-picker"),
-                ("device-picker", WindowOperation::Resize, "device-picker"),
+                (
+                    "model-footprint",
+                    WindowOperation::Resize,
+                    "model-footprint",
+                ),
                 ("model-picker", WindowOperation::Anchor, "model-picker"),
             ],
             true,
         );
         assert_window_rules(
-            &[("model-picker", WindowOperation::Anchor, "device-picker")],
+            &[("model-picker", WindowOperation::Anchor, "model-footprint")],
             false,
         );
     }
@@ -1431,8 +1358,8 @@ mod tests {
                 ("main", WindowOperation::Close, "model-picker"),
                 ("model-picker", WindowOperation::Close, "model-picker"),
                 ("settings", WindowOperation::Close, "model-picker"),
-                ("tray-menu", WindowOperation::Close, "device-picker"),
-                ("device-picker", WindowOperation::Close, "device-picker"),
+                ("main", WindowOperation::Close, "model-footprint"),
+                ("model-footprint", WindowOperation::Close, "model-footprint"),
                 ("tray-menu", WindowOperation::Close, "tray-menu"),
                 ("settings", WindowOperation::Close, "settings"),
                 ("whats-new", WindowOperation::Close, "whats-new"),

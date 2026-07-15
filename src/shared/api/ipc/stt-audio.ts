@@ -529,27 +529,6 @@ export const footprintWindowOpen = (rect: {
 		),
 	);
 
-/** Open the tray mic picker as a detached, content-sized popup anchored to the
- *  tray menu's mic row. */
-export const devicePickerWindowOpen = (rect: {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-}) =>
-	runWindowCommand("open_window(device-picker)", () =>
-		commands.openWindow(
-			"device-picker",
-			rect.x,
-			rect.y,
-			rect.width,
-			rect.height,
-			null,
-			null,
-			null,
-		),
-	);
-
 export const windowResizeNamed = (
 	name: string,
 	width: number,

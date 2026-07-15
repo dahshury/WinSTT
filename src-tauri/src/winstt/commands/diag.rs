@@ -542,7 +542,6 @@ mod tests {
                 "overlay",
                 "tray-menu",
                 "model-picker",
-                "device-picker",
                 "history",
                 "onboarding",
                 "context-playground",

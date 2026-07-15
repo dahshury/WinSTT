@@ -10,7 +10,6 @@ const ROUTES: ReadonlyArray<{ name: string; path: string }> = [
 	{ name: "main", path: "/" },
 	{ name: "settings", path: "/windows/settings.html" },
 	{ name: "model-picker", path: "/windows/model-picker.html" },
-	{ name: "device-picker", path: "/windows/device-picker.html" },
 	{ name: "onboarding", path: "/windows/onboarding.html" },
 	{ name: "history", path: "/windows/history.html" },
 	{ name: "overlay", path: "/windows/overlay.html" },

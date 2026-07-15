@@ -48,11 +48,8 @@ const MODEL_PICKER_HIDE_DELAY_MS: u64 = 260;
 const MODEL_PICKER_ANCHOR_REEMIT_MS: &[u64] = &[75, 250, 700];
 /// Smallest usable model-picker height before we pin it to the screen top.
 const MODEL_MIN_HEIGHT: f64 = 160.0;
-/// Smallest usable device-picker height before we pin it to the screen top.
-const DEVICE_MIN_HEIGHT: f64 = 140.0;
-/// Gap between the tray menu's edge and the device-picker fly-out beside it.
-/// Mirrors the `gap-2` (8px) of the old inline side-by-side layout.
-const DEVICE_FLYOUT_GAP: f64 = 8.0;
+/// Smallest usable footprint-panel height before we pin it to the screen top.
+const FOOTPRINT_MIN_HEIGHT: f64 = 140.0;
 
 fn monitor_for_point(app: &AppHandle, point: (f64, f64)) -> Option<tauri::Monitor> {
     let (px, py) = point;
@@ -242,12 +239,6 @@ fn compute_transform_origin(anchor: PickerAnchor, panel: &PanelBounds) -> &'stat
     }
 }
 
-pub(super) fn visible_picker_open_should_toggle(label: &str) -> bool {
-    // model-footprint is hover-driven (re-open re-anchors, pointer-out closes), so
-    // a re-open must NOT toggle it shut like the click-driven device picker.
-    label != "model-picker" && label != "model-footprint"
-}
-
 /// Compute the on-screen popup rect (logical px) from the anchor + desired size,
 /// clamped into the monitor work area. `min_height` differs per picker.
 fn compute_panel(
@@ -430,7 +421,12 @@ fn place_anchored_popup(app: &AppHandle, window: &tauri::WebviewWindow, state: P
         return;
     };
     let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));
-    let panel = compute_panel(anchor, (state.width, state.height), work, DEVICE_MIN_HEIGHT);
+    let panel = compute_panel(
+        anchor,
+        (state.width, state.height),
+        work,
+        FOOTPRINT_MIN_HEIGHT,
+    );
 
     let _ = window.set_position(LogicalPosition::new(panel.x, panel.y));
     let _ = window.set_size(LogicalSize::new(panel.width, panel.height));
@@ -442,92 +438,10 @@ fn place_anchored_popup(app: &AppHandle, window: &tauri::WebviewWindow, state: P
     let _ = window.set_always_on_top(true);
 }
 
-/// Tell the device-picker RENDERER whether its window is actually on screen.
-/// The window is prewarmed (created hidden at startup) and dismissed via
-/// `hide()`, both invisible to the page — without these events the renderer's
-/// level meters would hold the microphones open in the background forever
-/// (and fight other meter surfaces, e.g. the Settings mic selects, over the
-/// single global level monitor). Mirrors the tray menu's shown/hidden events.
-pub(super) fn dispatch_device_picker_dom_event(window: &tauri::WebviewWindow, shown: bool) {
-    let event = if shown {
-        "winstt:device-picker-shown"
-    } else {
-        "winstt:device-picker-hidden"
-    };
-    let script = format!("window.dispatchEvent(new Event({event:?}));");
-    if let Err(e) = window.eval(&script) {
-        log::debug!("device-picker DOM event dispatch failed for {event}: {e}");
-    }
-}
-
-/// X-axis for the device-picker fly-out: to the RIGHT of the tray menu with a
-/// small gap, flipping to the LEFT side when the right edge would leave the
-/// work area (menu hugging the screen's right edge, the common tray case).
-fn compute_flyout_x(menu_left: f64, menu_right: f64, width: f64, work_x: f64, work_w: f64) -> f64 {
-    let right_x = menu_right + DEVICE_FLYOUT_GAP;
-    if right_x + width <= work_x + work_w {
-        return right_x;
-    }
-    (menu_left - DEVICE_FLYOUT_GAP - width).max(work_x)
-}
-
-/// Place + show the DEVICE picker as a SUBMENU fly-out of the tray menu:
-/// top-aligned with the menu and popped out beside it (mirroring the old
-/// inline layout where the device list expanded to the menu's side), rather
-/// than stacked above the menu like a plain anchored popup. The window IS
-/// sized to the popup bounds, so no anchor event is needed.
-fn place_device_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: PickerState) {
-    let Some(anchor) = state.anchor else {
-        log::warn!("device-picker open requested without an anchor; keeping it hidden");
-        dispatch_device_picker_dom_event(window, false);
-        let _ = window.hide();
-        return;
-    };
-    // Orphan guard: a submenu of a dismissed menu makes no sense. A late
-    // re-place (the picker's ResizeObserver report racing a dismissal) would
-    // otherwise anchor the fly-out beside the menu's off-screen parking spot.
-    if !crate::winstt::commands::tray_menu::is_tray_menu_open(app) {
-        dispatch_device_picker_dom_event(window, false);
-        let _ = window.hide();
-        return;
-    }
-    let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));
-    let (work_x, work_y, work_w, work_h) = work;
-
-    // The fly-out hangs off the tray-menu WINDOW, not the mic row: the old
-    // inline layout put the list beside the whole menu, top-aligned. Fall back
-    // to the row rect if the menu window can't be resolved.
-    let (menu_left, menu_top, menu_right) = app.get_webview_window("tray-menu").map_or(
-        (anchor.screen_left, anchor.screen_top, anchor.screen_right),
-        |menu| {
-            let (mx, my) = outer_position_logical(&menu);
-            let scale = menu.scale_factor().unwrap_or(1.0);
-            let mw = menu.inner_size().map_or(0.0, |s| s.width as f64 / scale);
-            (mx, my, mx + mw)
-        },
-    );
-
-    let width = state.width.min(work_w);
-    let height = state.height.min(work_h - TASKBAR_MARGIN);
-    let x = compute_flyout_x(menu_left, menu_right, width, work_x, work_w);
-    let y = menu_top
-        .min(work_y + work_h - TASKBAR_MARGIN - height)
-        .max(work_y);
-
-    let _ = window.set_position(LogicalPosition::new(x, y));
-    let _ = window.set_size(LogicalSize::new(width, height));
-    let _ = window.show();
-    let _ = window.set_always_on_top(true);
-    let _ = window.set_focus();
-    dispatch_device_picker_dom_event(window, true);
-}
-
 pub(super) fn place_picker(app: &AppHandle, label: &'static str, window: &tauri::WebviewWindow) {
     let state = with_picker_state(label, |s| s.clone());
     if label == "model-picker" {
         place_model_picker(app, window, state);
-    } else if label == "device-picker" {
-        place_device_picker(app, window, state);
     } else {
         place_anchored_popup(app, window, state);
     }
@@ -569,48 +483,15 @@ pub(super) fn resolve_opener(
     if caller.label() != picker {
         return Some(caller.clone());
     }
-    let fallback = if picker == "model-picker" {
-        "main"
-    } else {
-        "tray-menu"
-    };
-    app.get_webview_window(fallback)
+    app.get_webview_window("main")
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::PickerAnchor;
     use super::{
-        ANCHOR_GAP, DEVICE_FLYOUT_GAP, MODEL_MIN_HEIGHT, TASKBAR_MARGIN, compute_flyout_x,
-        compute_panel, compute_x_axis, compute_y_axis, visible_picker_open_should_toggle,
+        ANCHOR_GAP, MODEL_MIN_HEIGHT, TASKBAR_MARGIN, compute_panel, compute_x_axis, compute_y_axis,
     };
-
-    #[test]
-    fn model_picker_visible_open_repairs_instead_of_toggling() {
-        assert!(!visible_picker_open_should_toggle("model-picker"));
-        assert!(visible_picker_open_should_toggle("device-picker"));
-    }
-
-    #[test]
-    fn flyout_opens_right_of_menu_when_room() {
-        // Menu mid-screen: fly-out sits DEVICE_FLYOUT_GAP right of the menu edge.
-        let x = compute_flyout_x(600.0, 792.0, 240.0, 0.0, 1920.0);
-        assert_eq!(x, 792.0 + DEVICE_FLYOUT_GAP);
-    }
-
-    #[test]
-    fn flyout_flips_left_when_menu_hugs_right_edge() {
-        // Menu at the screen's right edge (the tray case): no room right → flip left.
-        let x = compute_flyout_x(1720.0, 1912.0, 240.0, 0.0, 1920.0);
-        assert_eq!(x, 1720.0 - DEVICE_FLYOUT_GAP - 240.0);
-    }
-
-    #[test]
-    fn flyout_clamps_to_work_area_left() {
-        // Pathological: no room on either side → pin to the work-area left edge.
-        let x = compute_flyout_x(100.0, 292.0, 400.0, 0.0, 500.0);
-        assert_eq!(x, 0.0);
-    }
 
     #[test]
     fn y_axis_glues_above_trigger_when_more_room_above() {

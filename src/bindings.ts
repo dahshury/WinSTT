@@ -2745,7 +2745,7 @@ export type GlobalSettings = {
 modelUnloadTimeout?: ModelUnloadTimeout }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 /**
- * One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the device-picker /
+ * One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the model picker /
  * quality settings GPU chip. Enumerate adapters via DXGI; empty list = "no GPU detected".
  */
 export type GpuInfoEntry = { name: string; total_vram_bytes: number }

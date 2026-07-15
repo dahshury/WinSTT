@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use ndarray::{ArrayD, ArrayView1, ArrayView2};
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 use super::super::{
@@ -744,8 +744,7 @@ pub(super) fn last_step_row(logits: &ArrayD<f32>) -> SttResult<Vec<f32>> {
             if s == 0 {
                 return Err(SttError::Inference("empty logits sequence".into()));
             }
-            Ok(l
-                .index_axis(ndarray::Axis(0), 0)
+            Ok(l.index_axis(ndarray::Axis(0), 0)
                 .index_axis(ndarray::Axis(0), s - 1)
                 .to_vec())
         }

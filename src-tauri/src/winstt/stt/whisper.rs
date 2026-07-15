@@ -61,8 +61,7 @@ use ort_shapes::{
 };
 use token_select::{
     NO_REPEAT_NGRAM_SIZE, build_suppress_token_mask, fill_no_repeat_ngram_banned,
-    select_whisper_token,
-    select_whisper_token_from_allowed,
+    select_whisper_token, select_whisper_token_from_allowed,
 };
 
 use super::mel::{HOP_LENGTH, MelExtractor, N_FRAMES};

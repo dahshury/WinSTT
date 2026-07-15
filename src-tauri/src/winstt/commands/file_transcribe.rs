@@ -369,7 +369,6 @@ mod tests {
                 "settings",
                 "overlay",
                 "tray-menu",
-                "device-picker",
                 "history",
                 "context-playground",
             ],
@@ -377,13 +376,7 @@ mod tests {
         );
         command_auth::assert_label_rules(
             &["main", "tray-menu"],
-            &[
-                "settings",
-                "overlay",
-                "device-picker",
-                "history",
-                "context-playground",
-            ],
+            &["settings", "overlay", "history", "context-playground"],
             |caller| {
                 is_file_transcribe_operation_allowed(
                     caller,
@@ -397,7 +390,6 @@ mod tests {
                 "settings",
                 "overlay",
                 "tray-menu",
-                "device-picker",
                 "history",
                 "context-playground",
             ],

@@ -33,7 +33,7 @@ export interface SortableOptionRowsProps<T extends SortableOptionLike> {
 
 /**
  * Shared drag-sortable option-list body for the mic pickers (settings
- * `Select`, footer `FooterMenuChip`, detached `DevicePickerWindow`). Rows
+ * `Select` and footer `FooterMenuChip`). Rows
  * marked `sortable` become draggables; the row element itself carries the
  * sortable transform (`asChild`) so popup geometry (e.g. `data-menu-option`
  * highlight measurement) stays flat.

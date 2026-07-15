@@ -810,7 +810,7 @@ pub fn apply_dolphin_cmvn(features: &mut Array2<f32>, mean: &[f32], invstd: &[f3
 
 #[cfg(test)]
 mod tests {
-    use super::{kaldi_streaming_frame_count, nemo_streaming_frame_count, KALDI_HOP, NEMO_HOP};
+    use super::{KALDI_HOP, NEMO_HOP, kaldi_streaming_frame_count, nemo_streaming_frame_count};
 
     #[test]
     fn streaming_frame_counts_match_feature_lengths() {

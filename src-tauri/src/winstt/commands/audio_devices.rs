@@ -6,7 +6,7 @@
 // `entities/audio-device` (`useInputDevices`) calls via `IPC.AUDIO_GET_DEVICES`
 // (adapter → `get_audio_devices`). It is consumed by WU-3 (footer mic picker),
 // WU-9 (`useVadCalibration` device-name correlation, `useDeviceSwitchFeedback`
-// stale-index reset, the detached `DevicePickerWindow`), and WU-11 (audio
+// stale-index reset, the tray-menu inline device picker), and WU-11 (audio
 // settings). The renderer validates the spec `AudioDevice` shape:
 //
 //     { index: integer, name: string, isDefault: boolean,

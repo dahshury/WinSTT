@@ -131,7 +131,6 @@ mod tests {
                 "overlay",
                 "tray-menu",
                 "model-picker",
-                "device-picker",
                 "history",
                 "context-playground",
             ],

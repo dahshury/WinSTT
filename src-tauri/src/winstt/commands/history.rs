@@ -1548,13 +1548,7 @@ mod tests {
     fn history_authorization_matches_renderer_surfaces() {
         command_auth::assert_label_rules(
             &["settings", "history", "tray-menu"],
-            &[
-                "main",
-                "overlay",
-                "model-picker",
-                "device-picker",
-                "context-playground",
-            ],
+            &["main", "overlay", "model-picker", "context-playground"],
             |caller| is_history_operation_allowed(caller, HistoryOperation::Read),
         );
         command_auth::assert_label_rules(
@@ -1564,20 +1558,13 @@ mod tests {
                 "overlay",
                 "tray-menu",
                 "model-picker",
-                "device-picker",
                 "context-playground",
             ],
             |caller| is_history_operation_allowed(caller, HistoryOperation::Write),
         );
         command_auth::assert_label_rules(
             &["main", "settings", "history"],
-            &[
-                "overlay",
-                "tray-menu",
-                "model-picker",
-                "device-picker",
-                "context-playground",
-            ],
+            &["overlay", "tray-menu", "model-picker", "context-playground"],
             |caller| is_history_operation_allowed(caller, HistoryOperation::Add),
         );
     }
