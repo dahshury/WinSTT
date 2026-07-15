@@ -114,9 +114,14 @@ impl EngineKind {
     ///     MatMul/Softmax, zero `MultiHeadAttention` nodes) run correctly and ~2.7× FASTER than CPU
     ///     on DirectML, so `backend::resolve_catalog` probes the resolved graph
     ///     (`cohere_export_dml_safe`) and RESTORES the GPU EP when it's MHA-free.
-    ///   * `GraniteSpeechNar` was pinned after its rank-5 block-attention MatMul/Einsum failed on
-    ///     DirectML. The engine now derives a rank-4-equivalent encoder graph beside the download,
-    ///     preserving CPU parity while allowing DirectML, so it is no longer pinned.
+    ///   * `GraniteSpeechNar`: RE-PINNED 2026-07-16. The rank-4 encoder patch fixed the original
+    ///     rank-5 MatMul/Einsum build failure, but the patched graph is still WRONG on DML
+    ///     (measured via `stt_dml_spike`, fp16w, RTX 3080 Ti): (a) the encoder intermittently
+    ///     faults at runtime (`ScatterND: invalid indice found` on a repeat pass over the SAME
+    ///     clip); (b) even a "successful" pass drops/reorders words vs the CPU transcript on the
+    ///     smcleod reference fixture; (c) the fp16w session grows the DML pool to VRAM saturation
+    ///     (7.2 → 11.4 GiB observed on a 12 GiB card). CPU decodes the fixture exactly at ~2×
+    ///     realtime, so the pin costs little and the GPU had correctness to lose, not win.
     ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: the DML session
     ///     BUILD terminates the whole process silently (exit 0, no panic, no error — reproduced
     ///     2026-07-08 via `examples/stt_dml_spike.rs`); in-app that would kill WinSTT outright.
@@ -135,6 +140,7 @@ impl EngineKind {
         matches!(
             self,
             EngineKind::CohereAsr
+                | EngineKind::GraniteSpeechNar
                 | EngineKind::KaldiTransducer
                 | EngineKind::SenseVoiceCtc
                 | EngineKind::DolphinCtc

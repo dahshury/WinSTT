@@ -16,11 +16,21 @@ use crate::winstt::stt::Accelerator;
 /// embeddings, audio frame length).
 type GraniteNarEncoded = (ArrayD<f32>, ArrayD<f32>, ndarray::Array3<f32>, usize);
 
+/// CTC blank of the encoder's `bpe_logits_dense` head. The head's vocab is the BPE vocab with a
+/// blank PREPENDED at index 0 (V = 100353 = 100352 + 1), so blank is 0 and every surviving argmax
+/// id maps to tokenizer id `head_id - 1`. Verified against the smcleod test fixtures: decoding
+/// with blank=0 + the −1 shift reproduces the reference transcript exactly; treating
+/// `<|end_of_text|>` as the CTC blank (the pre-2026-07-16 bug) yields code-token garbage because
+/// blank frames (argmax 0 = "!") survive as real tokens and every id is off by one.
+const BPE_CTC_BLANK_ID: i64 = 0;
+
 pub(in crate::winstt::stt::families) struct GraniteNarEngine {
     encoder: Session,
     embed_tokens: Session,
     editor: Session,
     tokenizer: tokenizers::Tokenizer,
+    /// `<|end_of_text|>` in TOKENIZER space: the insertion-slot filler and the blank the final
+    /// editor-logits collapse drops. NOT the CTC-draft blank (see [`BPE_CTC_BLANK_ID`]).
     blank_token_id: i64,
     embedding_multiplier: f32,
     model_name: String,
@@ -124,7 +134,11 @@ impl GraniteNarEngine {
                 .to_vec();
             ids.push(argmax_1d(&row).0 as i64);
         }
-        Ok(ctc_greedy_collapse(&ids, self.blank_token_id))
+        // Collapse in HEAD space (blank = 0), then shift the survivors into tokenizer space.
+        Ok(ctc_greedy_collapse(&ids, BPE_CTC_BLANK_ID)
+            .into_iter()
+            .map(|id| id - 1)
+            .collect())
     }
 
     fn add_insertion_slots(&self, ids: &[i64]) -> Vec<i64> {
