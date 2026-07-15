@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { TitleBar } from "./TitleBar";
 
@@ -97,9 +97,10 @@ describe("TitleBar", () => {
 		renderWithIntl();
 		fireEvent.click(screen.getByRole("button", { name: /minimize/i }));
 		fireEvent.click(screen.getByRole("button", { name: /close/i }));
-		await Promise.resolve();
-		expect(windowCalls).toContain("minimize");
-		expect(windowCalls).toContain("hide");
+		await waitFor(() => {
+			expect(windowCalls).toContain("minimize");
+			expect(windowCalls).toContain("hide");
+		});
 	});
 
 	test("touch tapping minimize and close invokes each native operation once", async () => {
@@ -110,12 +111,13 @@ describe("TitleBar", () => {
 		fireEvent.click(minimize);
 		touchTap(close, 2);
 		fireEvent.click(close);
-		await Promise.resolve();
-		expect(
-			windowCalls.filter((operation) => operation === "minimize"),
-		).toHaveLength(1);
-		expect(
-			windowCalls.filter((operation) => operation === "hide"),
-		).toHaveLength(1);
+		await waitFor(() => {
+			expect(
+				windowCalls.filter((operation) => operation === "minimize"),
+			).toHaveLength(1);
+			expect(
+				windowCalls.filter((operation) => operation === "hide"),
+			).toHaveLength(1);
+		});
 	});
 });

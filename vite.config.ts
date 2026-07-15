@@ -26,7 +26,6 @@ const CORE_PRELOAD_PREFIXES = [
 	"audio-visualizer-",
 	"update-settings-",
 	"connect-server-",
-	"transcription-",
 	"listen-mode-",
 ] as const;
 
