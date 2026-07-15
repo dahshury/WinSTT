@@ -131,6 +131,9 @@ pub fn register_skip_post_processing_shortcut(app: &AppHandle) {
 }
 
 pub fn unregister_skip_post_processing_shortcut(app: &AppHandle) {
+    #[cfg(target_os = "linux")]
+    let _ = app;
+
     if !SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.swap(false, Ordering::SeqCst) {
         return;
     }
