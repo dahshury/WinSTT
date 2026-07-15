@@ -155,9 +155,10 @@ impl MelExtractor {
                 (
                     vec![Complex::<f32>::new(0.0, 0.0); N_FFT],
                     vec![Complex::<f32>::new(0.0, 0.0); self.fft.get_inplace_scratch_len()],
+                    [0.0f32; N_FREQS],
                 )
             },
-            |(buffer, scratch), (t, row)| {
+            |(buffer, scratch, power), (t, row)| {
                 let start = t * HOP_LENGTH;
                 // Windowed frame into the complex buffer (re = windowed sample, im = 0 for real PCM).
                 // WIN_LENGTH == N_FFT (400 == 400) so the whole frame is windowed directly.
@@ -168,7 +169,6 @@ impl MelExtractor {
                 // Real-input FFT → |X[k]|² for the first N_FREQS bins (drops Nyquist, matching
                 // rfft[:, :-1]). O(n_fft·log n_fft), numerically identical to the previous naive DFT.
                 self.fft.process_with_scratch(buffer, scratch);
-                let mut power = [0.0f32; N_FREQS];
                 for (f, p) in power.iter_mut().enumerate() {
                     let c = buffer[f];
                     *p = c.re * c.re + c.im * c.im;

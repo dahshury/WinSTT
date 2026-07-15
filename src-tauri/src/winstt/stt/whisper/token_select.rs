@@ -33,13 +33,24 @@ pub(super) struct SelectedToken {
 /// special-token interaction). Returns every token that, appended next, would make the trailing
 /// `ngram_size`-gram equal to one produced earlier — i.e. the continuations that would close a
 /// repetition loop. Empty until `generated` holds at least one full prior n-gram.
-pub(super) fn no_repeat_ngram_banned(generated: &[i64], ngram_size: usize) -> Vec<i64> {
+#[cfg(test)]
+fn no_repeat_ngram_banned(generated: &[i64], ngram_size: usize) -> Vec<i64> {
+    let mut banned = Vec::new();
+    fill_no_repeat_ngram_banned(generated, ngram_size, &mut banned);
+    banned
+}
+
+pub(super) fn fill_no_repeat_ngram_banned(
+    generated: &[i64],
+    ngram_size: usize,
+    banned: &mut Vec<i64>,
+) {
+    banned.clear();
     if ngram_size == 0 || generated.len() + 1 < ngram_size {
-        return Vec::new();
+        return;
     }
     let prefix_len = ngram_size - 1;
     let suffix = &generated[generated.len() - prefix_len..];
-    let mut banned: Vec<i64> = Vec::new();
     // Every complete n-gram window whose leading `prefix_len` tokens match the current suffix has a
     // last token that would recreate that n-gram if emitted next → ban it. The "three identical in a
     // row" case (window == suffix+repeat) is covered too: it bans the repeated token, capping runs.
@@ -51,7 +62,6 @@ pub(super) fn no_repeat_ngram_banned(generated: &[i64], ngram_size: usize) -> Ve
             }
         }
     }
-    banned
 }
 
 pub(super) fn build_suppress_token_mask(vocab_size: usize) -> Vec<bool> {

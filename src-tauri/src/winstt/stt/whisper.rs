@@ -60,7 +60,8 @@ use ort_shapes::{
     device_for_providers, first_dim, kv_head_dim, read_config_usize, read_whisper_head_dims,
 };
 use token_select::{
-    NO_REPEAT_NGRAM_SIZE, build_suppress_token_mask, no_repeat_ngram_banned, select_whisper_token,
+    NO_REPEAT_NGRAM_SIZE, build_suppress_token_mask, fill_no_repeat_ngram_banned,
+    select_whisper_token,
     select_whisper_token_from_allowed,
 };
 
@@ -175,6 +176,8 @@ struct DecodeState {
     /// Which `past` entries were replaced since their last bind (must be rebound this step).
     /// Encoder (cross-attn) KV settles after step 0 and is never rebound again.
     past_dirty: Vec<bool>,
+    /// Reused no-repeat-ngram ban list for the generated region.
+    banned_tokens: Vec<i64>,
     /// Whether to collect cross-attention this run (`*_timestamped` export + caller requested).
     want_attn: bool,
     /// Per-layer running cross-attention buffers: each entry is (heads, dec_step_len, frames) FLAT
@@ -701,6 +704,7 @@ impl WhisperEngine {
             present_names,
             past,
             past_dirty,
+            banned_tokens: Vec::new(),
             want_attn,
             per_layer_steps,
             // Resolved at the FIRST step from the actual output shapes (steps are uniform per layer).
@@ -873,9 +877,10 @@ impl WhisperEngine {
                 // continuations that would close a verbatim repetition loop, which is what the
                 // greedy decoder falls into on lite-whisper's low-rank encoders. No-op on any
                 // decode that isn't actually repeating an n-gram, and EOS is never in the set.
-                let banned = no_repeat_ngram_banned(
+                fill_no_repeat_ngram_banned(
                     &state.tokens[state.prompt_len.min(state.tokens.len())..],
                     NO_REPEAT_NGRAM_SIZE,
+                    &mut state.banned_tokens,
                 );
                 select_whisper_token(
                     logits,
@@ -883,7 +888,7 @@ impl WhisperEngine {
                     self.tokenizer.eos_token_id,
                     self.tokenizer.nospeech_token_id,
                     false,
-                    &banned,
+                    &state.banned_tokens,
                 )
             };
             if state.step0.is_none() {
