@@ -6,9 +6,11 @@
 
 use ndarray::{ArrayD, Axis};
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 use super::*;
+use crate::winstt::stt::Accelerator;
 
 /// `encode_audio` output: (encoder hidden states, attention mask, audio
 /// embeddings, audio frame length).
@@ -29,9 +31,22 @@ impl GraniteNarEngine {
     pub(in crate::winstt::stt::families) fn load(
         cfg: &EngineConfig,
     ) -> SttResult<GraniteNarEngine> {
-        let encoder = build_session(file(&cfg.resolved, "encoder")?, &cfg.providers)?;
-        let embed_tokens = build_session(file(&cfg.resolved, "embed_tokens")?, &cfg.providers)?;
-        let editor = build_session(file(&cfg.resolved, "editor")?, &cfg.providers)?;
+        let optimization_level = granite_nar_optimization_level(&cfg.providers);
+        let encoder = build_session_with_optimization(
+            file(&cfg.resolved, "encoder")?,
+            &cfg.providers,
+            optimization_level,
+        )?;
+        let embed_tokens = build_session_with_optimization(
+            file(&cfg.resolved, "embed_tokens")?,
+            &cfg.providers,
+            optimization_level,
+        )?;
+        let editor = build_session_with_optimization(
+            file(&cfg.resolved, "editor")?,
+            &cfg.providers,
+            optimization_level,
+        )?;
         let tokenizer = load_granite_tokenizer(file(&cfg.resolved, "tokenizer")?)?;
         let blank_token_id = tokenizer
             .token_to_id("<|end_of_text|>")
@@ -172,6 +187,17 @@ impl GraniteNarEngine {
 
     fn decode_text(&self, ids: &[i64]) -> SttResult<String> {
         granite_decode_tokens(&self.tokenizer, ids)
+    }
+}
+
+fn granite_nar_optimization_level(providers: &[Accelerator]) -> GraphOptimizationLevel {
+    if providers.first() == Some(&Accelerator::DirectMl) {
+        // ORT Level2's MatMulScaleFusion rewrites attention MatMul→Mul(scale) into
+        // com.microsoft::FusedMatMul. DirectML rejects that fused GEMM at runtime
+        // (E_INVALIDARG), while the original standard MatMul and Mul nodes run on DML.
+        GraphOptimizationLevel::Level1
+    } else {
+        GraphOptimizationLevel::Level3
     }
 }
 

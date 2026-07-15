@@ -39,6 +39,14 @@ pub(super) type F16 = half::f16;
 ///   * intra-op threads via `pick_intra_op_threads` (CPU→min(cpu,8), GPU→2).
 ///   * EPs registered per `providers` (already DML→CPU-overridden upstream for these families).
 pub(super) fn build_session(path: &Path, providers: &[Accelerator]) -> SttResult<Session> {
+    build_session_with_optimization(path, providers, GraphOptimizationLevel::Level3)
+}
+
+pub(super) fn build_session_with_optimization(
+    path: &Path,
+    providers: &[Accelerator],
+    optimization_level: GraphOptimizationLevel,
+) -> SttResult<Session> {
     let is_gpu = providers
         .first()
         .is_some_and(|p| !matches!(p, Accelerator::Cpu));
@@ -53,13 +61,8 @@ pub(super) fn build_session(path: &Path, providers: &[Accelerator]) -> SttResult
     // DYNAMIC-length audio inputs (shapes vary every call → the memory pattern can't be reused and
     // just adds planning overhead). CPU/CUDA keep the default (mem-pattern on) — validated
     // separately. EPs are the FINAL, already-policy-routed list from `EngineConfig.providers`.
-    let mut builder = configure_session(
-        GraphOptimizationLevel::Level3,
-        Some(threads),
-        is_gpu,
-        Some(providers),
-    )
-    .map_err(SttError::SessionCreate)?;
+    let mut builder = configure_session(optimization_level, Some(threads), is_gpu, Some(providers))
+        .map_err(SttError::SessionCreate)?;
 
     builder
         .commit_from_file(path)

@@ -827,10 +827,12 @@ mod tests {
 
     #[test]
     fn switch_commit_rebases_owned_fields_without_clobbering_concurrent_model_edits() {
-        let mut current = crate::winstt::settings_schema::ModelSettings::default();
-        current.language = "fr".into();
-        current.initial_prompt = "concurrent prompt".into();
-        current.realtime_model = "current-realtime".into();
+        let current = crate::winstt::settings_schema::ModelSettings {
+            language: "fr".into(),
+            initial_prompt: "concurrent prompt".into(),
+            realtime_model: "current-realtime".into(),
+            ..Default::default()
+        };
         let mut loaded = current.clone();
         loaded.model = "nemo-canary-180m-flash".into();
         loaded.onnx_quantization = "int8".into();
@@ -851,10 +853,12 @@ mod tests {
 
     #[test]
     fn realtime_switch_rebases_only_shared_load_inputs_and_realtime_selection() {
-        let mut current = crate::winstt::settings_schema::ModelSettings::default();
-        current.model = "main-current".into();
-        current.realtime_model = "realtime-old".into();
-        current.language = "fr".into();
+        let current = crate::winstt::settings_schema::ModelSettings {
+            model: "main-current".into(),
+            realtime_model: "realtime-old".into(),
+            language: "fr".into(),
+            ..Default::default()
+        };
         let mut loaded = current.clone();
         loaded.model = "stale-main".into();
         loaded.realtime_model = "realtime-new".into();

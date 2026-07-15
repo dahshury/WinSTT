@@ -115,7 +115,6 @@ pub fn register_skip_post_processing_shortcut(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
         let _ = app;
-        return;
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -132,14 +131,18 @@ pub fn register_skip_post_processing_shortcut(app: &AppHandle) {
 
 pub fn unregister_skip_post_processing_shortcut(app: &AppHandle) {
     #[cfg(target_os = "linux")]
-    let _ = app;
-
-    if !SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.swap(false, Ordering::SeqCst) {
-        return;
+    {
+        let _ = app;
     }
+
     #[cfg(not(target_os = "linux"))]
-    if let Err(err) = tauri_impl::unregister_shortcut(app, skip_post_processing_binding()) {
-        log::debug!("Alt+S post-processing skip shortcut was already unregistered: {err}");
+    {
+        if !SKIP_POST_PROCESSING_SHORTCUT_REGISTERED.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        if let Err(err) = tauri_impl::unregister_shortcut(app, skip_post_processing_binding()) {
+            log::debug!("Alt+S post-processing skip shortcut was already unregistered: {err}");
+        }
     }
 }
 

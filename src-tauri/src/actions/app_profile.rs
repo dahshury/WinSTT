@@ -22,6 +22,7 @@ pub(super) struct ResolvedAppProfile {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 enum SlotState {
     Idle,
     Pending,
@@ -91,7 +92,7 @@ fn commit_resolution(generation: u64, profile: Option<ResolvedAppProfile>) -> bo
         if slot.generation != generation {
             return false;
         }
-        slot.state = SlotState::Ready(profile.clone());
+        slot.state = SlotState::Ready(profile);
     }
     ACTIVE.1.notify_all();
     true

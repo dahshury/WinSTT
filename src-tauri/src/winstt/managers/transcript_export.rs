@@ -42,10 +42,6 @@ pub struct ExportWord {
 }
 
 impl TranscriptDocument {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "constructor mirrors the stable export document metadata"
-    )]
     pub fn from_transcription(
         transcription: &Transcription,
         created_at: String,

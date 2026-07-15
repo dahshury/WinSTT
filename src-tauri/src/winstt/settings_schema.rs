@@ -1877,10 +1877,12 @@ mod tests {
 
     #[test]
     fn app_profile_rule_round_trips_camel_case_field_names() {
-        let mut rule = AppProfileRule::default();
-        rule.id = "mail".into();
-        rule.title_pattern = "Inbox".into();
-        rule.configuration_id = "builtin:formal".into();
+        let rule = AppProfileRule {
+            id: "mail".into(),
+            title_pattern: "Inbox".into(),
+            configuration_id: "builtin:formal".into(),
+            ..Default::default()
+        };
         let value = serde_json::to_value(rule).expect("app profile should serialize");
         assert_eq!(value["titlePattern"], "Inbox");
         assert_eq!(value["configurationId"], "builtin:formal");

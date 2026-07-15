@@ -66,7 +66,7 @@ async fn read_status() -> PermissionPreflightStatus {
     {
         let accessibility = tauri_plugin_macos_permissions::check_accessibility_permission().await;
         let microphone = tauri_plugin_macos_permissions::check_microphone_permission().await;
-        return PermissionPreflightStatus::new(
+        PermissionPreflightStatus::new(
             PermissionPlatform::Macos,
             if microphone {
                 PermissionGrantState::Granted
@@ -78,7 +78,7 @@ async fn read_status() -> PermissionPreflightStatus {
             } else {
                 PermissionGrantState::Required
             },
-        );
+        )
     }
 
     #[cfg(target_os = "windows")]
@@ -95,11 +95,11 @@ async fn read_status() -> PermissionPreflightStatus {
         } else {
             PermissionGrantState::Granted
         };
-        return PermissionPreflightStatus::new(
+        PermissionPreflightStatus::new(
             PermissionPlatform::Windows,
             microphone,
             PermissionGrantState::NotRequired,
-        );
+        )
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

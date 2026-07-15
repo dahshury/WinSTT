@@ -692,6 +692,10 @@ pub async fn history_list(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "search inputs mirror the shared history query contract"
+)]
 fn search_transcription_rows(
     conn: &Connection,
     query: &str,
@@ -725,11 +729,12 @@ fn search_transcription_rows(
                 .into_iter()
                 .map(|row| (row, 1)),
             );
-            if (rows.len() as i64) < fetch {
-                if let Some(relaxed) = relaxed {
-                    let seen: std::collections::HashSet<i64> =
-                        rows.iter().map(|(row, _)| row.id).collect();
-                    let mut stmt = conn.prepare(
+            if (rows.len() as i64) < fetch
+                && let Some(relaxed) = relaxed
+            {
+                let seen: std::collections::HashSet<i64> =
+                    rows.iter().map(|(row, _)| row.id).collect();
+                let mut stmt = conn.prepare(
                         "SELECT h.id, h.file_name, h.timestamp, h.saved, h.title, h.transcription_text,
                          h.post_processed_text, h.post_process_prompt, h.post_process_requested, h.llm_meta,
                          h.dictionary_fixes, h.history_tag, h.privacy_markers_json, h.stt_model,
@@ -738,19 +743,18 @@ fn search_transcription_rows(
                          WHERE transcription_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
                          AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(transcription_fts), h.id DESC LIMIT ?4",
                     )?;
-                    let candidates = stmt
-                        .query_map(
-                            rusqlite::params![relaxed, from, to, fetch],
-                            HistoryManager::map_history_entry,
-                        )?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows.extend(
-                        candidates
-                            .into_iter()
-                            .filter(|row| !seen.contains(&row.id))
-                            .map(|row| (row, 2)),
-                    );
-                }
+                let candidates = stmt
+                    .query_map(
+                        rusqlite::params![relaxed, from, to, fetch],
+                        HistoryManager::map_history_entry,
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows.extend(
+                    candidates
+                        .into_iter()
+                        .filter(|row| !seen.contains(&row.id))
+                        .map(|row| (row, 2)),
+                );
             }
         }
     } else {
@@ -779,6 +783,10 @@ fn search_transcription_rows(
     Ok((page.into_iter().take(limit as usize).collect(), has_more))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "search inputs mirror the shared history query contract"
+)]
 fn search_transform_rows(
     conn: &Connection,
     query: &str,
@@ -809,24 +817,24 @@ fn search_transform_rows(
                 .into_iter()
                 .map(|row| (row, 1)),
             );
-            if (rows.len() as i64) < fetch {
-                if let Some(relaxed) = relaxed {
-                    let seen: std::collections::HashSet<i64> =
-                        rows.iter().map(|(row, _)| row.id).collect();
-                    let mut stmt = conn.prepare(select)?;
-                    let candidates = stmt
-                        .query_map(
-                            rusqlite::params![relaxed, from, to, fetch],
-                            HistoryManager::map_transform_history_entry,
-                        )?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows.extend(
-                        candidates
-                            .into_iter()
-                            .filter(|row| !seen.contains(&row.id))
-                            .map(|row| (row, 2)),
-                    );
-                }
+            if (rows.len() as i64) < fetch
+                && let Some(relaxed) = relaxed
+            {
+                let seen: std::collections::HashSet<i64> =
+                    rows.iter().map(|(row, _)| row.id).collect();
+                let mut stmt = conn.prepare(select)?;
+                let candidates = stmt
+                    .query_map(
+                        rusqlite::params![relaxed, from, to, fetch],
+                        HistoryManager::map_transform_history_entry,
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows.extend(
+                    candidates
+                        .into_iter()
+                        .filter(|row| !seen.contains(&row.id))
+                        .map(|row| (row, 2)),
+                );
             }
         }
     } else {
@@ -847,6 +855,10 @@ fn search_transform_rows(
     Ok((page.into_iter().take(limit as usize).collect(), has_more))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "search inputs mirror the shared history query contract"
+)]
 fn search_tts_rows(
     conn: &Connection,
     query: &str,
@@ -877,24 +889,24 @@ fn search_tts_rows(
                 .into_iter()
                 .map(|row| (row, 1)),
             );
-            if (rows.len() as i64) < fetch {
-                if let Some(relaxed) = relaxed {
-                    let seen: std::collections::HashSet<i64> =
-                        rows.iter().map(|(row, _)| row.id).collect();
-                    let mut stmt = conn.prepare(select)?;
-                    let candidates = stmt
-                        .query_map(
-                            rusqlite::params![relaxed, from, to, fetch],
-                            HistoryManager::map_tts_history_entry,
-                        )?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    rows.extend(
-                        candidates
-                            .into_iter()
-                            .filter(|row| !seen.contains(&row.id))
-                            .map(|row| (row, 2)),
-                    );
-                }
+            if (rows.len() as i64) < fetch
+                && let Some(relaxed) = relaxed
+            {
+                let seen: std::collections::HashSet<i64> =
+                    rows.iter().map(|(row, _)| row.id).collect();
+                let mut stmt = conn.prepare(select)?;
+                let candidates = stmt
+                    .query_map(
+                        rusqlite::params![relaxed, from, to, fetch],
+                        HistoryManager::map_tts_history_entry,
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows.extend(
+                    candidates
+                        .into_iter()
+                        .filter(|row| !seen.contains(&row.id))
+                        .map(|row| (row, 2)),
+                );
             }
         }
     } else {
@@ -917,6 +929,10 @@ fn search_tts_rows(
 
 #[tauri::command]
 #[specta::specta]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri command arguments are part of the generated IPC contract"
+)]
 pub async fn history_search(
     app: AppHandle,
     webview: WebviewWindow,
