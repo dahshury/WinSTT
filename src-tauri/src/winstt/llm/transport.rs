@@ -25,9 +25,9 @@ pub fn llm_request_timeout(timeout_ms: i64) -> Duration {
 
 // ─────────────────────── OpenRouter extra-body ────────────────────────
 //
-// OpenRouter rides the OpenAI-compatible client (send_chat_completion_with_schema).
-// These are the two WinSTT-specific request extras (response-healing plugin +
-// provider pinning) that go in the request body. Mirrors
+// OpenRouter rides the genai OpenAI-compatible streaming client. These are the
+// two WinSTT-specific request extras (response-healing plugin + provider pinning)
+// that go in the request body. Mirrors
 // OPENROUTER_DICTATION_PROVIDER_OPTIONS + buildModelOptions in llm.ts.
 
 /// Sentinel error returned by `LlmManager::openrouter_chat` when the request was

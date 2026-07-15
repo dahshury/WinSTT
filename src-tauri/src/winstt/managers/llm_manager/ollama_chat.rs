@@ -45,6 +45,33 @@ fn ensure_ollama_stream_has_content(state: &llm::OllamaStreamState) -> Result<()
     ))
 }
 
+fn ollama_cancelled_error() -> String {
+    "Ollama chat cancelled".to_string()
+}
+
+fn log_ollama_chat_result<T>(
+    feature: &str,
+    request_id: &str,
+    model: &str,
+    started: std::time::Instant,
+    result: &Result<T, String>,
+) {
+    let duration_ms = started.elapsed().as_millis();
+    match result {
+        Ok(_) => {
+            log::info!(
+                "[llm][{request_id}] ollama_chat_complete feature={feature} model='{model}' duration_ms={duration_ms}"
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "[llm][{request_id}] ollama_chat_failed feature={feature} model='{model}' duration_ms={duration_ms} error={}",
+                llm::compact_error_for_log(err)
+            );
+        }
+    }
+}
+
 impl LlmManager {
     // ── Ollama capability probe (`/api/show`) ──────────────────────────────
 
@@ -79,6 +106,10 @@ impl LlmManager {
         request_id: &str,
     ) -> Result<LlmChatOutput, String> {
         self.track_cancel(request_id);
+        if self.is_cancelled(request_id) {
+            self.clear_cancel(request_id);
+            return Err(ollama_cancelled_error());
+        }
         // The model crashed loading within the backoff window (doesn't fit in
         // VRAM) — don't re-trigger a guaranteed ~16-28s crash; fail soft to the
         // original text INSTANTLY. Retries on its own after the window expires.
@@ -95,6 +126,10 @@ impl LlmManager {
             .ollama_capabilities(endpoint, model)
             .await
             .unwrap_or_default();
+        if self.is_cancelled(request_id) {
+            self.clear_cancel(request_id);
+            return Err(ollama_cancelled_error());
+        }
         let enable_dictionary_suggestions = dictionary_auto_add_enabled;
         let mut body = build_ollama_chat_body_with_keep_alive(
             model,
@@ -106,6 +141,11 @@ impl LlmManager {
             self.ollama_keep_alive(),
         );
         llm::add_ollama_side_effect_schema_instruction(&mut body, enable_dictionary_suggestions);
+        if self.is_cancelled(request_id) {
+            self.clear_cancel(request_id);
+            return Err(ollama_cancelled_error());
+        }
+        let started = std::time::Instant::now();
         let result = self
             .stream_ollama_chat(
                 endpoint,
@@ -115,6 +155,7 @@ impl LlmManager {
                 enable_dictionary_suggestions,
             )
             .await;
+        log_ollama_chat_result("dictation", request_id, model, started, &result);
         match &result {
             Ok(_) => {
                 self.mark_ollama_model_warm(endpoint, model);
@@ -147,6 +188,10 @@ impl LlmManager {
         request_id: &str,
     ) -> Result<String, String> {
         self.track_cancel(request_id);
+        if self.is_cancelled(request_id) {
+            self.clear_cancel(request_id);
+            return Err(ollama_cancelled_error());
+        }
         if self.ollama_model_recently_crashed(endpoint, model) {
             self.clear_cancel(request_id);
             log::warn!(
@@ -160,6 +205,10 @@ impl LlmManager {
             .ollama_capabilities(endpoint, model)
             .await
             .unwrap_or_default();
+        if self.is_cancelled(request_id) {
+            self.clear_cancel(request_id);
+            return Err(ollama_cancelled_error());
+        }
         let body = build_ollama_chat_body_with_keep_alive(
             model,
             system_prompt,
@@ -169,10 +218,16 @@ impl LlmManager {
             effort,
             self.ollama_keep_alive(),
         );
+        if self.is_cancelled(request_id) {
+            self.clear_cancel(request_id);
+            return Err(ollama_cancelled_error());
+        }
+        let started = std::time::Instant::now();
         let result = self
             .stream_ollama_chat(endpoint, body, text, request_id, false)
             .await
             .map(|out| out.text);
+        log_ollama_chat_result("transform", request_id, model, started, &result);
         match &result {
             Ok(_) => self.mark_ollama_model_warm(endpoint, model),
             Err(e) if ollama_err_is_load_crash(e) => {
