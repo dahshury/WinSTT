@@ -1,10 +1,6 @@
 /// A Windows foreground handle paired with its owning process so recycled HWNDs
 /// can be rejected before focus or context operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(target_os = "windows"),
-    expect(dead_code, reason = "foreground capture is Windows-only")
-)]
 pub(crate) struct ForegroundWindow {
     pub(crate) hwnd_raw: isize,
     pub(crate) process_id: u32,
