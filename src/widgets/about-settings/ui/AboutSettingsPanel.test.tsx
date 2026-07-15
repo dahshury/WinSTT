@@ -41,6 +41,23 @@ describe("AboutSettingsPanel", () => {
 			}
 			return undefined;
 		};
+		window.nativeBridge = {
+			...previousNativeBridge,
+			invoke: async (channel) => {
+				tauriCalls.push(channel);
+				if (channel === IPC.UPDATER_CHECK_NOW) {
+					return { triggered: false };
+				}
+				return undefined;
+			},
+			secureInvoke: async (channel) => {
+				tauriCalls.push(channel);
+				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
+					return [];
+				}
+				return undefined;
+			},
+		};
 
 		try {
 			render(
@@ -64,12 +81,16 @@ describe("AboutSettingsPanel", () => {
 			await waitFor(() => {
 				expect(
 					tauriCalls.filter(
-						(command) => command === "winstt_updater_get_status_history",
+						(command) =>
+							command === "winstt_updater_get_status_history" ||
+							command === IPC.UPDATER_GET_STATUS_HISTORY,
 					),
 				).toHaveLength(1);
 				expect(
 					tauriCalls.filter(
-						(command) => command === "winstt_updater_check_and_download",
+						(command) =>
+							command === "winstt_updater_check_and_download" ||
+							command === IPC.UPDATER_CHECK_NOW,
 					),
 				).toHaveLength(1);
 			});
@@ -79,7 +100,9 @@ describe("AboutSettingsPanel", () => {
 			});
 			expect(
 				tauriCalls.filter(
-					(command) => command === "winstt_updater_check_and_download",
+					(command) =>
+						command === "winstt_updater_check_and_download" ||
+						command === IPC.UPDATER_CHECK_NOW,
 				),
 			).toHaveLength(1);
 
@@ -114,6 +137,16 @@ describe("AboutSettingsPanel", () => {
 				return [{ status: "not-available", timestamp: 1 }];
 			}
 			return undefined;
+		};
+		window.nativeBridge = {
+			...previousNativeBridge,
+			secureInvoke: async (channel) => {
+				tauriCalls.push(channel);
+				if (channel === IPC.UPDATER_GET_STATUS_HISTORY) {
+					return [{ status: "not-available", timestamp: 1 }];
+				}
+				return undefined;
+			},
 		};
 
 		try {
@@ -169,6 +202,16 @@ describe("AboutSettingsPanel", () => {
 			}
 			return undefined;
 		};
+		window.nativeBridge = {
+			...previousNativeBridge,
+			invoke: async (channel) => {
+				tauriCalls.push(channel);
+				if (channel === IPC.DIAG_OPEN_LOGS_FOLDER) {
+					return { ok: true, path: "C:\\logs" };
+				}
+				return undefined;
+			},
+		};
 
 		try {
 			render(
@@ -183,7 +226,13 @@ describe("AboutSettingsPanel", () => {
 				);
 				await Promise.resolve();
 			});
-			expect(tauriCalls.includes("diag_open_logs_folder")).toBe(true);
+			expect(
+				tauriCalls.some(
+					(command) =>
+						command === "diag_open_logs_folder" ||
+						command === IPC.DIAG_OPEN_LOGS_FOLDER,
+				),
+			).toBe(true);
 		} finally {
 			window.nativeBridge = previousNativeBridge;
 			tauriWindow.__TAURI_INTERNALS__.invoke = previousTauriInvoke;
