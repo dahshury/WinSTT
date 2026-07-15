@@ -124,15 +124,12 @@ impl GraniteNarEngine {
             .into_dimensionality::<ndarray::Ix2>()
             .map_err(|e| SttError::Inference(format!("granite nar bpe mask dim: {e}")))?;
         let mut ids = Vec::new();
+        let logits0 = logits.index_axis(Axis(0), 0);
         for t in 0..logits.shape()[1] {
             if mask[[0, t]] <= 0.0 {
                 continue;
             }
-            let row = logits
-                .index_axis(Axis(0), 0)
-                .index_axis(Axis(0), t)
-                .to_vec();
-            ids.push(argmax_1d(&row).0 as i64);
+            ids.push(argmax_view1(logits0.index_axis(Axis(0), t)).0 as i64);
         }
         // Collapse in HEAD space (blank = 0), then shift the survivors into tokenizer space.
         Ok(ctc_greedy_collapse(&ids, BPE_CTC_BLANK_ID)
@@ -187,12 +184,9 @@ impl GraniteNarEngine {
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| SttError::Inference(format!("granite nar editor logits dim: {e}")))?;
         let mut ids = Vec::with_capacity(text_len);
+        let logits0 = logits.index_axis(Axis(0), 0);
         for t in audio_len..total_len {
-            let row = logits
-                .index_axis(Axis(0), 0)
-                .index_axis(Axis(0), t)
-                .to_vec();
-            ids.push(argmax_1d(&row).0 as i64);
+            ids.push(argmax_view1(logits0.index_axis(Axis(0), t)).0 as i64);
         }
         Ok(ctc_greedy_collapse(&ids, self.blank_token_id))
     }

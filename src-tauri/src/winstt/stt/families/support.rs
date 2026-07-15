@@ -190,6 +190,19 @@ pub(crate) fn argmax_1d(v: &[f32]) -> (usize, f32) {
     (best, best_v)
 }
 
+/// argmax over a 1-D ndarray view without materializing the row.
+pub(super) fn argmax_view1(v: ArrayView1<'_, f32>) -> (usize, f32) {
+    let mut best = 0usize;
+    let mut best_v = f32::NEG_INFINITY;
+    for (i, &x) in v.iter().enumerate() {
+        if x > best_v {
+            best_v = x;
+            best = i;
+        }
+    }
+    (best, best_v)
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // 2. Vocab loading (tokens.txt / vocab.txt — "<token> <id>" per line)
 // ───────────────────────────────────────────────────────────────────────────
@@ -728,7 +741,11 @@ pub(super) fn last_step_row(logits: &ArrayD<f32>) -> SttResult<Vec<f32>> {
                 .into_dimensionality::<ndarray::Ix3>()
                 .map_err(|e| SttError::Inference(format!("logits ix3: {e}")))?;
             let s = l.shape()[1];
-            Ok(l.index_axis(ndarray::Axis(0), 0)
+            if s == 0 {
+                return Err(SttError::Inference("empty logits sequence".into()));
+            }
+            Ok(l
+                .index_axis(ndarray::Axis(0), 0)
                 .index_axis(ndarray::Axis(0), s - 1)
                 .to_vec())
         }
@@ -737,10 +754,18 @@ pub(super) fn last_step_row(logits: &ArrayD<f32>) -> SttResult<Vec<f32>> {
                 .view()
                 .into_dimensionality::<ndarray::Ix2>()
                 .map_err(|e| SttError::Inference(format!("logits ix2: {e}")))?;
+            if l.shape()[0] == 0 {
+                return Err(SttError::Inference("empty logits batch".into()));
+            }
             Ok(l.index_axis(ndarray::Axis(0), 0).to_vec())
         }
         _ => Err(SttError::Inference("unexpected logits rank".into())),
     }
+}
+
+/// Argmax over the final decode-step logit row from `(1, S, vocab)` or `(1, vocab)` logits.
+pub(super) fn argmax_last_step(logits: &ArrayD<f32>) -> SttResult<(usize, f32)> {
+    Ok(argmax_1d(&last_step_row(logits)?))
 }
 
 /// Decoder_mems shape `(layers, 1, 0, hidden)` from the decoder input metadata (mem_len starts 0).

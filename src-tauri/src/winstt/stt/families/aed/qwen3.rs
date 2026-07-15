@@ -49,6 +49,34 @@ fn qwen3_device(providers: &[Accelerator]) -> (AllocationDevice, i32) {
     }
 }
 
+struct Qwen3PromptScaffold {
+    system: Vec<i64>,
+    newline: Vec<i64>,
+    user: Vec<i64>,
+    assistant: Vec<i64>,
+}
+
+impl Qwen3PromptScaffold {
+    fn from_tokenizer(tokenizer: &tokenizers::Tokenizer) -> SttResult<Self> {
+        fn encode_static(tokenizer: &tokenizers::Tokenizer, text: &str) -> SttResult<Vec<i64>> {
+            Ok(tokenizer
+                .encode(text, false)
+                .map_err(|e| SttError::Tokenizer(format!("qwen3 prompt encode {text:?}: {e}")))?
+                .get_ids()
+                .iter()
+                .map(|&i| i64::from(i))
+                .collect())
+        }
+
+        Ok(Self {
+            system: encode_static(tokenizer, "system\n")?,
+            newline: encode_static(tokenizer, "\n")?,
+            user: encode_static(tokenizer, "user\n")?,
+            assistant: encode_static(tokenizer, "assistant\n")?,
+        })
+    }
+}
+
 pub(in crate::winstt::stt::families) struct Qwen3AsrEngine {
     encoder: Session,
     decoder_init: Session,
@@ -58,6 +86,7 @@ pub(in crate::winstt::stt::families) struct Qwen3AsrEngine {
     embed: Vec<F16>,
     hidden: usize,
     tokenizer: tokenizers::Tokenizer,
+    prompt_scaffold: Qwen3PromptScaffold,
     enc_input: String,
     enc_output: String,
     im_start: i64,
@@ -85,6 +114,7 @@ impl Qwen3AsrEngine {
         let decoder_step = build_session(file(&cfg.resolved, "decoder_step")?, &cfg.providers)?;
         let tokenizer = tokenizers::Tokenizer::from_file(file(&cfg.resolved, "tokenizer")?)
             .map_err(|e| SttError::Tokenizer(format!("qwen3 tokenizer: {e}")))?;
+        let prompt_scaffold = Qwen3PromptScaffold::from_tokenizer(&tokenizer)?;
 
         // config.json carries decoder.hidden_size + the special-token ids. The resolver always
         // adds it under the "config" key.
@@ -146,6 +176,7 @@ impl Qwen3AsrEngine {
             embed,
             hidden,
             tokenizer,
+            prompt_scaffold,
             enc_input,
             enc_output,
             im_start,
@@ -229,33 +260,16 @@ impl Qwen3AsrEngine {
         Ok((audio_features, audio_len))
     }
 
-    fn build_prompt_ids(&self, audio_len: usize) -> SttResult<(Vec<i64>, usize)> {
-        let enc = |s: &str| -> SttResult<Vec<i64>> {
-            Ok(self
-                .tokenizer
-                .encode(s, false)
-                .map_err(|e| SttError::Tokenizer(format!("qwen3 prompt encode: {e}")))?
-                .get_ids()
-                .iter()
-                .map(|&i| i64::from(i))
-                .collect())
-        };
-        let mut ids = Vec::with_capacity(audio_len + 24);
-        ids.push(self.im_start);
-        ids.extend(enc("system\n")?);
-        ids.push(self.im_end);
-        ids.extend(enc("\n")?);
-        ids.push(self.im_start);
-        ids.extend(enc("user\n")?);
-        ids.push(self.audio_start);
-        let audio_offset = ids.len();
-        ids.extend(std::iter::repeat_n(self.audio_pad, audio_len));
-        ids.push(self.audio_end);
-        ids.push(self.im_end);
-        ids.extend(enc("\n")?);
-        ids.push(self.im_start);
-        ids.extend(enc("assistant\n")?);
-        Ok((ids, audio_offset))
+    fn build_prompt_ids(&self, audio_len: usize) -> (Vec<i64>, usize) {
+        qwen3_prompt_ids(
+            &self.prompt_scaffold,
+            self.im_start,
+            self.im_end,
+            self.audio_start,
+            self.audio_pad,
+            self.audio_end,
+            audio_len,
+        )
     }
 
     fn embed_row(&self, token: i64) -> SttResult<Array3<f32>> {
@@ -270,7 +284,7 @@ impl Qwen3AsrEngine {
     }
 
     fn argmax_logits(logits: &ArrayD<f32>) -> SttResult<i64> {
-        Ok(argmax_1d(&last_step_row(logits)?).0 as i64)
+        Ok(argmax_last_step(logits)?.0 as i64)
     }
 
     fn decode_text(&self, ids: &[i64]) -> SttResult<String> {
@@ -303,7 +317,7 @@ impl Transcriber for Qwen3AsrEngine {
         if audio_len == 0 {
             return Ok(Transcription::default());
         }
-        let (prompt_ids, audio_offset) = self.build_prompt_ids(audio_len)?;
+        let (prompt_ids, audio_offset) = self.build_prompt_ids(audio_len);
         let seq = prompt_ids.len();
 
         let dev_mem = self.device_mem()?;
@@ -440,5 +454,62 @@ impl Transcriber for Qwen3AsrEngine {
             text,
             ..Default::default()
         })
+    }
+}
+
+fn qwen3_prompt_ids(
+    scaffold: &Qwen3PromptScaffold,
+    im_start: i64,
+    im_end: i64,
+    audio_start: i64,
+    audio_pad: i64,
+    audio_end: i64,
+    audio_len: usize,
+) -> (Vec<i64>, usize) {
+    let scaffold_len = scaffold.system.len()
+        + scaffold.newline.len() * 2
+        + scaffold.user.len()
+        + scaffold.assistant.len();
+    let mut ids = Vec::with_capacity(audio_len + scaffold_len + 7);
+    ids.push(im_start);
+    ids.extend_from_slice(&scaffold.system);
+    ids.push(im_end);
+    ids.extend_from_slice(&scaffold.newline);
+    ids.push(im_start);
+    ids.extend_from_slice(&scaffold.user);
+    ids.push(audio_start);
+    let audio_offset = ids.len();
+    ids.extend(std::iter::repeat_n(audio_pad, audio_len));
+    ids.push(audio_end);
+    ids.push(im_end);
+    ids.extend_from_slice(&scaffold.newline);
+    ids.push(im_start);
+    ids.extend_from_slice(&scaffold.assistant);
+    (ids, audio_offset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qwen3_prompt_ids_match_reference_scaffold() {
+        let scaffold = Qwen3PromptScaffold {
+            system: vec![9125, 198],
+            newline: vec![198],
+            user: vec![882, 198],
+            assistant: vec![77091, 198],
+        };
+        let (ids, audio_offset) =
+            qwen3_prompt_ids(&scaffold, 151644, 151645, 151669, 151676, 151670, 2);
+
+        assert_eq!(audio_offset, 9);
+        assert_eq!(
+            ids,
+            vec![
+                151644, 9125, 198, 151645, 198, 151644, 882, 198, 151669, 151676, 151676, 151670,
+                151645, 198, 151644, 77091, 198,
+            ]
+        );
     }
 }
