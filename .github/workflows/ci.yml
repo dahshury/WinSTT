@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -14,6 +15,14 @@ on:
       - "bunfig.toml"
       - "knip.json"
       - "tools/i18n/**"
+      - "tools/windows/**"
+      - "tools/linux/**"
+      - "tools/macos/**"
+      - "tools/perf/check-startup-bundle.mjs"
+      - "tools/release/audit-*-packages.*"
+      - "tools/tauri-ci-artifacts.conf.json"
+      - "src-tauri/**"
+      - "vite.config.ts"
       - "biome.jsonc"
       - "tsconfig*"
       - ".github/workflows/ci.yml"
@@ -29,6 +38,14 @@ on:
       - "bunfig.toml"
       - "knip.json"
       - "tools/i18n/**"
+      - "tools/windows/**"
+      - "tools/linux/**"
+      - "tools/macos/**"
+      - "tools/perf/check-startup-bundle.mjs"
+      - "tools/release/audit-*-packages.*"
+      - "tools/tauri-ci-artifacts.conf.json"
+      - "src-tauri/**"
+      - "vite.config.ts"
       - "biome.jsonc"
       - "tsconfig*"
       - ".github/workflows/ci.yml"

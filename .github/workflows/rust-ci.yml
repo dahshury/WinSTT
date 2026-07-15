@@ -23,6 +23,8 @@ on:
       - "tools/tauri-ci-artifacts.conf.json"
       - "package.json"
       - "vite.config.ts"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
       - ".github/workflows/rust-ci.yml"
   pull_request:
     paths:
@@ -35,6 +37,8 @@ on:
       - "tools/tauri-ci-artifacts.conf.json"
       - "package.json"
       - "vite.config.ts"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
       - ".github/workflows/rust-ci.yml"
 
 # Cancel superseded runs on the same ref — a fresh push obsoletes the
