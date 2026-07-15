@@ -1,0 +1,14 @@
+Fixture: ru_tts_short.f32
+Format: raw f32le, 16 kHz, mono
+Duration: 5.88 s
+Generated: 2026-07-03
+
+Text:
+Привет. Это короткая русская фраза для проверки распознавания речи.
+
+Source:
+Generated with Microsoft Edge TTS voice `ru-RU-DmitryNeural`, then converted with ffmpeg:
+
+python -m edge_tts --voice ru-RU-DmitryNeural --text "<text above>" --write-media ru_tts_short.mp3
+ffmpeg -y -i ru_tts_short.mp3 -ar 16000 -ac 1 -acodec pcm_s16le ru_tts_short.wav
+ffmpeg -y -i ru_tts_short.wav -ar 16000 -ac 1 -f f32le ru_tts_short.f32

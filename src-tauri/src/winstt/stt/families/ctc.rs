@@ -6,6 +6,7 @@
 // layer and the `frontend` featurizers, never on a peer engine.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use ndarray::{Array2, Axis};
 use ort::session::Session;
@@ -13,7 +14,6 @@ use ort::value::Tensor;
 
 use super::super::{
     EngineConfig, EngineKind, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
-    ctc_greedy_collapse,
 };
 use super::frontend;
 use super::support::*;
@@ -25,6 +25,14 @@ use super::support::*;
 const SV_NUM_CONTROL_TOKENS: usize = 4;
 const SV_DEFAULT_LFR_WIN: usize = 7;
 const SV_DEFAULT_LFR_SHIFT: usize = 6;
+
+fn ctc_profile_enabled() -> bool {
+    std::env::var_os("STT_CTC_PROFILE").is_some()
+}
+
+fn ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
 
 /// Parsed SenseVoice ONNX `custom_metadata_map`. Defaults mirror `_parse_metadata`.
 pub(super) struct SvMeta {
@@ -199,13 +207,17 @@ impl Transcriber for SenseVoiceEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
+        let profile = ctc_profile_enabled();
+        let frontend_start = Instant::now();
         let features = self.features_for(audio);
+        let frontend_elapsed = frontend_start.elapsed();
         let n_feat_frames = features.nrows();
         if n_feat_frames == 0 {
             return Ok(Transcription::default());
         }
         let feat_dim = features.ncols();
 
+        let tensor_start = Instant::now();
         // (1, T, feat_dim)
         let feat3 = features
             .into_shape_with_order((1, n_feat_frames, feat_dim))
@@ -214,24 +226,33 @@ impl Transcriber for SenseVoiceEngine {
             .map_err(|e| SttError::Inference(format!("sense_voice feat tensor: {e}")))?;
 
         let language = opts.language.as_deref().unwrap_or("");
-        let outputs = if self.meta.is_nano {
-            self.session
+        let (outputs, tensor_elapsed, inference_elapsed) = if self.meta.is_nano {
+            let tensor_elapsed = tensor_start.elapsed();
+            let inference_start = Instant::now();
+            let outputs = self
+                .session
                 .run(ort::inputs![self.input_names[0].as_str() => feat_tensor])
-                .map_err(|e| SttError::Inference(format!("sense_voice nano run: {e}")))?
+                .map_err(|e| SttError::Inference(format!("sense_voice nano run: {e}")))?;
+            (outputs, tensor_elapsed, inference_start.elapsed())
         } else {
             let x_len = tensor_i32_1d(vec![n_feat_frames as i32])?;
             let lang = tensor_i32_1d(vec![self.meta.resolve_lang_id(language)])?;
             let itn = tensor_i32_1d(vec![self.meta.with_itn_id])?;
-            self.session
+            let tensor_elapsed = tensor_start.elapsed();
+            let inference_start = Instant::now();
+            let outputs = self
+                .session
                 .run(ort::inputs![
                     self.input_names[0].as_str() => feat_tensor,
                     self.input_names[1].as_str() => x_len,
                     self.input_names[2].as_str() => lang,
                     self.input_names[3].as_str() => itn,
                 ])
-                .map_err(|e| SttError::Inference(format!("sense_voice run: {e}")))?
+                .map_err(|e| SttError::Inference(format!("sense_voice run: {e}")))?;
+            (outputs, tensor_elapsed, inference_start.elapsed())
         };
 
+        let decode_start = Instant::now();
         // logits (1, T', vocab)
         let logits = out_to_f32(&outputs[0])?;
         let dims = logits.shape();
@@ -251,9 +272,8 @@ impl Transcriber for SenseVoiceEngine {
         }
         .min(frame_logits.nrows());
 
-        let scanned = frame_logits.slice(ndarray::s![..num_frames, ..]);
-        let ids = argmax_last_axis_2d(scanned);
-        let collapsed = ctc_greedy_collapse(&ids, self.meta.blank_id);
+        let collapsed =
+            ctc_greedy_ids_from_logits(frame_logits.view(), self.meta.blank_id, num_frames);
 
         // strip leading 4 control tokens (non-Nano), ▁→space already handled at decode by symbol.
         let start = if self.meta.is_nano {
@@ -264,16 +284,37 @@ impl Transcriber for SenseVoiceEngine {
         let mut text = String::new();
         for &tid in collapsed.iter().skip(start) {
             if let Some(sym) = self.vocab.get(tid) {
-                // Only allocate a replacement String when the U+2581 marker is present;
-                // otherwise push the symbol directly (most tokens have no marker).
+                // Replace SentencePiece markers while appending so decode does not allocate a
+                // temporary String per token.
                 if sym.contains('\u{2581}') {
-                    text.push_str(&sym.replace('\u{2581}', " "));
+                    for ch in sym.chars() {
+                        if ch == '\u{2581}' {
+                            text.push(' ');
+                        } else {
+                            text.push(ch);
+                        }
+                    }
                 } else {
                     text.push_str(sym);
                 }
             }
         }
         let text = text.trim().replace(" '", "'").replace(" \u{2581}'", "'");
+        let decode_elapsed = decode_start.elapsed();
+
+        if profile {
+            eprintln!(
+                "PROFILE_CTC kind=SenseVoiceCtc samples={} feature_frames={} logits_frames={} frontend_ms={:.3} tensor_ms={:.3} inference_ms={:.3} decode_ms={:.3} chars={}",
+                audio.len(),
+                n_feat_frames,
+                frame_logits.nrows(),
+                ms(frontend_elapsed),
+                ms(tensor_elapsed),
+                ms(inference_elapsed),
+                ms(decode_elapsed),
+                text.chars().count(),
+            );
+        }
 
         Ok(Transcription {
             text,
@@ -438,13 +479,17 @@ impl Transcriber for CtcEngine {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
+        let profile = ctc_profile_enabled();
+        let frontend_start = Instant::now();
         let features = self.features_for(audio);
+        let frontend_elapsed = frontend_start.elapsed();
         let n_frames = features.nrows();
         if n_frames == 0 {
             return Ok(Transcription::default());
         }
         let feat_dim = features.ncols();
 
+        let tensor_start = Instant::now();
         // Dolphin: x is (N, T, 80) time-major. NeMo/GigaAM: features (N, feat, T) channel-major.
         // We feed the kaldi-style (1, T, 80) for Dolphin; for NeMo/GigaAM we transpose to (1, feat, T).
         let (tensor, len_val) = match self.frontend {
@@ -473,12 +518,14 @@ impl Transcriber for CtcEngine {
             }
         };
         let len_tensor = tensor_i64_1d(vec![len_val])?;
+        let tensor_elapsed = tensor_start.elapsed();
         // encoder_out_lens (= (features_lens-1)//subsampling+1) — computed before the &mut session
         // borrow so the post-run masking can use it without re-borrowing self.
         let enc_len_unclamped = self.encoder_out_len(n_frames);
         let blank_id = self.blank_id;
         let logits_output = self.logits_output.clone();
 
+        let inference_start = Instant::now();
         let outputs = self
             .session
             .run(ort::inputs![
@@ -486,28 +533,39 @@ impl Transcriber for CtcEngine {
                 self.len_input.as_str() => len_tensor,
             ])
             .map_err(|e| SttError::Inference(format!("ctc run: {e}")))?;
+        let inference_elapsed = inference_start.elapsed();
 
+        let decode_start = Instant::now();
         let logits = out_to_f32(&outputs[logits_output.as_str()])?;
         let logits3 = logits
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| SttError::Inference(format!("ctc logits dim: {e}")))?;
         let frame_logits = logits3.index_axis_move(Axis(0), 0); // (T', vocab)
-        let mut ids = argmax_last_axis_2d(frame_logits.view());
+
         // Mask CTC frames >= encoder_out_lens before the greedy collapse — onnx-asr asr.py:348 builds
         // `batch_mask` from encoder_out_lens, so trailing padded encoder frames cannot emit spurious
         // tokens. We force those frames to the blank id (collapse drops blanks). subsampling_factor==1
         // (kaldi/dolphin) makes this a no-op.
-        let enc_len = enc_len_unclamped.min(ids.len());
-        for id in ids.iter_mut().skip(enc_len) {
-            *id = blank_id;
-        }
-        let collapsed = ctc_greedy_collapse(&ids, blank_id);
+        let enc_len = enc_len_unclamped.min(frame_logits.nrows());
+        let collapsed = ctc_greedy_ids_from_logits(frame_logits.view(), blank_id, enc_len);
+        let text = join_ids_and_normalize(&collapsed, &self.vocab);
+        let decode_elapsed = decode_start.elapsed();
 
-        let syms: Vec<&str> = collapsed
-            .iter()
-            .filter_map(|&id| self.vocab.get(id))
-            .collect();
-        let text = join_and_normalize(&syms, self.vocab.lowercase_decoded);
+        if profile {
+            eprintln!(
+                "PROFILE_CTC kind={:?} samples={} feature_frames={} logits_frames={} valid_logits={} frontend_ms={:.3} tensor_ms={:.3} inference_ms={:.3} decode_ms={:.3} chars={}",
+                self.kind,
+                audio.len(),
+                n_frames,
+                frame_logits.nrows(),
+                enc_len,
+                ms(frontend_elapsed),
+                ms(tensor_elapsed),
+                ms(inference_elapsed),
+                ms(decode_elapsed),
+                text.chars().count(),
+            );
+        }
         Ok(Transcription {
             text,
             ..Default::default()

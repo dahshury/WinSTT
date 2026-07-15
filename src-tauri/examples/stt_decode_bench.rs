@@ -60,6 +60,27 @@ fn init_bench_logger() {
     }
 }
 
+#[cfg(windows)]
+fn ensure_hf_cache_env_for_bench() {
+    let configured = ["HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HOME"]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()));
+    if configured {
+        return;
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+        std::env::set_var(
+            "HF_HOME",
+            std::path::Path::new(&profile)
+                .join(".cache")
+                .join("huggingface"),
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_hf_cache_env_for_bench() {}
+
 /// Default snapshot: the whisper-tiny.en hf-hub cache dir on this machine.
 /// Derived from `HF_HOME`/`HF_HUB_CACHE` (or `$HOME/.cache/huggingface/hub`)
 /// instead of a hardcoded absolute path so the benchmark isn't pinned to one
@@ -200,6 +221,14 @@ fn resolved_from_snapshot_dir(
             if config.exists() {
                 files.insert("config".to_string(), config);
             }
+        }
+        EngineKind::ToneCtc => {
+            insert_existing(
+                &mut files,
+                "model",
+                quantized_path(&dir, "model", effective_quant),
+            )?;
+            insert_existing(&mut files, "config", dir.join("config.json"))?;
         }
         _ => {
             return Err(format!(
@@ -430,6 +459,8 @@ fn run_catalog_mode(cat_id: &str) {
 }
 
 fn real_main() {
+    ensure_hf_cache_env_for_bench();
+
     let args: Vec<String> = std::env::args().collect();
 
     // Catalog mode: `stt_decode_bench --catalog <catalog_id>` (verifies the resolver→engine path).

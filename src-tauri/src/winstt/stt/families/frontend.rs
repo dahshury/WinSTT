@@ -74,12 +74,19 @@ pub fn compute_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
     // output is byte-identical to the serial version (same per-frame computation).
     use rayon::prelude::*;
     let mut out_flat = vec![0f32; num_frames * NUM_MELS];
-    out_flat
-        .par_chunks_mut(NUM_MELS)
-        .enumerate()
-        .for_each(|(t, row)| {
+    out_flat.par_chunks_mut(NUM_MELS).enumerate().for_each_init(
+        || {
+            (
+                vec![0f32; WIN],
+                Vec::<rustfft::num_complex::Complex32>::new(),
+                Vec::<f32>::new(),
+            )
+        },
+        |scratch, (t, row)| {
+            let frame = &mut scratch.0;
+            let fft_buf = &mut scratch.1;
+            let power = &mut scratch.2;
             let start = t * HOP;
-            let mut frame = vec![0f32; WIN];
             // pre-emphasis with edge-pad (offset[0] == samples[start]).
             for i in 0..WIN {
                 let cur = samples[start + i];
@@ -91,7 +98,7 @@ pub fn compute_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
                 frame[i] = (cur - PRE_EMPHASIS * prev) * hamming[i];
             }
             // real FFT magnitude^2 → mel energies → log.
-            let power = rfft_power(&frame, N_FFT, n_freqs);
+            rfft_power_into(frame, N_FFT, n_freqs, fft_buf, power);
             for (m, slot) in row.iter_mut().enumerate() {
                 let mut acc = 0f32;
                 for (f, &p) in power.iter().enumerate() {
@@ -99,7 +106,8 @@ pub fn compute_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
                 }
                 *slot = acc.max(eps).ln();
             }
-        });
+        },
+    );
     array2_from_shape_vec((num_frames, NUM_MELS), out_flat, "fbank")
 }
 
@@ -112,6 +120,19 @@ pub fn compute_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
 /// + within/under 1.3× onnx-asr). One plan is cached per distinct n_fft (400 for compute_fbank,
 ///   512 for nemo_features) in a thread-local — rfft_power is a free fn with no struct to hold it.
 fn rfft_power(frame: &[f32], n_fft: usize, n_freqs: usize) -> Vec<f32> {
+    let mut buf = Vec::new();
+    let mut power = Vec::new();
+    rfft_power_into(frame, n_fft, n_freqs, &mut buf, &mut power);
+    power
+}
+
+fn rfft_power_into(
+    frame: &[f32],
+    n_fft: usize,
+    n_freqs: usize,
+    buf: &mut Vec<rustfft::num_complex::Complex32>,
+    power: &mut Vec<f32>,
+) {
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -129,14 +150,17 @@ fn rfft_power(frame: &[f32], n_fft: usize, n_freqs: usize) -> Vec<f32> {
             .or_insert_with(|| FftPlanner::<f32>::new().plan_fft_forward(n_fft))
             .clone()
     });
-    let mut buf: Vec<Complex32> = (0..n_fft)
-        .map(|i| Complex32::new(frame.get(i).copied().unwrap_or(0.0), 0.0))
-        .collect();
-    fft.process(&mut buf);
-    buf.into_iter()
-        .take(n_freqs)
-        .map(|c| c.re * c.re + c.im * c.im)
-        .collect()
+    if buf.len() != n_fft {
+        buf.resize(n_fft, Complex32::new(0.0, 0.0));
+    }
+    for i in 0..n_fft {
+        buf[i] = Complex32::new(frame.get(i).copied().unwrap_or(0.0), 0.0);
+    }
+    fft.process(buf);
+    power.resize(n_freqs, 0.0);
+    for (slot, c) in power.iter_mut().zip(buf.iter()).take(n_freqs) {
+        *slot = c.re * c.re + c.im * c.im;
+    }
 }
 
 pub fn granite_ar_features(samples: &[f32]) -> Array2<f32> {
@@ -395,37 +419,50 @@ pub fn compute_kaldi_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32>
     out_flat
         .par_chunks_mut(KALDI_N_MELS)
         .enumerate()
-        .for_each(|(t, mel_row)| {
-            let start = t * KALDI_HOP;
-            // 512-long FFT frame: windowed 400 samples in [0,400), zeros in [400,512).
-            // (Fresh per-worker buffer → the [400,512) tail stays zero.)
-            let mut frame = vec![0f32; KALDI_N_FFT];
-            let mut raw = vec![0f32; KALDI_WIN];
-            // gather the 400-sample frame from the symmetric-padded buffer.
-            for (i, r) in raw.iter_mut().enumerate() {
-                *r = padded.get(start + i).copied().unwrap_or(0.0);
-            }
-            // 1. DC removal: subtract the frame mean.
-            let mean: f32 = raw.iter().sum::<f32>() / KALDI_WIN as f32;
-            for v in raw.iter_mut() {
-                *v -= mean;
-            }
-            // 2. pre-emphasis on the DC-removed frame: f[i] - 0.97*f[i-1], f[-1]==f[0] (edge).
-            //    + window. Compute back-to-front so f[i-1] is still the pre-emphasis input.
-            for i in (0..KALDI_WIN).rev() {
-                let prev = if i == 0 { raw[0] } else { raw[i - 1] };
-                frame[i] = (raw[i] - KALDI_PRE_EMPHASIS * prev) * window[i];
-            }
-            // 3. power spectrum → mel → log.
-            let power = rfft_power(&frame, KALDI_N_FFT, n_freqs);
-            for (m, slot) in mel_row.iter_mut().enumerate() {
-                let mut acc = 0f32;
-                for (f, &p) in power.iter().enumerate() {
-                    acc += p * fbanks[[f, m]];
+        .for_each_init(
+            || {
+                (
+                    vec![0f32; KALDI_N_FFT],
+                    vec![0f32; KALDI_WIN],
+                    Vec::<rustfft::num_complex::Complex32>::new(),
+                    Vec::<f32>::new(),
+                )
+            },
+            |scratch, (t, mel_row)| {
+                let frame = &mut scratch.0;
+                let raw = &mut scratch.1;
+                let fft_buf = &mut scratch.2;
+                let power = &mut scratch.3;
+                let start = t * KALDI_HOP;
+                // 512-long FFT frame: windowed 400 samples in [0,400), zeros in [400,512).
+                // (Fresh per-worker buffer → the [400,512) tail stays zero.)
+                frame.fill(0.0);
+                // gather the 400-sample frame from the symmetric-padded buffer.
+                for (i, r) in raw.iter_mut().enumerate() {
+                    *r = padded.get(start + i).copied().unwrap_or(0.0);
                 }
-                *slot = acc.max(eps).ln();
-            }
-        });
+                // 1. DC removal: subtract the frame mean.
+                let mean: f32 = raw.iter().sum::<f32>() / KALDI_WIN as f32;
+                for v in raw.iter_mut() {
+                    *v -= mean;
+                }
+                // 2. pre-emphasis on the DC-removed frame: f[i] - 0.97*f[i-1], f[-1]==f[0] (edge).
+                //    + window. Compute back-to-front so f[i-1] is still the pre-emphasis input.
+                for i in (0..KALDI_WIN).rev() {
+                    let prev = if i == 0 { raw[0] } else { raw[i - 1] };
+                    frame[i] = (raw[i] - KALDI_PRE_EMPHASIS * prev) * window[i];
+                }
+                // 3. power spectrum → mel → log.
+                rfft_power_into(frame, KALDI_N_FFT, n_freqs, fft_buf, power);
+                for (m, slot) in mel_row.iter_mut().enumerate() {
+                    let mut acc = 0f32;
+                    for (f, &p) in power.iter().enumerate() {
+                        acc += p * fbanks[[f, m]];
+                    }
+                    *slot = acc.max(eps).ln();
+                }
+            },
+        );
     array2_from_shape_vec((num_frames, KALDI_N_MELS), out_flat, "kaldi fbank")
 }
 
@@ -487,24 +524,35 @@ pub fn gigaam_v3_features(samples: &[f32]) -> Array2<f32> {
     out_flat
         .par_chunks_mut(GIGAAM_V3_N_MELS)
         .enumerate()
-        .for_each(|(t, mel_row)| {
-            let start = t * GIGAAM_V3_HOP;
-            // window the 320-sample frame (no pre-emphasis, no DC removal).
-            let mut frame = vec![0f32; GIGAAM_V3_WIN];
-            for (i, slot) in frame.iter_mut().enumerate() {
-                *slot = samples[start + i] * window[i];
-            }
-            // |rfft|^2 → 161-bin power spectrum (frame len == n_fft, so no zero-pad needed).
-            let power = rfft_power(&frame, GIGAAM_V3_N_FFT, GIGAAM_V3_N_FREQS);
-            // mel = power @ fbanks (161×64), then log(clip(mel, 1e-9, 1e9)).
-            for (m, slot) in mel_row.iter_mut().enumerate() {
-                let mut acc = 0f32;
-                for (f, &p) in power.iter().enumerate() {
-                    acc += p * fbanks[f][m];
+        .for_each_init(
+            || {
+                (
+                    vec![0f32; GIGAAM_V3_WIN],
+                    Vec::<rustfft::num_complex::Complex32>::new(),
+                    Vec::<f32>::new(),
+                )
+            },
+            |scratch, (t, mel_row)| {
+                let frame = &mut scratch.0;
+                let fft_buf = &mut scratch.1;
+                let power = &mut scratch.2;
+                let start = t * GIGAAM_V3_HOP;
+                // window the 320-sample frame (no pre-emphasis, no DC removal).
+                for (i, slot) in frame.iter_mut().enumerate() {
+                    *slot = samples[start + i] * window[i];
                 }
-                *slot = acc.clamp(GIGAAM_V3_CLAMP_MIN, GIGAAM_V3_CLAMP_MAX).ln();
-            }
-        });
+                // |rfft|^2 → 161-bin power spectrum (frame len == n_fft, so no zero-pad needed).
+                rfft_power_into(frame, GIGAAM_V3_N_FFT, GIGAAM_V3_N_FREQS, fft_buf, power);
+                // mel = power @ fbanks (161×64), then log(clip(mel, 1e-9, 1e9)).
+                for (m, slot) in mel_row.iter_mut().enumerate() {
+                    let mut acc = 0f32;
+                    for (f, &p) in power.iter().enumerate() {
+                        acc += p * fbanks[f][m];
+                    }
+                    *slot = acc.clamp(GIGAAM_V3_CLAMP_MIN, GIGAAM_V3_CLAMP_MAX).ln();
+                }
+            },
+        );
     array2_from_shape_vec((num_frames, GIGAAM_V3_N_MELS), out_flat, "gigaam v3 fbank")
 }
 

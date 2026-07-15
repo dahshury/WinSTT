@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use ndarray::{Array2, ArrayView2, Axis};
+use ndarray::Axis;
 use ort::memory::{AllocationDevice, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::Session;
 use ort::value::{DynValue, Tensor};
@@ -97,7 +97,8 @@ pub struct ToneEngine {
 /// buffers 8 kHz samples not yet forming a full `chunk_size` window (streaming path only).
 struct ToneStreamingState {
     state: Option<DynValue>,
-    all_logprobs: Vec<Array2<f32>>,
+    decoded_ids: Vec<i64>,
+    prev_token: i64,
     chunk_idx: usize,
     pending8: Vec<f32>,
 }
@@ -106,7 +107,8 @@ impl ToneStreamingState {
     fn new() -> Self {
         Self {
             state: None,
-            all_logprobs: Vec::new(),
+            decoded_ids: Vec::new(),
+            prev_token: -1,
             chunk_idx: 0,
             pending8: Vec::new(),
         }
@@ -131,6 +133,7 @@ fn tone_run_chunk(
     state_size: usize,
     dev_mem: &MemoryInfo,
     cpu_mem: &MemoryInfo,
+    blank_idx: i64,
     st: &mut ToneStreamingState,
     chunk8: &[f32],
 ) -> SttResult<()> {
@@ -204,8 +207,13 @@ fn tone_run_chunk(
         let lp3 = lp
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| SttError::Inference(format!("t-one logprobs dim: {e}")))?;
-        st.all_logprobs
-            .push(lp3.index_axis_move(Axis(0), 0).to_owned()); // (frames, 35)
+        append_ctc_greedy_ids_from_logits(
+            lp3.index_axis(Axis(0), 0),
+            blank_idx,
+            usize::MAX,
+            &mut st.prev_token,
+            &mut st.decoded_ids,
+        );
     }
     // state_next is f16 (tone.py:70). Carry it → device (session-owned; survives the binding drop).
     st.state = Some(
@@ -219,28 +227,16 @@ fn tone_run_chunk(
     Ok(())
 }
 
-/// Collapse the collected logprobs into text: concat along time → argmax → CTC greedy collapse →
-/// id→symbol map (the " " token is the separator; verbatim, no `▁`, no lowercasing).
-fn tone_snapshot_text(
-    vocab: &BTreeMap<i64, String>,
-    blank_idx: i64,
-    all_logprobs: &[Array2<f32>],
-) -> SttResult<String> {
-    if all_logprobs.is_empty() {
-        return Ok(String::new());
-    }
-    let views: Vec<ArrayView2<'_, f32>> = all_logprobs.iter().map(|a| a.view()).collect();
-    let enc = ndarray::concatenate(Axis(0), &views)
-        .map_err(|e| SttError::Inference(format!("t-one concat logprobs: {e}")))?;
-    let ids = argmax_last_axis_2d(enc.view());
-    let collapsed = ctc_greedy_collapse(&ids, blank_idx);
+/// Map the incrementally collapsed IDs to symbols (the " " token is the separator; verbatim,
+/// no `▁`, no lowercasing).
+fn tone_snapshot_text(vocab: &BTreeMap<i64, String>, decoded_ids: &[i64]) -> String {
     let mut text = String::new();
-    for &id in &collapsed {
+    for &id in decoded_ids {
         if let Some(sym) = vocab.get(&id) {
             text.push_str(sym);
         }
     }
-    Ok(text.trim().to_string())
+    text.trim().to_string()
 }
 
 impl ToneEngine {
@@ -381,13 +377,14 @@ impl Transcriber for ToneEngine {
                 self.state_size,
                 &dev_mem,
                 &cpu_mem,
+                self.blank_idx,
                 &mut st,
                 &padded[off..off + self.chunk_size],
             )?;
         }
 
-        // 4-5. Concat logprobs → argmax → CTC collapse → id→symbol map.
-        let text = tone_snapshot_text(&self.vocab, self.blank_idx, &st.all_logprobs)?;
+        // 4-5. Incremental CTC IDs → id→symbol map.
+        let text = tone_snapshot_text(&self.vocab, &st.decoded_ids);
         Ok(Transcription {
             text,
             ..Default::default()
@@ -425,15 +422,15 @@ impl Transcriber for ToneEngine {
                 state_size,
                 &dev_mem,
                 &cpu_mem,
+                self.blank_idx,
                 st,
                 &chunk,
             )?;
         }
         Ok(NativeStreamUpdate::interim(tone_snapshot_text(
             &self.vocab,
-            self.blank_idx,
-            &st.all_logprobs,
-        )?))
+            &st.decoded_ids,
+        )))
     }
 
     /// Flush the streaming tail: fill the partial pending window + one trailing drain chunk (mirrors
@@ -461,11 +458,12 @@ impl Transcriber for ToneEngine {
                 state_size,
                 &dev_mem,
                 &cpu_mem,
+                self.blank_idx,
                 st,
                 &chunk,
             )?;
         }
-        tone_snapshot_text(&self.vocab, self.blank_idx, &st.all_logprobs)
+        Ok(tone_snapshot_text(&self.vocab, &st.decoded_ids))
     }
 
     /// Start a fresh streaming session: zero state, seed the leading warm-up chunk (one `chunk_size`

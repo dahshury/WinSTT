@@ -11,9 +11,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use ndarray::{ArrayD, ArrayView2};
-use ort::session::Session;
+use ndarray::{ArrayD, ArrayView1, ArrayView2};
 use ort::session::builder::GraphOptimizationLevel;
+use ort::session::Session;
 use ort::value::Tensor;
 
 use super::super::{
@@ -117,20 +117,61 @@ pub(super) fn out_to_mask_f32(out: &ort::value::DynValue) -> SttResult<ArrayD<f3
 }
 
 /// argmax along the last axis of a 2-D `(T, vocab)` view → `Vec<i64>` of length `T`.
+#[cfg(test)]
 pub(super) fn argmax_last_axis_2d(logits: ArrayView2<'_, f32>) -> Vec<i64> {
     let mut out = Vec::with_capacity(logits.nrows());
     for row in logits.rows() {
-        let mut best = 0usize;
-        let mut best_v = f32::NEG_INFINITY;
-        for (j, &v) in row.iter().enumerate() {
-            if v > best_v {
-                best_v = v;
-                best = j;
-            }
-        }
-        out.push(best as i64);
+        out.push(argmax_row(row));
     }
     out
+}
+
+#[inline]
+fn argmax_row(row: ArrayView1<'_, f32>) -> i64 {
+    let mut best = 0usize;
+    let mut best_v = f32::NEG_INFINITY;
+    for (j, &v) in row.iter().enumerate() {
+        if v > best_v {
+            best_v = v;
+            best = j;
+        }
+    }
+    best as i64
+}
+
+/// Append CTC greedy-decoded token IDs directly from `(T, vocab)` logits.
+///
+/// This is equivalent to `argmax_last_axis_2d` followed by `ctc_greedy_collapse`, while preserving
+/// the previous frame across chunk boundaries for streaming models. `valid_frames` masks trailing
+/// padded frames the same way as forcing them to blank before collapse.
+pub(super) fn append_ctc_greedy_ids_from_logits(
+    logits: ArrayView2<'_, f32>,
+    blank_id: i64,
+    valid_frames: usize,
+    prev_token: &mut i64,
+    out: &mut Vec<i64>,
+) {
+    let limit = logits.nrows().min(valid_frames);
+    out.reserve(limit);
+    for row in logits.rows().into_iter().take(limit) {
+        let token = argmax_row(row);
+        if token != blank_id && token != *prev_token {
+            out.push(token);
+        }
+        *prev_token = token;
+    }
+}
+
+/// One-shot CTC greedy decode from logits with an optional valid-frame cap.
+pub(super) fn ctc_greedy_ids_from_logits(
+    logits: ArrayView2<'_, f32>,
+    blank_id: i64,
+    valid_frames: usize,
+) -> Vec<i64> {
+    let mut ids = Vec::new();
+    let mut prev_token = -1;
+    append_ctc_greedy_ids_from_logits(logits, blank_id, valid_frames, &mut prev_token, &mut ids);
+    ids
 }
 
 /// argmax over a flat 1-D logit slice (single decode step). Returns (index, value).
@@ -284,6 +325,39 @@ pub(super) fn join_and_normalize(syms: &[&str], lowercase: bool) -> String {
         trimmed.to_lowercase()
     } else {
         trimmed
+    }
+}
+
+/// Join vocab IDs into text with the same whitespace/lowercase semantics as `join_and_normalize`,
+/// but without first collecting borrowed symbol slices or building the raw concatenated string.
+pub(super) fn join_ids_and_normalize(ids: &[i64], vocab: &Vocab) -> String {
+    let mut out = String::new();
+    let mut prev_space = true;
+    for &id in ids {
+        if let Some(sym) = vocab.get(id) {
+            push_normalized_symbol(&mut out, sym, &mut prev_space);
+        }
+    }
+    let trimmed_len = out.trim_end().len();
+    out.truncate(trimmed_len);
+    if vocab.lowercase_decoded {
+        out.to_lowercase()
+    } else {
+        out
+    }
+}
+
+fn push_normalized_symbol(out: &mut String, sym: &str, prev_space: &mut bool) {
+    for ch in sym.chars() {
+        if ch.is_whitespace() {
+            if !*prev_space {
+                out.push(' ');
+            }
+            *prev_space = true;
+        } else {
+            out.push(ch);
+            *prev_space = false;
+        }
     }
 }
 
@@ -711,4 +785,97 @@ pub(super) fn tensor_i32(shape: (usize, usize), data: Vec<i32>) -> SttResult<Ten
     let arr = ndarray::Array2::from_shape_vec(shape, data)
         .map_err(|e| SttError::Inference(format!("i32 array: {e}")))?;
     Tensor::from_array(arr).map_err(|e| SttError::Inference(format!("i32 tensor: {e}")))
+}
+
+/// Carry present.* outputs into the next step's past_key_values.* (dtype-preserving).
+pub(super) fn carry_present(
+    outputs: &ort::session::SessionOutputs<'_>,
+    past_names: &[String],
+    present_names: &[String],
+    is_fp16: bool,
+) -> SttResult<BTreeMap<String, KvTensor>> {
+    let mut next = BTreeMap::new();
+    for (past, present) in past_names.iter().zip(present_names.iter()) {
+        let val = &outputs[present.as_str()];
+        let kv = if is_fp16 {
+            let arr = val
+                .try_extract_array::<F16>()
+                .map_err(|e| SttError::Inference(format!("carry present f16 {present}: {e}")))?;
+            KvTensor::F16(arr.to_owned())
+        } else {
+            let arr = val
+                .try_extract_array::<f32>()
+                .map_err(|e| SttError::Inference(format!("carry present f32 {present}: {e}")))?;
+            KvTensor::F32(arr.to_owned())
+        };
+        next.insert(past.clone(), kv);
+    }
+    Ok(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use ndarray::array;
+
+    use super::*;
+
+    #[test]
+    fn fused_ctc_logits_matches_argmax_collapse_with_valid_frame_mask() {
+        let logits = array![
+            [0.0, 3.0, 1.0],
+            [0.0, 2.0, 1.0],
+            [4.0, 1.0, 0.0],
+            [0.0, 5.0, 1.0],
+            [0.0, 1.0, 6.0],
+            [0.0, 7.0, 1.0],
+        ];
+        let blank = 0;
+        let valid_frames = 5;
+
+        let mut ids = argmax_last_axis_2d(logits.view());
+        for id in ids.iter_mut().skip(valid_frames) {
+            *id = blank;
+        }
+        let expected = crate::winstt::stt::ctc_greedy_collapse(&ids, blank);
+        let actual = ctc_greedy_ids_from_logits(logits.view(), blank, valid_frames);
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual, vec![1, 1, 2]);
+    }
+
+    #[test]
+    fn streaming_ctc_append_preserves_cross_chunk_previous_token() {
+        let first = array![[0.0, 3.0, 1.0], [0.0, 2.0, 1.0], [4.0, 1.0, 0.0]];
+        let second = array![[0.0, 5.0, 1.0], [0.0, 1.0, 6.0]];
+
+        let mut ids = Vec::new();
+        let mut prev = -1;
+        append_ctc_greedy_ids_from_logits(first.view(), 0, usize::MAX, &mut prev, &mut ids);
+        append_ctc_greedy_ids_from_logits(second.view(), 0, usize::MAX, &mut prev, &mut ids);
+
+        assert_eq!(ids, vec![1, 1, 2]);
+    }
+
+    #[test]
+    fn join_ids_and_normalize_matches_symbol_join() {
+        let mut id_to_sym = BTreeMap::new();
+        id_to_sym.insert(1, " HELLO".to_string());
+        id_to_sym.insert(2, "  ".to_string());
+        id_to_sym.insert(3, "WORLD ".to_string());
+        let vocab = Vocab {
+            id_to_sym,
+            size: 3,
+            blank_idx: 0,
+            lowercase_decoded: true,
+        };
+        let ids = [1, 2, 3, 99];
+        let syms: Vec<&str> = ids.iter().filter_map(|&id| vocab.get(id)).collect();
+
+        assert_eq!(
+            join_ids_and_normalize(&ids, &vocab),
+            join_and_normalize(&syms, vocab.lowercase_decoded)
+        );
+    }
 }
