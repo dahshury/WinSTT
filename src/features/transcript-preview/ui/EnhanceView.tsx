@@ -114,7 +114,7 @@ function EnhanceControls() {
 
 			<textarea
 				aria-label={tp("customInstructionPlaceholder")}
-				className="min-h-[2.25rem] w-full resize-none rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-foreground text-sm placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60"
+				className="min-h-[2.25rem] w-full resize-none rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-foreground text-sm placeholder:text-foreground-dim focus:outline-none focus:ring-1 focus:ring-accent/60"
 				dir="auto"
 				onChange={(e) => store.setCustomInstruction(e.currentTarget.value)}
 				placeholder={tp("customInstructionPlaceholder")}

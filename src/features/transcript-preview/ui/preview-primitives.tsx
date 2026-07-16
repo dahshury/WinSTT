@@ -58,7 +58,7 @@ export function PreviewInfoPill({ text }: { text: string }) {
 		<span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] text-foreground-muted leading-snug">
 			<HugeiconsIcon
 				aria-hidden="true"
-				className="shrink-0 text-foreground-subtle"
+				className="shrink-0 text-foreground-dim"
 				icon={InformationCircleIcon}
 				size={13}
 			/>
@@ -86,7 +86,7 @@ export function TranscriptTextarea({
 		<textarea
 			aria-label={ariaLabel}
 			className={cn(
-				"w-full resize-none rounded-md border border-border px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-subtle focus:outline-none focus:ring-1 focus:ring-accent/60",
+				"w-full resize-none rounded-md border border-border px-2.5 py-2 text-foreground text-sm leading-snug placeholder:text-foreground-dim focus:outline-none focus:ring-1 focus:ring-accent/60",
 				className,
 			)}
 			dir="auto"
