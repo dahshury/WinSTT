@@ -108,11 +108,29 @@ fn accel_runtime(accel: Accelerator) -> (&'static str, bool, Vec<String>) {
     }
 }
 
+/// Map a loaded engine's ACTUAL first execution provider to the (device label, is_gpu) the chip
+/// reads. `None` for an unrecognized provider string → caller falls back to the device-derived
+/// values.
+fn provider_runtime(providers: &[String]) -> Option<(&'static str, bool)> {
+    match providers.first().map(String::as_str) {
+        Some("CPUExecutionProvider") => Some(("cpu", false)),
+        Some("DmlExecutionProvider") => Some(("directml", true)),
+        Some("CUDAExecutionProvider") => Some(("cuda", true)),
+        Some("CoreMLExecutionProvider") => Some(("coreml", true)),
+        Some("ROCMExecutionProvider") => Some(("rocm", true)),
+        Some("OpenVINOExecutionProvider") => Some(("openvino", true)),
+        Some("WebGpuExecutionProvider") => Some(("webgpu", true)),
+        _ => None,
+    }
+}
+
 /// `get_runtime_info` — the active EP + loaded-model snapshot the GPU/CPU chip and the active-model
 /// reconciliation (`useSyncActiveModel`) read. Reads the loaded model from the TranscriptionManager
-/// (falling back to the persisted `model.model` when nothing is loaded yet), and the EP from the
-/// persisted device. The real per-session provider list is a compile-loop refinement (ort exposes it
-/// at session-create); the device-derived list is correct for the shipped flavors.
+/// (falling back to the persisted `model.model` when nothing is loaded yet). The EP is the LOADED
+/// engine's real per-session provider list whenever one is resident — so a DML-incompatible model
+/// that `override_dml_to_cpu_for_kind` routed to CPU reports `is_gpu=false` and the footer chip
+/// flips to CPU with the RAM fill bar. Only when nothing is loaded yet does the snapshot fall back
+/// to the persisted-device derivation (the cold-boot chip shows the user's chosen device intent).
 #[tauri::command]
 #[specta::specta]
 pub fn get_runtime_info(
@@ -131,7 +149,15 @@ pub fn runtime_info_snapshot(
     transcription: &TranscriptionManager,
 ) -> RuntimeInfoPayload {
     let accel = picker_accelerator(app);
-    let (device, is_gpu, providers) = accel_runtime(accel);
+    // Prefer the LOADED engine's real per-session providers (a DML-incompatible model routed to
+    // CPU must show CPU); fall back to the persisted-device derivation when nothing is resident.
+    let (device, is_gpu, providers) = match transcription.active_engine_providers() {
+        Some(active) => match provider_runtime(&active) {
+            Some((device, is_gpu)) => (device, is_gpu, active),
+            None => accel_runtime(accel),
+        },
+        None => accel_runtime(accel),
+    };
     let settings = read_settings_raw(app);
     let loaded = transcription.get_current_model();
 
@@ -451,6 +477,24 @@ pub fn persisted_device_is_gpu(app: &AppHandle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_runtime_reflects_actual_first_provider() {
+        // DML-incompatible engine routed to CPU on a GPU box: first provider is CPU → chip = CPU.
+        let cpu_routed = vec!["CPUExecutionProvider".to_string()];
+        assert_eq!(provider_runtime(&cpu_routed), Some(("cpu", false)));
+
+        // GPU session (CPU is only the op-level fallback) → chip = GPU.
+        let dml = vec![
+            "DmlExecutionProvider".to_string(),
+            "CPUExecutionProvider".to_string(),
+        ];
+        assert_eq!(provider_runtime(&dml), Some(("directml", true)));
+
+        // Unknown/empty provider lists fall back to the persisted-device derivation.
+        assert_eq!(provider_runtime(&[]), None);
+        assert_eq!(provider_runtime(&["MysteryProvider".to_string()]), None);
+    }
 
     #[test]
     fn accel_labels_match_renderer_chip() {

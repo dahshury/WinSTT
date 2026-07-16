@@ -349,6 +349,12 @@ pub struct TranscriptionManager {
     engine: Arc<Mutex<Option<LoadedEngine>>>,
     app_handle: AppHandle,
     current_model_id: Arc<Mutex<Option<String>>>,
+    /// The loaded engine's ACTUAL ORT execution providers, snapshotted at install time (see
+    /// `initiate_model_load`) and cleared on unload. Kept OUTSIDE the engine mutex so the runtime
+    /// chip can read it while a decode owns the engine. This is what lets the GPU/CPU footer chip
+    /// tell the truth for DML-incompatible engines that `override_dml_to_cpu_for_kind` routed to
+    /// CPU despite a GPU device setting.
+    active_providers: Arc<Mutex<Option<Vec<String>>>>,
     last_activity: Arc<AtomicU64>,
     model_unload_timeout_secs: Arc<AtomicU64>,
     listen_mode_resident: Arc<AtomicBool>,
@@ -389,6 +395,7 @@ impl TranscriptionManager {
             engine: Arc::new(Mutex::new(None)),
             app_handle: app_handle.clone(),
             current_model_id: Arc::new(Mutex::new(None)),
+            active_providers: Arc::new(Mutex::new(None)),
             last_activity: Arc::new(AtomicU64::new(Self::now_ms())),
             model_unload_timeout_secs: Arc::new(AtomicU64::new(encode_stt_idle_unload_timeout(
                 model_unload_timeout,
@@ -547,6 +554,24 @@ impl TranscriptionManager {
     pub fn is_model_loaded(&self) -> bool {
         let engine = self.lock_engine();
         engine.is_some()
+    }
+
+    /// The loaded engine's actual ORT execution providers (e.g.
+    /// `["CPUExecutionProvider"]` for a DML-incompatible model routed to CPU on a GPU box).
+    /// `None` when no local engine is resident — callers fall back to the persisted-device
+    /// derivation. Reads the install-time snapshot, NOT the engine mutex, so it never blocks
+    /// behind an in-flight decode.
+    pub fn active_engine_providers(&self) -> Option<Vec<String>> {
+        if self.lock_current_model().is_none() {
+            return None;
+        }
+        self.active_providers.lock_recover().clone()
+    }
+
+    /// Record (or clear) the resident engine's provider snapshot. Called by the load path at
+    /// install and by `unload_model`.
+    pub(crate) fn set_active_engine_providers(&self, providers: Option<Vec<String>>) {
+        *self.active_providers.lock_recover() = providers;
     }
 
     /// Whether model weights are currently being resolved/built. Exposed to the

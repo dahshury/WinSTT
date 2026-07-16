@@ -46,6 +46,7 @@ impl TranscriptionManager {
             let mut current_model = self.lock_current_model();
             *current_model = None;
         }
+        self.set_active_engine_providers(None);
         self.clear_warmed_model();
 
         // Emit unloaded event
@@ -602,6 +603,9 @@ impl TranscriptionManager {
         };
 
         self.clear_warmed_model();
+        // Snapshot the REAL per-session providers before the engine goes behind its mutex — this
+        // is what the runtime chip reads, so a DML-incompatible model routed to CPU shows CPU.
+        self.set_active_engine_providers(Some(engine.active_providers().to_vec()));
         {
             let mut guard = self.lock_engine();
             *guard = Some(LoadedEngine::Winstt(engine));
