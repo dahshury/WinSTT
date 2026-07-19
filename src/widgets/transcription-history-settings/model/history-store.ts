@@ -66,11 +66,16 @@ export const useTranscriptionHistoryStore = create<HistoryState>()((set) => ({
 	setTtsAll: (ttsEntries) => set({ ttsEntries, ttsLoaded: true }),
 	addEntry: (entry) =>
 		set((state) => {
-			const entries = appendUniqueById(state.entries, entry);
-			if (entries === state.entries) {
-				return state;
+			// Upsert: the backend re-emits the same row on updates (retry
+			// re-transcription, listen-session post-processing), so a repeated id
+			// replaces the earlier row in place instead of being dropped.
+			const index = state.entries.findIndex((e) => e.id === entry.id);
+			if (index >= 0) {
+				const entries = [...state.entries];
+				entries[index] = entry;
+				return { entries };
 			}
-			return { entries };
+			return { entries: [...state.entries, entry] };
 		}),
 	addTransformEntry: (entry) =>
 		set((state) => {

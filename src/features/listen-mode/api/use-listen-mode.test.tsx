@@ -426,6 +426,36 @@ describe("applyLoopbackTransition", () => {
 		});
 	});
 
+	test("restarts loopback when the mic-mix toggle changes", () => {
+		window.nativeBridge = makeApi();
+		applyLoopbackTransition(
+			"listen",
+			true,
+			3,
+			STREAMING_MODEL_ID,
+			3,
+			STREAMING_MODEL_ID,
+			true,
+			false,
+		);
+		expect(tauriCommandNames()).toEqual(["stop_listen", "start_listen"]);
+	});
+
+	test("does not restart loopback when the mic-mix toggle is unchanged", () => {
+		window.nativeBridge = makeApi();
+		applyLoopbackTransition(
+			"listen",
+			true,
+			3,
+			STREAMING_MODEL_ID,
+			3,
+			STREAMING_MODEL_ID,
+			true,
+			true,
+		);
+		expect(tauriCommandNames()).toEqual([]);
+	});
+
 	test("calls loopbackStop when transitioning away from listen mode", () => {
 		window.nativeBridge = makeApi();
 		applyLoopbackTransition("ptt", true, null, null);

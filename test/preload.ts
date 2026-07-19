@@ -4,6 +4,22 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 // Register a happy-dom global document/window so @testing-library/react can mount.
 GlobalRegistrator.register();
 
+// Bun shares one module cache across test files, but Testing Library registers
+// its auto-cleanup and act-environment hooks against whichever file imports it
+// first. When that file finishes before a sibling file, its afterAll restores
+// IS_REACT_ACT_ENVIRONMENT and its afterEach no longer cleans later React roots.
+// Own both process-global responsibilities here instead, where the hooks apply
+// to every test regardless of import order.
+process.env.RTL_SKIP_AUTO_CLEANUP = "true";
+(
+	globalThis as typeof globalThis & {
+		IS_REACT_ACT_ENVIRONMENT: boolean;
+	}
+).IS_REACT_ACT_ENVIRONMENT = true;
+const { cleanup: cleanupReact } = require("@testing-library/react/pure") as {
+	cleanup: () => void;
+};
+
 // Replace the production `IntlProvider` (which lazy-loads its message bundle via
 // `import.meta.glob` and renders `null` until the async load resolves — empty
 // under `bun test`) with a synchronous test double that serves the real English
@@ -168,12 +184,12 @@ function installDefaultTauriInternals(): void {
 installDefaultNativeBridge();
 installDefaultTauriInternals();
 
-// @testing-library/react does not auto-cleanup under bun:test, and importing
-// `cleanup` here would tear down the happy-dom global document between tests.
-// Strip mounted React roots manually + reset the shared per-window globals
-// (localStorage, the native bridge, the Tauri internals) so a suite that mutates
-// any of them can't poison a later file in the same process.
+// Unmount React roots before resetting the shared per-window globals. Removing
+// their DOM nodes without unmounting leaves subscriptions, effects, and timers
+// alive in Testing Library's process-global root registry. The final body sweep
+// handles any raw DOM a test created outside Testing Library.
 afterEach(() => {
+	cleanupReact();
 	if (typeof window !== "undefined") {
 		if (window.localStorage) {
 			window.localStorage.clear();

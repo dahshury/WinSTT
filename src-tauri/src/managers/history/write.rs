@@ -38,6 +38,7 @@ impl HistoryManager {
         stt_processing_ms: Option<i64>,
         stt_cost_usd: Option<f64>,
         stt_cost_is_estimate: bool,
+        source: Option<String>,
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
@@ -60,8 +61,9 @@ impl HistoryManager {
                 stt_model,
                 stt_processing_ms,
                 stt_cost_usd,
-                stt_cost_is_estimate
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                stt_cost_is_estimate,
+                source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 &file_name,
                 timestamp,
@@ -79,6 +81,7 @@ impl HistoryManager {
                 stt_processing_ms,
                 stt_cost_usd,
                 stt_cost_is_estimate,
+                &source,
             ],
         )?;
 
@@ -100,6 +103,7 @@ impl HistoryManager {
             stt_processing_ms,
             stt_cost_usd,
             stt_cost_is_estimate,
+            source,
         };
 
         debug!("Saved history entry with id {}", entry.id);
@@ -348,13 +352,60 @@ impl HistoryManager {
 
         let entry = conn
             .query_row(
-                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
+                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate, source
                  FROM transcription_history WHERE id = ?1",
                 params![id],
                 Self::map_history_entry,
             )?;
 
         debug!("Updated transcription for history entry {}", id);
+
+        if let Err(e) = (HistoryUpdatePayload::Updated {
+            entry: entry.clone(),
+        })
+        .emit(&self.app_handle)
+        {
+            error!("Failed to emit history-updated event: {}", e);
+        }
+
+        Ok(entry)
+    }
+
+    /// Overwrite ONLY the LLM post-processing result of an existing entry,
+    /// leaving the raw transcript untouched. Used by the listen-session
+    /// post-process command; re-running replaces the previous processed text
+    /// (the row keeps exactly one processed variant). Emits `Updated`.
+    pub fn update_post_processed(
+        &self,
+        id: i64,
+        post_processed_text: String,
+        post_process_prompt: Option<String>,
+        llm_meta: Option<String>,
+    ) -> Result<HistoryEntry> {
+        let conn = self.get_connection()?;
+        let updated = conn.execute(
+            "UPDATE transcription_history
+             SET post_processed_text = ?1,
+                 post_process_prompt = ?2,
+                 post_process_requested = 1,
+                 llm_meta = ?3
+             WHERE id = ?4",
+            params![post_processed_text, post_process_prompt, llm_meta, id],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("History entry {} not found", id));
+        }
+
+        let entry = conn
+            .query_row(
+                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate, source
+                 FROM transcription_history WHERE id = ?1",
+                params![id],
+                Self::map_history_entry,
+            )?;
+
+        debug!("Updated post-processed text for history entry {}", id);
 
         if let Err(e) = (HistoryUpdatePayload::Updated {
             entry: entry.clone(),

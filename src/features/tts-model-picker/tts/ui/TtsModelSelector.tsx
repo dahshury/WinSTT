@@ -14,8 +14,6 @@ import {
 	type ComponentPropsWithoutRef,
 	type MouseEvent,
 	type ReactNode,
-	useEffect,
-	useReducer,
 	useState,
 } from "react";
 import type { ModelSuggestion } from "@/entities/model-suggestion";
@@ -55,29 +53,15 @@ import { makeNameComparator } from "@/shared/ui/model-picker/core/lib/sort-state
 import { ModelPicker } from "@/shared/ui/model-picker/core/ModelPicker";
 import { useFavoriteSet } from "@/shared/ui/model-picker/core/use-favorite-set";
 import { SuggestedFilterChip } from "@/shared/ui/model-picker/ui/SuggestedFilterChip";
-import { useModelPickerCloseGuard } from "@/shared/ui/model-picker/lib/model-picker-close-guard";
-import {
-	readPersistedSelectorState,
-	writePersistedSelectorState,
-} from "@/shared/lib/persisted-selector-state";
 import { publicAsset } from "@/shared/lib/public-asset";
 import { STT_PICKER_WIDTH_CLASS } from "@/shared/ui/model-picker/lib/dimensions";
 import {
 	collectTtsLanguages,
 	collectTtsQuantizations,
-	EMPTY_TTS_FILTER_STATE,
 	filterTtsModels,
 	hasActiveTtsFilters,
-	isTtsFilterState,
-	normalizeTtsFilterState,
-	type PersistedTtsFilterState,
-	type TtsFilterState,
 } from "../lib/filter-state";
-import {
-	sortTtsModels,
-	TTS_SORT_KEYS,
-	type TtsSortValue,
-} from "../lib/sort-state";
+import { sortTtsModels } from "../lib/sort-state";
 import {
 	buildTtsSearchCorpus,
 	cloningLabel,
@@ -107,6 +91,7 @@ import type {
 	QuantDownloadAction,
 	QuantDownloadSnapshot,
 } from "./TtsModelCard";
+import { useTtsSelectorUi } from "./use-tts-selector-ui";
 
 type TtsModelChange = (modelId: string, quantization?: string) => void;
 
@@ -119,7 +104,6 @@ interface TtsTriggerDownloadProgress {
 
 const DEFAULT_TTS_POPUP_HEIGHT = "h-[min(620px,var(--available-height))]";
 const DEFAULT_TTS_POPUP_WIDTH = STT_PICKER_WIDTH_CLASS;
-const TTS_SELECTOR_UI_STORAGE_KEY = "winstt:model-picker:tts-ui";
 
 export interface TtsModelSelectorProps {
 	currentQuantization: string;
@@ -165,82 +149,6 @@ export interface TtsModelSelectorProps {
 	 *  a `Combobox.Trigger` internally. */
 	trigger?: ReactNode;
 	value: string;
-}
-
-interface TtsSelectorUiState {
-	activeRailId: string | null;
-	filters: TtsFilterState;
-	open: boolean;
-	/** Text-search query, owned here (not inside `ModelPicker`) so a query can
-	 *  span ALL authors — it overrides the active rail, so e.g. "piper" finds
-	 *  Piper voices even while the Kokoro rail is selected. Mirrors the STT
-	 *  picker's lifted-search fix. */
-	search: string;
-	sort: TtsSortValue;
-}
-
-interface PersistedTtsSelectorUiState {
-	activeRailId: string | null;
-	/** May predate the `suggestedOnly` flag — normalized (missing key → ON)
-	 *  via {@link normalizeTtsFilterState} on read. */
-	filters?: PersistedTtsFilterState;
-	sort?: TtsSortValue;
-}
-
-const DEFAULT_PERSISTED_TTS_SELECTOR_UI_STATE: PersistedTtsSelectorUiState = {
-	activeRailId: ALL_AUTHORS_RAIL_ID,
-};
-
-function isPersistedTtsSelectorUiState(
-	value: unknown,
-): value is PersistedTtsSelectorUiState {
-	if (typeof value !== "object" || value === null) {
-		return false;
-	}
-	const candidate = value as Partial<PersistedTtsSelectorUiState>;
-	return (
-		(candidate.activeRailId === null ||
-			typeof candidate.activeRailId === "string") &&
-		(candidate.filters === undefined || isTtsFilterState(candidate.filters)) &&
-		(candidate.sort === undefined ||
-			candidate.sort === null ||
-			TTS_SORT_KEYS.includes(candidate.sort))
-	);
-}
-
-type TtsSelectorUiAction =
-	| { id: string | null; type: "setActiveRailId" }
-	| { filters: TtsFilterState; type: "setFilters" }
-	| { open: boolean; type: "setOpen" }
-	| { search: string; type: "setSearch" }
-	| { sort: TtsSortValue; type: "setSort" };
-
-function uiReducer(
-	state: TtsSelectorUiState,
-	action: TtsSelectorUiAction,
-): TtsSelectorUiState {
-	switch (action.type) {
-		case "setActiveRailId":
-			return state.activeRailId === action.id
-				? state
-				: { ...state, activeRailId: action.id };
-		case "setOpen":
-			return state.open === action.open
-				? state
-				: { ...state, open: action.open };
-		case "setSearch":
-			return state.search === action.search
-				? state
-				: { ...state, search: action.search };
-		case "setFilters":
-			return { ...state, filters: action.filters };
-		case "setSort":
-			return state.sort === action.sort
-				? state
-				: { ...state, sort: action.sort };
-		default:
-			return state;
-	}
 }
 
 /** Maker-rail tiles: the pinned All authors tile + one tile per engine, each
@@ -893,36 +801,11 @@ function TtsModelSelectorPanel({
 		models,
 		onDownloadSnapshot,
 	);
-	// Computed each render (not memoized): `isFavorite` is a fresh closure per
-	// render, so memoizing on it would recompute anyway — mirrors the STT picker.
-	const [uiState, dispatch] = useReducer(uiReducer, undefined, () => {
-		const persisted = readPersistedSelectorState(
-			TTS_SELECTOR_UI_STORAGE_KEY,
-			isPersistedTtsSelectorUiState,
-			DEFAULT_PERSISTED_TTS_SELECTOR_UI_STATE,
-		);
-		return {
-			activeRailId: persisted.activeRailId,
-			// Pre-feature blobs lack `suggestedOnly` — normalize defaults it ON.
-			filters: persisted.filters
-				? normalizeTtsFilterState(persisted.filters)
-				: { ...EMPTY_TTS_FILTER_STATE },
-			open: false,
-			search: "",
-			sort: persisted.sort ?? null,
-		};
-	});
-	const { activeRailId, filters, open, search, sort } = uiState;
+	const { dispatch, open, openGuard, state: uiState } = useTtsSelectorUi();
+	const { activeRailId, filters, search, sort } = uiState;
 	const hasSearch = search.trim().length > 0;
 	const effectiveOpen = inline ? true : open;
 	const shouldBuildList = effectiveOpen;
-	useEffect(() => {
-		writePersistedSelectorState(TTS_SELECTOR_UI_STORAGE_KEY, {
-			activeRailId,
-			filters,
-			sort,
-		});
-	}, [activeRailId, filters, sort]);
 
 	// Suggested (spec-based recommender). The host injects the verdict; when
 	// absent the flag is inert (predicate null) and the chip stays hidden.
@@ -1000,10 +883,6 @@ function TtsModelSelectorPanel({
 		hasSearch || sort !== null || activeRailId === ALL_AUTHORS_RAIL_ID
 			? filteredModels.length
 			: groups.reduce((sum, group) => sum + group.items.length, 0);
-
-	const openGuard = useModelPickerCloseGuard({
-		setOpen: (nextOpen) => dispatch({ type: "setOpen", open: nextOpen }),
-	});
 
 	const handleSelect: TtsModelChange = (modelId, quantization) => {
 		onChange(modelId, quantization);

@@ -31,6 +31,12 @@ export interface SettingsWarning {
 interface SettingsHydrationState {
 	/** Warnings the user hasn't dismissed yet (consumed by a toast renderer). */
 	warnings: SettingsWarning[];
+	/**
+	 * Removes every warning of the given kind. Used when the condition a warning
+	 * reported has resolved itself (e.g. a `save-failed` retry succeeded), so the
+	 * stale notice doesn't outlive the problem.
+	 */
+	clearWarningKind: (kind: SettingsWarningKind) => void;
 	dismissWarning: (id: number) => void;
 	error: string | null;
 	/**
@@ -61,6 +67,14 @@ let nextWarningId = 0;
 export const useSettingsHydrationStore = create<SettingsHydrationState>(
 	(set) => ({
 		warnings: [],
+		clearWarningKind: (kind) =>
+			set((s) =>
+				// Keep the array identity when nothing matches so routine successful
+				// saves don't churn subscribers.
+				s.warnings.some((w) => w.kind === kind)
+					? { warnings: s.warnings.filter((w) => w.kind !== kind) }
+					: s,
+			),
 		dismissWarning: (id) =>
 			set((s) => ({ warnings: s.warnings.filter((w) => w.id !== id) })),
 		error: null,

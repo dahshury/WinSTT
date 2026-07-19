@@ -3,16 +3,15 @@ import { computeModelExclusionConfig } from "@/shared/ui/model-picker/lib/model-
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { SettingSubsection } from "@/entities/setting";
-import { onLlmUnloadStatus } from "@/shared/api/ipc-client";
 import { FormControl } from "@/shared/ui/form-control";
 import { Switcher } from "@/shared/ui/switcher";
 import {
 	type LlmFeatureDraft,
 	performFeatureToggle,
 } from "../lib/llm-settings-panel-test-helpers";
-import { resolveUnloadPending } from "./feature-block-helpers";
 import { DictionaryAutoAddControl, ProviderSection } from "./provider-sections";
 import type { FeatureBlockProps, LlmProvider } from "./types";
+import { useOllamaWarmTracker } from "./use-ollama-lifecycle-trackers";
 import { WarmupStatusBanner } from "./WarmupStatusBanner";
 
 // Toggle handler shared by both feature subsections — pulls together the
@@ -175,127 +174,6 @@ function useOllamaSwapTracker(opts: {
 	return {
 		swap: resolvePendingSwap(pendingSwap, provider, enabled, warmupStatus),
 		beginSwap,
-	};
-}
-
-/** Pure resolver for the enable-warmup spinner. Once armed (the user enabled the
- *  feature), stays true until a FRESH warmup broadcast reports a terminal outcome
- *  for the model — "loading" keeps it up, ok/unreachable/not-found/failed/skipped
- *  settle it. Mirrors {@link resolvePendingSwap}; returns false when the feature is
- *  off, not Ollama, or has no model (nothing holds VRAM). */
-function resolveWarmPending(
-	armedAtTimestamp: number | null,
-	model: string,
-	provider: LlmProvider,
-	enabled: boolean,
-	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null,
-): boolean {
-	if (armedAtTimestamp === null) {
-		return false;
-	}
-	if (provider !== "ollama" || !enabled || model.trim().length === 0) {
-		return false;
-	}
-	if (warmupStatus && warmupStatus.timestamp > armedAtTimestamp) {
-		const entry = warmupStatus.models.find((m) => m.model === model);
-		if (entry && entry.outcome !== "loading") {
-			return false;
-		}
-	}
-	return true;
-}
-
-/** Sibling of {@link useOllamaSwapTracker} for the *enable* transition: flipping
- *  a feature on moves the toggle instantly, but the model only lands in VRAM once
- *  the backend warmup pass finishes — seconds, or minutes for a big model on a cold
- *  GPU. `beginWarm` arms the moment the enable commits; `isWarming` then tracks the
- *  real load (resolved by the warmup broadcast) so the spinner doesn't vanish the
- *  instant the toggle moves. Exported so the panel-level master toggle (which owns
- *  the enable/disable UX since the header redesign) can render the same truth. */
-export function useOllamaWarmTracker(opts: {
-	enabled: boolean;
-	model: string;
-	provider: LlmProvider;
-	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null;
-}): { beginWarm: (model: string) => void; isWarming: boolean } {
-	const { enabled, model, provider, warmupStatus } = opts;
-	const [armedAt, setArmedAt] = useState<number | null>(null);
-
-	const beginWarm = (target: string) => {
-		if (provider !== "ollama" || target.trim().length === 0) {
-			return;
-		}
-		setArmedAt(warmupStatus?.timestamp ?? 0);
-	};
-
-	// Safety: never let the spinner outlive a stuck/silent warmup. 180 s matches
-	// the swap tracker's ceiling — a big reasoning model on one GPU can take >60 s.
-	useEffect(() => {
-		if (armedAt === null) {
-			return;
-		}
-		const id = window.setTimeout(() => setArmedAt(null), 180_000);
-		return () => window.clearTimeout(id);
-	}, [armedAt]);
-
-	return {
-		beginWarm,
-		isWarming: resolveWarmPending(
-			armedAt,
-			model,
-			provider,
-			enabled,
-			warmupStatus,
-		),
-	};
-}
-
-/** Disable-side twin of {@link useOllamaWarmTracker}: flipping a feature off
- *  moves the toggle instantly, but the model only leaves VRAM once the backend's
- *  eviction (`keep_alive: 0`) completes — the `llm:unload-status` broadcast with
- *  `inProgress: false` covering the model is the ground truth. `beginUnload`
- *  arms the moment the disable commits; a 30 s safety timeout bounds a silent
- *  backend (evictions run with a 5 s per-model budget). */
-export function useOllamaUnloadTracker(opts: {
-	enabled: boolean;
-	provider: LlmProvider;
-}): { beginUnload: (model: string) => void; isUnloading: boolean } {
-	const { enabled, provider } = opts;
-	const [pendingModel, setPendingModel] = useState<string | null>(null);
-
-	const beginUnload = (model: string) => {
-		if (provider !== "ollama" || model.trim().length === 0) {
-			return;
-		}
-		setPendingModel(model);
-	};
-
-	useEffect(
-		() =>
-			onLlmUnloadStatus((status) => {
-				setPendingModel((pending) =>
-					pending !== null &&
-					!status.inProgress &&
-					status.models.includes(pending)
-						? null
-						: pending,
-				);
-			}),
-		[],
-	);
-
-	// Safety: never let the indicator outlive a stuck/silent eviction.
-	useEffect(() => {
-		if (pendingModel === null) {
-			return;
-		}
-		const id = window.setTimeout(() => setPendingModel(null), 30_000);
-		return () => window.clearTimeout(id);
-	}, [pendingModel]);
-
-	return {
-		beginUnload,
-		isUnloading: resolveUnloadPending(pendingModel, provider, enabled),
 	};
 }
 

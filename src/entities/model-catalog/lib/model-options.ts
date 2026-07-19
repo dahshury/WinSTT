@@ -230,6 +230,24 @@ export function needsModelFallback(
 	return !models.some((m) => m.id === modelId);
 }
 
+/** The app's factory-default STT model (the Rust schema's
+ *  `ModelSettings::default_model`). Every automatic fallback resolves HERE
+ *  first: a stale selection must land on the known default, never on
+ *  "whatever small model happens to be cached" (observed live: a stale main
+ *  slot silently became `alphacep/vosk-model-small-ru` — a Russian-only
+ *  model — because it was the smallest cached entry). */
+export const DEFAULT_STT_MODEL_ID = "tiny";
+
+/** The default model's id when it is present in `models` and passes
+ *  `filter`, else null. */
+function eligibleDefaultModelId(
+	models: readonly ModelInfo[],
+	filter: (m: ModelInfo) => boolean,
+): string | null {
+	const entry = models.find((m) => m.id === DEFAULT_STT_MODEL_ID);
+	return entry && filter(entry) ? entry.id : null;
+}
+
 /**
  * Pick the smallest model id from a list, using the `statesById` byte
  * estimate as the sort key. Returns null when the list is empty. Extracted
@@ -248,15 +266,20 @@ function smallestModelId(
 }
 
 /** Resolve a sensible default STT model when the user's saved selection is
- *  invalid. Prefers something already cached on disk (zero-friction enable,
- *  no surprise download), then falls back to the smallest in the catalog.
- *  `filter` narrows the eligible set (e.g. native-streaming realtime only). Returns
- *  null only when the catalog itself is empty (boot race). */
+ *  invalid. The factory default (`DEFAULT_STT_MODEL_ID`) wins whenever it is
+ *  eligible — cached or not — so the fallback target is deterministic; only
+ *  when the filter rules it out (e.g. native-streaming realtime only) does
+ *  this degrade to a cached-preferred smallest pick. Returns null only when
+ *  the eligible set is empty (boot race / empty catalog). */
 export function pickDefaultSttModel(
 	models: readonly ModelInfo[],
 	statesById: Record<string, ModelStateEntry>,
 	filter: (m: ModelInfo) => boolean = () => true,
 ): string | null {
+	const defaultId = eligibleDefaultModelId(models, filter);
+	if (defaultId !== null) {
+		return defaultId;
+	}
 	const eligible = models.filter(filter);
 	const cached = eligible.filter(
 		(m) => statesById[m.id]?.cache.state === "cached",
@@ -265,12 +288,18 @@ export function pickDefaultSttModel(
 	return smallestModelId(preferred, statesById);
 }
 
-/** Pick a default only from models that are already fully cached locally. */
+/** Pick a default only from models that are already fully cached locally.
+ *  The factory default wins when it is cached and eligible; otherwise the
+ *  smallest cached model. */
 export function pickCachedSttModel(
 	models: readonly ModelInfo[],
 	statesById: Record<string, ModelStateEntry>,
 	filter: (m: ModelInfo) => boolean = () => true,
 ): string | null {
+	const defaultId = eligibleDefaultModelId(models, filter);
+	if (defaultId !== null && statesById[defaultId]?.cache.state === "cached") {
+		return defaultId;
+	}
 	const cached = models.filter(
 		(m) => filter(m) && statesById[m.id]?.cache.state === "cached",
 	);

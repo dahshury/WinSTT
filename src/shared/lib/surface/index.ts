@@ -9,4 +9,5 @@ export {
 	surfacePopupOpenBg,
 	surfaceShadow,
 } from "./surface-classes";
-export { SurfaceProvider, useSurface } from "./surface-context";
+export { SurfaceProvider } from "./SurfaceProvider";
+export { useSurface } from "./use-surface";

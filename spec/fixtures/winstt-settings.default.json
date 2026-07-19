@@ -40,6 +40,7 @@
     "fileTranscriptionSaveLocation": "auto",
     "historyEnabled": true,
     "historyMaxEntries": 1000,
+    "listenCaptureMicrophone": false,
     "liveTranscriptionDisplay": "both",
     "llmHandlesDictionary": true,
     "llmHandlesSnippets": true,

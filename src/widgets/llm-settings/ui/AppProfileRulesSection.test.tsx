@@ -8,10 +8,12 @@ import {
 import { BUILTIN_CONFIGURATIONS } from "../model/configurations";
 import { AppProfileRuleDialog } from "./AppProfileRuleDialog";
 import {
-	AppProfileRulesGrid,
 	buildAppProfileAppOptions,
-	ConfigurationPickerCell,
 	reconcileAppProfileRules,
+} from "./app-profile-rules-grid-helpers";
+import {
+	AppProfileRulesGrid,
+	ConfigurationPickerCell,
 } from "./AppProfileRulesGrid";
 
 const RUNNING_APP = {
@@ -99,7 +101,6 @@ describe("AppProfileRulesGrid", () => {
 					apps={[RUNNING_APP]}
 					onClose={() => undefined}
 					onSave={onSave}
-					open={true}
 					rule={profileRule(1)}
 				/>
 			</IntlProvider>,

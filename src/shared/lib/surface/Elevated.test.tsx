@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { Elevated } from "./Elevated";
-import { SurfaceProvider } from "./surface-context";
+import { SurfaceProvider } from "./SurfaceProvider";
 
 describe("Elevated", () => {
 	test("renders children inside a div", () => {

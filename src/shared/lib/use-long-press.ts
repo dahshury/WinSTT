@@ -46,16 +46,11 @@ export function useLongPress(
 ): UseLongPressResult {
 	const [pressing, setPressing] = useState(false);
 	const activePointerRef = useRef<ActivePointer | null>(null);
-	const onLongPressRef = useRef(onLongPress);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
 	const suppressContextMenuRef = useRef(false);
-
-	useEffect(() => {
-		onLongPressRef.current = onLongPress;
-	}, [onLongPress]);
 
 	const clearTimer = () => {
 		clearTimeoutRef(timerRef);
@@ -94,12 +89,13 @@ export function useLongPress(
 		clearTimer();
 		activePointerRef.current = capturePointer(event);
 		setPressing(true);
+		const runLongPress = onLongPress;
 		timerRef.current = setTimeout(() => {
 			timerRef.current = null;
 			activePointerRef.current = null;
 			setPressing(false);
 			suppressNextContextMenu();
-			onLongPressRef.current();
+			runLongPress();
 		}, delay);
 	};
 

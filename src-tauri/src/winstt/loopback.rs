@@ -392,6 +392,11 @@ mod linux_impl;
 #[cfg(target_os = "macos")]
 mod macos_impl;
 
+/// Cross-platform (cpal) microphone capture for the listen-mode mic-mix
+/// toggle. Same output contract as the loopback capture: AGC'd 16 kHz mono
+/// f32 frames in 30 ms chunks.
+pub mod mic_capture;
+
 impl Drop for LoopbackCapture {
     fn drop(&mut self) {
         self.stop();

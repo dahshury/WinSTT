@@ -13,9 +13,9 @@ import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import "@/shared/ui/searchable-select/searchable-select.css";
 import {
 	buildContextAppOptions,
-	ContextAppIcon,
 	normalizeContextAppId,
 } from "./context-app-options";
+import { ContextAppIcon } from "./ContextAppIcon";
 
 interface ContextAppSingleComboboxProps {
 	apps: readonly ContextAppEntry[];

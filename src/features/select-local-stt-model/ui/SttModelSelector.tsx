@@ -452,6 +452,13 @@ function useSttModelSelectorPanelState({
 			),
 		),
 	);
+	// The close guard installs a window-blur effect keyed by its setter. Keep the
+	// reducer-to-setter adapter stable for the lifetime of this selector so the
+	// listener is not torn down and recreated on every render. The reducer's
+	// dispatch is itself stable, so the initializer safely captures it once.
+	const [setOpen] = useState(
+		() => (nextOpen: boolean) => dispatch({ type: "setOpen", open: nextOpen }),
+	);
 	const { filters, sort, activeRailId, expandedBundles, open, search } =
 		uiState;
 	const hasSearch = search.trim().length > 0;
@@ -602,9 +609,7 @@ function useSttModelSelectorPanelState({
 
 	// Shared close guard keeps filter popovers from triggering an outside-press
 	// dismissal while still allowing item selections to close the picker.
-	const openGuard = useModelPickerCloseGuard({
-		setOpen: (nextOpen) => dispatch({ type: "setOpen", open: nextOpen }),
-	});
+	const openGuard = useModelPickerCloseGuard({ setOpen });
 	const handleOpenChange = externalOpen
 		? () => undefined
 		: openGuard.handleOpenChange;
@@ -625,7 +630,7 @@ function useSttModelSelectorPanelState({
 		// here — they go through onDownloadAction — so the popup correctly STAYS
 		// open while a quant is downloading. Inline / detached modes own their close.
 		if (!(inline || externalOpen)) {
-			dispatch({ type: "setOpen", open: false });
+			setOpen(false);
 		}
 	};
 

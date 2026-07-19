@@ -9,9 +9,19 @@
 //! had copied before it. Other platforms get a text+image snapshot via the clipboard
 //! plugin (arboard), which is the best fidelity available there.
 
-use log::warn;
+use log::{debug, warn};
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+/// How long the target app gets to service the synthetic paste keystroke before the
+/// original clipboard is put back. The old inline restore fired a fixed 50ms after the
+/// key combo, which raced busy targets (Electron apps, async browser clipboard reads,
+/// a system still loaded from the decode): when the app read the clipboard after the
+/// restore, it pasted the PREVIOUS clipboard content instead of the transcription.
+/// The restore now runs on a background thread after this grace, guarded by
+/// [`WrittenClipboard::still_current`] so it can never clobber anything but our own
+/// transcription text.
+const RESTORE_GRACE_MS: u64 = 400;
 
 pub enum ClipboardSnapshot {
     /// Raw Windows clipboard formats (format id → bytes). An empty vec means the
@@ -48,6 +58,81 @@ impl ClipboardSnapshot {
             Self::Empty => "kind=empty".to_string(),
         }
     }
+}
+
+/// Proof-of-ownership marker taken right after the transcription is written to the
+/// clipboard. The deferred restore only proceeds while the clipboard still holds that
+/// write — if the user (or the CopyToClipboard rewrite, or a second dictation) changed
+/// it during the grace window, the restore steps aside instead of clobbering it.
+pub struct WrittenClipboard {
+    /// Windows tracks every clipboard write with a global sequence number; comparing it
+    /// is exact and does not require reading the clipboard back.
+    #[cfg(target_os = "windows")]
+    sequence: u32,
+    /// Elsewhere there is no portable sequence counter; compare the text we wrote.
+    #[cfg(not(target_os = "windows"))]
+    text: String,
+}
+
+impl WrittenClipboard {
+    /// Record the just-written clipboard state. Call immediately after the write, before
+    /// any paste delay, so a user copy during the delay also vetoes the restore.
+    #[cfg(target_os = "windows")]
+    pub fn mark(_text: &str) -> Self {
+        Self {
+            sequence: win::sequence_number(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn mark(text: &str) -> Self {
+        Self {
+            text: text.to_string(),
+        }
+    }
+
+    fn still_current(&self, app_handle: &AppHandle) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = app_handle;
+            win::sequence_number() == self.sequence
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            match app_handle.clipboard().read_text() {
+                Ok(current) => current == self.text,
+                // Unreadable clipboard: restoring blind could re-trigger the very bug the
+                // guard exists for (old content pasted over the transcription), so skip.
+                Err(e) => {
+                    warn!("[clipboard] deferred restore guard read failed: {e}");
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// Restore `snapshot` on a background thread after [`RESTORE_GRACE_MS`], but only if the
+/// clipboard still holds the write recorded in `written`. Fire-and-forget: the paste
+/// already succeeded, so a skipped or failed restore is logged, never propagated.
+pub fn schedule_restore(
+    app_handle: &AppHandle,
+    snapshot: ClipboardSnapshot,
+    written: WrittenClipboard,
+) {
+    let app = app_handle.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(RESTORE_GRACE_MS));
+        if !written.still_current(&app) {
+            debug!(
+                "[clipboard] deferred restore skipped (clipboard changed during grace) {}",
+                snapshot.describe()
+            );
+            return;
+        }
+        debug!("[clipboard] deferred restore start {}", snapshot.describe());
+        restore(&app, &snapshot);
+    });
 }
 
 /// Snapshot the current clipboard with the highest fidelity the platform allows.
@@ -137,8 +222,8 @@ mod win {
     use std::time::Duration;
     use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard,
-        SetClipboardData,
+        CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
+        GetClipboardSequenceNumber, OpenClipboard, SetClipboardData,
     };
     use windows::Win32::System::Memory::{
         GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
@@ -161,6 +246,14 @@ mod win {
             CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE
         ) && !(0x0080..=0x008F).contains(&format)
             && !(0x0200..=0x03FF).contains(&format)
+    }
+
+    /// Global counter Windows bumps on every clipboard write. Reading it needs no
+    /// clipboard open. Returns 0 without clipboard access, in which case before/after
+    /// values match and the restore proceeds — the pre-guard behavior.
+    pub(super) fn sequence_number() -> u32 {
+        // SAFETY: no arguments, no state; documented safe to call at any time.
+        unsafe { GetClipboardSequenceNumber() }
     }
 
     /// RAII guard for the Win32 clipboard (a system-global mutex): always

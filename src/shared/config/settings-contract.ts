@@ -18,6 +18,7 @@ export const SETTINGS_CONTRACT = {
 		"general.encoderDictionaryEnabled",
 		"general.historyEnabled",
 		"general.historyMaxEntries",
+		"general.listenCaptureMicrophone",
 		"general.llmHandlesDictionary",
 		"general.llmHandlesSnippets",
 		"general.loopbackDeviceIndex",

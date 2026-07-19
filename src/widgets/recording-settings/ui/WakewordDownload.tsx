@@ -1,110 +1,22 @@
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import {
-	onWakewordModelStatus,
-	wakewordModelStatus,
-	type WakewordModelStatusPayload,
-} from "@/shared/api/ipc-client";
-import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
 import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import { DownloadActions, DownloadProgressBar } from "@/shared/ui/download";
+import type {
+	WakewordDownloadDialogProps,
+	WakewordDownloadProgressProps,
+} from "./wakeword-download.types";
 import {
-	WAKEWORD_DOWNLOAD_SIZE_LABEL,
-	WAKEWORD_MODEL_STATUS_DEFAULT,
-} from "./recording-settings-types";
-
-export function useWakewordModelStatus(
-	onStatus?: (next: WakewordModelStatusPayload) => void,
-): WakewordModelStatusPayload {
-	const [status, setStatus] = useState<WakewordModelStatusPayload>(
-		WAKEWORD_MODEL_STATUS_DEFAULT,
-	);
-	const handleStatus = useEffectEvent((next: WakewordModelStatusPayload) => {
-		setStatus(next);
-		onStatus?.(next);
-	});
-
-	useEffect(() => {
-		let mounted = true;
-		wakewordModelStatus().then((next) => {
-			if (mounted) {
-				handleStatus(next);
-			}
-		});
-		const unsubscribe = onWakewordModelStatus((next) => handleStatus(next));
-		return () => {
-			mounted = false;
-			unsubscribe();
-		};
-	}, []);
-
-	return status;
-}
-
-// Full B → KB → MB → GB ladder for the download overlay. MB/KB keep one decimal
-// to match the original wake-word formatter (the shared default floors MB to
-// whole numbers).
-function formatDownloadBytes(bytes: number | null | undefined): string | null {
-	return formatBytes(bytes, { minUnit: "B", mbDecimals: 1 });
-}
-
-function formatDuration(seconds: number | null | undefined): string | null {
-	if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
-		return null;
-	}
-	if (seconds < 60) {
-		return `${Math.max(1, Math.round(seconds))}s left`;
-	}
-	const minutes = Math.floor(seconds / 60);
-	const remainder = Math.round(seconds % 60);
-	return remainder === 0
-		? `${minutes}m left`
-		: `${minutes}m ${remainder}s left`;
-}
-
-function wakewordProgressPercent(
-	status: WakewordModelStatusPayload,
-): number | null {
-	return status.progress == null ? null : Math.round(status.progress * 100);
-}
-
-function wakewordDownloadStatsLabel(
-	status: WakewordModelStatusPayload,
-): string {
-	const downloaded = formatDownloadBytes(status.downloadedBytes);
-	const total = formatDownloadBytes(status.totalBytes);
-	const speed = formatBytesPerSecond(status.speedBps, {
-		minUnit: "B",
-		mbDecimals: 1,
-	});
-	const eta = formatDuration(status.etaSeconds);
-	const byteLabel =
-		downloaded && total
-			? `${downloaded} / ${total}`
-			: (downloaded ??
-				status.downloadSizeLabel ??
-				WAKEWORD_DOWNLOAD_SIZE_LABEL);
-	return [byteLabel, speed, eta].filter(Boolean).join(" · ");
-}
-
-function wakewordDownloadPhase(
-	status: WakewordModelStatusPayload,
-): "idle" | "active" | "paused" {
-	if (status.downloading || status.phase === "downloading") {
-		return "active";
-	}
-	if (status.phase === "paused") {
-		return "paused";
-	}
-	return "idle";
-}
+	wakewordDownloadPhase,
+	wakewordDownloadStatsLabel,
+	wakewordProgressPercent,
+} from "./wakeword-download-utils";
+import { WAKEWORD_DOWNLOAD_SIZE_LABEL } from "./recording-settings-types";
 
 export function WakewordDownloadProgress({
 	status,
-}: {
-	status: WakewordModelStatusPayload;
-}): ReactNode {
+}: WakewordDownloadProgressProps): ReactNode {
 	const t = useTranslations("general");
 	if (status.available) {
 		return null;
@@ -151,17 +63,6 @@ export function WakewordDownloadProgress({
 		);
 	}
 	return null;
-}
-
-export interface WakewordDownloadDialogProps {
-	enablePending: boolean;
-	onCancelDownload: () => void;
-	onOpenChange: (open: boolean) => void;
-	onPause: () => void;
-	onResume: () => void;
-	onStart: () => void;
-	open: boolean;
-	status: WakewordModelStatusPayload;
 }
 
 export function WakewordDownloadDialog({

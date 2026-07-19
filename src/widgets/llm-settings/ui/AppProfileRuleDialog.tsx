@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import type { ContextAppEntry } from "@/shared/api/ipc-client";
 import { ContextAppSingleCombobox } from "@/shared/ui/context-app-combobox";
@@ -20,8 +20,7 @@ interface AppProfileRuleDialogProps {
 	apps: ContextAppEntry[];
 	onClose: () => void;
 	onSave: (rule: AppProfileRule) => void;
-	open: boolean;
-	rule: AppProfileRule | null;
+	rule: AppProfileRule;
 }
 
 const inputClass =
@@ -31,22 +30,12 @@ export function AppProfileRuleDialog({
 	apps,
 	onClose,
 	onSave,
-	open,
 	rule,
 }: AppProfileRuleDialogProps) {
 	const t = useTranslations("llm");
-	const [appExe, setAppExe] = useState("");
-	const [titlePattern, setTitlePattern] = useState("");
-	const [urlPattern, setUrlPattern] = useState("");
-
-	useEffect(() => {
-		if (!open) {
-			return;
-		}
-		setAppExe(rule?.appExe ?? "");
-		setTitlePattern(rule?.titlePattern ?? "");
-		setUrlPattern(rule?.urlPattern ?? "");
-	}, [open, rule]);
+	const [appExe, setAppExe] = useState(rule.appExe);
+	const [titlePattern, setTitlePattern] = useState(rule.titlePattern);
+	const [urlPattern, setUrlPattern] = useState(rule.urlPattern);
 
 	const normalized = {
 		appExe: normalizeExeInput(appExe),
@@ -57,14 +46,14 @@ export function AppProfileRuleDialog({
 		normalized.appExe || normalized.titlePattern || normalized.urlPattern,
 	);
 	const save = () => {
-		if (!(rule && canSave)) {
+		if (!canSave) {
 			return;
 		}
 		onSave({ ...rule, ...normalized });
 	};
 
 	return (
-		<Dialog onOpenChange={(next) => !next && onClose()} open={open}>
+		<Dialog onOpenChange={(next) => !next && onClose()} open>
 			<DialogContent size="lg">
 				<DialogTitle>{t("appProfileEditRule")}</DialogTitle>
 				<DialogDescription>

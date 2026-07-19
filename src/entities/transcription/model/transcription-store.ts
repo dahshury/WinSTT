@@ -33,7 +33,7 @@ function clearEphemeralTimer(): void {
 }
 
 interface TranscriptionState {
-	addFinalSentence: (text: string) => void;
+	addFinalSentence: (text: string, speaker?: number | null) => void;
 	beginRecordingSession: () => void;
 	clearAll: () => void;
 	clearEphemeral: () => void;
@@ -86,13 +86,13 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			transcribingStartedAt: null,
 		}));
 	},
-	addFinalSentence: (text) => {
+	addFinalSentence: (text, speaker = null) => {
 		const id = crypto.randomUUID();
 		const timestamp = Date.now();
 		set((state) => {
 			const appended = [
 				...state.items,
-				{ id, type: "final" as const, text, timestamp },
+				{ id, type: "final" as const, text, timestamp, speaker },
 			];
 			const trimmed =
 				appended.length > MAX_LIVE_ITEMS

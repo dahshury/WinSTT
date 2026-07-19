@@ -253,6 +253,31 @@ describe("performScheduledSave", () => {
 		expect(lastSavedRef.current).toBe(changed);
 	});
 
+	test("fires onSaveSuccess (and not onSaveError) on a confirmed write", async () => {
+		// The success hook clears the "save failed, will be retried" toast once a
+		// retry actually lands, so the notice can't outlive the problem.
+		window.nativeBridge = makeApi();
+		_resetIpcLoadTimingForTests();
+		const baseline = asSettings({ audio: { sileroSensitivity: 0.4 } });
+		const changed = asSettings({ audio: { sileroSensitivity: 0.7 } });
+		const latestSettingsRef = { current: changed };
+		const lastSavedRef: { current: AppSettings | undefined } = {
+			current: baseline,
+		};
+		let sawSuccess = false;
+		let sawError = false;
+		await performScheduledSave(latestSettingsRef, lastSavedRef, recordSave, {
+			onSaveError: () => {
+				sawError = true;
+			},
+			onSaveSuccess: () => {
+				sawSuccess = true;
+			},
+		});
+		expect(sawSuccess).toBe(true);
+		expect(sawError).toBe(false);
+	});
+
 	test("does NOT advance lastSavedRef when the save is rejected (stays dirty for retry)", async () => {
 		// Audit #46: a rejected backend write must leave the baseline untouched so
 		// the section reads dirty and is re-sent, instead of silently "clean".

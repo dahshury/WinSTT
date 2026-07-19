@@ -82,26 +82,31 @@ export function buildRuntimeFill(
 	return isGpu ? buildGpuFill(snapshot) : buildRamFill(snapshot);
 }
 
-/** Usage payload for {@link GpuModelBreakdown}: the active device's used/total
- *  for the header, plus used bytes for BOTH pools so each section's share is
- *  measured against the memory its weights actually live in (VRAM for GPU rows,
- *  RAM for the always-CPU dictionary even on a GPU host). */
+/** One device pool's live pressure, for the breakdown's segmented meters. */
+export interface BreakdownPool {
+	usedBytes: number;
+	totalBytes: number;
+}
+
+/** Usage payload for {@link GpuModelBreakdown}: which pool the header leads
+ *  with, plus used/total for BOTH pools — the meter segments each section
+ *  against the memory its weights actually live in (VRAM for GPU rows, RAM for
+ *  the always-CPU dictionary even on a GPU host), and the secondary pool gets
+ *  its own meter when any section's weights live there. */
 export function buildBreakdownUsage(
 	snapshot: LiveResourcesEntry | null,
 	isGpu: boolean,
 ): {
 	device: "gpu" | "cpu";
-	totalBytes: number;
-	usedBytes: number;
-	usedByDevice: { gpu: number; cpu: number };
+	pools: { gpu: BreakdownPool; cpu: BreakdownPool };
 } {
 	const gpu = buildGpuFill(snapshot);
 	const ram = buildRamFill(snapshot);
-	const active = isGpu ? gpu : ram;
 	return {
 		device: isGpu ? "gpu" : "cpu",
-		totalBytes: active.totalBytes,
-		usedBytes: active.usedBytes,
-		usedByDevice: { gpu: gpu.usedBytes, cpu: ram.usedBytes },
+		pools: {
+			gpu: { usedBytes: gpu.usedBytes, totalBytes: gpu.totalBytes },
+			cpu: { usedBytes: ram.usedBytes, totalBytes: ram.totalBytes },
+		},
 	};
 }

@@ -326,7 +326,7 @@ impl OllamaClient {
                         if let Some(c) = parse_chat_stream_line(&line) {
                             let deltas = state.apply_chunk(&c);
                             if let Some(t) = deltas.thinking {
-                                on_thinking_delta(t);
+                                on_thinking_delta(&t);
                             }
                         }
                     }

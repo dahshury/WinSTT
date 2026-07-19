@@ -468,10 +468,7 @@ impl Transcriber for NativeNemoCtcStreamingEngine {
     }
 
     fn stream_finalize(&mut self) -> SttResult<String> {
-        self.stream
-            .cursor
-            .pcm
-            .extend_from_slice(&streaming::final_silence_pad());
+        streaming::append_final_silence_pad(&mut self.stream.cursor.pcm);
         self.process_available_chunks(true)?;
         Ok(self.current_text())
     }
@@ -897,10 +894,7 @@ impl Transcriber for NativeZipformerStreamingEngine {
     }
 
     fn stream_finalize(&mut self) -> SttResult<String> {
-        self.stream
-            .cursor
-            .pcm
-            .extend_from_slice(&streaming::final_silence_pad());
+        streaming::append_final_silence_pad(&mut self.stream.cursor.pcm);
         self.process_available_chunks(true)?;
         Ok(self.current_text())
     }

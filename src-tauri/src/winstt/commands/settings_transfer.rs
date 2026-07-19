@@ -211,6 +211,10 @@ fn export_file_json(file: &SettingsExportFile) -> Result<Vec<u8>, serde_json::Er
         .and_then(serde_json::Value::as_object_mut)
     {
         settings.remove("core");
+        // Backend-only, like `core`: the store schema revision is a property of
+        // the MACHINE's persisted tree, not of a portable backup (the envelope
+        // has its own `version` gate).
+        settings.remove("schemaVersion");
     }
     serde_json::to_vec_pretty(&value)
 }
@@ -381,10 +385,12 @@ fn parse_import(bytes: &[u8]) -> Result<ParsedImport, String> {
         .map_err(|err| format!("Invalid settings payload: {err}"))?;
     let mut canonical = serde_json::to_value(&settings)
         .map_err(|err| format!("Could not validate settings payload: {err}"))?;
-    canonical
-        .as_object_mut()
-        .expect("WinsttSettings serializes as an object")
-        .remove("core");
+    if let Some(canonical_map) = canonical.as_object_mut() {
+        canonical_map.remove("core");
+        // Stripped from exports (see `export_file_json`), so the shape check
+        // must not require it either.
+        canonical_map.remove("schemaVersion");
+    }
     validate_exact_shape(&settings_value, &canonical, "settings")?;
 
     Ok(ParsedImport {
@@ -477,14 +483,13 @@ fn stt_model_available(model_id: &str, availability: &SettingsAvailability) -> b
     catalog::find(&canonical).is_some() && availability.cached_stt_models.contains(&canonical)
 }
 
-fn fallback_stt_model(availability: &SettingsAvailability, defaults: &WinsttSettings) -> String {
-    catalog::STT_CATALOG
-        .iter()
-        .find(|entry| availability.cached_stt_models.contains(entry.id))
-        .map_or_else(
-            || defaults.model.model.clone(),
-            |entry| entry.id.to_string(),
-        )
+/// The deterministic STT fallback for an import whose selection can't be
+/// restored: ALWAYS the factory default (`tiny`). Never "the first cached
+/// model in catalog order" — that once landed users on an arbitrary
+/// small foreign-language model. The default is tiny enough that a
+/// first-use download beats a surprise wrong model.
+fn fallback_stt_model(defaults: &WinsttSettings) -> String {
+    defaults.model.model.clone()
 }
 
 fn reconcile_stt_model(
@@ -499,7 +504,7 @@ fn reconcile_stt_model(
         if has_cloud_stt_key(current, provider) {
             return;
         }
-        let fallback = fallback_stt_model(availability, &defaults);
+        let fallback = fallback_stt_model(&defaults);
         imported.model.model = fallback.clone();
         imported.model.onnx_quantization = defaults.model.onnx_quantization;
         adjusted.push(report(
@@ -535,7 +540,7 @@ fn reconcile_stt_model(
         return;
     }
 
-    let fallback = fallback_stt_model(availability, &defaults);
+    let fallback = fallback_stt_model(&defaults);
     imported.model.model = fallback.clone();
     imported.model.onnx_quantization = defaults.model.onnx_quantization;
     adjusted.push(report(
@@ -558,7 +563,7 @@ fn reconcile_realtime_model(
     let fallback = if stt_model_available(&imported.model.model, availability) {
         imported.model.model.clone()
     } else {
-        fallback_stt_model(availability, &defaults)
+        fallback_stt_model(&defaults)
     };
     imported.model.realtime_model = fallback.clone();
     adjusted.push(report(
@@ -1219,7 +1224,7 @@ mod tests {
     }
 
     #[test]
-    fn cloud_stt_without_target_key_falls_back_to_available_local_model() {
+    fn cloud_stt_without_target_key_falls_back_to_the_factory_default() {
         let current = WinsttSettings::default();
         let mut imported = WinsttSettings::default();
         imported.model.model = "openrouter:openai/whisper-1".into();
@@ -1231,7 +1236,12 @@ mod tests {
             &availability(&["base"], &[], &[]),
         );
 
-        assert_eq!(next.model.model, "base");
+        // Deterministic: the factory default, NOT whichever model happens to
+        // be cached first in catalog order ("base" here).
+        assert_eq!(
+            next.model.model,
+            crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID
+        );
         assert!(
             adjusted
                 .iter()

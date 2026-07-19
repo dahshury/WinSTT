@@ -72,6 +72,10 @@ pub mod ollama_library;
 pub mod ollama_pull;
 // ── slice: cloud-STT + credential verification ──
 pub mod listen;
+/// `history_post_process` — run the configured post-processing LLM over a
+/// saved listen-session transcript (meeting notes / summary / custom
+/// instructions) and store the result as the entry's processed text.
+pub mod listen_post_process;
 /// The ONE renderer verify seam (`INTEGRATIONS_VERIFY` → `verify_integration_credential`):
 /// unified OpenAI / ElevenLabs / OpenRouter probe returning `{ ok, code?, message? }`.
 pub mod verify;

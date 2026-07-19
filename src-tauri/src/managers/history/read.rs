@@ -50,7 +50,7 @@ impl HistoryManager {
             (Some(cursor_id), Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate, source
                      FROM transcription_history
                      WHERE id < ?1
                      ORDER BY id DESC
@@ -63,7 +63,7 @@ impl HistoryManager {
             (None, Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate, source
                      FROM transcription_history
                      ORDER BY id DESC
                      LIMIT ?1",
@@ -74,7 +74,7 @@ impl HistoryManager {
             }
             (_, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, llm_meta, dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, stt_cost_usd, stt_cost_is_estimate, source
                      FROM transcription_history
                      ORDER BY id DESC",
                 )?;
@@ -112,7 +112,8 @@ impl HistoryManager {
                 stt_model,
                 stt_processing_ms,
                 stt_cost_usd,
-                stt_cost_is_estimate
+                stt_cost_is_estimate,
+                source
              FROM transcription_history
              ORDER BY timestamp DESC
              LIMIT 1",
@@ -149,7 +150,8 @@ impl HistoryManager {
                 stt_model,
                 stt_processing_ms,
                 stt_cost_usd,
-                stt_cost_is_estimate
+                stt_cost_is_estimate,
+                source
              FROM transcription_history
              WHERE transcription_text != ''
              ORDER BY timestamp DESC
@@ -180,7 +182,8 @@ impl HistoryManager {
                 stt_model,
                 stt_processing_ms,
                 stt_cost_usd,
-                stt_cost_is_estimate
+                stt_cost_is_estimate,
+                source
              FROM transcription_history
              WHERE id = ?1",
         )?;

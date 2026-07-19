@@ -4,6 +4,7 @@ import {
 	Copy01Icon,
 	CopyCheckIcon,
 	Delete02Icon,
+	MagicWand01Icon,
 	PauseIcon,
 	PlayIcon,
 	TextFontIcon,
@@ -147,6 +148,42 @@ export function DeleteButton({
 				type="button"
 			>
 				<HugeiconsIcon className="size-3.5" icon={Delete02Icon} />
+			</BaseButton>
+		</Tooltip>
+	);
+}
+
+/**
+ * Opens the listen-session post-process dialog (meeting notes / summary /
+ * custom instructions). Mounted only on listen-session rows. Stays visible
+ * when AI post-processing is disabled in Settings, but inert with an
+ * explanatory tooltip — the affordance should be discoverable either way.
+ */
+export function PostProcessButton({
+	label,
+	onOpen,
+	unavailable,
+}: {
+	label: string;
+	onOpen: () => void;
+	/** Tooltip explaining WHY the action is inert (post-processing disabled). */
+	unavailable?: string | undefined;
+}) {
+	return (
+		<Tooltip content={unavailable ?? label}>
+			<BaseButton
+				aria-disabled={unavailable ? true : undefined}
+				aria-label={unavailable ?? label}
+				className={cn(
+					"inline-flex size-7 items-center justify-center transition-[color,background-color,transform]",
+					unavailable
+						? "cursor-default text-foreground-muted/40"
+						: "text-foreground-muted hover:bg-surface-hover hover:text-foreground active:scale-95",
+				)}
+				onClick={unavailable ? undefined : onOpen}
+				type="button"
+			>
+				<HugeiconsIcon className="size-3.5" icon={MagicWand01Icon} />
 			</BaseButton>
 		</Tooltip>
 	);

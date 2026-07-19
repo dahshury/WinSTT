@@ -384,6 +384,8 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
     let _ = window.show();
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
+    #[cfg(target_os = "windows")]
+    exempt_popup_from_occlusion_tracking(window);
     // Window-local panel coords = screen coords minus the work-area origin.
     // Show first so a hidden/suspended WebView2 has resumed before the event.
     let _ = app.emit("model-picker:anchor", payload.clone());
@@ -404,6 +406,61 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
                 return;
             }
             let _ = app2.emit("model-picker:anchor", payload.clone());
+        }
+    });
+}
+
+/// Mark a popup `WS_EX_TOOLWINDOW` so OTHER apps' occlusion trackers ignore
+/// it. Tauri/tao transparency is DWM-based (no `WS_EX_LAYERED`), so to every
+/// other Chromium process on the system (Chrome, Edge, Electron apps) a
+/// transparent always-on-top popup reads as an OPAQUE rectangle. A window that
+/// ends up fully covered by it marks itself occluded, pauses compositing, and
+/// freezes video until the popup closes — the model-picker's full-work-area
+/// backdrop froze EVERY window on the screen, and the smaller popups
+/// (tray-menu, model-footprint) can do the same to a small window they fully
+/// cover, e.g. a picture-in-picture player. Chromium's tracker
+/// (`ui/gfx/win/hwnd_util.cc`, `IsWindowVisibleAndFullyOpaque`) skips tool
+/// windows, and the bit also hides the popup from Alt-Tab, which these
+/// popups want anyway. WinSTT's OWN webviews are protected separately by
+/// disabling `CalculateNativeWinOcclusion` in `WEBVIEW2_BROWSER_ARGS`
+/// (startup.rs); browser args cannot reach external processes, hence this
+/// style bit.
+///
+/// Re-applied on EVERY show, after the last tao flag mutation: tao recomputes
+/// `GWL_EXSTYLE` from its own `WindowFlags` whenever any flag changes (e.g. the
+/// picker close path's `set_ignore_cursor_events(true)`), wiping foreign bits.
+/// Idempotent — a window that still carries the bit early-returns.
+#[cfg(target_os = "windows")]
+pub(in crate::winstt::commands) fn exempt_popup_from_occlusion_tracking(
+    window: &tauri::WebviewWindow,
+) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GWL_EXSTYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_EX_TOOLWINDOW,
+    };
+
+    let w = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        let Ok(hwnd) = w.hwnd() else { return };
+        // SAFETY: `hwnd` is our own window and we are on its thread; adding a
+        // style bit plus the documented frame-refresh SetWindowPos is benign
+        // (the window is undecorated and its WebView2 clear color is pinned to
+        // alpha-0, so the invalidation cannot flash white).
+        unsafe {
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if ex_style & WS_EX_TOOLWINDOW.0 as isize != 0 {
+                return;
+            }
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW.0 as isize);
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
         }
     });
 }
@@ -436,6 +493,8 @@ fn place_anchored_popup(app: &AppHandle, window: &tauri::WebviewWindow, state: P
     // while the prewarmed native window is still hidden/unrealized.
     let _ = window.set_ignore_cursor_events(true);
     let _ = window.set_always_on_top(true);
+    #[cfg(target_os = "windows")]
+    exempt_popup_from_occlusion_tracking(window);
 }
 
 pub(super) fn place_picker(app: &AppHandle, label: &'static str, window: &tauri::WebviewWindow) {

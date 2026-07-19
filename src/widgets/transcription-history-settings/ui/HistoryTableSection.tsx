@@ -19,6 +19,7 @@ import { useTranscriptionHistoryStore } from "../model/history-store";
 import type { HistoryTableItem } from "../model/history-table-types";
 import { HistoryTable } from "./HistoryTable";
 import { HistorySearchInput } from "./HistorySearchInput";
+import { LiveListenSessionCard } from "./LiveListenSessionCard";
 
 interface HistoryTableSectionProps {
 	/** The date-filtered combined rows (STT + transform + TTS) to display. */
@@ -208,6 +209,10 @@ export function HistoryTableSection({
 			title={t("combinedTableTitle")}
 		>
 			<div className="flex flex-col gap-2 py-2">
+				{/* Ongoing listen session — live captions + finalize-now. Renders
+				    only while a session is active; the finalized entry drops into
+				    the table below through the standard history events. */}
+				<LiveListenSessionCard />
 				{query.trim() ? (
 					<p className="text-foreground-muted text-xs" role="status">
 						{search.hasMore

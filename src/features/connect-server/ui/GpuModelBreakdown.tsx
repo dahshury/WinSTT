@@ -20,6 +20,7 @@ import type {
 	BreakdownSection,
 	BreakdownStatus,
 } from "../lib/runtime-model-breakdown";
+import type { BreakdownPool } from "../lib/runtime-resource-fill";
 
 const SECTION_LABEL = {
 	stt: "breakdownStt",
@@ -37,6 +38,29 @@ const SECTION_ICON = {
 	dictionary: Books02Icon,
 	post: AiEditingIcon,
 } as const satisfies Record<BreakdownSection["key"], typeof AiChat02Icon>;
+
+/** Grayscale ladder for the meter's per-section slices (and the matching
+ *  swatch beside each section's share %): brightest for the pipeline's lead
+ *  engine, stepping down in section order. Deliberately NOT hue-coded — the
+ *  footprint card stays neutral like the rest of the footer chrome. */
+const SECTION_TONE = {
+	stt: "bg-foreground/75",
+	tts: "bg-foreground/55",
+	dictionary: "bg-foreground/40",
+	post: "bg-foreground/25",
+} as const satisfies Record<BreakdownSection["key"], string>;
+
+/** The "everything else" slice — the OS plus other apps' share of the pool.
+ *  Hatched over a solid dim base: the stripes mark it as ambient pressure (not
+ *  another WinSTT engine) while the base keeps the span reading as *used*
+ *  memory — bare panel background showing through the gaps made the slice look
+ *  empty. */
+const SYSTEM_STRIPES: CSSProperties = {
+	backgroundColor:
+		"color-mix(in oklab, var(--color-foreground) 12%, transparent)",
+	backgroundImage:
+		"repeating-linear-gradient(135deg, color-mix(in oklab, var(--color-foreground) 24%, transparent) 0 2px, transparent 2px 5px)",
+};
 
 const STATUS_LABEL = {
 	off: "breakdownOff",
@@ -275,7 +299,7 @@ function Row({
  */
 function sectionShare(
 	section: BreakdownSection,
-	usedByDevice: { gpu: number; cpu: number },
+	pools: { gpu: BreakdownPool; cpu: BreakdownPool },
 ): { percent: number; device: BreakdownDevice } | null {
 	let memSum = 0;
 	let device: BreakdownDevice | null = null;
@@ -288,11 +312,104 @@ function sectionShare(
 	if (device === null || memSum <= 0) {
 		return null;
 	}
-	const pool = usedByDevice[device];
+	const pool = pools[device].usedBytes;
 	if (pool <= 0) {
 		return null;
 	}
 	return { percent: (memSum / pool) * 100, device };
+}
+
+/** One model slice of a pool meter: a pipeline section's bytes resident there. */
+interface MeterSegment {
+	key: BreakdownSection["key"];
+	bytes: number;
+}
+
+/** Each section's runtime bytes living in `device`'s pool, in section order —
+ *  the model slices of that pool's meter. Sections whose weights live on the
+ *  other device (or nowhere locally) contribute no slice here. */
+function segmentsForDevice(
+	sections: BreakdownSection[],
+	device: BreakdownDevice,
+): MeterSegment[] {
+	const segments: MeterSegment[] = [];
+	for (const section of sections) {
+		let bytes = 0;
+		for (const row of section.rows) {
+			if (row.device === device && row.memBytes !== null) {
+				bytes += row.memBytes;
+			}
+		}
+		if (bytes > 0) {
+			segments.push({ key: section.key, bytes });
+		}
+	}
+	return segments;
+}
+
+function segmentWidth(bytes: number, totalBytes: number): string {
+	return `${Math.min(100, (bytes / totalBytes) * 100).toFixed(2)}%`;
+}
+
+/**
+ * One pool's stacked meter: a slice per pipeline section (toned to match the
+ * swatch beside that section's share %), then a hatched "System" slice for the
+ * rest of the pool's used memory, with the free space left as bare track. The
+ * System slice gets a legend line beneath — it's the one slice with no section
+ * heading to explain it.
+ */
+function SegmentedMeter({
+	pool,
+	segments,
+	t,
+}: {
+	pool: BreakdownPool;
+	segments: MeterSegment[];
+	t: StatusBarTranslateFn;
+}): ReactNode {
+	const modelBytes = segments.reduce((sum, segment) => sum + segment.bytes, 0);
+	const systemBytes = Math.max(0, pool.usedBytes - modelBytes);
+	return (
+		<div className="flex flex-col gap-1">
+			{/* Opening snapshots must paint at their final widths; animating from
+			    the hidden window's previous sample looks like a recalculation. */}
+			<div className="flex h-1 w-full gap-px overflow-hidden rounded-full bg-foreground/[0.06]">
+				{segments.map((segment) => (
+					<div
+						className={cn("h-full shrink-0", SECTION_TONE[segment.key])}
+						data-section={segment.key}
+						data-slot="footprint-resource-segment"
+						key={segment.key}
+						style={{ width: segmentWidth(segment.bytes, pool.totalBytes) }}
+					/>
+				))}
+				{systemBytes > 0 ? (
+					<div
+						className="h-full shrink-0"
+						data-section="system"
+						data-slot="footprint-resource-segment"
+						style={{
+							...SYSTEM_STRIPES,
+							width: segmentWidth(systemBytes, pool.totalBytes),
+						}}
+					/>
+				) : null}
+			</div>
+			{systemBytes > 0 ? (
+				<div className="flex items-center justify-between gap-2 text-[9px] text-foreground-muted">
+					<span className="flex items-center gap-1">
+						<span
+							aria-hidden="true"
+							className="size-1.5 shrink-0 rounded-[2px]"
+							style={SYSTEM_STRIPES}
+						/>
+						{t("breakdownSystem")}
+					</span>
+					<span className="tabular-nums">{sizeText(systemBytes)}</span>
+				</div>
+			) : null}
+		</div>
+	);
 }
 
 /** Sub-1% footprints round to "<1%" rather than a misleading "0%"; everything
@@ -305,16 +422,30 @@ function formatShare(percent: number): string {
 	return `${Math.min(100, Math.round(percent))}%`;
 }
 
+/** "used / total" figure with the pool's unit phrase, or `null` when the pool
+ *  size is unknown (no snapshot yet). */
+function poolLabel(
+	t: StatusBarTranslateFn,
+	device: BreakdownDevice,
+	pool: BreakdownPool,
+): string | null {
+	if (pool.totalBytes <= 0) {
+		return null;
+	}
+	const size = `${sizeText(pool.usedBytes)} / ${sizeText(pool.totalBytes)}`;
+	return device === "cpu"
+		? t("breakdownMemRam", { size })
+		: t("breakdownMemVram", { size });
+}
+
 interface GpuModelBreakdownProps {
 	sections: BreakdownSection[];
-	/** Live total VRAM/RAM usage on the active device, for the header line. */
+	/** Live used/total for both device pools; `device` picks the pool the header
+	 *  leads with. The other pool gets its own smaller meter when any section's
+	 *  weights live there (the always-CPU dictionary on a GPU host). */
 	usage: {
 		device: "gpu" | "cpu";
-		totalBytes: number;
-		usedBytes: number;
-		/** Live used bytes per device, so each section's footprint can be shown as
-		 *  a share of the pool its weights actually live in (VRAM vs RAM). */
-		usedByDevice: { gpu: number; cpu: number };
+		pools: { gpu: BreakdownPool; cpu: BreakdownPool };
 	};
 	t: StatusBarTranslateFn;
 }
@@ -324,24 +455,21 @@ export function GpuModelBreakdown({
 	usage,
 	t,
 }: GpuModelBreakdownProps): ReactNode {
-	const usageText =
-		usage.totalBytes > 0
-			? `${sizeText(usage.usedBytes)} / ${sizeText(usage.totalBytes)}`
-			: null;
-	const usagePercent =
-		usage.totalBytes > 0
-			? Math.max(0, Math.min(100, (usage.usedBytes / usage.totalBytes) * 100))
-			: 0;
-	const usageLabel =
-		usageText === null
-			? null
-			: usage.device === "cpu"
-				? t("breakdownMemRam", { size: usageText })
-				: t("breakdownMemVram", { size: usageText });
+	const activePool = usage.pools[usage.device];
+	const usageLabel = poolLabel(t, usage.device, activePool);
+	const otherDevice: BreakdownDevice = usage.device === "gpu" ? "cpu" : "gpu";
+	const otherPool = usage.pools[otherDevice];
+	const otherSegments = segmentsForDevice(sections, otherDevice);
+	// The secondary pool only earns a meter when our models actually hold some
+	// of it — otherwise it's pure system noise the sentence footer covers.
+	const otherLabel =
+		otherSegments.length > 0 ? poolLabel(t, otherDevice, otherPool) : null;
 	return (
 		<div className="flex min-w-[228px] flex-col gap-2.5 text-[11px]">
-			{/* Header: live device pressure — the headline number plus a slim,
-			    grayscale meter that echoes the footer chip's own fill bar. */}
+			{/* Header: live device pressure — the headline number plus a slim meter
+			    stacked per consumer: one grayscale slice per pipeline section (keyed
+			    by the swatches on the section headings below), a hatched System
+			    slice for everything that isn't ours, bare track for free memory. */}
 			<div className="flex flex-col gap-1.5">
 				<div className="flex items-baseline justify-between gap-3">
 					<span className="font-medium text-[9.5px] text-foreground-muted uppercase tracking-[0.08em]">
@@ -353,15 +481,24 @@ export function GpuModelBreakdown({
 						</span>
 					) : null}
 				</div>
-				{usageText ? (
-					<div className="h-[3px] w-full overflow-hidden rounded-full bg-foreground/[0.06]">
-						{/* Opening snapshots must paint at their final width; animating from
-						    the hidden window's previous width looks like a recalculation. */}
-						<div
-							className="h-full rounded-full bg-gradient-to-r from-foreground/25 to-foreground/45"
-							data-slot="footprint-resource-fill"
-							style={{ width: `${usagePercent}%` }}
-						/>
+				{usageLabel ? (
+					<SegmentedMeter
+						pool={activePool}
+						segments={segmentsForDevice(sections, usage.device)}
+						t={t}
+					/>
+				) : null}
+				{/* On a GPU host the dictionary (and any other CPU-pinned engine)
+				    lives in RAM, not VRAM — give that pool its own meter so the
+				    breakdown accounts for every local byte, not just the lead pool. */}
+				{otherLabel ? (
+					<div className="flex flex-col gap-1 pt-0.5">
+						<div className="flex items-baseline justify-end">
+							<span className="shrink-0 text-[10px] text-foreground-muted tabular-nums">
+								{otherLabel}
+							</span>
+						</div>
+						<SegmentedMeter pool={otherPool} segments={otherSegments} t={t} />
 					</div>
 				) : null}
 			</div>
@@ -370,7 +507,7 @@ export function GpuModelBreakdown({
 			    align to the Settings tabs; entries hang under the label. */}
 			<div className="flex flex-col gap-2.5">
 				{sections.map((section) => {
-					const share = sectionShare(section, usage.usedByDevice);
+					const share = sectionShare(section, usage.pools);
 					return (
 						<div className="flex flex-col gap-1" key={section.key}>
 							<div className="flex items-center justify-between gap-2">
@@ -390,8 +527,19 @@ export function GpuModelBreakdown({
 									</span>
 								</div>
 								{share ? (
-									<span className="shrink-0 text-[10px] text-foreground-secondary tabular-nums">
-										{formatShare(share.percent)}
+									<span className="flex shrink-0 items-center gap-1">
+										{/* Swatch keys this section to its slice of the meter(s)
+										    above — same tone, same grayscale ladder. */}
+										<span
+											aria-hidden="true"
+											className={cn(
+												"size-1.5 shrink-0 rounded-[2px]",
+												SECTION_TONE[section.key],
+											)}
+										/>
+										<span className="text-[10px] text-foreground-secondary tabular-nums">
+											{formatShare(share.percent)}
+										</span>
 									</span>
 								) : null}
 							</div>

@@ -127,6 +127,18 @@
 	--color-subtitle-scrim-bloom-core: oklch(0% 0 0 / 0.52);
 	--color-subtitle-scrim-bloom-mid: oklch(0% 0 0 / 0.24);
 
+	/* Listen-mode diarization speaker palette: pastel hues tuned for legibility
+	   over the dark subtitle scrim; ids cycle modulo 8. Content encoding (who is
+	   speaking), not status colors — exempt from the grayscale-status rule. */
+	--color-speaker-0: oklch(80% 0.1 240);
+	--color-speaker-1: oklch(84% 0.11 75);
+	--color-speaker-2: oklch(85% 0.1 165);
+	--color-speaker-3: oklch(80% 0.11 315);
+	--color-speaker-4: oklch(87% 0.11 100);
+	--color-speaker-5: oklch(80% 0.1 15);
+	--color-speaker-6: oklch(83% 0.08 200);
+	--color-speaker-7: oklch(85% 0.1 130);
+
 	/* Settings shell material: window substrate, rail chrome, and active tabs. */
 	--color-settings-window-bloom: oklch(15% 0.014 265 / 0.38);
 	--color-settings-window-top: oklch(13% 0.015 265);

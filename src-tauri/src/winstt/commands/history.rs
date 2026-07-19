@@ -161,6 +161,10 @@ pub struct TranscriptionHistoryEntry {
     /// LLMs and runs without usage data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_cost_usd: Option<f64>,
+    /// Where the transcription came from: omitted = mic dictation, `"listen"`
+    /// = a finished listen-mode session (drives the session post-process UI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Legacy-table compatible transform row for the settings History tab. It uses
@@ -242,6 +246,9 @@ pub struct HistoryRow {
     pub history_tag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub privacy_markers: Option<Vec<String>>,
+    /// Omitted = mic dictation; `"listen"` = a finished listen-mode session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
@@ -430,6 +437,7 @@ fn to_transcription_entry(
             .is_some()
             .then_some(entry.stt_cost_is_estimate),
         llm_cost_usd: if llm_failed { None } else { meta.cost_usd },
+        source: entry.source.clone(),
     }
 }
 
@@ -579,6 +587,7 @@ fn to_history_row(entry: &DbHistoryEntry) -> HistoryRow {
         post_process_requested: entry.post_process_requested,
         history_tag: entry.history_tag.clone(),
         privacy_markers: optional_privacy_markers(entry.privacy_markers_json.as_deref()),
+        source: entry.source.clone(),
     }
 }
 
@@ -668,7 +677,7 @@ pub async fn history_list(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
              dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, \
-             stt_cost_usd, stt_cost_is_estimate \
+             stt_cost_usd, stt_cost_is_estimate, source \
              FROM transcription_history ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )?;
         // Bind before the closure ends so the row-iterator's borrow of `stmt`
@@ -715,7 +724,7 @@ fn search_transcription_rows(
                 "SELECT h.id, h.file_name, h.timestamp, h.saved, h.title, h.transcription_text,
                  h.post_processed_text, h.post_process_prompt, h.post_process_requested, h.llm_meta,
                  h.dictionary_fixes, h.history_tag, h.privacy_markers_json, h.stt_model,
-                 h.stt_processing_ms, h.stt_cost_usd, h.stt_cost_is_estimate
+                 h.stt_processing_ms, h.stt_cost_usd, h.stt_cost_is_estimate, h.source
                  FROM transcription_fts JOIN transcription_history h ON h.id=transcription_fts.rowid
                  WHERE transcription_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
                  AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(transcription_fts), h.id DESC LIMIT ?4",
@@ -738,7 +747,7 @@ fn search_transcription_rows(
                         "SELECT h.id, h.file_name, h.timestamp, h.saved, h.title, h.transcription_text,
                          h.post_processed_text, h.post_process_prompt, h.post_process_requested, h.llm_meta,
                          h.dictionary_fixes, h.history_tag, h.privacy_markers_json, h.stt_model,
-                         h.stt_processing_ms, h.stt_cost_usd, h.stt_cost_is_estimate
+                         h.stt_processing_ms, h.stt_cost_usd, h.stt_cost_is_estimate, h.source
                          FROM transcription_fts JOIN transcription_history h ON h.id=transcription_fts.rowid
                          WHERE transcription_fts MATCH ?1 AND (?2 IS NULL OR h.timestamp>=?2)
                          AND (?3 IS NULL OR h.timestamp<=?3) ORDER BY bm25(transcription_fts), h.id DESC LIMIT ?4",
@@ -763,7 +772,7 @@ fn search_transcription_rows(
             "SELECT id, file_name, timestamp, saved, title, transcription_text,
              post_processed_text, post_process_prompt, post_process_requested, llm_meta,
              dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms,
-             stt_cost_usd, stt_cost_is_estimate FROM transcription_history
+             stt_cost_usd, stt_cost_is_estimate, source FROM transcription_history
              WHERE (transcription_text LIKE ?1 ESCAPE '\\' OR coalesce(post_processed_text,'') LIKE ?1 ESCAPE '\\')
              AND (?2 IS NULL OR timestamp>=?2) AND (?3 IS NULL OR timestamp<=?3)
              ORDER BY id DESC LIMIT ?4",
@@ -1066,7 +1075,7 @@ pub async fn history_recent(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
              dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, \
-             stt_cost_usd, stt_cost_is_estimate \
+             stt_cost_usd, stt_cost_is_estimate, source \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt
@@ -1194,6 +1203,7 @@ pub async fn history_add(
             None,
             None,
             false,
+            None,
         )
         .map_err(|e| e.to_string())?;
     Ok(Some(to_history_row(&entry)))
@@ -1224,7 +1234,7 @@ pub async fn history_get_all(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
              post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
              dictionary_fixes, history_tag, privacy_markers_json, stt_model, stt_processing_ms, \
-             stt_cost_usd, stt_cost_is_estimate \
+             stt_cost_usd, stt_cost_is_estimate, source \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt

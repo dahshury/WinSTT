@@ -337,17 +337,21 @@ function OpenCustomModelsFolderRow() {
 	);
 }
 
+type EmptyStateReason = "filters" | "loading";
+
+interface SuggestedEmptyHint {
+	hiddenCount: number;
+	onShowAll: () => void;
+}
+
 function EmptyState({
-	hasActiveFilters,
-	onShowAllSuggested,
-	suggestedHiddenCount = 0,
+	reason,
+	suggestedHint,
 }: {
-	hasActiveFilters: boolean;
-	onShowAllSuggested?: (() => void) | undefined;
-	suggestedHiddenCount?: number | undefined;
+	reason: EmptyStateReason;
+	suggestedHint: SuggestedEmptyHint | undefined;
 }) {
 	const t = useTranslations("modelPicker");
-	const showSuggestedHint = suggestedHiddenCount > 0 && onShowAllSuggested;
 	return (
 		<div className="mx-auto flex w-full max-w-[280px] flex-col items-center gap-2 px-4 py-8 text-center">
 			<div className="flex size-10 items-center justify-center rounded-full bg-surface-secondary">
@@ -360,26 +364,42 @@ function EmptyState({
 				{t("noModelsFound")}
 			</p>
 			<p className="text-balance text-foreground-muted text-xs-tight">
-				{hasActiveFilters ? t("emptyHintFilters") : t("emptyHintLoading")}
+				{reason === "filters" ? t("emptyHintFilters") : t("emptyHintLoading")}
 			</p>
-			{showSuggestedHint ? (
+			{suggestedHint ? (
 				<BaseButton
 					className={cn(
 						"cursor-pointer text-balance text-accent text-xs-tight underline-offset-2 outline-none",
 						"hover:underline focus-visible:underline",
 					)}
 					data-slot="suggested-hidden-hint"
-					onClick={onShowAllSuggested}
+					onClick={suggestedHint.onShowAll}
 					type="button"
 				>
-					{t("suggestedHiddenHint", { count: suggestedHiddenCount })}
+					{t("suggestedHiddenHint", {
+						count: suggestedHint.hiddenCount,
+					})}
 				</BaseButton>
 			) : null}
 		</div>
 	);
 }
 
-export function SttModelList({
+type SttModelGroupsProps = Omit<
+	SttModelListProps,
+	| "hasActiveFilters"
+	| "hasSearch"
+	| "onShowAllSuggested"
+	| "suggestedHiddenCount"
+	| "visibleModelCount"
+>;
+
+/**
+ * Model-group rendering is independent from query/empty-state presentation.
+ * Keeping those concerns in separate components prevents search-state flags
+ * from forming artificial combinations with per-model policy predicates.
+ */
+function SttModelGroups({
 	statesById,
 	systemInfo,
 	selectedId,
@@ -392,17 +412,122 @@ export function SttModelList({
 	getFitAssessment,
 	getFittingQuants,
 	onDownloadAction,
-	hasActiveFilters,
-	hasSearch = false,
 	expandedBundles,
-	onShowAllSuggested,
 	onToggleExpanded,
 	onToggleFavorite,
 	sortKey,
 	suggestedFlattenActive = false,
+}: SttModelGroupsProps) {
+	return (
+		<Combobox.List className="p-0 pb-2">
+			{(group: SttListGroup) => {
+				// An active sort flattens every maker into one ordered column —
+				// rendered solo (the selector hands us just this group + hides
+				// the rail), so there are no per-maker headers to fight with.
+				if (isSortedGroup(group.value)) {
+					return (
+						<SortedGroup
+							currentQuantization={currentQuantization}
+							getDownloadSnapshot={getDownloadSnapshot}
+							getFitAssessment={getFitAssessment}
+							getFittingQuants={getFittingQuants}
+							isFavorite={isFavorite}
+							items={group.items}
+							key={group.value}
+							onDownloadAction={onDownloadAction}
+							onRequestDeleteQuant={onRequestDeleteQuant}
+							canDeleteQuant={canDeleteQuant}
+							onSelect={onSelect}
+							onToggleFavorite={onToggleFavorite}
+							selectedId={selectedId}
+							sortKey={sortKey}
+							statesById={statesById}
+							suggested={suggestedFlattenActive}
+							systemInfo={systemInfo}
+						/>
+					);
+				}
+				// The synthetic Favorites group is maker-agnostic and flat —
+				// rendered ahead of (and separately from) the per-maker groups.
+				if (isFavoritesGroup(group.value)) {
+					return (
+						<FavoritesGroup
+							currentQuantization={currentQuantization}
+							getDownloadSnapshot={getDownloadSnapshot}
+							getFitAssessment={getFitAssessment}
+							getFittingQuants={getFittingQuants}
+							isFavorite={isFavorite}
+							items={group.items}
+							key={group.value}
+							onDownloadAction={onDownloadAction}
+							onRequestDeleteQuant={onRequestDeleteQuant}
+							canDeleteQuant={canDeleteQuant}
+							onSelect={onSelect}
+							onToggleFavorite={onToggleFavorite}
+							selectedId={selectedId}
+							statesById={statesById}
+							systemInfo={systemInfo}
+						/>
+					);
+				}
+				// Bundling happens INSIDE the group render so it stays
+				// responsive to the menu-filtered set the selector hands
+				// us — a filter that hides a multilingual variant lets
+				// its .en sibling render solo automatically.
+				const family: FamilyKey = group.value;
+				const bundles = bundleVariants(group.items);
+				return (
+					<Combobox.Group
+						className="flex flex-col"
+						items={group.items}
+						key={group.value}
+					>
+						<AuthorLabel family={family} />
+						{bundles.map((bundle) => (
+							<SttVariantBundle
+								bundle={bundle}
+								currentQuantization={currentQuantization}
+								expanded={expandedBundles.has(bundle.baseId)}
+								getDownloadSnapshot={getDownloadSnapshot}
+								getFitAssessment={getFitAssessment}
+								getFittingQuants={getFittingQuants}
+								isFavorite={isFavorite}
+								key={bundle.baseId}
+								onDownloadAction={onDownloadAction}
+								onRequestDeleteQuant={onRequestDeleteQuant}
+								canDeleteQuant={canDeleteQuant}
+								onSelect={onSelect}
+								onToggleExpanded={onToggleExpanded}
+								onToggleFavorite={onToggleFavorite}
+								selectedId={selectedId}
+								statesById={statesById}
+								systemInfo={systemInfo}
+							/>
+						))}
+						{family === "custom" ? <OpenCustomModelsFolderRow /> : null}
+					</Combobox.Group>
+				);
+			}}
+		</Combobox.List>
+	);
+}
+
+export function SttModelList({
+	hasActiveFilters,
+	hasSearch = false,
+	onShowAllSuggested,
 	suggestedHiddenCount = 0,
 	visibleModelCount,
+	...modelGroupsProps
 }: SttModelListProps) {
+	const reason: EmptyStateReason = hasActiveFilters ? "filters" : "loading";
+	const suggestedHint =
+		suggestedHiddenCount > 0 && onShowAllSuggested
+			? {
+					hiddenCount: suggestedHiddenCount,
+					onShowAll: onShowAllSuggested,
+				}
+			: undefined;
 	return (
 		<ScrollArea
 			className="min-h-0 flex-1"
@@ -424,11 +549,7 @@ export function SttModelList({
 						: `${visibleModelCount} models available`}
 				</Combobox.Status>
 				<Combobox.Empty className="block">
-					<EmptyState
-						hasActiveFilters={hasActiveFilters}
-						onShowAllSuggested={onShowAllSuggested}
-						suggestedHiddenCount={suggestedHiddenCount}
-					/>
+					<EmptyState reason={reason} suggestedHint={suggestedHint} />
 				</Combobox.Empty>
 				{/* Base UI's Combobox.Empty only shows for an empty SEARCH result;
 				    when the menu filters (typically Suggested) empty the list with
@@ -436,102 +557,9 @@ export function SttModelList({
 				    "N models hidden by Suggested — tap to show all" escape hatch
 				    stays reachable. */}
 				{!hasSearch && visibleModelCount === 0 ? (
-					<EmptyState
-						hasActiveFilters={hasActiveFilters}
-						onShowAllSuggested={onShowAllSuggested}
-						suggestedHiddenCount={suggestedHiddenCount}
-					/>
+					<EmptyState reason={reason} suggestedHint={suggestedHint} />
 				) : null}
-				<Combobox.List className="p-0 pb-2">
-					{(group: SttListGroup) => {
-						// An active sort flattens every maker into one ordered column —
-						// rendered solo (the selector hands us just this group + hides
-						// the rail), so there are no per-maker headers to fight with.
-						if (isSortedGroup(group.value)) {
-							return (
-								<SortedGroup
-									currentQuantization={currentQuantization}
-									getDownloadSnapshot={getDownloadSnapshot}
-									getFitAssessment={getFitAssessment}
-									getFittingQuants={getFittingQuants}
-									isFavorite={isFavorite}
-									items={group.items}
-									key={group.value}
-									onDownloadAction={onDownloadAction}
-									onRequestDeleteQuant={onRequestDeleteQuant}
-									canDeleteQuant={canDeleteQuant}
-									onSelect={onSelect}
-									onToggleFavorite={onToggleFavorite}
-									selectedId={selectedId}
-									sortKey={sortKey}
-									statesById={statesById}
-									suggested={suggestedFlattenActive}
-									systemInfo={systemInfo}
-								/>
-							);
-						}
-						// The synthetic Favorites group is maker-agnostic and flat —
-						// rendered ahead of (and separately from) the per-maker groups.
-						if (isFavoritesGroup(group.value)) {
-							return (
-								<FavoritesGroup
-									currentQuantization={currentQuantization}
-									getDownloadSnapshot={getDownloadSnapshot}
-									getFitAssessment={getFitAssessment}
-									getFittingQuants={getFittingQuants}
-									isFavorite={isFavorite}
-									items={group.items}
-									key={group.value}
-									onDownloadAction={onDownloadAction}
-									onRequestDeleteQuant={onRequestDeleteQuant}
-									canDeleteQuant={canDeleteQuant}
-									onSelect={onSelect}
-									onToggleFavorite={onToggleFavorite}
-									selectedId={selectedId}
-									statesById={statesById}
-									systemInfo={systemInfo}
-								/>
-							);
-						}
-						// Bundling happens INSIDE the group render so it stays
-						// responsive to the menu-filtered set the selector hands
-						// us — a filter that hides a multilingual variant lets
-						// its .en sibling render solo automatically.
-						const family: FamilyKey = group.value;
-						const bundles = bundleVariants(group.items);
-						return (
-							<Combobox.Group
-								className="flex flex-col"
-								items={group.items}
-								key={group.value}
-							>
-								<AuthorLabel family={family} />
-								{bundles.map((bundle) => (
-									<SttVariantBundle
-										bundle={bundle}
-										currentQuantization={currentQuantization}
-										expanded={expandedBundles.has(bundle.baseId)}
-										getDownloadSnapshot={getDownloadSnapshot}
-										getFitAssessment={getFitAssessment}
-										getFittingQuants={getFittingQuants}
-										isFavorite={isFavorite}
-										key={bundle.baseId}
-										onDownloadAction={onDownloadAction}
-										onRequestDeleteQuant={onRequestDeleteQuant}
-										canDeleteQuant={canDeleteQuant}
-										onSelect={onSelect}
-										onToggleExpanded={onToggleExpanded}
-										onToggleFavorite={onToggleFavorite}
-										selectedId={selectedId}
-										statesById={statesById}
-										systemInfo={systemInfo}
-									/>
-								))}
-								{family === "custom" ? <OpenCustomModelsFolderRow /> : null}
-							</Combobox.Group>
-						);
-					}}
-				</Combobox.List>
+				<SttModelGroups {...modelGroupsProps} />
 			</div>
 		</ScrollArea>
 	);

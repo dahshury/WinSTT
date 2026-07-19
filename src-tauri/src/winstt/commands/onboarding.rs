@@ -86,15 +86,23 @@ fn track_from_str(track: &str) -> OnboardedTrack {
 /// section without disturbing any other field. Reads the full snapshot, mutates
 /// only `general.onboarded*`, writes it back, and returns the snapshot so the
 /// caller can broadcast it.
+///
+/// The read→mutate→write span holds the process-wide settings write lock (like
+/// every other durable writer): without it, a concurrent renderer section patch
+/// committing between our read and write would be silently reverted by this
+/// stale full-tree write (lost update).
 fn mark_onboarded(app: &AppHandle, track: OnboardedTrack) -> Result<serde_json::Value, String> {
-    let mut settings = crate::winstt::commands::settings::read_settings(app);
-    settings.general.onboarded = true;
-    settings.general.onboarded_at = Some(now_ms());
-    settings.general.onboarded_track = track;
+    let mut settings = crate::winstt::settings_store::with_settings_write_lock(|| {
+        let mut settings = crate::winstt::settings_store::try_read_settings(app)?;
+        settings.general.onboarded = true;
+        settings.general.onboarded_at = Some(now_ms());
+        settings.general.onboarded_track = track;
 
-    let mut to_persist = settings.clone();
-    crate::winstt::settings_store::try_seal_secrets(&mut to_persist)?;
-    crate::winstt::settings_store::write_settings_value(app, &to_persist)?;
+        let mut to_persist = settings.clone();
+        crate::winstt::settings_store::try_seal_secrets(&mut to_persist)?;
+        crate::winstt::settings_store::write_settings_value(app, &to_persist)?;
+        Ok::<_, String>(settings)
+    })?;
 
     crate::winstt::settings_store::sanitize_settings_for_renderer(&mut settings);
     serde_json::to_value(&settings).map_err(|e| e.to_string())

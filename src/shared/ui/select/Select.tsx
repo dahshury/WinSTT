@@ -87,7 +87,7 @@ export interface SelectProps {
 // Leading badge + icon + label, shared by the trigger (current value) and the
 // option rows. `active` marks the selected/highlighted state so the leading
 // icon thickens (strokeWidth 2) — the fluidfunctionalism dropdown's active cue.
-export function SelectOptionContent({
+function SelectOptionContent({
 	active,
 	option,
 }: {

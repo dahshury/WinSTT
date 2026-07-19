@@ -30,6 +30,7 @@ export {
 	isVisibleSttModel,
 	modelsHaveLanguageOverlap,
 	needsModelFallback,
+	DEFAULT_STT_MODEL_ID,
 	pickCachedSttModel,
 	pickDefaultSttModel,
 	supportsTranslateToEnglish,

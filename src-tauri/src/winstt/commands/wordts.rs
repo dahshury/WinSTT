@@ -123,6 +123,7 @@ mod tests {
             stt_processing_ms: None,
             stt_cost_usd: None,
             stt_cost_is_estimate: false,
+            source: None,
         }
     }
 

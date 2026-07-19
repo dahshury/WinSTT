@@ -15,61 +15,86 @@ interface ActiveReleaseNotes {
 	version: string;
 }
 
+interface KeyedText {
+	key: string;
+	text: string;
+}
+
+function keyTextOccurrences(texts: readonly string[]): KeyedText[] {
+	const occurrences = new Map<string, number>();
+	return texts.map((text) => {
+		const occurrence = occurrences.get(text) ?? 0;
+		occurrences.set(text, occurrence + 1);
+		return { key: `${text}\u0000${occurrence}`, text };
+	});
+}
+
+function parseMarkdownBlocks(notes: string): KeyedText[] {
+	const occurrences = new Map<string, number>();
+	const blocks: KeyedText[] = [];
+	for (const rawBlock of notes.trim().split(/\n\s*\n/)) {
+		const text = rawBlock.trim();
+		if (!text) {
+			continue;
+		}
+		const occurrence = occurrences.get(text) ?? 0;
+		occurrences.set(text, occurrence + 1);
+		blocks.push({ key: `${text}\u0000${occurrence}`, text });
+	}
+	return blocks;
+}
+
 function renderInlineMarkdown(text: string): ReactNode {
-	const pieces = text.split(/(`[^`]+`)/g);
-	return pieces.map((piece, index) =>
-		piece.startsWith("`") && piece.endsWith("`") ? (
+	const pieces = keyTextOccurrences(text.split(/(`[^`]+`)/g));
+	return pieces.map((piece) =>
+		piece.text.startsWith("`") && piece.text.endsWith("`") ? (
 			<code
 				className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[0.9em] text-foreground"
-				key={`${piece}-${index}`}
+				key={piece.key}
 			>
-				{piece.slice(1, -1)}
+				{piece.text.slice(1, -1)}
 			</code>
 		) : (
-			<Fragment key={`${piece}-${index}`}>{piece}</Fragment>
+			<Fragment key={piece.key}>{piece.text}</Fragment>
 		),
 	);
 }
 
 function MarkdownReleaseNotes({ notes }: { notes: string }) {
-	const blocks = notes
-		.trim()
-		.split(/\n\s*\n/)
-		.map((block) => block.trim())
-		.filter(Boolean);
+	const blocks = parseMarkdownBlocks(notes);
 
 	return (
 		<div className="space-y-3">
-			{blocks.map((block, index) => {
-				if (block.startsWith("# ")) {
+			{blocks.map((block) => {
+				if (block.text.startsWith("# ")) {
 					return (
 						<h2
 							className="font-semibold text-lg text-foreground tracking-tight"
-							key={`${block}-${index}`}
+							key={block.key}
 						>
-							{renderInlineMarkdown(block.slice(2))}
+							{renderInlineMarkdown(block.text.slice(2))}
 						</h2>
 					);
 				}
-				if (block.startsWith("## ")) {
+				if (block.text.startsWith("## ")) {
 					return (
 						<h3
 							className="pt-1 font-semibold text-body text-foreground"
-							key={`${block}-${index}`}
+							key={block.key}
 						>
-							{renderInlineMarkdown(block.slice(3))}
+							{renderInlineMarkdown(block.text.slice(3))}
 						</h3>
 					);
 				}
-				if (block.startsWith("- ")) {
+				if (block.text.startsWith("- ")) {
 					return (
 						<ul
 							className="space-y-1.5 pl-4 text-body text-foreground-secondary leading-relaxed"
-							key={`${block}-${index}`}
+							key={block.key}
 						>
-							{block.split("\n").map((item) => (
-								<li className="list-disc pl-0.5" key={item}>
-									{renderInlineMarkdown(item.replace(/^-\s+/, ""))}
+							{keyTextOccurrences(block.text.split("\n")).map((item) => (
+								<li className="list-disc pl-0.5" key={item.key}>
+									{renderInlineMarkdown(item.text.replace(/^-\s+/, ""))}
 								</li>
 							))}
 						</ul>
@@ -78,9 +103,9 @@ function MarkdownReleaseNotes({ notes }: { notes: string }) {
 				return (
 					<p
 						className="text-body text-foreground-secondary leading-relaxed"
-						key={`${block}-${index}`}
+						key={block.key}
 					>
-						{renderInlineMarkdown(block.replaceAll("\n", " "))}
+						{renderInlineMarkdown(block.text.replaceAll("\n", " "))}
 					</p>
 				);
 			})}

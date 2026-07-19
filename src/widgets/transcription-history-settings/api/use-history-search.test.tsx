@@ -90,12 +90,12 @@ afterAll(() => {
 });
 
 describe("useHistorySearch", () => {
-	test("passes through entries without invoking the backend for an empty query", async () => {
+	test("passes through entries synchronously without invoking the backend for an empty query", () => {
 		const { result: hook } = renderHook(() =>
 			useHistorySearch("  ", memoryItems, null),
 		);
 
-		await waitFor(() => expect(hook.current.loading).toBe(false));
+		expect(hook.current.loading).toBe(false);
 		expect(hook.current.items).toEqual([memoryItem]);
 		expect(mutableCommands.historySearch).not.toHaveBeenCalled();
 	});
@@ -128,16 +128,28 @@ describe("useHistorySearch", () => {
 				true,
 			),
 		);
-		const { result: hook } = renderHook(() =>
-			useHistorySearch("remote", memoryItems, null),
+		const { result: hook, rerender } = renderHook(
+			({ query }: { query: string }) =>
+				useHistorySearch(query, memoryItems, null),
+			{ initialProps: { query: "remote" } },
 		);
 
+		expect(hook.current.loading).toBe(true);
 		await waitFor(() => expect(hook.current.loading).toBe(false));
 		expect(hook.current.items.map((item) => item.entry.id)).toEqual(["remote"]);
 		expect(hook.current.hasMore).toBe(true);
 		expect(hook.current.highlights.get("transcription:remote")).toEqual([
 			{ end: 6, start: 0 },
 		]);
+
+		rerender({ query: "" });
+		expect(hook.current).toEqual({
+			hasMore: false,
+			highlights: new Map(),
+			items: memoryItems,
+			loading: false,
+			totalLabelCount: 1,
+		});
 	});
 
 	test("drops a late response from an older query", async () => {
@@ -156,7 +168,9 @@ describe("useHistorySearch", () => {
 			{ initialProps: { query: "alpha" } },
 		);
 
+		expect(hook.current.loading).toBe(true);
 		rerender({ query: "memory" });
+		expect(hook.current.loading).toBe(true);
 		await waitFor(() => expect(hook.current.loading).toBe(false));
 		expect(hook.current.items.map((item) => item.entry.id)).toEqual(["memory"]);
 

@@ -16,9 +16,10 @@ function Harness({ sections }: { sections: BreakdownSection[] }) {
 			t={t}
 			usage={{
 				device: "gpu",
-				totalBytes: 24 * GB,
-				usedBytes: 6 * GB,
-				usedByDevice: { gpu: 6 * GB, cpu: 8 * GB },
+				pools: {
+					gpu: { usedBytes: 6 * GB, totalBytes: 24 * GB },
+					cpu: { usedBytes: 8 * GB, totalBytes: 32 * GB },
+				},
 			}}
 		/>
 	);
@@ -48,13 +49,96 @@ describe("GpuModelBreakdown", () => {
 		expect(screen.getByText("Post-processing")).toBeDefined();
 		// Header reuses the {size} VRAM template with a "used / total" size.
 		expect(screen.getByText(/6\.0 GB \/ 24\.0 GB VRAM/)).toBeDefined();
-		const fill = container.querySelector<HTMLElement>(
-			'[data-slot="footprint-resource-fill"]',
+		// No local model bytes → the whole used span is one hatched System slice.
+		const segments = container.querySelectorAll<HTMLElement>(
+			'[data-slot="footprint-resource-segment"]',
 		);
-		expect(fill?.style.width).toBe("25%");
+		expect(segments.length).toBe(1);
+		expect(segments[0]?.dataset.section).toBe("system");
+		expect(segments[0]?.style.width).toBe("25.00%");
 		// Opening snapshots paint at their final width instead of visibly
 		// transitioning from the hidden window's older sample.
-		expect(fill?.className).not.toContain("transition");
+		expect(segments[0]?.className).not.toContain("transition");
+		// The System slice is spelled out in a legend line with its size.
+		expect(screen.getByText("System")).toBeDefined();
+		expect(screen.getByText("6.0 GB")).toBeDefined();
+	});
+
+	test("slices the meter per section, with the System remainder and a second meter for the other pool", () => {
+		const { container } = renderBreakdown([
+			{
+				key: "stt",
+				rows: [
+					{
+						key: "stt-main",
+						name: "Whisper Large v3",
+						status: null,
+						detail: "int8",
+						live: false,
+						memBytes: 1.5 * GB,
+						diskBytes: 1.5 * GB,
+						device: "gpu",
+					},
+				],
+			},
+			{
+				key: "dictionary",
+				rows: [
+					{
+						key: "dictionary",
+						name: "mmBERT",
+						status: null,
+						detail: "int8",
+						live: false,
+						memBytes: 800 * MB,
+						diskBytes: 800 * MB,
+						device: "cpu",
+					},
+				],
+			},
+		]);
+		// Primary (VRAM) meter: STT slice 1.5/24 GB, System remainder 4.5/24 GB.
+		const stt = container.querySelector<HTMLElement>('[data-section="stt"]');
+		expect(stt?.style.width).toBe("6.25%");
+		const systems = container.querySelectorAll<HTMLElement>(
+			'[data-section="system"]',
+		);
+		expect(systems[0]?.style.width).toBe("18.75%");
+		// Secondary (RAM) meter appears because the dictionary is CPU-resident:
+		// its own figure line plus a dictionary slice of 800 MB / 32 GB.
+		expect(screen.getByText(/8\.0 GB \/ 32\.0 GB RAM/)).toBeDefined();
+		const dictionary = container.querySelector<HTMLElement>(
+			'[data-section="dictionary"]',
+		);
+		expect(dictionary?.style.width).toBe("2.44%");
+		// ...and the RAM pool's System remainder (8 GB − 800 MB).
+		expect(systems.length).toBe(2);
+		expect(systems[1]?.style.width).toBe("22.56%");
+	});
+
+	test("shows no secondary meter when every local model lives in the active pool", () => {
+		const { container } = renderBreakdown([
+			{
+				key: "stt",
+				rows: [
+					{
+						key: "stt-main",
+						name: "Whisper Large v3",
+						status: null,
+						detail: "int8",
+						live: false,
+						memBytes: 1.5 * GB,
+						diskBytes: 1.5 * GB,
+						device: "gpu",
+					},
+				],
+			},
+		]);
+		expect(screen.queryByText(/32\.0 GB RAM/)).toBeNull();
+		expect(
+			container.querySelectorAll('[data-slot="footprint-resource-segment"]')
+				.length,
+		).toBe(2);
 	});
 
 	test("shows the VRAM memory tag plus a distinct disk figure for an STT model", () => {

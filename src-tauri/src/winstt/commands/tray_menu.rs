@@ -169,6 +169,11 @@ fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
     }
     let _ = window.unminimize();
     let _ = window.set_focus();
+    // Keep other apps' occlusion trackers from freezing a small window (e.g. a
+    // picture-in-picture player) the menu happens to fully cover — see the
+    // helper's doc comment.
+    #[cfg(target_os = "windows")]
+    super::windows::placement::exempt_popup_from_occlusion_tracking(&window);
     dispatch_tray_menu_dom_event(&window, TRAY_MENU_OPENED_EVENT);
     Ok(())
 }

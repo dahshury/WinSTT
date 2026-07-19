@@ -9,7 +9,7 @@ import {
 	screen,
 } from "../test/render-with-intl";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
-import { useOpenedFlag } from "../core/Collapsible";
+import { useOpenedFlag } from "../core/use-opened-flag";
 import * as components from "../lib/model-list-content-virtualized-components";
 import * as utils from "../lib/model-list-content-virtualized-utils";
 import type { VirtualizedItem } from "../lib/model-list-content-virtualized-utils";

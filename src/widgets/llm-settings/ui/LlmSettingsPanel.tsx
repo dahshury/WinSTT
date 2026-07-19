@@ -10,17 +10,17 @@ import { performFeatureToggle } from "../lib/llm-settings-panel-test-helpers";
 import { useLlmSettingsPanel } from "../model/use-llm-settings-panel";
 import { useAppProfileIndicatorStore } from "../model/use-app-profile-indicator";
 import { AppProfileRulesSection } from "./AppProfileRulesSection";
-import {
-	FeatureBlock,
-	useOllamaUnloadTracker,
-	useOllamaWarmTracker,
-} from "./FeatureBlock";
+import { FeatureBlock } from "./FeatureBlock";
 import { LlmSettingsDialogs } from "./LlmSettingsDialogs";
 import {
 	FeaturePresetControls,
 	PostProcessingProfilesCombobox,
 } from "./modifier-presets";
 import { PlaygroundModal } from "./playground-modal";
+import {
+	useOllamaUnloadTracker,
+	useOllamaWarmTracker,
+} from "./use-ollama-lifecycle-trackers";
 
 export function LlmSettingsPanel() {
 	const model = useLlmSettingsPanel();

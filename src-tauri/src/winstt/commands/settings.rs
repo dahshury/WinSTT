@@ -296,9 +296,10 @@ fn apply_settings_patch_inner(
     apply_stt_model_runtime: bool,
     expected_revision: Option<u64>,
 ) -> Result<AppliedPatch, ApplyPatchError> {
-    let changed_sections = patch_section_names(&patch)
-        .into_iter()
-        .map(str::to_owned)
+    let section_names = patch_section_names(&patch);
+    let changed_sections = section_names
+        .iter()
+        .map(|name| (*name).to_owned())
         .collect::<Vec<_>>();
     // The full read→merge→seal→write span runs UNDER the process-wide settings write
     // lock so two concurrent section patches (e.g. the renderer's per-utterance
@@ -330,8 +331,15 @@ fn apply_settings_patch_inner(
         let mut next = merge_patch_over(&previous, patch);
         preserve_masked_secrets(&previous, &mut next);
 
-        // (a) cross-field validation (the Zod `.refine` equivalents).
-        validate_settings(&next).map_err(ApplyPatchError::Other)?;
+        // (a) cross-field validation (the Zod `.refine` equivalents) — scoped to
+        //     the sections this patch posts, so a bad value already persisted in
+        //     an UNTOUCHED section can't reject unrelated saves forever. A section
+        //     that fails is SALVAGED field-by-field (validation rules drift across
+        //     app versions — catalogs, allowlists, numeric ranges — and a save must
+        //     never be permanently wedged by state an older version wrote); only a
+        //     section that is still invalid after salvage rejects the patch.
+        salvage_invalid_sections(&mut next, &previous, &section_names)
+            .map_err(ApplyPatchError::Other)?;
 
         if next == previous {
             return Ok((previous, next, false, actual_revision));
@@ -514,7 +522,34 @@ fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> W
         next.integrations = integrations;
     }
     normalize_cross_field_settings(&mut next);
+    heal_model_quantization(&mut next);
     next
+}
+
+/// HEAL an unusable `{model.model, model.onnxQuantization}` couple instead of
+/// letting `validate_quantization` reject the whole save.
+///
+/// The couple goes inconsistent transiently by design: quant picks, model swaps,
+/// runtime fallbacks, and cross-window adoption each persist at different times,
+/// so a debounced section save can post a precision that belongs to a model other
+/// than the one currently in `model.model` (observed live: `fp16w` posted while
+/// `model` still read `alphacep/vosk-model-small-ru` mid-switch). The renderer
+/// mirrors (`resolveSwapQuantization` / `reconcileAdoptedQuant`) and the swap
+/// path's `reconcile_persisted_quant` each guard their own write, but any NEW
+/// write path re-opens the hole — healing at the merge choke point closes the
+/// class. Resets to `""` (the universal default every catalog entry ships; the
+/// server re-resolves it per model), matching `reconcile_persisted_quant`. The
+/// swap that caused the mismatch persists its own correct couple on completion.
+fn heal_model_quantization(next: &mut WinsttSettings) {
+    if let Err(detail) = validate_quantization(&next.model.model, &next.model.onnx_quantization) {
+        log::warn!(
+            "[settings] healed model.onnxQuantization '{}' for model '{}' to the universal \
+             default ({detail})",
+            next.model.onnx_quantization,
+            next.model.model,
+        );
+        next.model.onnx_quantization = String::new();
+    }
 }
 
 /// True when the patch posts EVERY top-level section — the "whole store dumped"
@@ -593,26 +628,187 @@ fn preserve_main_owned_general(
     incoming
 }
 
-/// Re-run the Zod cross-field rules: no duplicate preset keys, at most one tone key,
-/// `level` only for summarize/concise, `targetLang` only for translate.
+/// Full-tree validation over every section. Production paths validate SCOPED
+/// subsets via [`validate_sections`] (the patch path passes the posted sections,
+/// the swap path passes `["model"]`); tests assert the complete ruleset here.
+#[cfg(test)]
 pub(super) fn validate_settings(settings: &WinsttSettings) -> Result<(), String> {
-    validate_model_settings(&settings.model)?;
-    validate_quality_settings(&settings.quality)?;
-    validate_audio_settings(&settings.audio)?;
-    validate_general_settings(&settings.general)?;
-    validate_hotkey(
-        "hotkey.pushToTalkKey",
-        &settings.hotkey.push_to_talk_key,
-        true,
-    )?;
-    validate_dictionary(&settings.dictionary)?;
-    validate_snippets(&settings.snippets)?;
-    validate_llm_settings(&settings.llm)?;
-    validate_tts_settings(&settings.tts)?;
-    validate_integrations(&settings.integrations)?;
-    validate_presets(&settings.llm.dictation.presets)?;
-    validate_presets(&settings.llm.transforms.presets)?;
-    crate::winstt::llm::validate_loopback_ollama_endpoint(&settings.llm.endpoint)?;
+    validate_sections(
+        settings,
+        &[
+            "global",
+            "model",
+            "quality",
+            "audio",
+            "general",
+            "hotkey",
+            "dictionary",
+            "snippets",
+            "llm",
+            "tts",
+            "integrations",
+        ],
+    )
+}
+
+/// Field-level salvage of patched sections that fail validation — the write-time
+/// mirror of `settings_store::salvage_section_fields` (which salvages PARSE
+/// failures), with the section validator as the oracle instead of serde.
+///
+/// Why: validation rules drift between app versions (catalog memberships, hotkey
+/// token allowlists, builtin-asset lists, numeric ranges, endpoint rules). A
+/// section is always posted WHOLE, so one field persisted under an older rule
+/// set would otherwise make every future save of that section fail — observed
+/// classes: a retired TTS catalog id breaking even the pill's speed slider, a
+/// once-allowed non-loopback Ollama endpoint breaking background auto-learning.
+///
+/// Strategy per failing section: rebuild over a base (the PERSISTED section if
+/// it still validates, else the schema defaults), then layer each incoming field
+/// one at a time, keeping it only while the section stays valid. Good edits in
+/// the same save survive; only the offending field reverts (to its persisted
+/// value, or its default when the persisted value is itself the drifted one).
+/// Array sections (dictionary/snippets) salvage per ENTRY instead. Errors only
+/// if a section is somehow still invalid after salvage (defaults always
+/// validate, so that would be a bug).
+fn salvage_invalid_sections(
+    next: &mut WinsttSettings,
+    previous: &WinsttSettings,
+    sections: &[&str],
+) -> Result<(), String> {
+    let failing: Vec<&str> = sections
+        .iter()
+        .copied()
+        .filter(|section| validate_sections(next, &[*section]).is_err())
+        .collect();
+    if failing.is_empty() {
+        return Ok(());
+    }
+    let mut tree = serde_json::to_value(&*next).map_err(|e| e.to_string())?;
+    let previous_tree = serde_json::to_value(previous).map_err(|e| e.to_string())?;
+    let defaults_tree =
+        serde_json::to_value(WinsttSettings::default()).map_err(|e| e.to_string())?;
+    for section in failing {
+        let incoming = tree
+            .get(section)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let base = if validate_sections(previous, &[section]).is_ok() {
+            previous_tree.get(section).cloned()
+        } else {
+            defaults_tree.get(section).cloned()
+        }
+        .unwrap_or(serde_json::Value::Null);
+        salvage_section_value(&mut tree, section, incoming, base)?;
+    }
+    *next = serde_json::from_value(tree).map_err(|e| e.to_string())?;
+    validate_sections(next, sections)
+}
+
+/// Salvage one section in `tree`: layer `incoming` over `base` piecewise
+/// (object → per field, array → per entry), keeping each piece only while
+/// `validate_sections` accepts the section. Logs every dropped piece.
+fn salvage_section_value(
+    tree: &mut serde_json::Value,
+    section: &str,
+    incoming: serde_json::Value,
+    base: serde_json::Value,
+) -> Result<(), String> {
+    let section_valid = |tree: &serde_json::Value| -> Result<bool, String> {
+        let candidate: WinsttSettings =
+            serde_json::from_value(tree.clone()).map_err(|e| e.to_string())?;
+        Ok(validate_sections(&candidate, &[section]).is_ok())
+    };
+    match incoming {
+        serde_json::Value::Object(fields) => {
+            tree[section] = base;
+            for (field, value) in fields {
+                let kept = tree[section]
+                    .as_object()
+                    .and_then(|obj| obj.get(&field).cloned());
+                tree[section][&field] = value;
+                if !section_valid(tree)? {
+                    log::warn!(
+                        "[settings] salvaged `{section}.{field}`: incoming value fails current \
+                         validation; kept the persisted/default value instead"
+                    );
+                    match kept {
+                        Some(previous_value) => tree[section][&field] = previous_value,
+                        None => {
+                            if let Some(obj) = tree[section].as_object_mut() {
+                                obj.remove(&field);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(entries) => {
+            tree[section] = serde_json::Value::Array(Vec::new());
+            for (index, entry) in entries.into_iter().enumerate() {
+                if let Some(items) = tree[section].as_array_mut() {
+                    items.push(entry);
+                }
+                if !section_valid(tree)? {
+                    log::warn!(
+                        "[settings] salvaged `{section}[{index}]`: entry fails current \
+                         validation; dropped it"
+                    );
+                    if let Some(items) = tree[section].as_array_mut() {
+                        items.pop();
+                    }
+                }
+            }
+        }
+        other => {
+            tree[section] = other;
+            if !section_valid(tree)? {
+                log::warn!(
+                    "[settings] salvaged `{section}`: value fails current validation; reset to \
+                     the persisted/default value"
+                );
+                tree[section] = base;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate only the named top-level sections of a merged tree.
+///
+/// The patch path validates ONLY the sections the caller actually posts: an
+/// invalid value already sitting in a PERSISTED, untouched section (e.g. an app
+/// update retiring a quantization the catalog used to publish, or a stale LLM
+/// model id) must degrade that one section — never permanently reject every
+/// future save of every other section, and never fail an STT model swap.
+pub(super) fn validate_sections(
+    settings: &WinsttSettings,
+    sections: &[&str],
+) -> Result<(), String> {
+    for section in sections {
+        match *section {
+            "model" => validate_model_settings(&settings.model)?,
+            "quality" => validate_quality_settings(&settings.quality)?,
+            "audio" => validate_audio_settings(&settings.audio)?,
+            "general" => validate_general_settings(&settings.general)?,
+            "hotkey" => validate_hotkey(
+                "hotkey.pushToTalkKey",
+                &settings.hotkey.push_to_talk_key,
+                true,
+            )?,
+            "dictionary" => validate_dictionary(&settings.dictionary)?,
+            "snippets" => validate_snippets(&settings.snippets)?,
+            "llm" => {
+                validate_llm_settings(&settings.llm)?;
+                validate_presets(&settings.llm.dictation.presets)?;
+                validate_presets(&settings.llm.transforms.presets)?;
+                crate::winstt::llm::validate_loopback_ollama_endpoint(&settings.llm.endpoint)?;
+            }
+            "tts" => validate_tts_settings(&settings.tts)?,
+            "integrations" => validate_integrations(&settings.integrations)?,
+            // `global` has no field validators (enum-typed; serde rejects bad values).
+            _ => {}
+        }
+    }
     Ok(())
 }
 
@@ -1844,6 +2040,161 @@ mod tests {
         let current = WinsttSettings::default();
         let next = merge_patch_over(&current, PartialWinsttSettings::default());
         assert_eq!(next, current);
+    }
+
+    // ── quantization healing at the merge choke point ──────────────────────────
+
+    /// The live repro (2026-07-16): mid-switch, a debounced model-section save
+    /// posted the NEW model's precision while `model.model` still held the OLD
+    /// model. The merge must heal the couple instead of letting validation
+    /// reject the whole save from every window.
+    #[test]
+    fn model_patch_heals_quantization_the_model_does_not_ship() {
+        let current = WinsttSettings::default();
+        let mut model = serde_json::to_value(&current.model).unwrap();
+        model["model"] = serde_json::json!("alphacep/vosk-model-small-ru");
+        model["onnxQuantization"] = serde_json::json!("fp16w");
+        let patch = patch_from_json(serde_json::json!({ "model": model }));
+
+        let next = merge_patch_over(&current, patch);
+
+        assert_eq!(next.model.model, "alphacep/vosk-model-small-ru");
+        assert_eq!(next.model.onnx_quantization, "");
+        assert!(validate_settings(&next).is_ok());
+    }
+
+    #[test]
+    fn model_patch_heals_unknown_quantization_token() {
+        let current = WinsttSettings::default();
+        let mut model = serde_json::to_value(&current.model).unwrap();
+        model["onnxQuantization"] = serde_json::json!("mxfp4");
+        let patch = patch_from_json(serde_json::json!({ "model": model }));
+
+        let next = merge_patch_over(&current, patch);
+
+        assert_eq!(next.model.onnx_quantization, "");
+        assert!(validate_settings(&next).is_ok());
+    }
+
+    #[test]
+    fn model_patch_keeps_a_valid_quantization_couple() {
+        let current = WinsttSettings::default();
+        let mut model = serde_json::to_value(&current.model).unwrap();
+        model["model"] = serde_json::json!("qwen3-asr-0.6b");
+        model["onnxQuantization"] = serde_json::json!("int4");
+        let patch = patch_from_json(serde_json::json!({ "model": model }));
+
+        let next = merge_patch_over(&current, patch);
+
+        assert_eq!(next.model.onnx_quantization, "int4");
+    }
+
+    #[test]
+    fn model_patch_keeps_the_auto_sentinel() {
+        let current = WinsttSettings::default();
+        let mut model = serde_json::to_value(&current.model).unwrap();
+        model["model"] = serde_json::json!("alphacep/vosk-model-small-ru");
+        model["onnxQuantization"] = serde_json::json!("auto");
+        let patch = patch_from_json(serde_json::json!({ "model": model }));
+
+        let next = merge_patch_over(&current, patch);
+
+        assert_eq!(next.model.onnx_quantization, "auto");
+    }
+
+    // ── per-patch section validation ────────────────────────────────────────────
+
+    /// A bad value already persisted in an UNTOUCHED section must not reject
+    /// saves of unrelated sections (nor STT swaps, which validate `["model"]`).
+    #[test]
+    fn stale_invalid_section_does_not_block_unrelated_saves() {
+        let mut settings = WinsttSettings::default();
+        settings.tts.model = "not-a-tts-model".into();
+
+        assert!(validate_sections(&settings, &["audio", "model"]).is_ok());
+        assert!(validate_sections(&settings, &["tts"]).is_err());
+        assert!(validate_settings(&settings).is_err());
+    }
+
+    // ── validation-drift salvage ────────────────────────────────────────────────
+
+    /// A drifted field (persisted under an older rule set, re-posted because
+    /// sections travel whole) must not reject the save; the good edits in the
+    /// same section survive and only the offending field reverts.
+    #[test]
+    fn salvage_keeps_good_edits_and_reverts_the_drifted_field() {
+        let previous = WinsttSettings::default();
+        let mut next = WinsttSettings::default();
+        next.quality.smart_endpoint_speed = 99.0; // outside 0.5–3.0 (drifted)
+        next.quality.realtime_processing_pause = 5.0; // a legitimate edit
+
+        salvage_invalid_sections(&mut next, &previous, &["quality"]).unwrap();
+
+        assert_eq!(
+            next.quality.smart_endpoint_speed,
+            previous.quality.smart_endpoint_speed
+        );
+        assert_eq!(next.quality.realtime_processing_pause, 5.0);
+        assert!(validate_sections(&next, &["quality"]).is_ok());
+    }
+
+    /// When the PERSISTED value of the drifted field is itself invalid (the
+    /// classic upgrade case: an app update retired a TTS catalog id), the field
+    /// falls back to its schema default and the save still lands.
+    #[test]
+    fn salvage_falls_back_to_defaults_when_previous_is_also_invalid() {
+        let mut previous = WinsttSettings::default();
+        previous.tts.model = "retired-tts-model".into();
+        let mut next = previous.clone();
+        next.tts.speed = 1.5; // the user just moved the speed slider
+
+        salvage_invalid_sections(&mut next, &previous, &["tts"]).unwrap();
+
+        assert_eq!(next.tts.model, WinsttSettings::default().tts.model);
+        assert_eq!(next.tts.speed, 1.5);
+        assert!(validate_sections(&next, &["tts"]).is_ok());
+    }
+
+    /// Array sections salvage per entry: one bad element is dropped, the rest
+    /// of the list survives.
+    #[test]
+    fn salvage_drops_only_the_invalid_array_entries() {
+        let previous = WinsttSettings::default();
+        let mut next = WinsttSettings {
+            dictionary: vec![
+                DictionaryEntry {
+                    id: "good".into(),
+                    term: "WinSTT".into(),
+                    auto_added: None,
+                    replacement: None,
+                },
+                DictionaryEntry {
+                    id: "bad".into(),
+                    term: String::new(), // term is required
+                    auto_added: None,
+                    replacement: None,
+                },
+            ],
+            ..WinsttSettings::default()
+        };
+
+        salvage_invalid_sections(&mut next, &previous, &["dictionary"]).unwrap();
+
+        assert_eq!(next.dictionary.len(), 1);
+        assert_eq!(next.dictionary[0].id, "good");
+    }
+
+    /// Valid patches take the fast path untouched.
+    #[test]
+    fn salvage_is_a_noop_for_valid_sections() {
+        let previous = WinsttSettings::default();
+        let mut next = WinsttSettings::default();
+        next.quality.realtime_processing_pause = 5.0;
+        let expected = next.clone();
+
+        salvage_invalid_sections(&mut next, &previous, &["quality", "audio"]).unwrap();
+
+        assert_eq!(next, expected);
     }
 
     /// A full-tree PartialWinsttSettings built from `tree` (all 11 sections posted).

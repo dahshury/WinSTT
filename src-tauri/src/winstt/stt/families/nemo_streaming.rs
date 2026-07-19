@@ -901,7 +901,7 @@ impl Transcriber for NativeNemoStreamingEngine {
     fn transcribe(&mut self, audio: &[f32], _opts: &TranscribeOptions) -> SttResult<Transcription> {
         self.stream_reset();
         self.stream_accept(audio)?;
-        self.stream_accept(&streaming::final_silence_pad())?;
+        self.stream_accept(&vec![0.0; streaming::FINAL_SILENCE_PAD_SAMPLES])?;
         let text = self.stream_finalize()?;
         Ok(Transcription {
             text,
@@ -922,10 +922,7 @@ impl Transcriber for NativeNemoStreamingEngine {
     }
 
     fn stream_finalize(&mut self) -> SttResult<String> {
-        self.stream
-            .cursor
-            .pcm
-            .extend_from_slice(&streaming::final_silence_pad());
+        streaming::append_final_silence_pad(&mut self.stream.cursor.pcm);
         self.process_available_chunks(true)?;
         if let Some(p) = self.profile.as_ref() {
             eprintln!(

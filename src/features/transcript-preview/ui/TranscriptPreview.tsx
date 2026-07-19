@@ -9,6 +9,11 @@ import { useTranscriptPreviewStore } from "../model/preview-store";
 import { EditView } from "./EditView";
 import { EnhanceView } from "./EnhanceView";
 
+function dismissTranscriptPreview(): void {
+	void cancelPreview();
+	useTranscriptPreviewStore.getState().reset();
+}
+
 /**
  * The preview-before-pasting pill content. Rendered inside both the dynamic
  * island and the floating-bottom bubble when `isPreviewActive`. A small view
@@ -21,13 +26,7 @@ import { EnhanceView } from "./EnhanceView";
 export function TranscriptPreview() {
 	const tp = useTranslations("preview");
 	const view = useTranscriptPreviewStore((s) => s.view);
-	const reset = useTranscriptPreviewStore((s) => s.reset);
-
-	const dismiss = () => {
-		void cancelPreview();
-		reset();
-	};
-	useEscapeToClose(dismiss);
+	useEscapeToClose(dismissTranscriptPreview);
 
 	return (
 		<SurfaceProvider value={2}>
@@ -36,7 +35,7 @@ export function TranscriptPreview() {
 					<IconButton
 						aria-label={tp("dismiss")}
 						icon={<HugeiconsIcon icon={Cancel01Icon} size={14} />}
-						onClick={dismiss}
+						onClick={dismissTranscriptPreview}
 					/>
 				</div>
 				{/* `key={view}` remounts on view change → the StaggerReveal replays and

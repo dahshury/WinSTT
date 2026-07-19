@@ -140,12 +140,13 @@ export function EditableListCombobox({
 	const visibleEntries = needle
 		? value.filter((entry) => matchesFuzzySearch(entry, needle))
 		: [...value];
+	const values = new Set(value);
 	const suggestionByValue = new Map(
 		suggestions.map((suggestion) => [suggestion.value, suggestion]),
 	);
 	const visibleSuggestions = suggestions.filter(
 		(suggestion) =>
-			!value.includes(suggestion.value) &&
+			!values.has(suggestion.value) &&
 			(!needle ||
 				matchesFuzzySearch([suggestion.label, suggestion.value], needle)),
 	);
@@ -155,8 +156,8 @@ export function EditableListCombobox({
 	const candidate = normalize(query);
 	const canCreate =
 		candidate.length > 0 &&
-		!value.includes(candidate) &&
-		!visibleSuggestions.some((suggestion) => suggestion.value === candidate);
+		!values.has(candidate) &&
+		!visibleSuggestionByValue.has(candidate);
 	const items = [
 		...visibleSuggestions.map((suggestion) => suggestion.value),
 		...(canCreate ? [candidate] : []),

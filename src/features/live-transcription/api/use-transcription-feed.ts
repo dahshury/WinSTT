@@ -177,7 +177,7 @@ export function useTranscriptionFeed(): void {
 			}
 		});
 
-		const unsubFinal = onFullSentence((text) => {
+		const unsubFinal = onFullSentence(({ text, speaker }) => {
 			voiceActivitySeenRef.current = false;
 			const isListenMode = recordingModeRef.current === "listen";
 			const sessionId = useTranscriptionStore.getState().recordingSessionId;
@@ -185,7 +185,7 @@ export function useTranscriptionFeed(): void {
 				setRecordingActive(false);
 			}
 			setTranscribing(false);
-			addFinalSentence(text);
+			addFinalSentence(text, speaker);
 			if (sessionId > 0 && !isListenMode) {
 				scheduleCompletedSessionClear(sessionId);
 			}

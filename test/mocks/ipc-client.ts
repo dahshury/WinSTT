@@ -355,8 +355,17 @@ export function ipcClientMock(): Record<string, unknown> {
 				}),
 				cb,
 			),
-		onFullSentence: (cb: (t: string) => void) =>
-			onTyped(IPC.STT_FULL_SENTENCE, (d: { text: string }) => d.text, cb),
+		onFullSentence: (
+			cb: (payload: { text: string; speaker?: number | null }) => void,
+		) =>
+			onTyped(
+				IPC.STT_FULL_SENTENCE,
+				(d: { text: string; speaker?: number | null }) => ({
+					text: d.text,
+					speaker: typeof d.speaker === "number" ? d.speaker : null,
+				}),
+				cb,
+			),
 		onNoAudioDetected: (cb: () => void) => on(IPC.STT_NO_AUDIO_DETECTED, cb),
 		onRecordingStart: (cb: () => void) => on(IPC.STT_RECORDING_START, cb),
 		onRecordingStop: (cb: () => void) => on(IPC.STT_RECORDING_STOP, cb),

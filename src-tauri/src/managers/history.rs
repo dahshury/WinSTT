@@ -172,6 +172,11 @@ static MIGRATIONS: &[M<'_>] = &[
             ('fts_backfill_target', (SELECT coalesce(MAX(id), 0) FROM transcription_history)),
             ('fts_backfill_done_id', 0);",
     ),
+    // Capture source of the transcription: NULL = mic dictation (every row
+    // written before this shipped), 'listen' = a finished listen-mode session
+    // (system-audio loopback, optionally mixed with the mic). Drives the
+    // History UI's listen-session affordances (session post-processing).
+    M::up("ALTER TABLE transcription_history ADD COLUMN source TEXT;"),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -234,6 +239,9 @@ pub struct HistoryEntry {
     /// `true` when `stt_cost_usd` is a client-side estimate (providers that
     /// report no billed amount) rather than a provider-billed figure.
     pub stt_cost_is_estimate: bool,
+    /// Where the transcription came from: `None` = mic dictation (also every
+    /// legacy row), `Some("listen")` = a finished listen-mode session.
+    pub source: Option<String>,
 }
 
 /// One text-to-speech read-aloud run, persisted so the History tab lists TTS
@@ -422,6 +430,7 @@ impl HistoryManager {
             stt_processing_ms: row.get("stt_processing_ms")?,
             stt_cost_usd: row.get("stt_cost_usd")?,
             stt_cost_is_estimate: row.get("stt_cost_is_estimate")?,
+            source: row.get("source")?,
         })
     }
 

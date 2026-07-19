@@ -69,12 +69,18 @@ fn ensure_hf_cache_env_for_bench() {
         return;
     }
     if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
-        std::env::set_var(
-            "HF_HOME",
-            std::path::Path::new(&profile)
-                .join(".cache")
-                .join("huggingface"),
-        );
+        // SAFETY: this is the first statement of the bench worker, which runs
+        // while the only other thread (main) is parked in `join()` and before
+        // any engine/ORT threads are created — so no other thread can be
+        // reading the environment concurrently.
+        unsafe {
+            std::env::set_var(
+                "HF_HOME",
+                std::path::Path::new(&profile)
+                    .join(".cache")
+                    .join("huggingface"),
+            );
+        }
     }
 }
 

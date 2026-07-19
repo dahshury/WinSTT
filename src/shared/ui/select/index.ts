@@ -3,7 +3,6 @@ export { GroupHeaderContent } from "./group-header";
 export { OptionBadge } from "./option-badge";
 export {
 	Select,
-	SelectOptionContent,
 	type SelectOption,
 	type SelectOptionGroup,
 } from "./Select";

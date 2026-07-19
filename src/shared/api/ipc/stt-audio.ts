@@ -572,8 +572,23 @@ function realtimeTextPayload(d: {
 export const onRealtimeText = (cb: (payload: RealtimeTextPayload) => void) =>
 	onTyped(IPC.STT_REALTIME_TEXT, realtimeTextPayload, cb);
 
-export const onFullSentence = (cb: (text: string) => void) =>
-	onTyped(IPC.STT_FULL_SENTENCE, (d: { text: string }) => d.text, cb);
+export interface FullSentencePayload {
+	text: string;
+	/** Diarized global speaker id for this listen-mode caption row (0-based).
+	 * `null`/absent when diarization is off, the row's span had no labeled
+	 * overlap yet, or the sentence came from mic dictation. */
+	speaker?: number | null;
+}
+
+export const onFullSentence = (cb: (payload: FullSentencePayload) => void) =>
+	onTyped(
+		IPC.STT_FULL_SENTENCE,
+		(d: { text: string; speaker?: number | null }): FullSentencePayload => ({
+			text: d.text,
+			speaker: typeof d.speaker === "number" ? d.speaker : null,
+		}),
+		cb,
+	);
 
 export const onNoAudioDetected = (cb: () => void) =>
 	on(IPC.STT_NO_AUDIO_DETECTED, cb);

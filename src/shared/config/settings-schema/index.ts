@@ -27,7 +27,9 @@ const appSettingsBaseSchema = z.object({
 	general: generalSettingsSchema.prefault({}),
 	hotkey: hotkeySettingsSchema.prefault({}),
 	dictionary: z.array(dictionaryEntrySchema).default([]).catch([]),
-	snippets: z.array(snippetEntrySchema).default([]),
+	// `.catch` matches `dictionary`: one malformed persisted snippet must reset
+	// only this array, not fail the whole-tree parse into per-section recovery.
+	snippets: z.array(snippetEntrySchema).default([]).catch([]),
 	llm: llmSettingsSchema.prefault({}),
 	tts: ttsSettingsSchema.prefault({}),
 	integrations: integrationsSchema.prefault({}),

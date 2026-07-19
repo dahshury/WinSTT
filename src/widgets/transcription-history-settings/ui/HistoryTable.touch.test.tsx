@@ -107,6 +107,31 @@ describe("HistoryTable touch gestures", () => {
 	});
 });
 
+describe("HistoryTable entry accents", () => {
+	test("uses the listen visualizer color for listen-session rails", async () => {
+		const entry: TranscriptionHistoryEntry = {
+			durationMs: 1200,
+			id: "entry-listen",
+			source: "listen",
+			text: "listen session transcript",
+			timestamp: Date.UTC(2026, 0, 1),
+			wordCount: 3,
+		};
+
+		render(
+			<IntlProvider>
+				<HistoryTable entries={[transcriptionItem(entry)]} />
+			</IntlProvider>,
+		);
+
+		await screen.findByText(entry.text);
+		const listeningLabel = screen.getByText("Listening");
+		const rail = listeningLabel.previousElementSibling;
+		expect(rail?.className).toContain("bg-recording-mode-listen");
+		expect(rail?.className).not.toContain("bg-history-stt");
+	});
+});
+
 describe("HistoryTable LLM variant toggle", () => {
 	test("shows a branded short label for a local Hugging Face Bonsai model", async () => {
 		const rawModel = "hf.co/prism-ml/Bonsai-27B-gguf:Q1_0";

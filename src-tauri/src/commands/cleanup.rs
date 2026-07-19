@@ -158,11 +158,14 @@ pub async fn remove_app_data_category(
                 errors.push(format!("failed to unload STT model: {err}"));
             }
             cleanup::delete_stt_model_caches(downloads.inner(), &mut errors).await;
-            // Clear the selected STT models so the app doesn't try to reload a
-            // now-deleted cache on the next launch.
+            // Reset the selected STT models so the app doesn't try to reload a
+            // now-deleted cache on the next launch. `model.model` is required
+            // by validation (clearing to `""` used to make this save FAIL), so
+            // the reset lands on the deterministic factory default.
             let mut settings = read_settings(&app);
-            settings.model.model.clear();
+            settings.model.model = crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID.to_string();
             settings.model.realtime_model.clear();
+            settings.model.onnx_quantization = "auto".to_string();
             if let Err(err) = apply_settings_patch(
                 &app,
                 PartialWinsttSettings {

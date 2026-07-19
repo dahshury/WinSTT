@@ -291,9 +291,53 @@ function OllamaDetachedTrigger({
 	);
 }
 
+type OllamaModelPickerSurfaceLayout =
+	| { kind: "inline" }
+	| { kind: "popup"; open: boolean };
+
+type OllamaModelPickerSurfaceFilterMode =
+	| "standard"
+	| "hardware-aware"
+	| "suggested-aware"
+	| "hardware-and-suggested-aware";
+
+interface OllamaModelPickerSurfaceState {
+	activity: "idle" | "loading";
+	availability: "disabled" | "enabled";
+	filterMode: OllamaModelPickerSurfaceFilterMode;
+	layout: OllamaModelPickerSurfaceLayout;
+}
+
+function resolveOllamaSurfaceFilterMode(
+	hasHardwareFilter: boolean,
+	hasSuggestedFilter: boolean,
+): OllamaModelPickerSurfaceFilterMode {
+	if (hasHardwareFilter && hasSuggestedFilter) {
+		return "hardware-and-suggested-aware";
+	}
+	if (hasHardwareFilter) {
+		return "hardware-aware";
+	}
+	if (hasSuggestedFilter) {
+		return "suggested-aware";
+	}
+	return "standard";
+}
+
+function surfaceShowsHardwareFilter(
+	mode: OllamaModelPickerSurfaceFilterMode,
+): boolean {
+	return mode === "hardware-aware" || mode === "hardware-and-suggested-aware";
+}
+
+function surfaceShowsSuggestedFilter(
+	mode: OllamaModelPickerSurfaceFilterMode,
+): boolean {
+	return mode === "suggested-aware" || mode === "hardware-and-suggested-aware";
+}
+
 interface OllamaModelPickerSurfaceProps {
 	body: ReactNode;
-	disabled: boolean;
 	filter: (model: OllamaModel, query: string) => boolean;
 	filters: OllamaFilterState;
 	handleFiltersChange: (next: OllamaFilterState) => void;
@@ -302,59 +346,47 @@ interface OllamaModelPickerSurfaceProps {
 	>;
 	handleSelect: (name: string) => void;
 	handleSortChange: (next: OllamaSortValue) => void;
-	inline: boolean;
-	isLoading: boolean;
-	isQueryPending: boolean;
 	items: readonly OllamaModel[];
 	onQueryChange: (next: string) => void;
-	open: boolean;
 	popupHeightClass: string;
 	popupWidthClass: string;
 	query: string;
 	selected: OllamaModel | undefined;
 	selectedItemKey: string | undefined;
 	setPopupNode: (node: HTMLElement | null) => void;
-	showHardwareFilter: boolean;
-	/** Whether the host wired a Suggested verdict — gates the chip + menu row. */
-	showSuggestedFilter: boolean;
 	sidebarSlot: ReactNode;
 	sortKey: OllamaSortValue;
+	state: OllamaModelPickerSurfaceState;
 	triggerNode: ReactNode;
 }
 
 function OllamaModelPickerSurface({
 	body,
-	disabled,
 	filter,
 	filters,
 	handleFiltersChange,
 	handleOpenChange,
 	handleSelect,
 	handleSortChange,
-	inline,
-	isLoading,
-	isQueryPending,
 	items,
 	onQueryChange,
-	open,
 	popupHeightClass,
 	popupWidthClass,
 	query,
 	selected,
 	selectedItemKey,
 	setPopupNode,
-	showHardwareFilter,
-	showSuggestedFilter,
 	sidebarSlot,
 	sortKey,
+	state,
 	triggerNode,
 }: OllamaModelPickerSurfaceProps) {
 	return (
 		<ModelPicker<OllamaModel, OllamaModel | null>
-			disabled={disabled}
+			disabled={state.availability === "disabled"}
 			filter={filter}
 			filtersLeadingSlot={
-				showSuggestedFilter ? (
+				surfaceShowsSuggestedFilter(state.filterMode) ? (
 					<SuggestedFilterChip
 						active={filters.suggestedOnly}
 						onToggle={() =>
@@ -371,22 +403,22 @@ function OllamaModelPickerSurface({
 					filters={filters}
 					onFiltersChange={handleFiltersChange}
 					onSortChange={handleSortChange}
-					showHardwareFilter={showHardwareFilter}
-					showSuggestedFilter={showSuggestedFilter}
+					showHardwareFilter={surfaceShowsHardwareFilter(state.filterMode)}
+					showSuggestedFilter={surfaceShowsSuggestedFilter(state.filterMode)}
 					sort={sortKey}
 				/>
 			}
-			inline={inline}
+			inline={state.layout.kind === "inline"}
 			inputValue={query}
 			isItemEqualToValue={(a, b) => a?.name === b?.name}
-			isLoading={isLoading || isQueryPending}
+			isLoading={state.activity === "loading"}
 			items={items}
 			itemToStringLabel={(m) => m?.name ?? ""}
 			list={selectorListSlot(body)}
 			onInputValueChange={onQueryChange}
 			onOpenChange={handleOpenChange}
 			onValueChange={(next) => forwardOllamaSelection(next, handleSelect)}
-			open={open}
+			open={state.layout.kind === "popup" && state.layout.open}
 			popupHeightClass={popupHeightClass}
 			popupRef={setPopupNode}
 			popupWidthClass={popupWidthClass}
@@ -772,31 +804,37 @@ function useOllamaModelSelectorPanelState({
 		/>
 	);
 
+	const surfaceState: OllamaModelPickerSurfaceState = {
+		activity: isLoading || isQueryPending ? "loading" : "idle",
+		availability: disabled ? "disabled" : "enabled",
+		filterMode: resolveOllamaSurfaceFilterMode(
+			systemFit !== undefined,
+			suggestionsAvailable,
+		),
+		layout: inline
+			? { kind: "inline" }
+			: { kind: "popup", open: externalOpen ? false : open },
+	};
+
 	const surfaceProps: OllamaModelPickerSurfaceProps = {
 		body,
-		disabled,
 		filter,
 		filters,
 		handleFiltersChange,
 		handleOpenChange,
 		handleSelect,
 		handleSortChange,
-		inline,
-		isLoading,
-		isQueryPending,
 		items: shouldBuildList ? dedupedModels : [],
 		onQueryChange: (next) => dispatchUi({ type: "queryChanged", query: next }),
-		open: externalOpen ? false : open,
 		popupHeightClass,
 		popupWidthClass,
 		query,
 		selected,
 		selectedItemKey: soleActivePullName ?? (value || undefined),
 		setPopupNode: openGuard.setPopupNode,
-		showHardwareFilter: !!systemFit,
-		showSuggestedFilter: suggestionsAvailable,
 		sidebarSlot,
 		sortKey,
+		state: surfaceState,
 		triggerNode,
 	};
 

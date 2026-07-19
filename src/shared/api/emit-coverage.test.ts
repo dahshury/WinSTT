@@ -139,8 +139,8 @@ const ROUTE_EVENTS_WITHOUT_BACKEND_EMITTER = new Set<string>([
 	// (`llm:catalog` left this list 2026-07: `ollama_refresh_models` now
 	// broadcasts it so every window converges after a scan/delete/pull.)
 	"stt:model-catalog",
-	// Only diarization-toggle started/completed are emitted; -failed never fires.
-	"stt:diarization-toggle-failed",
+	// (`stt:diarization-toggle-failed` left this list 2026-07: the diarization
+	// runtime now emits it on download/build failures — winstt/diarize/mod.rs.)
 ]);
 
 // B) Canonical backend event names with no frontend listener — Rust-internal

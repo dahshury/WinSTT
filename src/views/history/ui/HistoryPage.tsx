@@ -73,6 +73,20 @@ interface HistorySearchResult {
 	transcriptions: Array<{ row: HistoryEntry }>;
 }
 
+interface HistorySearchSnapshot {
+	entries: HistoryEntry[];
+	hasMore: boolean;
+	loadingMore: boolean;
+	query: string;
+}
+
+const EMPTY_SEARCH_SNAPSHOT: HistorySearchSnapshot = {
+	entries: [],
+	hasMore: false,
+	loadingMore: false,
+	query: "",
+};
+
 type HistorySearchCommand = (
 	query: string,
 	limit: number,
@@ -200,6 +214,118 @@ function LongPressTranscript({
 	);
 }
 
+interface HistoryEntryItemProps {
+	animateEntry: boolean;
+	audioUrl: string | null;
+	entry: HistoryEntry;
+	entryLevel: number;
+	onAnimationComplete: (entryId: number) => void;
+	onDelete: (entryId: number) => void;
+	onPlay: (entryId: number) => void;
+	onToggle: (entryId: number) => void;
+	playingId: number | null;
+	query: string;
+}
+
+function HistoryEntryItem({
+	animateEntry,
+	audioUrl,
+	entry,
+	entryLevel,
+	onAnimationComplete,
+	onDelete,
+	onPlay,
+	onToggle,
+	playingId,
+	query,
+}: HistoryEntryItemProps) {
+	const text = effectiveText(entry);
+	const highlights = query ? computeHighlightRanges(text, query) : undefined;
+	const tagLabel = historyTagLabel(entry.historyTag);
+	const sensitive = hasPrivacyMarkers(entry.privacyMarkers);
+
+	return (
+		<li
+			className={cn(
+				"flex flex-col gap-1 rounded-md border border-border p-2",
+				surfaceBg(entryLevel),
+			)}
+		>
+			<StaggerReveal
+				active={animateEntry}
+				contentClassName="flex flex-col gap-1"
+				onComplete={() => onAnimationComplete(entry.id)}
+			>
+				<div className="flex items-center justify-between text-xs">
+					<span className="text-foreground-secondary">
+						{formatEntryTimestamp(entry)}
+					</span>
+					<div className="flex flex-wrap items-center justify-end gap-1">
+						{tagLabel ? <Badge variant="secondary">{tagLabel}</Badge> : null}
+						{sensitive ? (
+							<Badge variant="outline">{SENSITIVE_HISTORY_LABEL}</Badge>
+						) : null}
+						<div className="flex gap-1">
+							<Tooltip content="Play recording">
+								<Button
+									aria-label="Play recording"
+									className="flex items-center gap-1 px-2 py-1 text-xs"
+									onClick={() => onPlay(entry.id)}
+								>
+									<HugeiconsIcon icon={PlayIcon} size={14} />
+								</Button>
+							</Tooltip>
+							<Tooltip
+								content={
+									entry.saved ? "Unpin" : "Pin (preserve from retention)"
+								}
+							>
+								<Button
+									aria-label={entry.saved ? "Unpin" : "Pin"}
+									className={`flex items-center gap-1 px-2 py-1 text-xs ${
+										entry.saved ? "text-warning" : ""
+									}`}
+									onClick={() => onToggle(entry.id)}
+								>
+									<HugeiconsIcon icon={FavouriteIcon} size={14} />
+								</Button>
+							</Tooltip>
+							<Tooltip content="Delete">
+								<Button
+									aria-label="Delete"
+									className="flex items-center gap-1 px-2 py-1 text-xs hover:text-error"
+									onClick={() => onDelete(entry.id)}
+								>
+									<HugeiconsIcon icon={Delete02Icon} size={14} />
+								</Button>
+							</Tooltip>
+						</div>
+					</div>
+				</div>
+				<LongPressTranscript
+					{...(highlights ? { highlights } : {})}
+					text={text}
+				/>
+				{playingId === entry.id && audioUrl ? (
+					<audio
+						aria-label="Transcription recording playback"
+						autoPlay
+						controls
+						src={audioUrl}
+					>
+						<track
+							default
+							kind="captions"
+							label="No captions available"
+							srcLang="en"
+						/>
+					</audio>
+				) : null}
+			</StaggerReveal>
+		</li>
+	);
+}
+
 export function HistoryPage() {
 	const t = useTranslations("history");
 	const entries = useHistoryViewStore((s) => s.entries);
@@ -215,9 +341,9 @@ export function HistoryPage() {
 	const [playingId, setPlayingId] = useState<number | null>(null);
 	const [audioUrl, setAudioUrl] = useState<string | null>(null);
 	const [query, setQuery] = useState("");
-	const [searchEntries, setSearchEntries] = useState<HistoryEntry[]>([]);
-	const [searchHasMore, setSearchHasMore] = useState(false);
-	const [searchLoading, setSearchLoading] = useState(false);
+	const [searchSnapshot, setSearchSnapshot] = useState<HistorySearchSnapshot>(
+		EMPTY_SEARCH_SNAPSHOT,
+	);
 	const searchRequestSeq = useRef(0);
 	const [animatedEntryIds, setAnimatedEntryIds] = useState<Set<number>>(
 		() => new Set(),
@@ -263,46 +389,70 @@ export function HistoryPage() {
 		speechActivityRef,
 	]);
 
+	const normalizedQuery = query.trim();
+	const searching = normalizedQuery.length > 0;
+	const activeSearchSnapshot =
+		searchSnapshot.query === normalizedQuery
+			? searchSnapshot
+			: { ...EMPTY_SEARCH_SNAPSHOT, query: normalizedQuery };
+
 	useEffect(() => {
-		const normalizedQuery = query.trim();
 		const seq = ++searchRequestSeq.current;
 		if (!normalizedQuery) {
-			setSearchEntries([]);
-			setSearchHasMore(false);
-			setSearchLoading(false);
 			return;
 		}
-		setSearchLoading(true);
+
+		let cancelled = false;
 		searchHistoryPage(normalizedQuery, 0)
 			.catch(() => ({ entries: [], hasMore: false }))
 			.then((page) => {
-				if (searchRequestSeq.current !== seq) {
+				if (cancelled || searchRequestSeq.current !== seq) {
 					return;
 				}
-				setSearchEntries(page.entries);
-				setSearchHasMore(page.hasMore);
-				setSearchLoading(false);
+				setSearchSnapshot({
+					entries: page.entries,
+					hasMore: page.hasMore,
+					loadingMore: false,
+					query: normalizedQuery,
+				});
 			});
-	}, [query]);
 
-	const searching = query.trim().length > 0;
-	const displayedEntries = searching ? searchEntries : entries;
-	const displayedHasMore = searching ? searchHasMore : hasMore;
-	const displayedLoading = searching ? searchLoading : loading;
+		return () => {
+			cancelled = true;
+		};
+	}, [normalizedQuery]);
+
+	const displayedEntries = searching ? activeSearchSnapshot.entries : entries;
+	const displayedHasMore = searching ? activeSearchSnapshot.hasMore : hasMore;
+	const displayedLoading = searching
+		? searchSnapshot.query !== normalizedQuery ||
+			activeSearchSnapshot.loadingMore
+		: loading;
 
 	const loadNext = (): void => {
 		if (searching) {
 			const seq = searchRequestSeq.current;
-			setSearchLoading(true);
-			searchHistoryPage(query.trim(), searchEntries.length)
+			setSearchSnapshot((current) =>
+				current.query === normalizedQuery
+					? { ...current, loadingMore: true }
+					: current,
+			);
+			searchHistoryPage(normalizedQuery, activeSearchSnapshot.entries.length)
 				.catch(() => ({ entries: [], hasMore: false }))
 				.then((page) => {
 					if (searchRequestSeq.current !== seq) {
 						return;
 					}
-					setSearchEntries((current) => [...current, ...page.entries]);
-					setSearchHasMore(page.hasMore);
-					setSearchLoading(false);
+					setSearchSnapshot((current) =>
+						current.query === normalizedQuery
+							? {
+									entries: [...current.entries, ...page.entries],
+									hasMore: page.hasMore,
+									loadingMore: false,
+									query: normalizedQuery,
+								}
+							: current,
+					);
 				});
 			return;
 		}
@@ -331,9 +481,10 @@ export function HistoryPage() {
 		deleteHistoryRow(id).then((ok) => {
 			if (ok) {
 				removeRow(id);
-				setSearchEntries((current) =>
-					current.filter((entry) => entry.id !== id),
-				);
+				setSearchSnapshot((current) => ({
+					...current,
+					entries: current.entries.filter((entry) => entry.id !== id),
+				}));
 				if (playingId === id) {
 					setPlayingId(null);
 					setAudioUrl(null);
@@ -346,12 +497,24 @@ export function HistoryPage() {
 		toggleHistoryRow(id).then((saved) => {
 			if (saved !== null) {
 				toggleRowInStore(id, saved);
-				setSearchEntries((current) =>
-					current.map((entry) =>
+				setSearchSnapshot((current) => ({
+					...current,
+					entries: current.entries.map((entry) =>
 						entry.id === id ? { ...entry, saved } : entry,
 					),
-				);
+				}));
 			}
+		});
+	};
+
+	const handleAnimationComplete = (entryId: number): void => {
+		setAnimatedEntryIds((current) => {
+			if (!current.has(entryId)) {
+				return current;
+			}
+			const next = new Set(current);
+			next.delete(entryId);
+			return next;
 		});
 	};
 
@@ -364,8 +527,8 @@ export function HistoryPage() {
 					{displayedEntries.length === 1 ? "entry" : "entries"}
 				</p>
 				<HistorySearchInput
-					count={searchEntries.length}
-					hasMore={searchHasMore}
+					count={activeSearchSnapshot.entries.length}
+					hasMore={activeSearchSnapshot.hasMore}
 					onQueryChange={setQuery}
 				/>
 			</header>
@@ -374,110 +537,22 @@ export function HistoryPage() {
 				className="flex flex-1 flex-col gap-2 overflow-y-auto"
 				style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
 			>
-				{displayedEntries.map((entry) => {
-					const text = effectiveText(entry);
-					const highlights = searching
-						? computeHighlightRanges(text, query)
-						: undefined;
-					const tagLabel = historyTagLabel(entry.historyTag);
-					const sensitive = hasPrivacyMarkers(entry.privacyMarkers);
-					const animateEntry = animatedEntryIds.has(entry.id);
-					return (
-						<li
-							className={cn(
-								"flex flex-col gap-1 rounded-md border border-border p-2",
-								surfaceBg(entryLevel),
-							)}
-							key={entry.id}
-						>
-							<StaggerReveal
-								active={animateEntry}
-								contentClassName="flex flex-col gap-1"
-								onComplete={() =>
-									setAnimatedEntryIds((current) => {
-										if (!current.has(entry.id)) {
-											return current;
-										}
-										const next = new Set(current);
-										next.delete(entry.id);
-										return next;
-									})
-								}
-							>
-								<div className="flex items-center justify-between text-xs">
-									<span className="text-foreground-secondary">
-										{formatEntryTimestamp(entry)}
-									</span>
-									<div className="flex flex-wrap items-center justify-end gap-1">
-										{tagLabel ? (
-											<Badge variant="secondary">{tagLabel}</Badge>
-										) : null}
-										{sensitive ? (
-											<Badge variant="outline">{SENSITIVE_HISTORY_LABEL}</Badge>
-										) : null}
-										<div className="flex gap-1">
-											<Tooltip content="Play recording">
-												<Button
-													aria-label="Play recording"
-													className="flex items-center gap-1 px-2 py-1 text-xs"
-													onClick={() => handlePlay(entry.id)}
-												>
-													<HugeiconsIcon icon={PlayIcon} size={14} />
-												</Button>
-											</Tooltip>
-											<Tooltip
-												content={
-													entry.saved
-														? "Unpin"
-														: "Pin (preserve from retention)"
-												}
-											>
-												<Button
-													aria-label={entry.saved ? "Unpin" : "Pin"}
-													className={`flex items-center gap-1 px-2 py-1 text-xs ${
-														entry.saved ? "text-warning" : ""
-													}`}
-													onClick={() => handleToggle(entry.id)}
-												>
-													<HugeiconsIcon icon={FavouriteIcon} size={14} />
-												</Button>
-											</Tooltip>
-											<Tooltip content="Delete">
-												<Button
-													aria-label="Delete"
-													className="flex items-center gap-1 px-2 py-1 text-xs hover:text-error"
-													onClick={() => handleDelete(entry.id)}
-												>
-													<HugeiconsIcon icon={Delete02Icon} size={14} />
-												</Button>
-											</Tooltip>
-										</div>
-									</div>
-								</div>
-								<LongPressTranscript
-									{...(highlights ? { highlights } : {})}
-									text={text}
-								/>
-								{playingId === entry.id && audioUrl ? (
-									<audio
-										aria-label="Transcription recording playback"
-										autoPlay
-										controls
-										src={audioUrl}
-									>
-										<track
-											default
-											kind="captions"
-											label="No captions available"
-											srcLang="en"
-										/>
-									</audio>
-								) : null}
-							</StaggerReveal>
-						</li>
-					);
-				})}
-				{searching && !searchLoading && displayedEntries.length === 0 ? (
+				{displayedEntries.map((entry) => (
+					<HistoryEntryItem
+						animateEntry={animatedEntryIds.has(entry.id)}
+						audioUrl={audioUrl}
+						entry={entry}
+						entryLevel={entryLevel}
+						key={entry.id}
+						onAnimationComplete={handleAnimationComplete}
+						onDelete={handleDelete}
+						onPlay={handlePlay}
+						onToggle={handleToggle}
+						playingId={playingId}
+						query={searching ? query : ""}
+					/>
+				))}
+				{searching && !displayedLoading && displayedEntries.length === 0 ? (
 					<li className="py-8 text-center text-foreground-muted text-sm">
 						{t("searchNoResults")}
 					</li>

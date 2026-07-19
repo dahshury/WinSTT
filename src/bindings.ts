@@ -839,9 +839,9 @@ async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
  * WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
  * command owns the device-name resolution + the started event.
  */
-async startListen(deviceIndex: number, modelId: string) : Promise<Result<null, string>> {
+async startListen(deviceIndex: number, modelId: string, captureMicrophone: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("start_listen", { deviceIndex, modelId }) };
+    return { status: "ok", data: await TAURI_INVOKE("start_listen", { deviceIndex, modelId, captureMicrophone }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return __commandError__(e);
@@ -856,6 +856,43 @@ async startListen(deviceIndex: number, modelId: string) : Promise<Result<null, s
  */
 async stopListen() : Promise<void> {
     await TAURI_INVOKE("stop_listen");
+},
+/**
+ * `listen_session_snapshot` — poll surface for the History tab's live
+ * session card (small clone; no events to subscribe to cross-window).
+ */
+async listenSessionSnapshot() : Promise<ListenSessionSnapshot> {
+    return await TAURI_INVOKE("listen_session_snapshot");
+},
+/**
+ * `finalize_listen_session` — cut the session-so-far into its own history
+ * row WITHOUT stopping the session (no silence or mode switch needed); the
+ * running session continues accumulating from empty. Returns whether a row
+ * was saved (false when idle or nothing committed yet). The row lands via
+ * the standard history `Added` event, so every history surface refreshes.
+ */
+async finalizeListenSession() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("finalize_listen_session") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `history_post_process` — apply `instructions` to a history entry's RAW
+ * transcript with the configured post-processing LLM and store the result as
+ * the entry's processed text (overwriting a previous run). Emits the standard
+ * history `Updated` event, so every history surface refreshes itself. Returns
+ * the processed text.
+ */
+async historyPostProcess(id: number, instructions: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_post_process", { id, instructions }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
 },
 /**
  * `align_words` — per-word timings for a history entry (lazy on first play).
@@ -1127,9 +1164,11 @@ async encoderDictUnload() : Promise<Result<null, string>> {
 /**
  * `get_runtime_info` — the active EP + loaded-model snapshot the GPU/CPU chip and the active-model
  * reconciliation (`useSyncActiveModel`) read. Reads the loaded model from the TranscriptionManager
- * (falling back to the persisted `model.model` when nothing is loaded yet), and the EP from the
- * persisted device. The real per-session provider list is a compile-loop refinement (ort exposes it
- * at session-create); the device-derived list is correct for the shipped flavors.
+ * (falling back to the persisted `model.model` when nothing is loaded yet). The EP is the LOADED
+ * engine's real per-session provider list whenever one is resident — so a DML-incompatible model
+ * that `override_dml_to_cpu_for_kind` routed to CPU reports `is_gpu=false` and the footer chip
+ * flips to CPU with the RAM fill bar. Only when nothing is loaded yet does the snapshot fall back
+ * to the persisted-device derivation (the cold-boot chip shows the user's chosen device intent).
  */
 async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
     return await TAURI_INVOKE("get_runtime_info");
@@ -2570,6 +2609,12 @@ repasteHotkey?: string;
  */
 loopbackDeviceIndex?: number | null;
 /**
+ * Listen mode: also capture the microphone and mix it into the loopback
+ * stream, so the session transcript covers both sides of a meeting.
+ * HOT-SWAP (the renderer restarts the listen session on change).
+ */
+listenCaptureMicrophone?: boolean;
+/**
  * Wake phrase in `wakeword` mode. Presets and custom phrases both run
  * through the local sherpa KWS detector. HOT-SWAP via wakeword runtime refresh.
  */
@@ -2792,12 +2837,21 @@ stt_cost_usd: number | null;
  * `true` when `stt_cost_usd` is a client-side estimate (providers that
  * report no billed amount) rather than a provider-billed figure.
  */
-stt_cost_is_estimate: boolean }
+stt_cost_is_estimate: boolean;
+/**
+ * Where the transcription came from: `None` = mic dictation (also every
+ * legacy row), `Some("listen")` = a finished listen-mode session.
+ */
+source: string | null }
 /**
  * Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
  * history window + paginated list. NUMBER id, epoch-SECONDS timestamp.
  */
-export type HistoryRow = { id: number; fileName: string; timestamp: number; saved: boolean; title: string; transcriptionText: string; postProcessedText: string | null; postProcessPrompt: string | null; postProcessRequested: boolean; historyTag?: string | null; privacyMarkers?: string[] | null }
+export type HistoryRow = { id: number; fileName: string; timestamp: number; saved: boolean; title: string; transcriptionText: string; postProcessedText: string | null; postProcessPrompt: string | null; postProcessRequested: boolean; historyTag?: string | null; privacyMarkers?: string[] | null;
+/**
+ * Omitted = mic dictation; `"listen"` = a finished listen-mode session.
+ */
+source?: string | null }
 export type HistorySearchResult = { transcriptions: TranscriptionHistorySearchHit[]; transforms: TransformHistorySearchHit[]; tts: TtsHistorySearchHit[]; hasMore: boolean; ftsActive: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HotkeySettings = {
@@ -2812,6 +2866,12 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | Partial
  * One language `{ code, label }`.
  */
 export type LanguagePayload = { code: string; label: string }
+/**
+ * Live transcript state of the CURRENT listen session for the History tab's
+ * live session card: committed caption lines plus the in-flight preview.
+ * `active` is false when no session is running (the card hides).
+ */
+export type ListenSessionSnapshot = { active: boolean; lines: string[]; livePreview: string }
 /**
  * One GPU as the renderer's `LiveResourcesEntry.gpus` (ipc-client.ts `LiveGpuEntry`) expects it.
  * snake_case on the wire — the renderer reads `total_vram_bytes` / `free_vram_bytes` directly.
@@ -3419,7 +3479,12 @@ sttCostIsEstimate?: boolean | null;
  * provider's native token accounting × catalog rates. Omitted for local
  * LLMs and runs without usage data.
  */
-llmCostUsd?: number | null }
+llmCostUsd?: number | null;
+/**
+ * Where the transcription came from: omitted = mic dictation, `"listen"`
+ * = a finished listen-mode session (drives the session post-process UI).
+ */
+source?: string | null }
 export type TranscriptionHistorySearchHit = { entry: TranscriptionHistoryEntry;
 /**
  * Native history-window row shape. The settings table consumes `entry`,
@@ -3641,7 +3706,16 @@ export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_ac
  * Persisted via the Tauri store (one JSON value). Secrets are encrypted at
  * rest by the persistence layer — they are plaintext on this struct.
  */
-export type WinsttSettings = { global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings;
+export type WinsttSettings = {
+/**
+ * See [`CURRENT_SETTINGS_SCHEMA_VERSION`]. Backend-only: absent from the
+ * renderer's zod schema (stripped on decode), absent from
+ * `PartialWinsttSettings` (a patch can't post it), preserved across merges
+ * via the section-graft clone, and stripped from the parity fixture and
+ * settings exports like `core`. Serde default 0 = pre-versioning store;
+ * the boot migration stamps it to CURRENT after applying the pending steps.
+ */
+schemaVersion?: number; global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings;
 /**
  * Backend-only fields that have no renderer-facing settings section: the hotkey
  * `bindings` map, audio-feedback and paste/clipboard settings, the keyboard

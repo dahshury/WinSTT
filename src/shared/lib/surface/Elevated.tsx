@@ -1,7 +1,8 @@
 import type { ComponentPropsWithoutRef, ReactNode, Ref } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceClasses } from "./surface-classes";
-import { SurfaceProvider, useSurface } from "./surface-context";
+import { SurfaceProvider } from "./SurfaceProvider";
+import { useSurface } from "./use-surface";
 
 export interface ElevatedProps extends ComponentPropsWithoutRef<"div"> {
 	children?: ReactNode;

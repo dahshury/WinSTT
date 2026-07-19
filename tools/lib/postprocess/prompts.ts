@@ -6,6 +6,10 @@ function custom(
 	return "id" in entry;
 }
 
+function isCavemanFinalPass(entry: PresetEntry): boolean {
+	return !custom(entry) && entry.key === "concise" && entry.level === "caveman";
+}
+
 export function operationSummary(entry: PresetEntry): string | null {
 	if (custom(entry)) {
 		const label = entry.name.trim() || "modifier";
@@ -41,12 +45,11 @@ export function buildUserPromptForPresets(
 	before: string,
 	presets: readonly PresetEntry[],
 ): string {
-	const operations = [...presets]
-		.sort((left, right) => {
-			const finalPass = (entry: PresetEntry) =>
-				!custom(entry) && entry.key === "concise" && entry.level === "caveman";
-			return Number(finalPass(left)) - Number(finalPass(right));
-		})
+	const operations = presets
+		.toSorted(
+			(left, right) =>
+				Number(isCavemanFinalPass(left)) - Number(isCavemanFinalPass(right)),
+		)
 		.map(operationSummary)
 		.filter((value): value is string => value !== null);
 	const has = (key: string) =>

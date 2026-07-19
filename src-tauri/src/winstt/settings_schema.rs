@@ -418,12 +418,18 @@ pub struct ModelSettings {
     pub translate_target_language: String,
 }
 
+/// The factory-default STT model id. Every automatic fallback (stale selection,
+/// settings import, offline cloud salvage) resolves to THIS deterministic
+/// target — never to "whatever small model happens to be cached". Mirrors the
+/// renderer's `DEFAULT_STT_MODEL_ID` in `entities/model-catalog`.
+pub const DEFAULT_STT_MODEL_ID: &str = "tiny";
+
 impl ModelSettings {
     fn default_model() -> String {
-        "tiny".to_string()
+        DEFAULT_STT_MODEL_ID.to_string()
     }
     fn default_realtime_model() -> String {
-        "tiny".to_string()
+        DEFAULT_STT_MODEL_ID.to_string()
     }
     fn default_language() -> String {
         "en".to_string()
@@ -736,6 +742,11 @@ pub struct GeneralSettings {
     /// Loopback device index for `listen` mode; `null` = default. HOT-SWAP.
     #[serde(default)]
     pub loopback_device_index: Option<i64>,
+    /// Listen mode: also capture the microphone and mix it into the loopback
+    /// stream, so the session transcript covers both sides of a meeting.
+    /// HOT-SWAP (the renderer restarts the listen session on change).
+    #[serde(default)]
+    pub listen_capture_microphone: bool,
     /// Wake phrase in `wakeword` mode. Presets and custom phrases both run
     /// through the local sherpa KWS detector. HOT-SWAP via wakeword runtime refresh.
     #[serde(default = "GeneralSettings::default_wake_word")]
@@ -1078,6 +1089,7 @@ impl Default for GeneralSettings {
             manual_toggle_stop: false,
             repaste_hotkey: Self::default_repaste_hotkey(),
             loopback_device_index: None,
+            listen_capture_microphone: false,
             wake_word: Self::default_wake_word(),
             custom_wake_words: Vec::new(),
             wake_word_sensitivity: Self::default_wake_word_sensitivity(),
@@ -1663,6 +1675,14 @@ impl Default for IntegrationsSettings {
 // TOP-LEVEL: WinsttSettings  (appSettingsSchema)
 // ===========================================================================
 
+/// The persisted tree's schema revision, for ONE-TIME boot migrations
+/// (`settings_store::migrate_store_on_boot`). Bump it when a persisted field's
+/// MEANING changes (a renamed field, a re-interpreted sentinel) and add the
+/// matching step to `apply_settings_migrations`; purely additive fields need no
+/// bump (serde defaults cover absence). Stores written before the field existed
+/// read as version 0.
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+
 /// The complete WinSTT settings tree, nested by the settings sections, ported
 /// 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
 /// the reused React renderer expects.
@@ -1672,6 +1692,14 @@ impl Default for IntegrationsSettings {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WinsttSettings {
+    /// See [`CURRENT_SETTINGS_SCHEMA_VERSION`]. Backend-only: absent from the
+    /// renderer's zod schema (stripped on decode), absent from
+    /// `PartialWinsttSettings` (a patch can't post it), preserved across merges
+    /// via the section-graft clone, and stripped from the parity fixture and
+    /// settings exports like `core`. Serde default 0 = pre-versioning store;
+    /// the boot migration stamps it to CURRENT after applying the pending steps.
+    #[serde(default)]
+    pub schema_version: u32,
     #[serde(default)]
     pub global: GlobalSettings,
     #[serde(default)]
@@ -1705,6 +1733,9 @@ pub struct WinsttSettings {
 impl Default for WinsttSettings {
     fn default() -> Self {
         Self {
+            // Fresh trees are stamped current so no boot migration ever runs on
+            // a tree this binary created itself.
+            schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
             global: GlobalSettings::default(),
             model: ModelSettings::default(),
             quality: QualitySettings::default(),
@@ -1735,6 +1766,9 @@ pub fn default_fixture_json() -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(WinsttSettings::default())?;
     if let Some(map) = value.as_object_mut() {
         map.remove("core");
+        // Backend-only, like `core`: the renderer's zod schema doesn't model the
+        // schema revision, so it must not participate in defaults parity.
+        map.remove("schemaVersion");
     }
     // Pin the push-to-talk key to the zod-canonical value: the runtime default is
     // platform-specific (see `DEFAULT_PUSH_TO_TALK_KEY`), but the parity fixture must
@@ -2084,9 +2118,17 @@ mod tests {
     #[test]
     fn empty_json_object_yields_all_defaults() {
         // Reproduces Zod `appSettingsSchema.parse({})` — a `{}` persisted blob
-        // must hydrate to the full default tree, never error.
+        // must hydrate to the full default tree, never error. The one deliberate
+        // divergence: a blob with NO `schemaVersion` reads as version 0 (a
+        // pre-versioning store, so the boot migration runs), while a freshly
+        // DEFAULTED tree is stamped current.
         let s: WinsttSettings = serde_json::from_str("{}").expect("empty object must parse");
-        assert_eq!(s, WinsttSettings::default());
+        assert_eq!(s.schema_version, 0);
+        let expected = WinsttSettings {
+            schema_version: 0,
+            ..WinsttSettings::default()
+        };
+        assert_eq!(s, expected);
     }
 
     #[test]

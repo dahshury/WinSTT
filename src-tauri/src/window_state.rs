@@ -70,6 +70,33 @@ pub(crate) fn restore_main_window_position(app: &AppHandle, window: &tauri::Webv
 }
 
 pub(crate) fn show_main_window(app: &AppHandle) {
+    show_main_window_with_restore(app, false);
+}
+
+/// Reveal the main pill from a system-tray interaction.
+///
+/// Tauri reveals hidden Windows windows with `ShowWindow(SW_SHOW)`, which skips
+/// the shell's restore semantics. Tray restores use `SW_RESTORE` instead so the
+/// operating system owns the transition and its timing. Other lifecycle reveals
+/// (startup/splash, onboarding) keep their existing handoff behavior.
+pub(crate) fn show_main_window_from_tray(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        let app_handle = app.clone();
+        let fallback_app = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            show_main_window_with_restore(&app_handle, true);
+        }) {
+            log::warn!("Failed to schedule the native tray restore: {e}");
+            show_main_window_with_restore(&fallback_app, false);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    show_main_window_with_restore(app, false);
+}
+
+fn show_main_window_with_restore(app: &AppHandle, restore_from_tray: bool) {
     // Hand off from the splash: the real window is about to be visible. Idempotent
     // and a no-op if the page-load handler already closed it (mirrors the reference's
     // showOnce → closeSplashWindow).
@@ -77,9 +104,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
         }
-        if let Err(e) = main_window.show() {
-            log::error!("Failed to show webview window: {}", e);
-        }
+        show_main_window_surface(&main_window, restore_from_tray);
         // Hand off from the splash after the real window is visible, so the
         // splash fade-out runs over a painted renderer instead of blank desktop.
         splash::close_splash_window(app);
@@ -115,4 +140,36 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         "Main window not found. Webview labels: {:?}",
         webview_labels
     );
+}
+
+fn show_main_window_surface(
+    main_window: &tauri::WebviewWindow,
+    #[allow(unused_variables)] restore_from_tray: bool,
+) {
+    #[cfg(target_os = "windows")]
+    if restore_from_tray && !main_window.is_visible().unwrap_or(false) {
+        use windows::Win32::UI::WindowsAndMessaging::{SW_RESTORE, ShowWindow};
+
+        if let Ok(hwnd) = main_window.hwnd() {
+            // SAFETY: `show_main_window_from_tray` dispatches this function to
+            // Tauri's main thread, which owns the top-level HWND. SW_RESTORE lets
+            // Windows/DWM apply the user's native window-transition policy.
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+
+            // The native call bypasses Tao's cached WindowFlags. Synchronize the
+            // framework after the HWND is already visible; its SW_SHOW is then an
+            // idempotent state update rather than a second transition.
+            if let Err(e) = main_window.show() {
+                log::error!("Failed to synchronize restored window visibility: {e}");
+            }
+            return;
+        }
+        log::warn!("Could not access the native main window; falling back to Tauri show");
+    }
+
+    if let Err(e) = main_window.show() {
+        log::error!("Failed to show webview window: {}", e);
+    }
 }

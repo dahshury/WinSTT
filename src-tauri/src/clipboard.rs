@@ -87,32 +87,40 @@ pub enum ClipboardError {
     Config(String),
 }
 
-/// Pastes text using the clipboard: saves current content, writes text, sends paste keystroke, restores clipboard.
+/// Pastes text using the clipboard: saves current content, writes text, sends paste
+/// keystroke, then restores the clipboard on a DEFERRED background thread (see
+/// `clipboard_snapshot::schedule_restore`). `restore_original` is false when the user
+/// chose CopyToClipboard — the transcription should stay, so nothing is snapshotted or
+/// restored.
 fn paste_via_clipboard(
     enigo: &mut Enigo,
     text: &str,
     app_handle: &AppHandle,
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
+    restore_original: bool,
 ) -> Result<(), ClipboardError> {
     let total_started = Instant::now();
     debug!(
-        "[clipboard] paste_via_clipboard_start method={paste_method:?} chars={} delay_ms={paste_delay_ms}",
+        "[clipboard] paste_via_clipboard_start method={paste_method:?} chars={} delay_ms={paste_delay_ms} restore_original={restore_original}",
         text.chars().count()
     );
     let clipboard = app_handle.clipboard();
-    let phase_started = Instant::now();
-    debug!("[clipboard] snapshot_original_start");
     // Full-fidelity snapshot (raw formats on Windows, text+image elsewhere) so a
     // copied image / file list survives the sandwich — a text-only save used to
     // "restore" an empty string over anything that wasn't plain text.
-    let snapshot = crate::clipboard_snapshot::capture(app_handle);
-    let elapsed_ms = phase_started.elapsed().as_millis();
-    debug!(
-        "[clipboard] snapshot_original_complete duration_ms={elapsed_ms} {}",
-        snapshot.describe()
-    );
-    warn_if_slow_paste_phase("snapshot_original", elapsed_ms);
+    let snapshot = restore_original.then(|| {
+        let phase_started = Instant::now();
+        debug!("[clipboard] snapshot_original_start");
+        let snapshot = crate::clipboard_snapshot::capture(app_handle);
+        let elapsed_ms = phase_started.elapsed().as_millis();
+        debug!(
+            "[clipboard] snapshot_original_complete duration_ms={elapsed_ms} {}",
+            snapshot.describe()
+        );
+        warn_if_slow_paste_phase("snapshot_original", elapsed_ms);
+        snapshot
+    });
 
     // Write text to clipboard first
     // On Wayland, prefer wl-copy for better compatibility (especially with umlauts)
@@ -140,6 +148,10 @@ fn paste_via_clipboard(
     let elapsed_ms = phase_started.elapsed().as_millis();
     debug!("[clipboard] write_text_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("write_text", elapsed_ms);
+
+    // Mark the write NOW (before any delay) so anything that changes the clipboard from
+    // here on — the user copying mid-grace, a second dictation — vetoes the restore.
+    let written = restore_original.then(|| crate::clipboard_snapshot::WrittenClipboard::mark(text));
 
     std::thread::sleep(Duration::from_millis(paste_delay_ms));
 
@@ -173,15 +185,15 @@ fn paste_via_clipboard(
     debug!("[clipboard] key_combo_complete duration_ms={elapsed_ms}");
     warn_if_slow_paste_phase("key_combo", elapsed_ms);
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
-    // Restore original clipboard content (full snapshot, incl. non-text formats).
-    let phase_started = Instant::now();
-    debug!("[clipboard] restore_original_start {}", snapshot.describe());
-    crate::clipboard_snapshot::restore(app_handle, &snapshot);
-    let elapsed_ms = phase_started.elapsed().as_millis();
-    debug!("[clipboard] restore_original_complete duration_ms={elapsed_ms}");
-    warn_if_slow_paste_phase("restore_original", elapsed_ms);
+    // Restore the original clipboard AFTER the target app has had time to service the
+    // synthetic paste. The old inline `sleep(50) + restore` raced slow targets: the app
+    // read the clipboard after the restore and pasted the PREVIOUS content instead of
+    // the transcription. The deferred restore runs off-thread (auto-submit below is not
+    // delayed) and is guarded so it only ever overwrites our own transcription text.
+    if let (Some(snapshot), Some(written)) = (snapshot, written) {
+        debug!("[clipboard] restore_original_scheduled {}", snapshot.describe());
+        crate::clipboard_snapshot::schedule_restore(app_handle, snapshot, written);
+    }
 
     let total_elapsed_ms = total_started.elapsed().as_millis();
     debug!("[clipboard] paste_via_clipboard_complete duration_ms={total_elapsed_ms}");
@@ -869,12 +881,18 @@ fn paste_inner(
             warn_if_slow_paste_phase("direct_paste", elapsed_ms);
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
+            // CopyToClipboard means the transcription should END UP on the clipboard —
+            // skip the snapshot/restore sandwich entirely instead of restoring the old
+            // content only to overwrite it again below.
+            let restore_original =
+                settings.clipboard_handling != ClipboardHandling::CopyToClipboard;
             paste_via_clipboard(
                 &mut enigo,
                 &text,
                 &app_handle,
                 &paste_method,
                 paste_delay_ms,
+                restore_original,
             )?
         }
         PasteMethod::ExternalScript => {

@@ -39,7 +39,8 @@ function shouldStopLoopback(
 
 /**
  * Applies loopback start/stop side effects when recording mode, selected output
- * device, or listen model changes. Extracted for testability.
+ * device, listen model, or the mic-mix toggle changes. Extracted for
+ * testability.
  */
 export function applyLoopbackTransition(
 	recordingMode: string,
@@ -48,6 +49,8 @@ export function applyLoopbackTransition(
 	listenModelId: string | null,
 	previousLoopbackDeviceIndex: number | null = null,
 	previousListenModelId: string | null = null,
+	captureMicrophone = false,
+	previousCaptureMicrophone: boolean | null = null,
 ): void {
 	if (shouldStartLoopback(recordingMode, loopbackDeviceIndex, listenModelId)) {
 		const modelId = listenModelId;
@@ -57,14 +60,18 @@ export function applyLoopbackTransition(
 		const shouldRestart =
 			wasListen &&
 			(previousLoopbackDeviceIndex !== loopbackDeviceIndex ||
-				previousListenModelId !== modelId);
+				previousListenModelId !== modelId ||
+				(previousCaptureMicrophone !== null &&
+					previousCaptureMicrophone !== captureMicrophone));
 		if (!wasListen || shouldRestart) {
 			if (shouldRestart) {
 				loopbackStop();
 			}
-			void loopbackStart(loopbackDeviceIndex, modelId).catch((err: unknown) => {
-				console.error("[useListenMode] Failed to start loopback:", err);
-			});
+			void loopbackStart(loopbackDeviceIndex, modelId, captureMicrophone).catch(
+				(err: unknown) => {
+					console.error("[useListenMode] Failed to start loopback:", err);
+				},
+			);
 		}
 	} else if (shouldStopLoopback(recordingMode, wasListen)) {
 		loopbackStop();
@@ -184,6 +191,9 @@ export function useListenMode(): void {
 	const selectedLoopbackDeviceIndex = useSettingsStore(
 		(s) => s.settings.general?.loopbackDeviceIndex ?? null,
 	);
+	const captureMicrophone = useSettingsStore(
+		(s) => s.settings.general?.listenCaptureMicrophone ?? false,
+	);
 	const onboarded = useSettingsStore(
 		(s) => s.settings.general?.onboarded ?? false,
 	);
@@ -218,6 +228,7 @@ export function useListenMode(): void {
 	const prevModeRef = useRef<RecordingMode | null>(null);
 	const prevLoopbackDeviceIndexRef = useRef<number | null>(loopbackDeviceIndex);
 	const prevListenModelIdRef = useRef<string | null>(listenModelId);
+	const prevCaptureMicrophoneRef = useRef<boolean | null>(captureMicrophone);
 	const lastNonListenModeRef = useRef<RecordingMode>("ptt");
 	const transcriptModeRef = useRef<string | null>(null);
 	// Read inside the loopback-event handlers below, which are subscribed once
@@ -345,6 +356,7 @@ export function useListenMode(): void {
 		const wasListen = prevModeRef.current === "listen";
 		const previousLoopbackDeviceIndex = prevLoopbackDeviceIndexRef.current;
 		const previousListenModelId = prevListenModelIdRef.current;
+		const previousCaptureMicrophone = prevCaptureMicrophoneRef.current;
 		applyLoopbackTransition(
 			recordingMode,
 			wasListen,
@@ -352,16 +364,20 @@ export function useListenMode(): void {
 			listenModelId,
 			previousLoopbackDeviceIndex,
 			previousListenModelId,
+			captureMicrophone,
+			previousCaptureMicrophone,
 		);
 		prevModeRef.current = recordingMode;
 		prevLoopbackDeviceIndexRef.current = loopbackDeviceIndex;
 		prevListenModelIdRef.current = listenModelId;
+		prevCaptureMicrophoneRef.current = captureMicrophone;
 	}, [
 		onboarded,
 		onboardedAt,
 		recordingMode,
 		loopbackDeviceIndex,
 		listenModelId,
+		captureMicrophone,
 	]);
 
 	// Stop loopback on unmount if active

@@ -175,7 +175,7 @@ export function OnboardingDictationDemo() {
 					dispatch({ type: "setInterim", text });
 				}
 			}),
-			onFullSentence((text) => {
+			onFullSentence(({ text }) => {
 				const trimmed = text.trim();
 				dispatch({ type: "clearTranscriptStatus" });
 				if (trimmed) {

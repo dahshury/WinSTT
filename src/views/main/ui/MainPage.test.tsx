@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
@@ -38,6 +38,19 @@ function renderMainPage() {
 			<MainPage />
 		</IntlProvider>,
 	);
+}
+
+interface TauriInternals {
+	invoke: (
+		command: string,
+		args?: unknown,
+		options?: unknown,
+	) => Promise<unknown>;
+}
+
+function getTauriInternals(): TauriInternals {
+	return (window as unknown as { __TAURI_INTERNALS__: TauriInternals })
+		.__TAURI_INTERNALS__;
 }
 
 beforeEach(resetStores);
@@ -91,5 +104,55 @@ describe("MainPage", () => {
 		expect(
 			screen.getByRole("button", { name: "Switch to Push-to-Talk" }),
 		).not.toBeNull();
+	});
+
+	test("switches from listen mode to push-to-talk on activation", async () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+			},
+		});
+		const tauriInternals = getTauriInternals();
+		const originalInvoke = tauriInternals.invoke;
+		let persisted = false;
+		tauriInternals.invoke = async (command, args, options) => {
+			if (command === "winstt_get_settings_snapshot") {
+				return { revision: 0, settings: DEFAULT_SETTINGS };
+			}
+			if (command === "winstt_patch_settings") {
+				persisted = true;
+				return {
+					applied: true,
+					changedSections: ["general"],
+					snapshot: {
+						revision: 1,
+						settings: useSettingsStore.getState().settings,
+					},
+				};
+			}
+			return originalInvoke(command, args, options);
+		};
+
+		try {
+			renderMainPage();
+
+			fireEvent.click(
+				screen.getByRole("button", { name: "Switch to Push-to-Talk" }),
+			);
+
+			expect(useSettingsStore.getState().settings.general.recordingMode).toBe(
+				"ptt",
+			);
+			expect(
+				screen.queryByRole("button", { name: "Switch to Push-to-Talk" }),
+			).toBeNull();
+			await waitFor(() => expect(persisted).toBe(true));
+		} finally {
+			tauriInternals.invoke = originalInvoke;
+		}
 	});
 });

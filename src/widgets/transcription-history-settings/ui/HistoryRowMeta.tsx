@@ -43,6 +43,7 @@ export interface MetaLabels {
 	costSpeechToText: string;
 	costTextToSpeech: string;
 	costTotal: string;
+	kindListening: string;
 	kindSpeechToText: string;
 	kindTextToSpeech: string;
 	languageModelProcessing: string;
@@ -216,7 +217,14 @@ export function buildHistoryRowMeta(
 			? { label: labels.kindTextToSpeech, railClass: "bg-history-tts" }
 			: kind === "transform"
 				? { label: labels.transform, railClass: "bg-accent" }
-				: { label: labels.kindSpeechToText, railClass: "bg-history-stt" };
+				: entry.source === "listen"
+					? // Match the listen-mode visualizer so system-audio sessions
+						// scan apart from blue PTT dictation rows.
+						{
+							label: labels.kindListening,
+							railClass: "bg-recording-mode-listen",
+						}
+					: { label: labels.kindSpeechToText, railClass: "bg-history-stt" };
 	// Content classification tag (Document / Note / AI Prompt …) and the sensitive
 	// marker lead the strip. They used to sit as pill badges in the card's
 	// top-right column, whose `shrink-0` width stole horizontal space from the

@@ -82,6 +82,9 @@ pub mod llm;
 /// Direct Ollama HTTP client used by the LLM manager.
 pub mod ollama_client;
 // ───────────────────────── heavy ONNX crates ─────────────────────────
+/// Speaker diarization for Listen mode: pyannote seg-3.0 + WeSpeaker cascade with
+/// WhoSpeaksLive online clustering (port of examples/diarization-playground).
+pub mod diarize;
 /// Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines.
 pub mod stt;
 /// Local Kokoro (in-process, on our ort) + cloud ElevenLabs TTS.

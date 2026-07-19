@@ -1,7 +1,8 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import type { CollapsibleProps } from "./collapsible.types";
+import { useOpenedFlag } from "./use-opened-flag";
 
 /**
  * Pure CSS height-to-auto animation via the grid-template-rows trick
@@ -34,19 +35,6 @@ import { cn } from "@/shared/lib/cn";
  * 100 hidden sibling lists. After the first open, content stays mounted
  * for instant subsequent re-opens (matches OpenRouter's behaviour).
  */
-export interface CollapsibleProps {
-	children: ReactNode;
-	className?: string;
-	/**
-	 * ``data-slot`` attribute for downstream styling / test hooks. Defaults
-	 * to ``"collapsible"`` but callers can override (e.g. ``"providers-row"``
-	 * for OpenRouter's hosting-provider grid).
-	 */
-	"data-slot"?: string;
-	/** Whether the panel is currently expanded. */
-	isOpen: boolean;
-}
-
 export function Collapsible({
 	children,
 	className,
@@ -70,17 +58,4 @@ export function Collapsible({
 			</div>
 		</div>
 	);
-}
-
-/**
- * Latch that flips ``true`` the first time the panel opens and stays
- * ``true`` thereafter. Used to gate the initial mount of expensive
- * subtrees without re-mounting on every close/re-open cycle.
- */
-export function useOpenedFlag(isOpen: boolean): boolean {
-	const [hasOpened, setHasOpened] = useState(isOpen);
-	if (isOpen && !hasOpened) {
-		setHasOpened(true);
-	}
-	return hasOpened;
 }

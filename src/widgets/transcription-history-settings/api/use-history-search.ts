@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	commands,
 	type HistorySearchResult as BackendSearchResult,
@@ -161,19 +161,19 @@ function rankCandidates(
 
 async function searchBackend(
 	query: string,
-	range: DateRange | null,
+	fromTs: number | null,
+	toTs: number | null,
 ): Promise<BackendSearchResult | null> {
 	if (query.trim().length < 2) {
 		return null;
 	}
-	const bounds = dayRangeBounds(range?.from ?? null, range?.to ?? null);
 	const response = await commands.historySearch(
 		query,
 		200,
 		0,
 		["transcription", "transform", "tts"],
-		bounds?.fromTs ?? null,
-		bounds?.toTs ?? null,
+		fromTs,
+		toTs,
 	);
 	if (response.status === "error") {
 		throw new Error(response.error);
@@ -189,60 +189,95 @@ export interface UseHistorySearchResult {
 	totalLabelCount: number;
 }
 
+interface CompletedSearch {
+	entries: HistoryTableItem[];
+	fromTs: number | null;
+	query: string;
+	result: UseHistorySearchResult;
+	toTs: number | null;
+}
+
+function passThroughResult(
+	entries: HistoryTableItem[],
+): UseHistorySearchResult {
+	return {
+		hasMore: false,
+		highlights: new Map(),
+		items: entries,
+		loading: false,
+		totalLabelCount: entries.length,
+	};
+}
+
 export function useHistorySearch(
 	query: string,
 	combinedEntries: HistoryTableItem[],
 	range: DateRange | null,
 ): UseHistorySearchResult {
-	const [result, setResult] = useState<UseHistorySearchResult>({
-		hasMore: false,
-		highlights: new Map(),
-		items: combinedEntries,
-		loading: false,
-		totalLabelCount: combinedEntries.length,
-	});
-	const requestSeq = useRef(0);
+	const normalizedQuery = query.trim();
+	const bounds = dayRangeBounds(range?.from ?? null, range?.to ?? null);
+	const fromTs = bounds?.fromTs ?? null;
+	const toTs = bounds?.toTs ?? null;
+	const [completedSearch, setCompletedSearch] =
+		useState<CompletedSearch | null>(null);
 
 	useEffect(() => {
-		const normalizedQuery = query.trim();
-		const seq = ++requestSeq.current;
 		if (!normalizedQuery) {
-			setResult({
-				hasMore: false,
-				highlights: new Map(),
-				items: combinedEntries,
-				loading: false,
-				totalLabelCount: combinedEntries.length,
-			});
 			return;
 		}
-		setResult((current) => ({ ...current, loading: true }));
-		searchBackend(normalizedQuery, range)
-			.catch(() => null)
-			.then((backend) => {
-				const candidates = buildCandidates(combinedEntries, backend);
-				return rankCandidates(normalizedQuery, candidates.workerItems).then(
-					(matches) => ({ backend, candidates, matches }),
-				);
-			})
-			.then(({ backend, candidates, matches }) => {
-				if (requestSeq.current !== seq) {
-					return;
-				}
-				setResult({
-					hasMore: backend?.hasMore ?? false,
-					highlights: new Map(
-						matches.map((match) => [match.key, match.ranges]),
-					),
-					items: matches.flatMap((match) => {
-						const item = candidates.byKey.get(match.key);
-						return item ? [item] : [];
-					}),
-					loading: false,
-					totalLabelCount: matches.length,
-				});
-			});
-	}, [combinedEntries, query, range]);
+		let ignore = false;
 
-	return result;
+		async function runSearch(): Promise<void> {
+			const backend = await searchBackend(normalizedQuery, fromTs, toTs).catch(
+				() => null,
+			);
+			const candidates = buildCandidates(combinedEntries, backend);
+			const matches = await rankCandidates(
+				normalizedQuery,
+				candidates.workerItems,
+			);
+			if (!ignore) {
+				setCompletedSearch({
+					entries: combinedEntries,
+					fromTs,
+					query: normalizedQuery,
+					result: {
+						hasMore: backend?.hasMore ?? false,
+						highlights: new Map(
+							matches.map((match) => [match.key, match.ranges]),
+						),
+						items: matches.flatMap((match) => {
+							const item = candidates.byKey.get(match.key);
+							return item ? [item] : [];
+						}),
+						loading: false,
+						totalLabelCount: matches.length,
+					},
+					toTs,
+				});
+			}
+		}
+
+		void runSearch();
+		return () => {
+			ignore = true;
+		};
+	}, [combinedEntries, fromTs, normalizedQuery, toTs]);
+
+	if (!normalizedQuery) {
+		return passThroughResult(combinedEntries);
+	}
+	if (
+		completedSearch?.entries === combinedEntries &&
+		completedSearch.fromTs === fromTs &&
+		completedSearch.query === normalizedQuery &&
+		completedSearch.toTs === toTs
+	) {
+		return completedSearch.result;
+	}
+
+	return {
+		...(completedSearch?.result ?? passThroughResult(combinedEntries)),
+		loading: true,
+	};
 }

@@ -1,7 +1,7 @@
 export { ContextAppSingleCombobox } from "./ContextAppSingleCombobox";
+export { ContextAppIcon } from "./ContextAppIcon";
 export {
 	buildContextAppOptions,
-	ContextAppIcon,
 	type ContextAppOption,
 	uniqueContextAppIds,
 } from "./context-app-options";

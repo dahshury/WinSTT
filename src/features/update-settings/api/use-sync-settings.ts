@@ -394,6 +394,12 @@ export function useSyncSettings(): void {
 					},
 					onSaveError: () =>
 						useSettingsHydrationStore.getState().pushWarning("save-failed"),
+					// A confirmed write means the "will be retried" notice is resolved —
+					// clear it instead of leaving a stale error on screen.
+					onSaveSuccess: () =>
+						useSettingsHydrationStore
+							.getState()
+							.clearWarningKind("save-failed"),
 				},
 			);
 		};
@@ -565,6 +571,8 @@ function patchIncludesRecordingModeChange(
 export interface ScheduledSaveHooks {
 	onGuardSuppressed?: () => void;
 	onSaveError?: (patch: Partial<AppSettings>, err: unknown) => void;
+	/** Fired after a confirmed successful write (the baseline has advanced). */
+	onSaveSuccess?: () => void;
 }
 
 /**
@@ -613,6 +621,7 @@ export async function performScheduledSave(
 		// A rejected save leaves `lastSavedRef` untouched, so the section stays
 		// dirty and is re-diffed (re-sent) on the next change/flush.
 		lastSavedRef.current = savedSnapshot ?? s;
+		hooks?.onSaveSuccess?.();
 	} catch (err) {
 		hooks?.onSaveError?.(patch, err);
 	}

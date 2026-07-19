@@ -6,4 +6,7 @@ export interface TranscriptionItem {
 	type: "realtime" | "final";
 	text: string;
 	timestamp: number;
+	/** Diarized speaker id (0-based, stable within a listen session). `null`
+	 * when diarization is off or the row couldn't be attributed. */
+	speaker?: number | null;
 }

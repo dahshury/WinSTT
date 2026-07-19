@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { VList } from "virtua";
 import { useSettingsStore } from "@/entities/setting";
+import { ListenPostProcessDialog } from "@/features/listen-post-process";
 import {
 	deleteTranscriptionHistoryEntry,
 	deleteTransformHistoryEntry,
@@ -27,6 +28,7 @@ import {
 	CopyButton,
 	DeleteButton,
 	PlayButton,
+	PostProcessButton,
 	SwapButton,
 } from "./HistoryRowButtons";
 import { buildHistoryRowMeta, type MetaLabels } from "./HistoryRowMeta";
@@ -104,8 +106,11 @@ interface HistoryRowFullProps extends HistoryRowProps {
 	highlights?: Array<{ end: number; start: number }> | undefined;
 	labels: MetaLabels;
 	onDeleteEntry: (id: string, kind: HistoryTableEntryKind) => void;
+	onPostProcess: (id: string) => void;
 	outputDeviceId: string;
 	playbackSpeedLabel: string;
+	postProcessDisabledTooltip: string | undefined;
+	postProcessLabel: string;
 	viewFullLabel: string;
 	viewOriginalLabel: string;
 	viewProcessedLabel: string;
@@ -117,8 +122,11 @@ function HistoryRow({
 	item,
 	labels,
 	onDeleteEntry,
+	onPostProcess,
 	outputDeviceId,
 	playbackSpeedLabel,
+	postProcessDisabledTooltip,
+	postProcessLabel,
 	viewFullLabel,
 	viewOriginalLabel,
 	viewProcessedLabel,
@@ -137,8 +145,14 @@ function HistoryRow({
 		outputDeviceId,
 		kind === "tts" ? "tts" : "stt",
 	);
-	const transcriptDiff = getEntryTranscriptDiff(entry);
-	const hasOriginal = transcriptDiff !== null;
+	// Listen-session rows opt OUT of the word-level before/after diff: their
+	// post-processing wholly restructures the text (meeting notes, summary), so
+	// a word diff is noise. The swap toggle still works off `originalText`.
+	const isListenEntry = kind === "transcription" && entry.source === "listen";
+	const transcriptDiff = isListenEntry ? null : getEntryTranscriptDiff(entry);
+	const hasOriginal =
+		transcriptDiff !== null ||
+		(isListenEntry && typeof entry.originalText === "string");
 	// Per-row view toggle for LLM-processed entries; resets implicitly because
 	// each row is keyed by entry.id. Defaults to the AI-edited final text.
 	const [showOriginal, setShowOriginal] = useState(false);
@@ -237,6 +251,13 @@ function HistoryRow({
 							showProcessedLabel={viewProcessedLabel}
 						/>
 					) : null}
+					{isListenEntry ? (
+						<PostProcessButton
+							label={postProcessLabel}
+							onOpen={() => onPostProcess(entry.id)}
+							unavailable={postProcessDisabledTooltip}
+						/>
+					) : null}
 					<CopyButton label={copyLabel} text={displayText} />
 					<DeleteButton
 						entryId={entry.id}
@@ -292,13 +313,25 @@ export function HistoryTable({
 	const outputDeviceId = useSettingsStore(
 		(s) => s.settings.general.outputDeviceId,
 	);
+	const postProcessingEnabled = useSettingsStore(
+		(s) => s.settings.llm.dictation.enabled,
+	);
 	const [animatedEntryKeys, setAnimatedEntryKeys] = useState<Set<string>>(
 		() => new Set(),
+	);
+	// Listen-session post-process dialog target; one dialog instance serves the
+	// whole table (keyed remount per entry resets its draft state).
+	const [postProcessEntryId, setPostProcessEntryId] = useState<string | null>(
+		null,
 	);
 	const previousEntryKeysRef = useRef<Set<string> | null>(null);
 	const speechActivityRef = useSpeechActivityRef();
 	const copyLabel = t("copy");
 	const playbackSpeedLabel = t("playbackSpeed");
+	const postProcessLabel = t("listenPostProcess");
+	const postProcessDisabledTooltip = postProcessingEnabled
+		? undefined
+		: t("listenPostProcessDisabled");
 	const viewFullLabel = t("viewFull");
 	const viewOriginalLabel = t("viewOriginal");
 	const viewProcessedLabel = t("viewProcessed");
@@ -327,6 +360,7 @@ export function HistoryTable({
 		costSpeechToText: t("costSpeechToText"),
 		costTextToSpeech: t("costTextToSpeech"),
 		costTotal: t("costTotal"),
+		kindListening: t("kindListening"),
 		kindSpeechToText: t("kindSpeechToText"),
 		kindTextToSpeech: t("kindTextToSpeech"),
 		languageModelProcessing: t("durationLlmProcessing"),
@@ -396,8 +430,11 @@ export function HistoryTable({
 					item={item}
 					labels={labels}
 					onDeleteEntry={deleteEntry}
+					onPostProcess={setPostProcessEntryId}
 					outputDeviceId={outputDeviceId}
 					playbackSpeedLabel={playbackSpeedLabel}
+					postProcessDisabledTooltip={postProcessDisabledTooltip}
+					postProcessLabel={postProcessLabel}
 					viewFullLabel={viewFullLabel}
 					viewOriginalLabel={viewOriginalLabel}
 					viewProcessedLabel={viewProcessedLabel}
@@ -449,5 +486,17 @@ export function HistoryTable({
 
 	// `bare`: the table sits inside a `boxed` section card, which is the single
 	// surface — a painted shell here would nest a second background.
-	return <EntryCardShell bare>{body}</EntryCardShell>;
+	return (
+		<>
+			<EntryCardShell bare>{body}</EntryCardShell>
+			{postProcessEntryId === null ? null : (
+				<ListenPostProcessDialog
+					entryId={postProcessEntryId}
+					isOpen
+					key={postProcessEntryId}
+					onClose={() => setPostProcessEntryId(null)}
+				/>
+			)}
+		</>
+	);
 }

@@ -17,6 +17,8 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+use specta::Type;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::winstt::catalog;
@@ -43,6 +45,7 @@ pub async fn start_listen(
     downloads: State<'_, Arc<DownloadManager>>,
     device_index: i32,
     model_id: String,
+    capture_microphone: bool,
 ) -> Result<(), String> {
     if crate::winstt::commands::onboarding::is_onboarding_active() {
         return Err("Onboarding is active; listen mode is disabled".to_string());
@@ -59,7 +62,11 @@ pub async fn start_listen(
     let selected_device_id = selected_device.id.clone();
     let model_id_for_start = model_id;
     let started_device = tauri::async_runtime::spawn_blocking(move || {
-        loopback_manager.start(Some(selected_device_id), model_id_for_start)
+        loopback_manager.start(
+            Some(selected_device_id),
+            model_id_for_start,
+            capture_microphone,
+        )
     })
     .await
     .map_err(|e| format!("failed to start listen mode worker: {e}"))??;
@@ -141,6 +148,49 @@ async fn ensure_cached_native_streaming_model(
 #[specta::specta]
 pub fn stop_listen(app: AppHandle, loopback: State<'_, Arc<LoopbackManager>>) {
     stop_listen_runtime(&app, loopback.inner().as_ref());
+}
+
+/// Live transcript state of the CURRENT listen session for the History tab's
+/// live session card: committed caption lines plus the in-flight preview.
+/// `active` is false when no session is running (the card hides).
+#[derive(Clone, Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenSessionSnapshot {
+    pub active: bool,
+    pub lines: Vec<String>,
+    pub live_preview: String,
+}
+
+/// `listen_session_snapshot` — poll surface for the History tab's live
+/// session card (small clone; no events to subscribe to cross-window).
+#[tauri::command]
+#[specta::specta]
+pub fn listen_session_snapshot(
+    loopback: State<'_, Arc<LoopbackManager>>,
+) -> ListenSessionSnapshot {
+    let (active, lines, live_preview) = loopback.session_snapshot();
+    ListenSessionSnapshot {
+        active,
+        lines,
+        live_preview,
+    }
+}
+
+/// `finalize_listen_session` — cut the session-so-far into its own history
+/// row WITHOUT stopping the session (no silence or mode switch needed); the
+/// running session continues accumulating from empty. Returns whether a row
+/// was saved (false when idle or nothing committed yet). The row lands via
+/// the standard history `Added` event, so every history surface refreshes.
+#[tauri::command]
+#[specta::specta]
+pub async fn finalize_listen_session(
+    loopback: State<'_, Arc<LoopbackManager>>,
+) -> Result<bool, String> {
+    let loopback = loopback.inner().clone();
+    // SQLite write + event emit — hop off the async pump.
+    tauri::async_runtime::spawn_blocking(move || loopback.finalize_session())
+        .await
+        .map_err(|e| format!("finalize task panicked: {e}"))
 }
 
 pub(crate) fn stop_listen_runtime(app: &AppHandle, loopback: &LoopbackManager) {

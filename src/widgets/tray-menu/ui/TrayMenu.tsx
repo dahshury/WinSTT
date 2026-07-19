@@ -140,6 +140,24 @@ async function handleTranscribeFile(): Promise<void> {
 	closeTrayMenu();
 }
 
+async function saveInputDeviceIndex(
+	inputDeviceIndex: number | null,
+): Promise<void> {
+	const settings = await settingsLoad();
+	await settingsSave({
+		audio: { ...settings.audio, inputDeviceIndex },
+	});
+}
+
+async function saveInputDevicePriority(
+	inputDevicePriority: string[],
+): Promise<void> {
+	const settings = await settingsLoad();
+	await settingsSave({
+		audio: { ...settings.audio, inputDevicePriority },
+	});
+}
+
 function useTrayMenuRender() {
 	const [state, dispatch] = useReducer(
 		trayMenuReducer,
@@ -273,22 +291,6 @@ function useTrayMenuRender() {
 		});
 	};
 
-	const handleInputDeviceChange = async (inputDeviceIndex: number | null) => {
-		const settings = await settingsLoad();
-		await settingsSave({
-			audio: { ...settings.audio, inputDeviceIndex },
-		});
-	};
-
-	const handleInputDevicePriorityChange = async (
-		inputDevicePriority: string[],
-	) => {
-		const settings = await settingsLoad();
-		await settingsSave({
-			audio: { ...settings.audio, inputDevicePriority },
-		});
-	};
-
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (
@@ -416,10 +418,8 @@ function useTrayMenuRender() {
 						className="w-full"
 						inputDeviceIndex={inputDeviceIndex}
 						inputDevicePriority={inputDevicePriority}
-						onChange={(value) => void handleInputDeviceChange(value)}
-						onPriorityChange={(value) =>
-							void handleInputDevicePriorityChange(value)
-						}
+						onChange={(value) => void saveInputDeviceIndex(value)}
+						onPriorityChange={(value) => void saveInputDevicePriority(value)}
 						reorderHandleLabel={tAudio("devicePriorityHandle")}
 						systemDefaultLabel={tAudio("systemDefault")}
 					/>

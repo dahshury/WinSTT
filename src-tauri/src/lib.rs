@@ -271,6 +271,21 @@ fn spawn_stt_boot_warmup(
             splash::mark_stt_boot_done(&app_handle_for_stt);
             return;
         }
+        // Booting straight into Listen mode: the listen session loads its OWN
+        // native-streaming model, and dictation loads on demand once the user
+        // leaves listen — preloading the dictation model here would stack a
+        // second (often multi-GB, multi-second) engine next to the listen one
+        // that nothing is about to use.
+        if winstt::settings_store::read_settings_raw(&app_handle_for_stt)
+            .general
+            .recording_mode
+            == winstt::settings_schema::RecordingMode::Listen
+        {
+            log::info!("[startup] STT dictation-model preload skipped -- recording mode is listen");
+            splash::mark_stt_boot_done(&app_handle_for_stt);
+            crate::bootstrap::state::schedule_winstt_background_warmups(&app_handle_for_stt);
+            return;
+        }
         tm.initiate_model_load(); // spawns its own background load thread
         tm.warmup(); // waits out that load, then dummy-decodes to compile kernels
         splash::mark_stt_boot_done(&app_handle_for_stt);
@@ -523,7 +538,7 @@ fn initialize_desktop_integration(
                     if !winstt::commands::onboarding::is_onboarding_in_progress(
                         tray_handle.app_handle(),
                     ) {
-                        show_main_window(tray_handle.app_handle());
+                        window_state::show_main_window_from_tray(tray_handle.app_handle());
                     }
                 }
                 TrayIconEvent::Click {

@@ -38,18 +38,35 @@
 //      liveness (recording generation / TTS island). If the terminal event that
 //      should have restored us was lost (pipeline panic, dropped event), the
 //      duck is force-released within ~15s instead of holding forever.
-//   5. Restore retry. A failed session enumeration during restore keeps the
-//      snapshots and retries from the watchdog rather than dropping them.
-//   6. Crash persistence. Snapshots are journaled to disk while ducked and the
-//      journal is deleted after a successful restore. The next launch restores
-//      any sessions a crashed/killed run left ducked (guarded by rule 3).
+//   5. VERIFIED restore — never assume, never silently drop. A restore is
+//      accounted per session: found (by instance id, then pid, then executable
+//      name), guarded (rule 3), written, and READ BACK. Any snapshot that is
+//      missing from the enumeration or whose write cannot be verified moves to
+//      a pending pool that is retried by the watchdog, healed right before the
+//      next duck, restored on exit, and journaled to disk — it is never
+//      forgotten just because one enumeration didn't see the session. (The old
+//      code treated "enumeration succeeded" as "everything restored", which
+//      permanently muted any session that had expired, changed pid, or failed
+//      its write — invisibly, since Windows persists per-app volumes and a
+//      100% duck leaves the session at exactly 0.)
+//   6. Crash persistence. Live + pending snapshots are journaled to disk while
+//      anything is outstanding and the journal is deleted only when every
+//      session is verifiably back. The next launch feeds any leftovers into the
+//      same pending pool (guarded by rule 3) instead of one-shot restoring and
+//      unconditionally deleting the journal.
 //   7. Exit hook. `restore_all_blocking_on_exit` runs from Tauri's
 //      ExitRequested cleanup so a graceful quit mid-dictation restores
-//      synchronously (bounded wait).
+//      synchronously (bounded wait), including a final heal attempt for the
+//      pending pool.
+//   8. COM lifetime. The worker thread initializes its COM apartment ONCE for
+//      its whole lifetime. (Per-enumeration init/uninit tore the apartment down
+//      while returned `ISimpleAudioVolume` pointers were still live — calls
+//      through them afterwards are undefined and can fail silently.)
 //
 // The reduction/clamp/ledger logic is pure and fully tested (COM is abstracted
 // behind `DuckOps`); the only unverifiable bit is runtime COM behavior.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
@@ -88,13 +105,20 @@ pub fn parse_volume(value: &str) -> Option<f32> {
 /// One session's pre-duck volume. Keyed by the WASAPI session instance
 /// identifier (stable for the session's lifetime, unlike the COM object across
 /// enumerations, and unlike a bare pid for processes with several sessions),
-/// with the pid kept as a fallback matcher for sessions the process re-created
-/// mid-duck.
+/// with the pid and the process's executable name kept as fallback matchers for
+/// sessions the process re-created mid-duck (same pid, new instance id) or that
+/// came back under a whole new process (browser audio-service churn, app
+/// restarts — Windows hands the re-created session the ducked volume it
+/// remembered for that app).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SessionVolumeSnapshot {
     /// Session instance identifier, or `"pid:<n>"` when unavailable.
     key: String,
     pid: u32,
+    /// Lower-cased executable file name of `pid` at duck time ("chrome.exe").
+    /// Optional so journals written by older builds still deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exe: Option<String>,
     /// The user's volume before we ducked.
     previous: f32,
     /// The exact value we wrote. A restore only rewrites `previous` while the
@@ -143,9 +167,15 @@ struct WorkerState {
     /// We actually lowered sessions and hold their snapshots.
     ducked: bool,
     snapshots: Vec<SessionVolumeSnapshot>,
-    /// A restore was due but the COM enumeration failed — retry from the
-    /// watchdog instead of dropping the snapshots.
-    restore_pending: bool,
+    /// Sessions whose restore could not be VERIFIED — missing from the
+    /// enumeration (expired session, device switch, process gone), failed
+    /// write, or failed read-back — plus any leftovers a previous run
+    /// journaled. Retried by the watchdog, healed right before the next duck
+    /// and on exit, and kept in the on-disk journal until each one is
+    /// verifiably back. Robustness rule 5.
+    pending_restore: Vec<SessionVolumeSnapshot>,
+    /// Last time the pending pool was attempted (rate-limits watchdog retries).
+    pending_last_attempt: Option<Instant>,
 }
 
 /// The side-effect surface of the ledger, so the transition logic is testable
@@ -153,8 +183,12 @@ struct WorkerState {
 trait DuckOps {
     /// Capture + lower background sessions. `None` = enumeration failed.
     fn duck(&mut self, reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>>;
-    /// Put sessions back. `false` = enumeration failed even after retries.
-    fn restore(&mut self, snapshots: &[SessionVolumeSnapshot]) -> bool;
+    /// Put sessions back, VERIFYING each write. Returns the keys that are now
+    /// settled: restored with a matching read-back, or deliberately left alone
+    /// because the slider moved while we were ducked (rule 3). A key that is
+    /// NOT returned stays unresolved and must be retried later. `None` = the
+    /// session enumeration itself failed (nothing was attempted).
+    fn restore(&mut self, snapshots: &[SessionVolumeSnapshot]) -> Option<Vec<String>>;
     /// Journal the snapshots for crash recovery.
     fn persist(&mut self, snapshots: &[SessionVolumeSnapshot]);
     /// Delete the crash-recovery journal.
@@ -167,6 +201,70 @@ const WATCHDOG_TICK: Duration = Duration::from_secs(5);
 /// liveness (covers e.g. the Read Aloud island being shown a beat AFTER its
 /// duck request).
 const REAP_GRACE: Duration = Duration::from_secs(10);
+/// Minimum spacing between watchdog retries of the pending-restore pool. The
+/// pool is also retried opportunistically (before every duck, on exit), so the
+/// watchdog cadence only bounds how long a quiet system stays unhealed.
+const PENDING_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Mirror the ledger to the crash journal: live + pending snapshots while
+/// anything is outstanding, no file at all once everything is verifiably back.
+fn persist_ledger(state: &WorkerState, ops: &mut impl DuckOps) {
+    if state.snapshots.is_empty() && state.pending_restore.is_empty() {
+        ops.clear_persisted();
+    } else {
+        let union: Vec<SessionVolumeSnapshot> = state
+            .snapshots
+            .iter()
+            .chain(&state.pending_restore)
+            .cloned()
+            .collect();
+        ops.persist(&union);
+    }
+}
+
+/// Queue an unresolved snapshot for later healing. When the key is already
+/// pending, the OLDER entry wins — its `previous` predates our interference.
+fn push_pending(state: &mut WorkerState, snapshot: SessionVolumeSnapshot) {
+    if state
+        .pending_restore
+        .iter()
+        .any(|pending| pending.key == snapshot.key)
+    {
+        return;
+    }
+    state.pending_restore.push(snapshot);
+}
+
+/// Retry the pending pool once (verified, like every restore). Called from the
+/// watchdog (rate-limited by the caller), right before a fresh duck — so a
+/// session an earlier cycle failed to un-duck is put back BEFORE we snapshot
+/// it again, which both heals the stuck volume and preserves the anti-ratchet
+/// invariant — and from the exit hook.
+fn heal_pending(state: &mut WorkerState, ops: &mut impl DuckOps) {
+    if state.pending_restore.is_empty() {
+        return;
+    }
+    state.pending_last_attempt = Some(Instant::now());
+    let Some(resolved) = ops.restore(&state.pending_restore) else {
+        return;
+    };
+    if resolved.is_empty() {
+        return;
+    }
+    let resolved: HashSet<String> = resolved.into_iter().collect();
+    let before = state.pending_restore.len();
+    state
+        .pending_restore
+        .retain(|snapshot| !resolved.contains(&snapshot.key));
+    if state.pending_restore.len() < before {
+        log::info!(
+            "[ducking] healed {} previously unrestorable session volume(s) ({} still pending)",
+            before - state.pending_restore.len(),
+            state.pending_restore.len()
+        );
+        persist_ledger(state, ops);
+    }
+}
 
 fn handle_duck(
     state: &mut WorkerState,
@@ -176,14 +274,23 @@ fn handle_duck(
     liveness: Option<Liveness>,
     gate_before_duck: bool,
 ) {
-    if state.active.iter().any(|a| a.reason == reason) {
-        return;
-    }
     // Robustness rule 2: the authoritative "still wanted?" check runs HERE, on
     // the worker, after every previously queued restore has fully applied. A
     // recording whose stop already landed (fast PTT tap) is not ducked at all.
     if gate_before_duck && liveness.as_ref().is_some_and(|alive| !alive()) {
         log::debug!("[ducking] duck for {reason:?} skipped -- no longer wanted");
+        return;
+    }
+    if let Some(existing) = state.active.iter_mut().find(|a| a.reason == reason) {
+        // Duplicate request while the reason is still held (its restore was
+        // lost or is still queued behind us): refresh the liveness probe and
+        // the grace clock so the watchdog tracks THIS cycle — a stale closure
+        // from the previous cycle would report "dead" and reap the duck out
+        // from under the live recording.
+        if liveness.is_some() {
+            existing.liveness = liveness;
+        }
+        existing.since = Instant::now();
         return;
     }
     state.active.push(ActiveReason {
@@ -192,17 +299,24 @@ fn handle_duck(
         since: Instant::now(),
     });
     if state.ducked {
-        // Piggyback on the existing duck. This also covers re-ducking while a
-        // failed restore's snapshots are still held: we keep the ORIGINAL
-        // pre-duck volumes and never re-snapshot already-ducked levels.
-        state.restore_pending = false;
+        // Piggyback on the existing duck: the sessions are already lowered and
+        // the original pre-duck snapshots stay authoritative (anti-ratchet).
         return;
     }
+    // Heal FIRST: a session an earlier cycle could not restore may be back in
+    // the enumeration now. Restoring it before the duck both un-sticks its
+    // volume and lets the duck below capture a TRUE pre-duck snapshot instead
+    // of re-snapshotting a ducked level (rule 5).
+    heal_pending(state, ops);
     match ops.duck(reduction_pct) {
         Some(snapshots) => {
+            log::debug!(
+                "[ducking] ducked {} session(s) at {reduction_pct}% reduction",
+                snapshots.len()
+            );
             state.ducked = true;
-            ops.persist(&snapshots);
             state.snapshots = snapshots;
+            persist_ledger(state, ops);
         }
         None => {
             log::warn!("[ducking] session enumeration failed; nothing ducked");
@@ -219,42 +333,95 @@ fn try_restore_if_idle(state: &mut WorkerState, ops: &mut impl DuckOps) {
     if !state.active.is_empty() || !state.ducked {
         return;
     }
-    if state.snapshots.is_empty() || ops.restore(&state.snapshots) {
+    if state.snapshots.is_empty() {
         state.ducked = false;
-        state.snapshots.clear();
-        state.restore_pending = false;
-        ops.clear_persisted();
-    } else {
-        // Robustness rule 5: keep the snapshots; the watchdog retries.
-        state.restore_pending = true;
-        log::warn!("[ducking] restore failed; keeping snapshots and retrying from the watchdog");
+        persist_ledger(state, ops);
+        return;
     }
+    let Some(resolved) = ops.restore(&state.snapshots) else {
+        // The enumeration itself failed (audio-service hiccup). Keep the duck
+        // marked live so the watchdog retries the whole restore; nothing has
+        // been attempted, so nothing may be dropped. Robustness rule 5.
+        log::warn!("[ducking] restore enumeration failed; keeping snapshots and retrying");
+        return;
+    };
+    let resolved: HashSet<String> = resolved.into_iter().collect();
+    let snapshots = std::mem::take(&mut state.snapshots);
+    let total = snapshots.len();
+    let mut unresolved = 0usize;
+    for snapshot in snapshots {
+        if !resolved.contains(&snapshot.key) {
+            unresolved += 1;
+            push_pending(state, snapshot);
+        }
+    }
+    state.ducked = false;
+    if unresolved > 0 {
+        // Their sessions were missing or their writes did not verify; keep
+        // them pending (journaled) and retry rather than assuming success.
+        state.pending_last_attempt = Some(Instant::now());
+        log::warn!(
+            "[ducking] {unresolved}/{total} ducked session(s) not verifiably restored; keeping them journaled for retry"
+        );
+    }
+    persist_ledger(state, ops);
 }
 
 fn watchdog_tick(state: &mut WorkerState, ops: &mut impl DuckOps) {
-    if state.restore_pending && state.active.is_empty() {
-        try_restore_if_idle(state, ops);
-        return;
-    }
-    if state.active.is_empty() {
-        return;
-    }
     // Robustness rule 4: a reason whose terminal event was lost (pipeline
     // panic, dropped emit) must not hold the user's mixer down forever. Past
     // the grace period, a reason whose liveness probe says "no longer wanted"
     // is force-released. Reasons without a probe are only released by their
     // explicit restore or the exit hook.
-    let before = state.active.len();
-    state.active.retain(|a| {
-        a.since.elapsed() < REAP_GRACE || a.liveness.as_ref().is_none_or(|alive| alive())
-    });
-    if state.active.len() < before {
-        log::warn!(
-            "[ducking] watchdog released {} stale duck reason(s) whose restore never arrived",
-            before - state.active.len()
-        );
+    if !state.active.is_empty() {
+        let before = state.active.len();
+        state.active.retain(|a| {
+            a.since.elapsed() < REAP_GRACE || a.liveness.as_ref().is_none_or(|alive| alive())
+        });
+        if state.active.len() < before {
+            log::warn!(
+                "[ducking] watchdog released {} stale duck reason(s) whose restore never arrived",
+                before - state.active.len()
+            );
+        }
+    }
+    // Covers a reason reaped above, a restore whose enumeration failed, AND a
+    // restore job that panicked mid-way (ducked with no owner left).
+    if state.active.is_empty() && state.ducked {
         try_restore_if_idle(state, ops);
     }
+    if !state.pending_restore.is_empty()
+        && state
+            .pending_last_attempt
+            .is_none_or(|at| at.elapsed() >= PENDING_RETRY_INTERVAL)
+    {
+        heal_pending(state, ops);
+    }
+}
+
+/// Exit hook body: release every reason, restore the live duck, and give the
+/// pending pool one final heal so a graceful quit leaves nothing muted.
+fn handle_restore_all(state: &mut WorkerState, ops: &mut impl DuckOps) {
+    state.active.clear();
+    try_restore_if_idle(state, ops);
+    heal_pending(state, ops);
+}
+
+/// Startup recovery: feed a previous run's journaled snapshots into the same
+/// verified-healing machinery live cycles use. Never one-shot-and-forget, and
+/// never clobber the journal of a duck that is already live in THIS run.
+fn handle_restore_orphaned(
+    state: &mut WorkerState,
+    ops: &mut impl DuckOps,
+    snapshots: Vec<SessionVolumeSnapshot>,
+) {
+    let count = snapshots.len();
+    for snapshot in snapshots {
+        push_pending(state, snapshot);
+    }
+    log::info!("[ducking] queued {count} session volume(s) left ducked by a previous run");
+    heal_pending(state, ops);
+    persist_ledger(state, ops);
 }
 
 // ─────────────────────── serialized COM executor ───────────────────────────
@@ -283,8 +450,8 @@ enum ComJob {
     RestoreAll {
         ack: Option<mpsc::SyncSender<()>>,
     },
-    /// Startup: best-effort restore of sessions a previous (crashed) run left
-    /// ducked, from the on-disk journal.
+    /// Startup: feed sessions a previous (crashed) run left ducked, from the
+    /// on-disk journal, into the pending-restore pool.
     RestoreOrphaned {
         snapshots: Vec<SessionVolumeSnapshot>,
     },
@@ -313,12 +480,28 @@ fn enqueue_com_job(job: ComJob) {
 }
 
 fn worker_loop(rx: &mpsc::Receiver<ComJob>) {
+    // Robustness rule 8: the apartment must outlive every WASAPI interface the
+    // jobs enumerate, so it is initialized once for the worker's lifetime. The
+    // worker never exits before process teardown, so it is never uninitialized
+    // while a job is in flight.
+    #[cfg(windows)]
+    let _com = crate::windows_com::ComApartment::init_multithreaded();
     let mut state = WorkerState::default();
     let mut ops = RealOps;
     loop {
         match rx.recv_timeout(WATCHDOG_TICK) {
             Ok(job) => handle_job(&mut state, &mut ops, job),
-            Err(mpsc::RecvTimeoutError::Timeout) => watchdog_tick(&mut state, &mut ops),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Same panic containment as handle_job: the watchdog runs COM
+                // restores too, and a panic here would kill the worker (and
+                // with it every future restore) silently.
+                let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    watchdog_tick(&mut state, &mut ops);
+                }));
+                if caught.is_err() {
+                    log::error!("[ducking] the ducking watchdog panicked; worker continues");
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
@@ -349,25 +532,12 @@ fn handle_job(state: &mut WorkerState, ops: &mut RealOps, job: ComJob) {
         }
         ComJob::Restore { reason } => handle_restore(state, ops, reason),
         ComJob::RestoreAll { ack } => {
-            state.active.clear();
-            try_restore_if_idle(state, ops);
+            handle_restore_all(state, ops);
             if let Some(ack) = ack {
                 let _ = ack.send(());
             }
         }
-        ComJob::RestoreOrphaned { snapshots } => {
-            // Only meaningful while nothing live owns the mixer. The
-            // volume_still_ours guard inside the restore keeps this safe even
-            // if the journal is stale.
-            if !state.ducked && state.active.is_empty() {
-                log::info!(
-                    "[ducking] restoring {} session volume(s) left ducked by a previous run",
-                    snapshots.len()
-                );
-                let _ = ops.restore(&snapshots);
-            }
-            ops.clear_persisted();
-        }
+        ComJob::RestoreOrphaned { snapshots } => handle_restore_orphaned(state, ops, snapshots),
     }));
     if caught.is_err() {
         log::error!("[ducking] a ducking job panicked; worker continues");
@@ -468,9 +638,9 @@ fn persist_path() -> Option<&'static PathBuf> {
     PERSIST_PATH.get().and_then(|p| p.as_ref())
 }
 
-/// Wire the crash-recovery journal path and restore any duck a previous run
-/// left behind (crash / kill / power loss while dictating). Call once during
-/// startup, before the first dictation.
+/// Wire the crash-recovery journal path and queue any duck a previous run
+/// left behind (crash / kill / power loss while dictating) for verified
+/// healing. Call once during startup, before the first dictation.
 pub fn init(app: &tauri::AppHandle) {
     let path = crate::portable::app_data_dir(app)
         .ok()
@@ -530,8 +700,8 @@ impl DuckOps for RealOps {
         perform_session_duck(reduction_pct)
     }
 
-    fn restore(&mut self, snapshots: &[SessionVolumeSnapshot]) -> bool {
-        perform_session_restore_with_retry(snapshots)
+    fn restore(&mut self, snapshots: &[SessionVolumeSnapshot]) -> Option<Vec<String>> {
+        perform_verified_session_restore(snapshots)
     }
 
     fn persist(&mut self, snapshots: &[SessionVolumeSnapshot]) {
@@ -545,9 +715,11 @@ impl DuckOps for RealOps {
 
 // ── ISimpleAudioVolume per-session COM impl ─────────────────────────────────
 //
-// Enumerates the default render endpoint's audio sessions and lowers each one
-// that does NOT belong to WinSTT or its child processes. Returns None on any COM
-// failure (the caller treats that as "nothing ducked").
+// Enumerates render-endpoint audio sessions and lowers each one that does NOT
+// belong to WinSTT or its child processes. Returns None on any COM failure
+// (the caller treats that as "nothing ducked" / "nothing attempted"). All of
+// these run on the ducking worker thread, whose COM apartment is held for the
+// thread's lifetime (rule 8).
 
 #[cfg(windows)]
 struct AudioSessionVolume {
@@ -556,12 +728,16 @@ struct AudioSessionVolume {
     volume: windows::Win32::Media::Audio::ISimpleAudioVolume,
 }
 
-/// The set of process ids to leave alone: WinSTT itself plus every descendant
-/// process (WebView2 children, etc.). The in-process rodio recording chime and
-/// the overlay-WebView Read Aloud audio both live inside this tree, so neither
-/// is ducked.
+/// One process scan serving two needs: the set of process ids to leave alone —
+/// WinSTT itself plus every descendant (WebView2 children, etc.), whose
+/// in-process rodio chime and overlay-WebView Read Aloud audio must never be
+/// ducked — and a pid → lower-cased executable-name map used to stamp each
+/// snapshot with its process image (the last-resort restore matcher).
 #[cfg(windows)]
-fn protected_winstt_process_ids() -> std::collections::HashSet<u32> {
+fn winstt_process_tree_and_exe_names() -> (
+    std::collections::HashSet<u32>,
+    std::collections::HashMap<u32, String>,
+) {
     use sysinfo::System;
 
     let current_pid = std::process::id();
@@ -586,7 +762,18 @@ fn protected_winstt_process_ids() -> std::collections::HashSet<u32> {
         }
     }
 
-    protected
+    let exe_names = system
+        .processes()
+        .iter()
+        .map(|(pid, process)| {
+            (
+                pid.as_u32(),
+                process.name().to_string_lossy().to_lowercase(),
+            )
+        })
+        .collect();
+
+    (protected, exe_names)
 }
 
 /// The session's instance identifier — stable for the session's lifetime and
@@ -614,29 +801,31 @@ fn session_instance_key(
     format!("pid:{pid}")
 }
 
+/// Append every audio session of one render device to `volumes`. Returns false
+/// when the device's session manager could not be activated/enumerated.
 #[cfg(windows)]
-fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
+fn collect_device_session_volumes(
+    device: &windows::Win32::Media::Audio::IMMDevice,
+    volumes: &mut Vec<AudioSessionVolume>,
+) -> bool {
     use windows::Win32::Media::Audio::{
-        IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume,
-        MMDeviceEnumerator, eMultimedia, eRender,
+        IAudioSessionControl2, IAudioSessionManager2, ISimpleAudioVolume,
     };
-    use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+    use windows::Win32::System::Com::CLSCTX_ALL;
     use windows::core::Interface;
 
-    let _com = crate::windows_com::ComApartment::init_multithreaded();
-    // SAFETY: COM is initialized for this thread and each interface returned by WASAPI is
-    // checked before use; interface values are kept within this thread-local enumeration.
+    // SAFETY: COM is initialized for the worker thread's lifetime and each
+    // interface returned by WASAPI is checked before use.
     unsafe {
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        let device = enumerator
-            .GetDefaultAudioEndpoint(eRender, eMultimedia)
-            .ok()?;
-        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
-        let sessions = manager.GetSessionEnumerator().ok()?;
-        let count = sessions.GetCount().ok()?;
-        let mut volumes = Vec::new();
-
+        let Ok(manager) = device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else {
+            return false;
+        };
+        let Ok(sessions) = manager.GetSessionEnumerator() else {
+            return false;
+        };
+        let Ok(count) = sessions.GetCount() else {
+            return false;
+        };
         for index in 0..count {
             let Ok(session) = sessions.GetSession(index) else {
                 continue;
@@ -651,8 +840,63 @@ fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
             };
             volumes.push(AudioSessionVolume { key, pid, volume });
         }
+        true
+    }
+}
 
+/// Sessions of the DEFAULT render endpoint — the duck scope (matches what
+/// master-volume ducking would have covered).
+#[cfg(windows)]
+fn enumerate_default_render_session_volumes() -> Option<Vec<AudioSessionVolume>> {
+    use windows::Win32::Media::Audio::{
+        IMMDeviceEnumerator, MMDeviceEnumerator, eMultimedia, eRender,
+    };
+    use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+
+    // SAFETY: COM is initialized for the worker thread's lifetime.
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eRender, eMultimedia)
+            .ok()?;
+        let mut volumes = Vec::new();
+        if !collect_device_session_volumes(&device, &mut volumes) {
+            return None;
+        }
         Some(volumes)
+    }
+}
+
+/// Sessions of EVERY active render endpoint — the restore scope. A default-
+/// device switch mid-duck must not orphan the sessions we lowered on the old
+/// default, so restores look everywhere.
+#[cfg(windows)]
+fn enumerate_all_render_session_volumes() -> Option<Vec<AudioSessionVolume>> {
+    use windows::Win32::Media::Audio::{
+        DEVICE_STATE_ACTIVE, IMMDeviceEnumerator, MMDeviceEnumerator, eRender,
+    };
+    use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
+
+    // SAFETY: COM is initialized for the worker thread's lifetime.
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let collection = enumerator
+            .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+            .ok()?;
+        let count = collection.GetCount().ok()?;
+        let mut volumes = Vec::new();
+        // No active device at all (audio service down) still counts as a
+        // usable — empty — enumeration only when the collection itself said 0.
+        let mut any_device_ok = count == 0;
+        for index in 0..count {
+            let Ok(device) = collection.Item(index) else {
+                continue;
+            };
+            any_device_ok |= collect_device_session_volumes(&device, &mut volumes);
+        }
+        if any_device_ok { Some(volumes) } else { None }
     }
 }
 
@@ -660,8 +904,8 @@ fn enumerate_audio_session_volumes() -> Option<Vec<AudioSessionVolume>> {
 /// return the captured pre-duck volumes so a later restore can put them back.
 #[cfg(windows)]
 fn perform_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
-    let protected = protected_winstt_process_ids();
-    let sessions = enumerate_audio_session_volumes()?;
+    let (protected, exe_names) = winstt_process_tree_and_exe_names();
+    let sessions = enumerate_default_render_session_volumes()?;
     let mut snapshots = Vec::new();
 
     for session in sessions {
@@ -675,7 +919,9 @@ fn perform_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>>
         let target = reduction_target(current, reduction_pct);
         if (current - target).abs() <= f32::EPSILON {
             // Already at/below the duck level (e.g. a muted app) — nothing to
-            // change, so nothing to snapshot or restore either.
+            // change, so nothing to snapshot or restore either. (A session WE
+            // left stuck at the duck level is healed by the pending pool
+            // BEFORE this runs, so it does not slip through here.)
             continue;
         }
         // SAFETY: `session.volume` is valid and `target` is clamped to the accepted 0.0..=1.0 range.
@@ -686,6 +932,7 @@ fn perform_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>>
                 .is_ok()
         } {
             snapshots.push(SessionVolumeSnapshot {
+                exe: exe_names.get(&session.pid).cloned(),
                 key: session.key,
                 pid: session.pid,
                 previous: current,
@@ -697,52 +944,159 @@ fn perform_session_duck(reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>>
     Some(snapshots)
 }
 
-/// Restore, retrying the session enumeration a few times (an audio-service
-/// hiccup or device switch mid-restore must not silently drop the snapshots).
-/// Returns false when every attempt failed — the ledger keeps the snapshots.
+/// Restore with verification, retrying the session enumeration a few times (an
+/// audio-service hiccup or device switch mid-restore must not silently drop the
+/// snapshots). `None` when every enumeration attempt failed — the ledger keeps
+/// everything and retries later.
 #[cfg(windows)]
-fn perform_session_restore_with_retry(snapshots: &[SessionVolumeSnapshot]) -> bool {
+fn perform_verified_session_restore(snapshots: &[SessionVolumeSnapshot]) -> Option<Vec<String>> {
     for attempt in 0..3u32 {
         if attempt > 0 {
             std::thread::sleep(Duration::from_millis(150 * u64::from(attempt)));
         }
-        if let Some(sessions) = enumerate_audio_session_volumes() {
-            apply_session_restore(&sessions, snapshots);
-            return true;
+        if let Some(sessions) = enumerate_all_render_session_volumes() {
+            return Some(apply_verified_session_restore(&sessions, snapshots));
         }
     }
-    false
+    None
 }
 
+/// Put each snapshot back and report the keys that are SETTLED: written and
+/// read back at the pre-duck volume, or deliberately left alone because the
+/// slider moved while we were ducked (rule 3). Anything else — session missing
+/// from the enumeration, failed write, failed read-back — is NOT reported, so
+/// the ledger keeps it pending instead of assuming success (rule 5).
 #[cfg(windows)]
-fn apply_session_restore(sessions: &[AudioSessionVolume], snapshots: &[SessionVolumeSnapshot]) {
-    for session in sessions {
+fn apply_verified_session_restore(
+    sessions: &[AudioSessionVolume],
+    snapshots: &[SessionVolumeSnapshot],
+) -> Vec<String> {
+    let mut resolved = Vec::new();
+    let mut consumed = vec![false; sessions.len()];
+    let mut exe_cache: std::collections::HashMap<u32, Option<String>> =
+        std::collections::HashMap::new();
+
+    for snapshot in snapshots {
+        let Some(index) = find_session_for_snapshot(sessions, &consumed, snapshot, &mut exe_cache)
+        else {
+            // Missing (expired session, process gone) — stays pending. If the
+            // app re-creates the session later, Windows hands it the ducked
+            // volume it remembered, and a retry heals it via pid/exe matching.
+            continue;
+        };
+        consumed[index] = true;
+        let session = &sessions[index];
         // SAFETY: `session.volume` is a live WASAPI interface obtained during enumeration.
         let Ok(current) = (unsafe { session.volume.GetMasterVolume() }) else {
             continue;
         };
-        let snapshot = snapshots.iter().find(|s| s.key == session.key).or_else(|| {
-            // The process re-created its session mid-duck (new instance id)
-            // but inherited the ducked per-app volume Windows remembers.
-            snapshots
-                .iter()
-                .find(|s| s.pid != 0 && s.pid == session.pid)
-        });
-        let Some(snapshot) = snapshot else {
-            continue;
-        };
-        // Robustness rule 3: only undo what we did. A slider the user (or
-        // another app) moved while we were ducked is left exactly where it is.
         if !volume_still_ours(current, snapshot.ducked_to) {
+            // Robustness rule 3: the slider moved while we were ducked (user or
+            // app) — leave it exactly where it is and consider the snapshot
+            // settled; rewriting would stomp their change.
+            resolved.push(snapshot.key.clone());
             continue;
         }
         // SAFETY: `session.volume` is valid and `snapshot.previous` was read from
         // the same API before ducking (already clamped by WASAPI).
-        let _ = unsafe {
+        if unsafe {
             session
                 .volume
                 .SetMasterVolume(snapshot.previous, std::ptr::null())
-        };
+                .is_err()
+        } {
+            continue;
+        }
+        // Trust nothing: only a read-back at the written value counts (rule 5).
+        match unsafe { session.volume.GetMasterVolume() } {
+            Ok(now) if (now - snapshot.previous).abs() <= RESTORE_TOLERANCE => {
+                resolved.push(snapshot.key.clone());
+            }
+            _ => {}
+        }
+    }
+
+    resolved
+}
+
+/// Locate the session a snapshot belongs to: exact instance id first, then the
+/// recorded pid (session re-created by the same process), then the recorded
+/// executable name (session re-created by a NEW process of the same app —
+/// browser audio-service churn, app restarts). The pid/exe tiers only consider
+/// sessions not already claimed by another snapshot, and every match is still
+/// guarded by `volume_still_ours` before anything is written.
+#[cfg(windows)]
+fn find_session_for_snapshot(
+    sessions: &[AudioSessionVolume],
+    consumed: &[bool],
+    snapshot: &SessionVolumeSnapshot,
+    exe_cache: &mut std::collections::HashMap<u32, Option<String>>,
+) -> Option<usize> {
+    if let Some(index) = sessions
+        .iter()
+        .enumerate()
+        .find(|(index, session)| !consumed[*index] && session.key == snapshot.key)
+        .map(|(index, _)| index)
+    {
+        return Some(index);
+    }
+    if snapshot.pid != 0
+        && let Some(index) = sessions
+            .iter()
+            .enumerate()
+            .find(|(index, session)| !consumed[*index] && session.pid == snapshot.pid)
+            .map(|(index, _)| index)
+    {
+        return Some(index);
+    }
+    let exe = snapshot.exe.as_deref()?;
+    sessions
+        .iter()
+        .enumerate()
+        .find(|(index, session)| {
+            !consumed[*index]
+                && session.pid != 0
+                && exe_cache
+                    .entry(session.pid)
+                    .or_insert_with(|| process_image_name(session.pid))
+                    .as_deref()
+                    == Some(exe)
+        })
+        .map(|(index, _)| index)
+}
+
+/// Lower-cased executable file name for a pid ("chrome.exe"), or None when the
+/// process is gone or unqueryable. Least-privilege query handle, closed on
+/// every path.
+#[cfg(windows)]
+fn process_image_name(pid: u32) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+
+    // SAFETY: the handle is opened with a query-only right and closed on every
+    // path; `buffer`/`length` follow the API's in/out length protocol.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buffer = [0u16; 512];
+        let mut length = buffer.len() as u32;
+        let result = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut length,
+        );
+        let _ = CloseHandle(handle);
+        if result.is_err() || length == 0 {
+            return None;
+        }
+        let full = String::from_utf16_lossy(&buffer[..length as usize]);
+        std::path::Path::new(&full)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_lowercase)
     }
 }
 
@@ -755,22 +1109,32 @@ fn perform_session_duck(_reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>
 }
 
 #[cfg(not(windows))]
-fn perform_session_restore_with_retry(_snapshots: &[SessionVolumeSnapshot]) -> bool {
-    true
+fn perform_verified_session_restore(snapshots: &[SessionVolumeSnapshot]) -> Option<Vec<String>> {
+    Some(snapshots.iter().map(|s| s.key.clone()).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     fn snap(key: &str, pid: u32, previous: f32, ducked_to: f32) -> SessionVolumeSnapshot {
         SessionVolumeSnapshot {
             key: key.to_string(),
             pid,
+            exe: None,
             previous,
             ducked_to,
         }
+    }
+
+    /// Scripted result for one `restore` call.
+    enum RestoreScript {
+        /// The session enumeration itself failed → `None`.
+        EnumerationFails,
+        /// Only these keys verify; the rest stay unresolved.
+        Resolves(Vec<&'static str>),
     }
 
     /// Records every side effect instead of touching COM / the filesystem.
@@ -778,18 +1142,20 @@ mod tests {
     struct MockOps {
         /// What the next duck enumeration returns (None = COM failure).
         duck_result: Option<Vec<SessionVolumeSnapshot>>,
-        restore_ok: bool,
+        /// Consumed per restore call; once empty, every call verifies ALL of
+        /// the requested keys (the happy path).
+        restore_script: VecDeque<RestoreScript>,
         ducks: u32,
         restores: Vec<Vec<SessionVolumeSnapshot>>,
         persisted: Option<Vec<SessionVolumeSnapshot>>,
         journal_clears: u32,
+        call_log: Vec<&'static str>,
     }
 
     impl MockOps {
         fn with_sessions(snapshots: Vec<SessionVolumeSnapshot>) -> Self {
             Self {
                 duck_result: Some(snapshots),
-                restore_ok: true,
                 ..Self::default()
             }
         }
@@ -797,15 +1163,21 @@ mod tests {
 
     impl DuckOps for MockOps {
         fn duck(&mut self, _reduction_pct: u8) -> Option<Vec<SessionVolumeSnapshot>> {
+            self.call_log.push("duck");
             self.ducks += 1;
             self.duck_result.clone()
         }
 
-        fn restore(&mut self, snapshots: &[SessionVolumeSnapshot]) -> bool {
-            if self.restore_ok {
-                self.restores.push(snapshots.to_vec());
+        fn restore(&mut self, snapshots: &[SessionVolumeSnapshot]) -> Option<Vec<String>> {
+            self.call_log.push("restore");
+            self.restores.push(snapshots.to_vec());
+            match self.restore_script.pop_front() {
+                Some(RestoreScript::EnumerationFails) => None,
+                Some(RestoreScript::Resolves(keys)) => {
+                    Some(keys.into_iter().map(String::from).collect())
+                }
+                None => Some(snapshots.iter().map(|s| s.key.clone()).collect()),
             }
-            self.restore_ok
         }
 
         fn persist(&mut self, snapshots: &[SessionVolumeSnapshot]) {
@@ -830,6 +1202,14 @@ mod tests {
                 .checked_sub(REAP_GRACE + Duration::from_secs(1))
                 .expect("system uptime exceeds the reap grace");
         }
+    }
+
+    /// Backdate the pending pool's last attempt past the retry interval.
+    fn expire_pending_interval(state: &mut WorkerState) {
+        state.pending_last_attempt = Instant::now()
+            .checked_sub(PENDING_RETRY_INTERVAL + Duration::from_secs(1))
+            .map(Some)
+            .expect("system uptime exceeds the pending retry interval");
     }
 
     // ── reduction math ──
@@ -886,6 +1266,17 @@ mod tests {
         assert!(!volume_still_ours(0.6, 0.2)); // user raised the slider mid-duck
     }
 
+    // ── journal (de)serialization compatibility ──
+
+    #[test]
+    fn journal_without_exe_field_still_deserializes() {
+        // Journals written by builds that predate the `exe` matcher.
+        let legacy = r#"[{"key":"a","pid":10,"previous":0.8,"ducked_to":0.16}]"#;
+        let parsed: Vec<SessionVolumeSnapshot> =
+            serde_json::from_str(legacy).expect("legacy journal parses");
+        assert_eq!(parsed, vec![snap("a", 10, 0.8, 0.16)]);
+    }
+
     // ── ledger transitions ──
 
     #[test]
@@ -902,6 +1293,7 @@ mod tests {
 
         handle_restore(&mut state, &mut ops, DuckReason::Dictation);
         assert!(!state.ducked);
+        assert!(state.pending_restore.is_empty());
         assert_eq!(ops.restores, vec![sessions]);
         assert!(ops.persisted.is_none());
 
@@ -1021,23 +1413,171 @@ mod tests {
     }
 
     #[test]
-    fn failed_restore_keeps_snapshots_and_watchdog_retries() {
+    fn duplicate_duck_refreshes_liveness_probe() {
+        // A new recording's duck arrives while the previous cycle's reason is
+        // still held (its restore was lost). The refreshed probe must keep the
+        // watchdog from reaping the duck out from under the LIVE recording.
+        let mut state = WorkerState::default();
+        let mut ops = MockOps::with_sessions(vec![snap("a", 3, 0.4, 0.08)]);
+        let first = Arc::new(AtomicBool::new(true));
+        let second = Arc::new(AtomicBool::new(true));
+
+        handle_duck(
+            &mut state,
+            &mut ops,
+            DuckReason::Dictation,
+            80,
+            Some(alive(&first)),
+            true,
+        );
+        first.store(false, Ordering::SeqCst); // first cycle is over
+        handle_duck(
+            &mut state,
+            &mut ops,
+            DuckReason::Dictation,
+            80,
+            Some(alive(&second)),
+            true,
+        );
+        assert_eq!(ops.ducks, 1); // still one COM duck (piggyback on itself)
+
+        // The stale first-probe would have been reaped here; the refreshed
+        // probe reports the live recording and holds the duck.
+        expire_grace(&mut state);
+        watchdog_tick(&mut state, &mut ops);
+        assert!(state.ducked);
+        assert!(ops.restores.is_empty());
+
+        // Once the second recording ends too, the watchdog releases it.
+        second.store(false, Ordering::SeqCst);
+        expire_grace(&mut state);
+        watchdog_tick(&mut state, &mut ops);
+        assert!(!state.ducked);
+        assert_eq!(ops.restores.len(), 1);
+    }
+
+    #[test]
+    fn enumeration_failure_keeps_snapshots_and_watchdog_retries() {
         let mut state = WorkerState::default();
         let sessions = vec![snap("a", 3, 0.4, 0.08)];
         let mut ops = MockOps::with_sessions(sessions.clone());
-        ops.restore_ok = false;
+        ops.restore_script
+            .push_back(RestoreScript::EnumerationFails);
 
         handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
         handle_restore(&mut state, &mut ops, DuckReason::Dictation);
 
-        // Restore failed: still ducked, snapshots retained, journal intact.
+        // Restore never ran: still ducked, snapshots retained, journal intact.
         assert!(state.ducked);
-        assert!(state.restore_pending);
         assert_eq!(state.snapshots, sessions);
         assert!(ops.persisted.is_some());
 
-        // The watchdog retries once the audio service recovers.
-        ops.restore_ok = true;
+        // The watchdog retries once the audio service recovers — no reason
+        // holds the duck, so `ducked && idle` alone triggers the retry.
+        watchdog_tick(&mut state, &mut ops);
+        assert!(!state.ducked);
+        assert_eq!(ops.restores.len(), 2);
+        assert!(ops.persisted.is_none());
+    }
+
+    #[test]
+    fn partial_restore_parks_unresolved_and_watchdog_heals() {
+        // THE bug class behind "volume stays muted after dictation": one
+        // session's restore cannot be verified (missing / failed write). It
+        // must survive as pending + journaled work, not be silently dropped.
+        let mut state = WorkerState::default();
+        let sessions = vec![snap("a", 10, 0.8, 0.16), snap("b", 20, 0.5, 0.1)];
+        let mut ops = MockOps::with_sessions(sessions);
+        ops.restore_script
+            .push_back(RestoreScript::Resolves(vec!["a"]));
+
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+        handle_restore(&mut state, &mut ops, DuckReason::Dictation);
+
+        // The duck is over, but "b" is parked for healing and stays journaled.
+        assert!(!state.ducked);
+        assert_eq!(state.pending_restore, vec![snap("b", 20, 0.5, 0.1)]);
+        assert_eq!(
+            ops.persisted.as_deref(),
+            Some(&[snap("b", 20, 0.5, 0.1)][..])
+        );
+
+        // Not retried again before the interval elapses…
+        watchdog_tick(&mut state, &mut ops);
+        assert_eq!(ops.restores.len(), 1);
+
+        // …but healed once it does (session came back / write now verifies).
+        expire_pending_interval(&mut state);
+        watchdog_tick(&mut state, &mut ops);
+        assert!(state.pending_restore.is_empty());
+        assert_eq!(ops.restores.len(), 2);
+        assert_eq!(ops.restores[1], vec![snap("b", 20, 0.5, 0.1)]);
+        assert!(ops.persisted.is_none());
+    }
+
+    #[test]
+    fn pending_is_healed_before_the_next_duck() {
+        // Anti-ratchet + un-stick: a session left ducked by a failed cycle is
+        // restored BEFORE the next duck snapshots it again, so the duck never
+        // captures a ducked level as "previous" and the stuck volume heals at
+        // the next dictation even without waiting for the watchdog.
+        let mut state = WorkerState::default();
+        let sessions = vec![snap("a", 10, 0.8, 0.16)];
+        let mut ops = MockOps::with_sessions(sessions.clone());
+        ops.restore_script
+            .push_back(RestoreScript::Resolves(vec![]));
+
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+        handle_restore(&mut state, &mut ops, DuckReason::Dictation);
+        assert_eq!(state.pending_restore, sessions);
+
+        ops.call_log.clear();
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+
+        // Heal ran first (default script = verifies all), THEN the fresh duck.
+        assert_eq!(ops.call_log, vec!["restore", "duck"]);
+        assert!(state.pending_restore.is_empty());
+        assert!(state.ducked);
+        assert_eq!(state.snapshots, sessions);
+    }
+
+    #[test]
+    fn reduck_while_restore_never_ran_keeps_original_snapshots() {
+        // The anti-ratchet invariant for a WHOLLY failed restore (enumeration
+        // down): a new duck while the old snapshots are still live must NOT
+        // re-snapshot the ducked levels.
+        let mut state = WorkerState::default();
+        let original = vec![snap("a", 3, 0.4, 0.08)];
+        let mut ops = MockOps::with_sessions(original.clone());
+        ops.restore_script
+            .push_back(RestoreScript::EnumerationFails);
+
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+        handle_restore(&mut state, &mut ops, DuckReason::Dictation);
+        assert!(state.ducked); // restore never ran
+
+        // Next PTT press arrives before the retry succeeded → piggyback.
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+        assert_eq!(ops.ducks, 1); // no second COM duck
+        assert_eq!(state.snapshots, original); // originals preserved
+
+        handle_restore(&mut state, &mut ops, DuckReason::Dictation);
+        assert!(!state.ducked);
+        assert_eq!(ops.restores.last(), Some(&original));
+    }
+
+    #[test]
+    fn watchdog_recovers_a_duck_orphaned_by_a_panicked_job() {
+        // A restore job that panicked after removing its reason leaves
+        // `ducked` with no owner and no flags. The watchdog's `ducked && idle`
+        // check must still put the mixer back.
+        let mut state = WorkerState::default();
+        let sessions = vec![snap("a", 3, 0.4, 0.08)];
+        let mut ops = MockOps::with_sessions(sessions.clone());
+
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+        state.active.clear(); // as if the reason was released but restore died
+
         watchdog_tick(&mut state, &mut ops);
         assert!(!state.ducked);
         assert_eq!(ops.restores, vec![sessions]);
@@ -1045,35 +1585,10 @@ mod tests {
     }
 
     #[test]
-    fn reduck_after_failed_restore_keeps_original_snapshots() {
-        // The anti-ratchet invariant: a new duck while old (failed-restore)
-        // snapshots are still held must NOT re-snapshot the ducked levels.
-        let mut state = WorkerState::default();
-        let original = vec![snap("a", 3, 0.4, 0.08)];
-        let mut ops = MockOps::with_sessions(original.clone());
-        ops.restore_ok = false;
-
-        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
-        handle_restore(&mut state, &mut ops, DuckReason::Dictation);
-        assert!(state.restore_pending);
-
-        // Next PTT press arrives before the retry succeeded.
-        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
-        assert_eq!(ops.ducks, 1); // no second COM duck
-        assert_eq!(state.snapshots, original); // originals preserved
-        assert!(!state.restore_pending);
-
-        ops.restore_ok = true;
-        handle_restore(&mut state, &mut ops, DuckReason::Dictation);
-        assert_eq!(ops.restores, vec![original]);
-    }
-
-    #[test]
     fn duck_com_failure_leaves_nothing_to_restore() {
         let mut state = WorkerState::default();
         let mut ops = MockOps {
             duck_result: None,
-            restore_ok: true,
             ..MockOps::default()
         };
 
@@ -1102,18 +1617,66 @@ mod tests {
     }
 
     #[test]
-    fn restore_all_releases_every_reason() {
+    fn restore_all_releases_every_reason_and_heals_pending() {
         let mut state = WorkerState::default();
         let sessions = vec![snap("a", 3, 0.4, 0.08)];
         let mut ops = MockOps::with_sessions(sessions.clone());
 
         handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
         handle_duck(&mut state, &mut ops, DuckReason::ReadAloud, 80, None, false);
+        state.pending_restore.push(snap("z", 99, 0.7, 0.0));
 
-        // The exit hook clears all reasons at once.
-        state.active.clear();
-        try_restore_if_idle(&mut state, &mut ops);
+        handle_restore_all(&mut state, &mut ops);
         assert!(!state.ducked);
-        assert_eq!(ops.restores, vec![sessions]);
+        assert!(state.pending_restore.is_empty());
+        // Live snapshots restored, then the pending pool healed.
+        assert_eq!(ops.restores.len(), 2);
+        assert_eq!(ops.restores[0], sessions);
+        assert_eq!(ops.restores[1], vec![snap("z", 99, 0.7, 0.0)]);
+        assert!(ops.persisted.is_none());
+    }
+
+    #[test]
+    fn orphans_join_pending_without_clobbering_a_live_journal() {
+        // Startup recovery racing the first dictation: the orphaned snapshots
+        // must merge into the pending pool and the journal must keep BOTH the
+        // live duck and the unresolved orphans (the old code deleted it).
+        let mut state = WorkerState::default();
+        let live = vec![snap("a", 3, 0.4, 0.08)];
+        let mut ops = MockOps::with_sessions(live);
+
+        handle_duck(&mut state, &mut ops, DuckReason::Dictation, 80, None, false);
+        ops.restore_script
+            .push_back(RestoreScript::Resolves(vec![])); // orphan not back yet
+        handle_restore_orphaned(&mut state, &mut ops, vec![snap("z", 99, 0.7, 0.0)]);
+
+        assert!(state.ducked);
+        assert_eq!(state.pending_restore, vec![snap("z", 99, 0.7, 0.0)]);
+        assert_eq!(
+            ops.persisted.as_deref(),
+            Some(&[snap("a", 3, 0.4, 0.08), snap("z", 99, 0.7, 0.0)][..])
+        );
+    }
+
+    #[test]
+    fn orphans_heal_immediately_when_their_sessions_are_back() {
+        let mut state = WorkerState::default();
+        let mut ops = MockOps::default(); // default restore verifies everything
+
+        handle_restore_orphaned(&mut state, &mut ops, vec![snap("z", 99, 0.7, 0.0)]);
+
+        assert!(state.pending_restore.is_empty());
+        assert_eq!(ops.restores, vec![vec![snap("z", 99, 0.7, 0.0)]]);
+        assert!(ops.persisted.is_none());
+    }
+
+    #[test]
+    fn pending_dedupe_keeps_the_older_entry() {
+        // The older entry's `previous` predates our interference and is the
+        // user's true volume; a later duplicate must not overwrite it.
+        let mut state = WorkerState::default();
+        push_pending(&mut state, snap("a", 3, 0.8, 0.0));
+        push_pending(&mut state, snap("a", 3, 0.1, 0.0));
+        assert_eq!(state.pending_restore, vec![snap("a", 3, 0.8, 0.0)]);
     }
 }

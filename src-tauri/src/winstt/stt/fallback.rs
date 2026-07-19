@@ -13,9 +13,11 @@
 //
 // The "is a local model available, and which one" question is answered by the SAME HF cache probe
 // the picker uses (`runtime::probe_cache_states`, TTL-memoized), restricted to families whose Rust
-// engine is actually wired (`backend::engine_kind_for`). We deliberately pick the SMALLEST fully
-// cached decodable model — the zero-friction, lowest-latency salvage, matching the renderer's
-// "smallest installed" default.
+// engine is actually wired (`backend::engine_kind_for`). Preference order: the factory-default
+// model (`tiny`) when it is fully cached — the deterministic target every other fallback resolves
+// to — else the SMALLEST fully cached decodable model. (This salvage runs OFFLINE mid-utterance,
+// so unlike the renderer's stale-selection fallback it cannot download the default; an arbitrary
+// cached model beats losing the utterance.)
 
 use std::sync::Arc;
 
@@ -47,9 +49,16 @@ pub async fn resolve_local_stt_fallback_async(downloads: &DownloadManager) -> Op
         if !decodable {
             continue;
         }
+        let is_default = crate::winstt::catalog::canonical_model_id(model_id)
+            == crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID;
         for info in by_quant.values() {
             if info.state != "cached" {
                 continue;
+            }
+            // The cached factory default wins outright; size only breaks ties
+            // among the non-default candidates.
+            if is_default {
+                return Some(crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID.to_string());
             }
             let size = info.total_bytes.max(info.downloaded_bytes);
             if best.as_ref().is_none_or(|(best_size, _)| size < *best_size) {

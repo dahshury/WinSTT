@@ -20,6 +20,8 @@ export interface HistoryEntry {
 	postProcessRequested: boolean;
 	privacyMarkers?: string[];
 	saved: boolean;
+	/** Omitted/undefined = mic dictation; "listen" = a listen-mode session. */
+	source?: string | null;
 	timestamp: number;
 	title: string;
 	transcriptionText: string;

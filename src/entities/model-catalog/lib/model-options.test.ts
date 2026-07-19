@@ -506,7 +506,7 @@ describe("pickDefaultSttModel", () => {
 		expect(pickDefaultSttModel(fixture, {}, () => false)).toBeNull();
 	});
 
-	test("prefers the smallest cached model over an uncached but smaller one", () => {
+	test("prefers the factory default even when other models are cached and it is not", () => {
 		const statesById: Record<string, ModelStateEntry> = {
 			tiny: makeEntry({
 				id: "tiny",
@@ -539,8 +539,38 @@ describe("pickDefaultSttModel", () => {
 				},
 			}),
 		};
-		// nemo-en (300M, cached) wins over large (1.5B, cached) and tiny (39M, not cached).
-		expect(pickDefaultSttModel(fixture, statesById)).toBe("nemo-en");
+		// The deterministic default wins over "whatever small model happens to
+		// be cached" (the vosk-model-small-ru regression).
+		expect(pickDefaultSttModel(fixture, statesById)).toBe("tiny");
+	});
+
+	test("degrades to the smallest cached model when the default is filtered out", () => {
+		const statesById: Record<string, ModelStateEntry> = {
+			tiny: makeEntry({ id: "tiny", estimated_bytes: 39_000_000 }),
+			large: makeEntry({
+				id: "large",
+				estimated_bytes: 1_500_000_000,
+				cache: {
+					state: "cached",
+					downloaded_bytes: 0,
+					progress: 1,
+					total_bytes: 0,
+				},
+			}),
+			"nemo-en": makeEntry({
+				id: "nemo-en",
+				estimated_bytes: 300_000_000,
+				cache: {
+					state: "cached",
+					downloaded_bytes: 0,
+					progress: 1,
+					total_bytes: 0,
+				},
+			}),
+		};
+		expect(
+			pickDefaultSttModel(fixture, statesById, (m) => m.id !== "tiny"),
+		).toBe("nemo-en");
 	});
 
 	test("falls back to smallest in catalog when nothing is cached", () => {
@@ -608,6 +638,29 @@ describe("pickCachedSttModel", () => {
 		expect(
 			pickCachedSttModel(fixture, statesById, (m) => m.nativeStreaming),
 		).toBe("nemo-en");
+	});
+
+	test("prefers the cached factory default over a smaller cached model", () => {
+		const cached = {
+			state: "cached",
+			downloaded_bytes: 0,
+			progress: 1,
+			total_bytes: 0,
+		} as const;
+		const statesById: Record<string, ModelStateEntry> = {
+			tiny: makeEntry({
+				id: "tiny",
+				estimated_bytes: 39_000_000,
+				cache: cached,
+			}),
+			// Smaller than the default — would win under a pure size sort.
+			"nemo-en": makeEntry({
+				id: "nemo-en",
+				estimated_bytes: 10_000_000,
+				cache: cached,
+			}),
+		};
+		expect(pickCachedSttModel(fixture, statesById)).toBe("tiny");
 	});
 
 	test("returns null when no eligible model is cached", () => {

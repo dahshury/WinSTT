@@ -7,7 +7,13 @@ import {
 	type SettingsWarning,
 	useSettingsHydrationStore,
 } from "@/entities/setting";
-import { ToastDismissButton, ToastShell } from "@/shared/ui/toast";
+import {
+	ToastDismissButton,
+	ToastShell,
+	useAutoDismiss,
+} from "@/shared/ui/toast";
+
+const AUTO_DISMISS_MS = 8000;
 
 /**
  * Maps a non-fatal settings warning to its localized message. The `detail`
@@ -30,12 +36,54 @@ function warningMessage(
 }
 
 /**
+ * A single warning notice. `save-failed` self-clears on the standard toast
+ * timer (the change is kept dirty and retried, so the notice is transient and
+ * a repeat failure re-pushes it, restarting the countdown). The load-time
+ * data-integrity kinds (#45 defaulted sections, #26 hotkey rewrites) stay
+ * until dismissed — they report data the user set that couldn't be read.
+ */
+function WarningToast({
+	warning,
+	onDismiss,
+}: {
+	warning: SettingsWarning;
+	onDismiss: () => void;
+}) {
+	const t = useTranslations("settings");
+	useAutoDismiss(
+		warning.kind === "save-failed" ? warning : null,
+		onDismiss,
+		AUTO_DISMISS_MS,
+	);
+
+	return (
+		<ToastShell
+			ariaLive="polite"
+			className="pointer-events-auto"
+			role="alert"
+			tone="error"
+		>
+			<div className="flex items-start gap-2">
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="mt-0.5 shrink-0 text-error"
+					icon={AlertCircleIcon}
+					size={16}
+				/>
+				<span className="flex-1 text-body text-foreground">
+					{warningMessage(warning, t)}
+				</span>
+				<ToastDismissButton onClick={onDismiss} />
+			</div>
+		</ToastShell>
+	);
+}
+
+/**
  * Renders the non-fatal settings-hydration warnings raised on load (a persisted
  * section fell back to defaults #45, colliding hotkeys were reset #26, or a
- * backend save was rejected #46) as a stack of dismissible notices. These carry
- * data-integrity information (something the user set couldn't be read or saved),
- * so they persist until dismissed rather than auto-clearing on a timer. The
- * store collapses repeats of the same kind, so the stack stays bounded.
+ * backend save was rejected #46) as a stack of dismissible notices. The store
+ * collapses repeats of the same kind, so the stack stays bounded.
  *
  * Mounted in BOTH the main window (RootLayout) and the settings window, because
  * either window's `useSyncSettings` can push a warning into its own store.
@@ -43,7 +91,6 @@ function warningMessage(
 export function SettingsWarningToasts() {
 	const warnings = useSettingsHydrationStore((s) => s.warnings);
 	const dismissWarning = useSettingsHydrationStore((s) => s.dismissWarning);
-	const t = useTranslations("settings");
 
 	if (warnings.length === 0) {
 		return null;
@@ -52,26 +99,11 @@ export function SettingsWarningToasts() {
 	return (
 		<div className="pointer-events-none fixed right-4 bottom-4 z-toast flex w-[420px] max-w-[90vw] flex-col gap-2">
 			{warnings.map((warning) => (
-				<ToastShell
-					ariaLive="polite"
-					className="pointer-events-auto"
+				<WarningToast
 					key={warning.id}
-					role="alert"
-					tone="error"
-				>
-					<div className="flex items-start gap-2">
-						<HugeiconsIcon
-							aria-hidden="true"
-							className="mt-0.5 shrink-0 text-error"
-							icon={AlertCircleIcon}
-							size={16}
-						/>
-						<span className="flex-1 text-body text-foreground">
-							{warningMessage(warning, t)}
-						</span>
-						<ToastDismissButton onClick={() => dismissWarning(warning.id)} />
-					</div>
-				</ToastShell>
+					onDismiss={() => dismissWarning(warning.id)}
+					warning={warning}
+				/>
 			))}
 		</div>
 	);

@@ -28,10 +28,8 @@ import {
 	SmartEndpointSection,
 } from "./EndpointingSections";
 import { RecordingModeSection } from "./RecordingModeSection";
-import {
-	useWakewordModelStatus,
-	WakewordDownloadDialog,
-} from "./WakewordDownload";
+import { WakewordDownloadDialog } from "./WakewordDownload";
+import { useWakewordModelStatus } from "./use-wakeword-model-status";
 import { wakewordStatusWithRuntimeFallback } from "./wakeword-status";
 
 const pauseWakewordDownload = () => {

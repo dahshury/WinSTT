@@ -66,11 +66,13 @@ export function ttsModelMatchesPreferredLanguages(
 	if (preferredLanguages.length === 0 || modelLanguages.length === 0) {
 		return true;
 	}
-	const preferred = new Set(
-		preferredLanguages
-			.map(normalizeSttLanguageCode)
-			.filter((code) => code.length > 0),
-	);
+	const preferred = new Set<string>();
+	for (const language of preferredLanguages) {
+		const normalized = normalizeSttLanguageCode(language);
+		if (normalized.length > 0) {
+			preferred.add(normalized);
+		}
+	}
 	if (preferred.size === 0) {
 		return true;
 	}

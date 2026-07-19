@@ -1,11 +1,11 @@
 import { useLayoutEffect } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
+	DEFAULT_STT_MODEL_ID,
 	isSelectableRealtimeModel,
 	isVisibleSttModel,
 	modelSupportsSelectedSourceLanguages,
 	modelsHaveLanguageOverlap,
-	needsModelFallback,
 	pickCachedSttModel,
 	pickDefaultSttModel,
 	type CatalogModels,
@@ -69,45 +69,31 @@ function resolveMainPatch(
 		return cloudFallbackPatch(cloudFallbackModel, currentMainModel);
 	}
 	const current = catalogModels.find((m) => m.id === currentMainModel);
+	const currentValid = current !== undefined && isVisibleSttModel(current);
 	const currentCached =
-		current !== undefined &&
-		isVisibleSttModel(current) &&
-		statesById[current.id]?.cache.state === "cached";
+		currentValid && statesById[current.id]?.cache.state === "cached";
 	if (currentCached) {
 		return null;
 	}
-	if (
-		current !== undefined &&
-		!needsModelFallback(currentMainModel, catalogModels)
-	) {
-		const cachedReplacement = pickCachedSttModel(
-			catalogModels,
-			statesById,
-			isVisibleSttModel,
-		);
-		if (!cachedReplacement) {
-			return cloudFallbackPatch(cloudFallbackModel, currentMainModel);
-		}
-		if (cachedReplacement === currentMainModel) {
-			return null;
-		}
-		const replacementEntry = catalogModels.find(
-			(m) => m.id === cachedReplacement,
-		);
-		if (!replacementEntry) {
-			return null;
-		}
-		return { model: cachedReplacement };
-	}
-	const next = pickCachedSttModel(catalogModels, statesById, isVisibleSttModel);
+	// Fallbacks are DETERMINISTIC: they land on the factory default, never on
+	// "whatever small model happens to be cached" (which once silently turned
+	// the main slot into a Russian-only Vosk model).
+	//   - A VALID selection that merely isn't cached is only ever rewritten to
+	//     the CACHED default; without one, prefer the keyed cloud fallback and
+	//     otherwise leave the user's pick alone (it can download on demand).
+	//   - A STALE id (missing from the catalog) recovers to the default
+	//     outright, cached or not.
+	const next = currentValid
+		? pickCachedSttModel(
+				catalogModels,
+				statesById,
+				(m) => m.id === DEFAULT_STT_MODEL_ID && isVisibleSttModel(m),
+			)
+		: pickDefaultSttModel(catalogModels, statesById, isVisibleSttModel);
 	if (!next) {
 		return cloudFallbackPatch(cloudFallbackModel, currentMainModel);
 	}
 	if (next === currentMainModel) {
-		return null;
-	}
-	const fallbackEntry = catalogModels.find((m) => m.id === next);
-	if (!fallbackEntry) {
 		return null;
 	}
 	return { model: next };
@@ -211,7 +197,9 @@ function resolveEffectiveMainModel(
  * STT is the always-on core capability — the selector must never be in a
  * "no model" state. If the saved id is empty (corrupted settings) or refers
  * to a model that's no longer in the catalog (catalog change), auto-pick the
- * smallest cached model so the user always lands on something usable. Skips
+ * factory default (`DEFAULT_STT_MODEL_ID`, falling back to the smallest
+ * cached model only when the default is ineligible) so the user always lands
+ * somewhere deterministic. Skips
  * while the catalog is still loading so we don't false-positive every model
  * as missing during the boot race. Also skips when the active model is a
  * cloud `provider:*` id — those are never in the local catalog by design and

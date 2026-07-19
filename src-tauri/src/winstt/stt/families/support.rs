@@ -811,30 +811,18 @@ pub(super) fn tensor_i32(shape: (usize, usize), data: Vec<i32>) -> SttResult<Ten
     Tensor::from_array(arr).map_err(|e| SttError::Inference(format!("i32 tensor: {e}")))
 }
 
-/// Carry present.* outputs into the next step's past_key_values.* (dtype-preserving).
-pub(super) fn carry_present(
-    outputs: &ort::session::SessionOutputs<'_>,
-    past_names: &[String],
-    present_names: &[String],
-    is_fp16: bool,
-) -> SttResult<BTreeMap<String, KvTensor>> {
-    let mut next = BTreeMap::new();
-    for (past, present) in past_names.iter().zip(present_names.iter()) {
-        let val = &outputs[present.as_str()];
-        let kv = if is_fp16 {
-            let arr = val
-                .try_extract_array::<F16>()
-                .map_err(|e| SttError::Inference(format!("carry present f16 {present}: {e}")))?;
-            KvTensor::F16(arr.to_owned())
-        } else {
-            let arr = val
-                .try_extract_array::<f32>()
-                .map_err(|e| SttError::Inference(format!("carry present f32 {present}: {e}")))?;
-            KvTensor::F32(arr.to_owned())
-        };
-        next.insert(past.clone(), kv);
+/// Argmax over an f32 iterator without materializing a slice (streaming joiner/CTC rows).
+/// Same first-max-wins semantics as `argmax_1d`; empty input → `(0, NEG_INFINITY)`.
+pub(super) fn argmax_iter(values: impl Iterator<Item = f32>) -> (usize, f32) {
+    let mut best = 0usize;
+    let mut best_v = f32::NEG_INFINITY;
+    for (i, x) in values.enumerate() {
+        if x > best_v {
+            best_v = x;
+            best = i;
+        }
     }
-    Ok(next)
+    (best, best_v)
 }
 
 #[cfg(test)]

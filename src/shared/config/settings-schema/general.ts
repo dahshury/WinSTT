@@ -62,6 +62,9 @@ export const generalSettingsSchema = z.object({
 		.default("LCtrl+LShift+V")
 		.catch("LCtrl+LShift+V"),
 	loopbackDeviceIndex: z.number().int().nullable().default(null),
+	// Listen mode: also capture the microphone and mix it into the loopback
+	// stream so the session transcript covers both sides of a meeting.
+	listenCaptureMicrophone: z.boolean().default(false).catch(false),
 	// Wake phrase used when recordingMode is "wakeword". Preset phrases and
 	// arbitrary custom phrases are tokenized with the downloaded sherpa KWS
 	// model's BPE files, so the UI must preserve unknown non-empty values.

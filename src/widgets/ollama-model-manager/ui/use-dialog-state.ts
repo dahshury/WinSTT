@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { TranslateFn } from "./types";
 
 export type Tab = "installed" | "recommended";
 
@@ -27,8 +26,3 @@ export function useDialogState(): [DialogState, DialogActions] {
 		{ setTab, setQuery, setDeletingName, setPendingDelete },
 	];
 }
-
-export type { TranslateFn };
-export { DialogFooter } from "./DialogFooter";
-export { DialogHeader, type DialogHeaderProps } from "./DialogHeader";
-export { DialogSearch } from "./DialogSearch";

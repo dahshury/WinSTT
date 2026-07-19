@@ -135,10 +135,78 @@ pub fn init_settings_store(app: &AppHandle) {
     match build_settings_store(app) {
         Ok(store) => {
             repair_wedged_store_on_boot(&store);
+            migrate_store_on_boot(&store);
             let _ = SETTINGS_STORE.set(store);
         }
         Err(err) => {
             log::error!("[settings] failed to initialize settings store handle: {err}");
+        }
+    }
+}
+
+/// One-time, boot-time schema migrations for the persisted tree.
+///
+/// Runs on the MAIN thread right after the corruption repair, BEFORE any reader
+/// touches the store — so migrated values are what every consumer (and the raw
+/// cache) ever sees, and the stamped version persists immediately rather than
+/// "whenever the next save happens" (an unstamped store would re-run value
+/// migrations on every boot, reverting later explicit user choices — e.g. the
+/// v1 `""`→`"auto"` step would keep flipping a deliberately-picked fp32).
+///
+/// Additive schema growth needs NO migration (every field is `#[serde(default)]`);
+/// steps here are only for fields whose MEANING changed between versions.
+fn migrate_store_on_boot(store: &Store<tauri::Wry>) {
+    let Some(value) = store.get(WINSTT_SETTINGS_KEY) else {
+        return; // fresh install: seed_defaults writes a current-version tree
+    };
+    let Some(migrated) = migrated_settings_value(value) else {
+        return;
+    };
+    store.set(WINSTT_SETTINGS_KEY, migrated);
+    if let Err(err) = durable_save_store(store) {
+        log::error!("[settings] failed to persist migrated settings: {err}");
+    }
+}
+
+/// Pure core of [`migrate_store_on_boot`]: `Some(migrated tree)` when the
+/// recorded version is behind CURRENT, `None` when the tree is already current
+/// (or not an object — the repair path's job).
+fn migrated_settings_value(mut value: serde_json::Value) -> Option<serde_json::Value> {
+    if !value.is_object() {
+        return None;
+    }
+    let from = value
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as u32;
+    if from >= crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION {
+        return None;
+    }
+    apply_settings_migrations(&mut value, from);
+    value["schemaVersion"] = crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION.into();
+    log::info!(
+        "[settings] migrated persisted settings schema v{from} → v{}",
+        crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION
+    );
+    Some(value)
+}
+
+/// The migration steps, applied in order from the store's recorded version.
+/// Each step transforms raw JSON (not the typed struct) so it can reshape
+/// fields the current schema no longer parses the old way.
+fn apply_settings_migrations(value: &mut serde_json::Value, from: u32) {
+    if from < 1 {
+        // v0 → v1: `model.onnxQuantization` `""` used to be the "auto" sentinel;
+        // since 2026-06 `""` means EXPLICIT fp32 and `"auto"` is the sentinel.
+        // A v0 store's `""` was written with auto intent, so carry that intent
+        // forward instead of silently reinterpreting it as a pinned fp32.
+        if let Some(quant) = value.pointer_mut("/model/onnxQuantization")
+            && quant == &serde_json::json!("")
+        {
+            log::info!(
+                "[settings] v0→v1: model.onnxQuantization \"\" (legacy auto sentinel) → \"auto\""
+            );
+            *quant = serde_json::json!("auto");
         }
     }
 }
@@ -261,9 +329,24 @@ pub fn read_settings(app: &AppHandle) -> WinsttSettings {
     }
 }
 
+/// Read for the WRITE path (`apply_settings_patch_inner`, `write_core_settings`).
+///
+/// Secrets are opened PER FIELD; a field whose envelope cannot be opened (DPAPI
+/// key change, roamed profile, corrupt envelope) keeps its sealed `enc:v1:` blob
+/// in place instead of failing the read. Failing here used to be a GLOBAL save
+/// wedge: every section patch begins with this read, so one undecryptable secret
+/// blocked saving audio/general/anything until decryption recovered. The kept
+/// envelope round-trips verbatim through merge → `try_seal_secrets` (idempotent
+/// for already-sealed values) → disk, so the key bytes are preserved at rest for
+/// a later recovery instead of being cleared.
 pub(crate) fn try_read_settings(app: &AppHandle) -> Result<WinsttSettings, String> {
     let mut settings = try_read_settings_raw(app)?;
-    try_open_secrets(&mut settings)?;
+    for (field, err) in open_secrets_tolerant(&mut settings) {
+        log::warn!(
+            "[settings] secret `{field}` could not be opened ({err}); keeping its sealed \
+             envelope in place so saves keep working and the key survives at rest"
+        );
+    }
     Ok(settings)
 }
 
@@ -275,9 +358,9 @@ pub(crate) fn try_read_settings(app: &AppHandle) -> Result<WinsttSettings, Strin
 pub(crate) fn read_settings_for_renderer(app: &AppHandle) -> WinsttSettings {
     match try_read_settings_raw(app) {
         Ok(mut settings) => {
-            if let Err(err) = try_open_secrets(&mut settings) {
+            for (field, err) in open_secrets_tolerant(&mut settings) {
                 log::warn!(
-                    "[settings] failed to open WinSTT settings secrets for renderer; masking stored secret markers: {err}"
+                    "[settings] failed to open secret `{field}` for renderer; masking the stored marker: {err}"
                 );
             }
             sanitize_settings_for_renderer(&mut settings);
@@ -436,35 +519,65 @@ pub fn recording_mode(app: &AppHandle) -> RecordingMode {
     read_settings_raw(app).general.recording_mode
 }
 
-/// Open the encrypted renderer-facing secret fields on a settings tree in place.
-fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
-    settings.llm.openrouter_api_key = try_decrypt_secret(&settings.llm.openrouter_api_key)?;
-    settings.integrations.elevenlabs.api_key =
-        try_decrypt_secret(&settings.integrations.elevenlabs.api_key)?;
-    Ok(())
+/// Open each sealed secret INDEPENDENTLY. A field whose envelope cannot be
+/// opened keeps its stored value in place (sealed envelope, or a legacy
+/// unwrapped value) and is reported as `(field, error)` — one broken secret
+/// must never take down the read of the whole tree, because the WRITE path
+/// starts from this read and would otherwise wedge every settings save.
+fn open_secrets_tolerant(settings: &mut WinsttSettings) -> Vec<(&'static str, String)> {
+    let mut failed = Vec::new();
+    match try_decrypt_secret(&settings.llm.openrouter_api_key) {
+        Ok(plain) => settings.llm.openrouter_api_key = plain,
+        Err(err) => failed.push(("llm.openrouterApiKey", err)),
+    }
+    match try_decrypt_secret(&settings.integrations.elevenlabs.api_key) {
+        Ok(plain) => settings.integrations.elevenlabs.api_key = plain,
+        Err(err) => failed.push(("integrations.elevenlabs.apiKey", err)),
+    }
+    failed
 }
 
+/// Fail-closed open for RUNTIME consumers: any field that cannot be opened is
+/// cleared (an `enc:v1:` envelope must never be handed to an API client as a
+/// live key). Per-field — one broken envelope no longer clears the OTHER,
+/// still-openable key.
 fn try_open_secrets_fail_closed(settings: &mut WinsttSettings) -> Result<(), String> {
-    match try_open_secrets(settings) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            clear_secret_fields(settings);
-            Err(err)
+    let failed = open_secrets_tolerant(settings);
+    if failed.is_empty() {
+        return Ok(());
+    }
+    for (field, _) in &failed {
+        match *field {
+            "llm.openrouterApiKey" => settings.llm.openrouter_api_key.clear(),
+            "integrations.elevenlabs.apiKey" => settings.integrations.elevenlabs.api_key.clear(),
+            _ => {}
         }
     }
-}
-
-fn clear_secret_fields(settings: &mut WinsttSettings) {
-    settings.llm.openrouter_api_key.clear();
-    settings.integrations.elevenlabs.api_key.clear();
+    Err(failed
+        .into_iter()
+        .map(|(field, err)| format!("{field}: {err}"))
+        .collect::<Vec<_>>()
+        .join("; "))
 }
 
 /// Seal the plaintext secret fields on a settings tree for persistence.
+///
+/// Idempotent for values still in their `enc:v1:` envelope: the write path
+/// tolerates a secret that could not be OPENED (see `try_read_settings`), so
+/// the untouched envelope must round-trip to disk verbatim — never be
+/// double-sealed and never abort the save.
 pub(crate) fn try_seal_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
-    settings.llm.openrouter_api_key = try_encrypt_secret(&settings.llm.openrouter_api_key)?;
+    settings.llm.openrouter_api_key = seal_unless_sealed(&settings.llm.openrouter_api_key)?;
     settings.integrations.elevenlabs.api_key =
-        try_encrypt_secret(&settings.integrations.elevenlabs.api_key)?;
+        seal_unless_sealed(&settings.integrations.elevenlabs.api_key)?;
     Ok(())
+}
+
+fn seal_unless_sealed(value: &str) -> Result<String, String> {
+    if crate::winstt::commands::secret_storage::is_encrypted(value) {
+        return Ok(value.to_string());
+    }
+    try_encrypt_secret(value)
 }
 
 fn mask_secret_for_renderer(value: &mut String) {
@@ -762,7 +875,7 @@ mod tests {
 
         // Opening returns plaintext.
         let mut opened = sealed.clone();
-        try_open_secrets(&mut opened).unwrap();
+        assert!(open_secrets_tolerant(&mut opened).is_empty());
         assert_eq!(opened.llm.openrouter_api_key, "sk-or-v1-secret");
         assert_eq!(opened.integrations.elevenlabs.api_key, "xi-el-secret");
     }
@@ -778,13 +891,71 @@ mod tests {
     }
 
     #[test]
-    fn malformed_secret_envelope_returns_error() {
+    fn v0_store_migrates_legacy_empty_quant_to_auto_and_stamps_version() {
+        // A pre-versioning store: no `schemaVersion`, quant `""` written when
+        // `""` still meant "auto" (the sentinel changed meaning in 2026-06).
+        let migrated = migrated_settings_value(serde_json::json!({
+            "model": { "model": "tiny", "onnxQuantization": "" }
+        }))
+        .expect("v0 stores must migrate");
+
+        assert_eq!(migrated["model"]["onnxQuantization"], "auto");
+        assert_eq!(
+            migrated["schemaVersion"],
+            serde_json::json!(crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
+    fn current_version_store_is_not_remigrated() {
+        // An explicit fp32 pick (`""`) on a stamped store must NEVER be flipped
+        // back to "auto" by a re-run of the v0 step.
+        let value = serde_json::json!({
+            "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+            "model": { "model": "tiny", "onnxQuantization": "" }
+        });
+        assert!(migrated_settings_value(value).is_none());
+    }
+
+    #[test]
+    fn fresh_default_tree_is_stamped_current_and_needs_no_migration() {
+        let value = serde_json::to_value(WinsttSettings::default()).unwrap();
+        assert!(migrated_settings_value(value).is_none());
+    }
+
+    #[test]
+    fn malformed_secret_envelope_is_kept_sealed_and_reported() {
         let mut s = WinsttSettings::default();
         s.llm.openrouter_api_key = "enc:v1:not-hex-!!!".into();
 
-        let err = try_open_secrets(&mut s).unwrap_err();
-        assert!(err.contains("malformed encrypted secret envelope"));
+        let failed = open_secrets_tolerant(&mut s);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0, "llm.openrouterApiKey");
+        assert!(failed[0].1.contains("malformed encrypted secret envelope"));
+        // The write path depends on this: the unopenable envelope stays in
+        // place so it round-trips to disk instead of wedging or clearing.
         assert_eq!(s.llm.openrouter_api_key, "enc:v1:not-hex-!!!");
+    }
+
+    #[test]
+    fn seal_passes_kept_envelopes_through_verbatim() {
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "enc:v1:deadbeef".into();
+        try_seal_secrets(&mut s).unwrap();
+        assert_eq!(s.llm.openrouter_api_key, "enc:v1:deadbeef");
+    }
+
+    #[test]
+    fn one_broken_envelope_does_not_clear_the_other_key_at_runtime() {
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "enc:v1:not-hex-!!!".into();
+        s.integrations.elevenlabs.api_key = try_encrypt_secret("real-key").unwrap();
+
+        let err = try_open_secrets_fail_closed(&mut s).unwrap_err();
+
+        assert!(err.contains("llm.openrouterApiKey"));
+        assert_eq!(s.llm.openrouter_api_key, "");
+        assert_eq!(s.integrations.elevenlabs.api_key, "real-key");
     }
 
     #[test]
@@ -808,10 +979,11 @@ mod tests {
         s.llm.openrouter_api_key = "enc:v1:not-hex-!!!".into();
         s.integrations.elevenlabs.api_key = "enc:v1:not-hex-!!!".into();
 
-        let err = try_open_secrets(&mut s).unwrap_err();
+        let failed = open_secrets_tolerant(&mut s);
         sanitize_settings_for_renderer(&mut s);
 
-        assert!(err.contains("malformed encrypted secret envelope"));
+        assert_eq!(failed.len(), 2);
+        assert!(failed[0].1.contains("malformed encrypted secret envelope"));
         assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
         assert_eq!(s.integrations.elevenlabs.api_key, SECRET_PRESENT_SENTINEL);
     }

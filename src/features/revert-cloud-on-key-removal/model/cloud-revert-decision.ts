@@ -3,6 +3,7 @@ import {
 	type CatalogModels,
 	type ModelInfo,
 	type ModelStatesById as StatesById,
+	pickCachedSttModel,
 	pickDefaultSttModel,
 } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
@@ -120,17 +121,21 @@ export function affectedProviders(
 }
 
 /**
- * Resolve the `{ model }` to swap the main STT slot to. Prefers the smallest
- * cached local model (so the revert never triggers a download), falling back
- * to the schema default (`tiny`, the vendored offline base) when the catalog is
- * empty or has no usable pick.
+ * Resolve the `{ model }` to swap the main STT slot to. This drives the
+ * OFFLINE auto-revert too, so a cached model is preferred (the revert must
+ * never depend on a download): first the cached factory default, then the
+ * smallest cached model, then the schema default (`tiny`, the vendored
+ * offline base) when nothing is cached or the catalog is empty. Always
+ * deterministic — never "whatever is cached" when the default is available.
  */
 export function resolveLocalSttTarget(
 	models: CatalogModels,
 	statesById: StatesById,
 ): SttTarget {
 	const fallback: SttTarget = { model: DEFAULT_SETTINGS.model.model };
-	const pick = pickDefaultSttModel(models, statesById);
+	const pick =
+		pickCachedSttModel(models, statesById) ??
+		pickDefaultSttModel(models, statesById);
 	if (!pick) {
 		return fallback;
 	}

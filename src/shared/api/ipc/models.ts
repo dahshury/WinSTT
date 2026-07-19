@@ -410,11 +410,49 @@ export const loopbackListDevices = () =>
 		}>
 	>("loopback_list_devices", () => commands.loopbackListDevices(), []);
 
-export const loopbackStart = async (deviceIndex: number, modelId: string) => {
-	unwrapResult(await commands.startListen(deviceIndex, modelId));
+export const loopbackStart = async (
+	deviceIndex: number,
+	modelId: string,
+	captureMicrophone: boolean,
+) => {
+	unwrapResult(
+		await commands.startListen(deviceIndex, modelId, captureMicrophone),
+	);
 };
 
 export const loopbackStop = () => void commands.stopListen();
+
+/** Live transcript state of the current listen session (History live card). */
+export interface ListenSessionSnapshot {
+	active: boolean;
+	lines: string[];
+	livePreview: string;
+}
+
+const IDLE_LISTEN_SESSION: ListenSessionSnapshot = {
+	active: false,
+	lines: [],
+	livePreview: "",
+};
+
+export const listenSessionSnapshot = () =>
+	commandOrDefault<ListenSessionSnapshot>(
+		"listen_session_snapshot",
+		() => commands.listenSessionSnapshot(),
+		IDLE_LISTEN_SESSION,
+	);
+
+/**
+ * Cut the ongoing listen session's committed captions into their own history
+ * entry WITHOUT stopping the session. Resolves to whether a row was saved
+ * (false when idle or nothing has committed yet).
+ */
+export const finalizeListenSession = () =>
+	commandOrDefault<boolean>(
+		"finalize_listen_session",
+		async () => unwrapResult(await commands.finalizeListenSession()),
+		false,
+	);
 
 export const onLoopbackStarted = (cb: (deviceName: string) => void) =>
 	onTyped(

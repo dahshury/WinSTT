@@ -24,10 +24,17 @@ function StatusBarPlaceholder() {
 	return <div aria-hidden="true" className="h-6 shrink-0 bg-surface-2" />;
 }
 
+function switchToPtt(): void {
+	const { updateGeneralSettings } = useSettingsStore.getState();
+	updateGeneralSettings({ recordingMode: "ptt" });
+	settingsSave({ general: useSettingsStore.getState().settings.general });
+}
+
 export function MainPage() {
 	const afterFirstPaint = useAfterFirstPaint();
-	const general = useSettingsStore((s) => s.settings.general);
-	const isListenMode = general?.recordingMode === "listen";
+	const isListenMode = useSettingsStore(
+		(s) => s.settings.general.recordingMode === "listen",
+	);
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
 	const liveText = useTranscriptionStore((s) => s.currentRealtime);
@@ -39,15 +46,8 @@ export function MainPage() {
 		isSpeaking,
 		liveText,
 	});
-	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("mainPage");
 	const th = useTranslations("hotkey");
-	const switchToPtt = () => {
-		updateGeneral({ recordingMode: "ptt" });
-		if (general) {
-			void settingsSave({ general: { ...general, recordingMode: "ptt" } });
-		}
-	};
 	const pttActivation = useTouchActivation(switchToPtt);
 
 	return (

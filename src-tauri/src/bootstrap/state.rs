@@ -58,6 +58,9 @@ pub(crate) fn register_winstt_managers(app_handle: &AppHandle, managers: &CoreMa
     app_handle.manage(tts_manager);
 
     app_handle.manage(Arc::new(WakeWordManager::new(app_handle)));
+    app_handle.manage(Arc::new(crate::winstt::diarize::DiarizationManager::new(
+        app_handle,
+    )));
     app_handle.manage(Arc::new(LoopbackManager::new(
         app_handle,
         managers.transcription.clone(),

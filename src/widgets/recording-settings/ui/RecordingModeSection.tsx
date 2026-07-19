@@ -119,6 +119,42 @@ function ToggleSilenceStopControl({
 	);
 }
 
+interface ListenCaptureMicrophoneControlProps {
+	enabled: boolean;
+	t: GeneralT;
+	update: UpdateGeneralFn;
+}
+
+// "Also transcribe my microphone" — surfaces under the listen-mode option
+// only. Mixes the mic into the loopback stream on the backend so a meeting's
+// transcript covers both the remote side and the user's own speech.
+function ListenCaptureMicrophoneControl({
+	enabled,
+	t,
+	update,
+}: ListenCaptureMicrophoneControlProps): ReactNode {
+	return (
+		<SettingField
+			isDefault={enabled === DEFAULT_SETTINGS.general.listenCaptureMicrophone}
+			label={t("listenCaptureMicrophone")}
+			labelAddon={
+				<Toggle
+					aria-label={t("listenCaptureMicrophone")}
+					checked={enabled}
+					onCheckedChange={(v) => update({ listenCaptureMicrophone: v })}
+				/>
+			}
+			onReset={() =>
+				update({
+					listenCaptureMicrophone:
+						DEFAULT_SETTINGS.general.listenCaptureMicrophone,
+				})
+			}
+			tooltip={t("listenCaptureMicrophoneTooltip")}
+		/>
+	);
+}
+
 interface WakeWordControlProps {
 	customWakeWords: readonly string[];
 	disabled?: boolean;
@@ -448,6 +484,13 @@ export function RecordingModeSection({
 						/>
 					)}
 				</>
+			) : null}
+			{contentMode === "listen" ? (
+				<ListenCaptureMicrophoneControl
+					enabled={general?.listenCaptureMicrophone ?? false}
+					t={t}
+					update={update}
+				/>
 			) : null}
 			{contentMode === "wakeword" ? (
 				<>

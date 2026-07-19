@@ -392,7 +392,9 @@ fn perform_atomic_model_switch(
     if let Some(realtime_model) = &requested_realtime_model {
         next.model.realtime_model.clone_from(realtime_model);
     }
-    if let Err(detail) = super::settings::validate_settings(&next) {
+    // Only the `model` section is mutated above — validate just that section so a
+    // stale-invalid value persisted in an unrelated section can never fail a swap.
+    if let Err(detail) = super::settings::validate_sections(&next, &["model"]) {
         let result = switch_result(
             app,
             &request.request_id,

@@ -318,7 +318,8 @@ mod tests {
                 stt_model TEXT,
                 stt_processing_ms INTEGER,
                 stt_cost_usd REAL,
-                stt_cost_is_estimate BOOLEAN NOT NULL DEFAULT 0
+                stt_cost_is_estimate BOOLEAN NOT NULL DEFAULT 0,
+                source TEXT
             );",
         )
         .expect("create transcription_history table");

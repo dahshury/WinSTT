@@ -1,8 +1,8 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { commands, type PermissionPreflightStatus } from "@/bindings";
+import { useEffect } from "react";
+import { commands } from "@/bindings";
 import {
 	type SettingsHydrationStatus,
 	useSettingsHydrationStore,
@@ -11,7 +11,6 @@ import {
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncSettings } from "@/features/update-settings";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
-import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { useTransparentBody } from "@/shared/lib/window-effects";
 import { Spinner } from "@/shared/ui/spinner";
@@ -20,6 +19,11 @@ import {
 	PermissionPreflightPanel,
 	useOnboardingWizardStore,
 } from "@/widgets/onboarding-wizard";
+import { usePermissionPreflight } from "./use-permission-preflight";
+
+function quitWinStt(): void {
+	void commands.quitApp();
+}
 
 /**
  * First-run wizard view. Mirrors the SettingsPage shell so the window reads
@@ -55,116 +59,9 @@ export function OnboardingPage() {
 	// Progress is persisted, so a relaunch resumes onboarding where it left off —
 	// there is no "close to skip" path. (Alt+F4 / OS close is funnelled to the same
 	// quit in the backend window-event handler.)
-	const quitActivation = useTouchActivation(() => {
-		void commands.quitApp();
-	});
+	const quitActivation = useTouchActivation(quitWinStt);
 	const settingsReady = settingsReadyForWizard(hydrationStatus);
-	const [permissionStatus, setPermissionStatus] =
-		useState<PermissionPreflightStatus | null>(null);
-	const [permissionBusy, setPermissionBusy] = useState(true);
-	const [permissionError, setPermissionError] = useState<string | null>(null);
-	const awaitingGrantRef = useRef(false);
-	const preflightInFlightRef =
-		useRef<Promise<PermissionPreflightStatus | null> | null>(null);
-
-	const acceptPermissionResult = useCallback(
-		(result: Awaited<ReturnType<typeof commands.permissionRunPreflight>>) => {
-			if (result.status === "error") {
-				throw new Error(result.error);
-			}
-			setPermissionStatus(result.data);
-			setPermissionError(null);
-			if (result.data.ready) {
-				awaitingGrantRef.current = false;
-			}
-			return result.data;
-		},
-		[],
-	);
-
-	const runPreflight = useCallback(() => {
-		if (preflightInFlightRef.current) {
-			return preflightInFlightRef.current;
-		}
-		if (!hasTauriRuntime()) {
-			const browserStatus: PermissionPreflightStatus = {
-				platform: "other",
-				microphone: "not_required",
-				accessibility: "not_required",
-				ready: true,
-			};
-			setPermissionStatus(browserStatus);
-			setPermissionError(null);
-			setPermissionBusy(false);
-			return Promise.resolve(browserStatus);
-		}
-		setPermissionBusy(true);
-		const pending = commands
-			.permissionRunPreflight()
-			.then(acceptPermissionResult)
-			.catch((error: unknown) => {
-				setPermissionError(
-					error instanceof Error ? error.message : String(error),
-				);
-				return null;
-			})
-			.finally(() => {
-				preflightInFlightRef.current = null;
-				setPermissionBusy(false);
-			});
-		preflightInFlightRef.current = pending;
-		return pending;
-	}, [acceptPermissionResult]);
-
-	const requestPermission = useCallback(
-		async (kind: "microphone" | "accessibility") => {
-			setPermissionBusy(true);
-			setPermissionError(null);
-			awaitingGrantRef.current = true;
-			try {
-				const result =
-					kind === "microphone"
-						? await commands.permissionRequestMicrophone()
-						: await commands.permissionRequestAccessibility();
-				acceptPermissionResult(result);
-			} catch (error) {
-				setPermissionError(
-					error instanceof Error ? error.message : String(error),
-				);
-			} finally {
-				setPermissionBusy(false);
-			}
-		},
-		[acceptPermissionResult],
-	);
-
-	useEffect(() => {
-		void runPreflight();
-	}, [runPreflight]);
-
-	// System privacy panels live outside the webview. Recheck while waiting for a
-	// grant and immediately when the user returns, without continuously polling
-	// once the preflight is settled.
-	useEffect(() => {
-		const recheckOnReturn = () => {
-			if (document.visibilityState === "visible") {
-				void runPreflight();
-			}
-		};
-		const pollWhileWaiting = () => {
-			if (awaitingGrantRef.current) {
-				recheckOnReturn();
-			}
-		};
-		window.addEventListener("focus", recheckOnReturn);
-		document.addEventListener("visibilitychange", recheckOnReturn);
-		const poll = window.setInterval(pollWhileWaiting, 1000);
-		return () => {
-			window.removeEventListener("focus", recheckOnReturn);
-			document.removeEventListener("visibilitychange", recheckOnReturn);
-			window.clearInterval(poll);
-		};
-	}, [runPreflight]);
+	const permission = usePermissionPreflight();
 
 	useEffect(() => {
 		if (settingsReady) {
@@ -201,27 +98,25 @@ export function OnboardingPage() {
 									size={15}
 								/>
 							</BaseButton>
-							{permissionStatus?.ready && settingsReady ? (
+							{permission.status?.ready && settingsReady ? (
 								<OnboardingWizard />
-							) : permissionStatus?.ready ? (
+							) : permission.status?.ready ? (
 								<OnboardingSettingsHydrationState
 									error={hydrationError}
 									status={hydrationStatus}
 								/>
 							) : (
 								<PermissionPreflightPanel
-									busy={permissionBusy}
-									error={permissionError}
+									busy={permission.busy}
+									error={permission.error}
 									onRequestAccessibility={() => {
-										void requestPermission("accessibility");
+										permission.request("accessibility");
 									}}
 									onRequestMicrophone={() => {
-										void requestPermission("microphone");
+										permission.request("microphone");
 									}}
-									onRetry={() => {
-										void runPreflight();
-									}}
-									status={permissionStatus}
+									onRetry={permission.retry}
+									status={permission.status}
 								/>
 							)}
 						</Elevated>

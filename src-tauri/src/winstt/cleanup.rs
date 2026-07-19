@@ -34,14 +34,23 @@ pub fn model_uninstall_settings_patch(
     let mut disabled = BTreeSet::new();
 
     let mut model = settings.model.clone();
-    if !model.model.trim().is_empty() {
+    let default_model = crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID;
+    if model.model.trim() != default_model {
         disabled.insert("sttModel".to_string());
     }
     if !model.realtime_model.trim().is_empty() {
         disabled.insert("realtimeSttModel".to_string());
     }
-    model.model.clear();
+    // `model.model` is REQUIRED by validation (an empty main slot has no meaning
+    // at runtime), so "clear the selection" persists as a reset to the factory
+    // default — the same deterministic target every automatic fallback uses.
+    // Writing `""` here used to FAIL validation, so the whole cleanup patch
+    // (model + general + tts + llm) silently never landed.
+    model.model = default_model.to_string();
     model.realtime_model.clear();
+    // The carried precision belonged to the removed model; let the default
+    // re-resolve instead of pinning a possibly-unavailable quant.
+    model.onnx_quantization = "auto".to_string();
 
     let mut general = settings.general.clone();
     if general.live_transcription_display != LiveTranscriptionDisplay::None {
@@ -457,9 +466,27 @@ fn win_stt_hf_repo_ids() -> BTreeSet<String> {
         insert_resolved_repo_id(&mut out, entry.id);
         insert_resolved_repo_id(&mut out, entry.onnx_model_name);
     }
-    // Helper model repos used by VAD / diarization code paths.
+    // Helper model repos used by VAD / diarization code paths. The diarization
+    // cascade downloads its two models straight from these HF repos (see
+    // winstt::diarize::{SEG_REPO, EMB_REPO}); they don't route through the STT
+    // resolver alias table, so insert the concrete repo ids directly.
     insert_resolved_repo_id(&mut out, "silero");
-    insert_resolved_repo_id(&mut out, "wespeaker-voxceleb-resnet34-LM");
+    out.insert(
+        format!(
+            "{}/{}",
+            crate::winstt::diarize::SEG_REPO.0,
+            crate::winstt::diarize::SEG_REPO.1
+        )
+        .to_ascii_lowercase(),
+    );
+    out.insert(
+        format!(
+            "{}/{}",
+            crate::winstt::diarize::EMB_REPO.0,
+            crate::winstt::diarize::EMB_REPO.1
+        )
+        .to_ascii_lowercase(),
+    );
     out
 }
 
@@ -737,8 +764,15 @@ mod tests {
         let (patch, disabled) = model_uninstall_settings_patch(&settings, false);
 
         let model = patch.model.expect("model patch");
-        assert_eq!(model.model, "");
+        // The reset must land on the required-field-safe factory default —
+        // `""` would fail `validate_model_id(required)` and drop the WHOLE
+        // cleanup patch (model + general + tts + llm).
+        assert_eq!(
+            model.model,
+            crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID
+        );
         assert_eq!(model.realtime_model, "");
+        assert_eq!(model.onnx_quantization, "auto");
 
         let general = patch.general.expect("general patch");
         assert_eq!(
@@ -784,7 +818,9 @@ mod tests {
         let ids = win_stt_hf_repo_ids();
         assert!(ids.contains("onnx-community/whisper-tiny"));
         assert!(ids.contains("istupakov/silero-vad-onnx"));
-        assert!(ids.contains("wespeaker/wespeaker-voxceleb-resnet34-lm"));
+        // Diarization cascade repos (winstt::diarize::{SEG_REPO, EMB_REPO}).
+        assert!(ids.contains("onnx-community/pyannote-segmentation-3.0"));
+        assert!(ids.contains("csukuangfj/speaker-embedding-models"));
     }
 
     #[test]

@@ -175,32 +175,24 @@ fn set_microphone(app: &AppHandle, on: bool) {
     coordinator.send_input(DICTATION_BINDING, "", on, true);
 }
 
-/// Toggle listen-mode diarization at runtime (request_diarization_toggle). Emits the
-/// diarization-toggle lifecycle events the renderer listens for. The diarization
-/// runtime has been removed, so this only acknowledges the persisted preference back
-/// to the renderer (the toggle is a UI-only state until a real engine is wired).
+/// Toggle listen-mode diarization at runtime (request_diarization_toggle). Delegates
+/// to `DiarizationManager::request_toggle`, which downloads the cascade models on
+/// first enable, builds/warms (or tears down) the engine on a worker thread, and
+/// emits the `stt:diarization-toggle-{started,completed,failed}` lifecycle events
+/// the renderer's toggle store listens for.
 fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
-    // Payload shapes are byte-identical to WinSTT's DiarizationTogglePayload
-    // (`{ enabled }`) and DiarizationToggleCompletedPayload (`{ enabled, message }`).
-    let _ = app.emit(
-        "stt:diarization-toggle-started",
-        serde_json::json!({ "enabled": enabled }),
-    );
-    let message = if enabled {
-        "Diarization enabled"
-    } else {
-        "Diarization disabled"
+    let Some(manager) = app.try_state::<Arc<crate::winstt::diarize::DiarizationManager>>() else {
+        log::warn!("[diarize] toggle requested before manager registration");
+        return;
     };
-    let _ = app.emit(
-        "stt:diarization-toggle-completed",
-        serde_json::json!({ "enabled": enabled, "message": message }),
-    );
+    manager.inner().request_toggle(enabled);
 }
 
 // ── STT lifecycle / level EVENT emitters (MISSING set — WU-3) ───────────────────
 //
 // Plain string events in WinSTT's byte-identical IPC shape. The renderer's
-// ipc-client.ts wrappers read: onRealtimeText → `{text,is_final}`, onFullSentence → `{text}`,
+// ipc-client.ts wrappers read: onRealtimeText → `{text,is_final}`, onFullSentence →
+// `{text}` (+ optional `speaker` on listen-mode rows),
 // onAudioLevel → `{level}`, onTranscriptionStart → `{audioBase64}`, onConnectionChange
 // → `{connected}`, onServerStatus → `{status}`; the no-payload events
 // (recording-start/stop, vad-start/stop, no-audio-detected, transcription-failed,
@@ -276,9 +268,14 @@ impl SttEvents {
     /// and the auto-processed `text` (what the pill shows). NOT terminal — the
     /// pill stays up via `isPreviewActive` until `confirm_paste`/`cancel_preview`.
     /// Same renderer event as `full_sentence`, but without dictation terminal side effects.
-    /// Listen mode keeps capturing after each transcript row.
-    pub fn listen_sentence(app: &AppHandle, text: &str) {
-        let _ = app.emit("stt:full-sentence", serde_json::json!({ "text": text }));
+    /// Listen mode keeps capturing after each transcript row. `speaker` carries the
+    /// diarized global speaker id for this caption row (`None` when diarization is
+    /// off or the span has no labeled overlap yet); the renderer colors rows by it.
+    pub fn listen_sentence(app: &AppHandle, text: &str, speaker: Option<i32>) {
+        let _ = app.emit(
+            "stt:full-sentence",
+            serde_json::json!({ "text": text, "speaker": speaker }),
+        );
     }
 
     pub fn preview_ready(app: &AppHandle, original: &str, text: &str) {

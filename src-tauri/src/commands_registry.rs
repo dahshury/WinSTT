@@ -33,7 +33,7 @@ pub(crate) fn show_main_window_command(app: AppHandle) -> Result<(), String> {
     if crate::winstt::commands::onboarding::is_onboarding_in_progress(&app) {
         return Ok(());
     }
-    crate::window_state::show_main_window(&app);
+    crate::window_state::show_main_window_from_tray(&app);
     Ok(())
 }
 
@@ -141,6 +141,9 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::wakeword::wakeword_cancel_model_download,
         winstt::commands::listen::start_listen,
         winstt::commands::listen::stop_listen,
+        winstt::commands::listen::listen_session_snapshot,
+        winstt::commands::listen::finalize_listen_session,
+        winstt::commands::listen_post_process::history_post_process,
         winstt::commands::wordts::align_words,
         winstt::commands::file_transcribe::file_transcribe_enqueue,
         winstt::commands::file_transcribe::file_transcribe_pick_and_enqueue,

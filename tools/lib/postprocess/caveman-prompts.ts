@@ -11,18 +11,28 @@ export const buildCavemanUserPrompt = buildUserPromptForPresets;
 export function cavemanOperationSummary(
 	presets: readonly PresetEntry[],
 ): readonly string[] {
-	const caveman = presets.filter(
-		(entry) =>
-			!("id" in entry) && entry.key === "concise" && entry.level === "caveman",
-	);
-	const rest = presets.filter(
-		(entry) =>
-			"id" in entry || (entry.key !== "translate" && !caveman.includes(entry)),
-	);
-	const translate = presets.filter(
-		(entry) => !("id" in entry) && entry.key === "translate",
-	);
-	return [...rest, ...translate, ...caveman]
-		.map(operationSummary)
-		.filter((value): value is string => value !== null);
+	const regular: PresetEntry[] = [];
+	const translations: PresetEntry[] = [];
+	const cavemanFinalPasses: PresetEntry[] = [];
+
+	for (const entry of presets) {
+		if (!("id" in entry) && entry.key === "translate") {
+			translations.push(entry);
+		} else if (
+			!("id" in entry) &&
+			entry.key === "concise" &&
+			entry.level === "caveman"
+		) {
+			cavemanFinalPasses.push(entry);
+		} else {
+			regular.push(entry);
+		}
+	}
+
+	const summaries: string[] = [];
+	for (const entry of regular.concat(translations, cavemanFinalPasses)) {
+		const summary = operationSummary(entry);
+		if (summary !== null) summaries.push(summary);
+	}
+	return summaries;
 }

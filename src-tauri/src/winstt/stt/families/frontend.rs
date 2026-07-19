@@ -153,8 +153,8 @@ fn rfft_power_into(
     if buf.len() != n_fft {
         buf.resize(n_fft, Complex32::new(0.0, 0.0));
     }
-    for i in 0..n_fft {
-        buf[i] = Complex32::new(frame.get(i).copied().unwrap_or(0.0), 0.0);
+    for (i, slot) in buf.iter_mut().enumerate() {
+        *slot = Complex32::new(frame.get(i).copied().unwrap_or(0.0), 0.0);
     }
     fft.process(buf);
     power.resize(n_freqs, 0.0);

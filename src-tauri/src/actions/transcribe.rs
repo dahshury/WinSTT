@@ -133,6 +133,9 @@ fn persist_history_after_wav(
             stt_processing_ms,
             stt_cost.as_ref().map(|c| c.cost_usd),
             stt_cost.as_ref().is_some_and(|c| c.cost_is_estimate),
+            // Mic dictation rows carry no source marker (`listen` is the only
+            // tagged source today).
+            None,
         ) {
             error!("Failed to save history entry: {}", err);
         }

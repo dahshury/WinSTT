@@ -274,6 +274,11 @@ export interface TranscriptionHistoryEntry {
 	 * native token accounting × catalog rates. Omitted for local LLMs.
 	 */
 	llmCostUsd?: number;
+	/**
+	 * Where the transcription came from: omitted = mic dictation, `"listen"` =
+	 * a finished listen-mode session (enables session post-processing).
+	 */
+	source?: string;
 }
 
 export const fetchTranscriptionHistory = () =>

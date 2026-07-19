@@ -10,6 +10,55 @@ const VISIBLE_COUNT = 3;
 const LISTEN_VISIBLE_COUNT = 160;
 const FADE_OPACITIES = [1, 0.4, 0.15];
 
+/** Diarization palette size — ids cycle through --color-speaker-0..7. */
+const SPEAKER_PALETTE_SIZE = 8;
+
+/** CSS color for a diarized caption row; undefined keeps the default foreground. */
+function speakerColor(speaker: number | null | undefined): string | undefined {
+	if (speaker == null || speaker < 0) {
+		return undefined;
+	}
+	return `var(--color-speaker-${speaker % SPEAKER_PALETTE_SIZE})`;
+}
+
+/** Tinted chip background for a speaker badge (token-derived, no raw colors). */
+function speakerBadgeBackground(speaker: number): string {
+	return `color-mix(in oklab, var(--color-speaker-${speaker % SPEAKER_PALETTE_SIZE}) 22%, transparent)`;
+}
+
+/**
+ * A run of consecutive captions attributed to the same speaker, rendered as one
+ * visual block with a leading `S<n>` badge (WhoSpeaksLive's live-panel layout).
+ * `speaker` is null for unattributed rows (diarization off / unknown span).
+ */
+interface SpeakerBlock {
+	key: string;
+	speaker: number | null;
+	items: TranscriptionItem[];
+}
+
+export function groupBySpeaker(items: TranscriptionItem[]): SpeakerBlock[] {
+	const blocks: SpeakerBlock[] = [];
+	for (const item of items) {
+		const speaker =
+			item.speaker != null && item.speaker >= 0 ? item.speaker : null;
+		const last = blocks.at(-1);
+		if (last && last.speaker === speaker) {
+			last.items.push(item);
+		} else {
+			blocks.push({ key: item.id, speaker, items: [item] });
+		}
+	}
+	return blocks;
+}
+
+/**
+ * Distance (px) from the bottom within which the transcript counts as "pinned":
+ * new content keeps auto-scrolling. Scrolling further up releases the pin so the
+ * user can read history without the feed yanking them back down.
+ */
+const PIN_THRESHOLD_PX = 32;
+
 /** Normal PTT/toggle captions should clear quickly once the final line lands. */
 const FADE_AFTER_MS = 500;
 /** Normal PTT/toggle captions are fully transparent after this many ms. */
@@ -126,13 +175,110 @@ export function SubtitleOverlay() {
 			)
 		: 0;
 
-	// Auto-scroll to bottom in listen mode when content changes.
-	// items.length and liveText are intentional triggers (not used in the body).
+	// Stick-to-bottom scrolling for the listen transcript. The old one-shot
+	// `scrollTop = scrollHeight` on content changes raced layout: a freshly
+	// committed multi-line caption grows the content AFTER the effect ran, so the
+	// feed ended up under-scrolled with its last lines cut off below the window.
+	//
+	// Pin protocol: pinned by default; ONLY a user wheel-up can unpin. Programmatic
+	// pins are recognized by their target POSITION so their own scroll events never
+	// read as user intent, and the viewport runs with `overflow-anchor: none` (see
+	// the ScrollArea below) because Chrome's scroll anchoring emits browser-initiated
+	// scroll events on content append that would otherwise unpin the feed.
+	//
+	// CRITICAL: rendering-driven callbacks (rAF, ResizeObserver, even scroll-event
+	// dispatch) are SUSPENDED while the window is hidden/fully occluded — Chromium
+	// only runs them in rendering steps. Every safety net here therefore also has a
+	// timer/effect leg (timers keep running when hidden) plus a visibilitychange
+	// pin, so the transcript is never stranded under-scrolled when the window is
+	// covered by the video the user is listening to and then revealed.
+	const pinnedRef = useRef(true);
+	const pinTargetRef = useRef<number | null>(null);
 	useEffect(() => {
-		if (isListenMode && scrollRef.current) {
-			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+		const viewport = scrollRef.current;
+		if (!(isListenMode && viewport)) {
+			return;
 		}
-	}, [isListenMode, items.length, liveText]);
+		const onScroll = () => {
+			const target = pinTargetRef.current;
+			if (target != null) {
+				// A pin is in flight: its scroll events must never read as user
+				// intent (rapid growth re-pins can update the target before the
+				// previous echo lands). Clear the marker once the bottom arrives.
+				if (viewport.scrollTop >= target - 2) {
+					pinTargetRef.current = null;
+				}
+				return;
+			}
+			pinnedRef.current =
+				viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+				PIN_THRESHOLD_PX;
+		};
+		const pin = () => {
+			const target = viewport.scrollHeight - viewport.clientHeight;
+			if (!pinnedRef.current || viewport.scrollTop >= target) {
+				return;
+			}
+			pinTargetRef.current = target;
+			viewport.scrollTop = viewport.scrollHeight;
+		};
+		// Wheel-up unpins SYNCHRONOUSLY (before any scroll event lands) and
+		// cancels the in-flight pin, closing the race where a content-growth pin
+		// fires between the user's gesture and its scroll event and drags them
+		// back to the bottom mid-read. Wheel-down re-checks after the browser
+		// applies the scroll (timer, NOT rAF — rAF stalls when hidden): reaching
+		// the bottom re-pins even when the stream grew in the same instant.
+		const onWheel = (event: WheelEvent) => {
+			if (event.deltaY < 0) {
+				pinnedRef.current = false;
+				pinTargetRef.current = null;
+				return;
+			}
+			window.setTimeout(() => {
+				if (
+					viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+					PIN_THRESHOLD_PX
+				) {
+					pinnedRef.current = true;
+					pin();
+				}
+			}, 0);
+		};
+		// A hidden window suspends scroll/RO/rAF; on reveal, re-pin immediately so
+		// everything that accumulated while covered lands with the bottom in view.
+		const onVisible = () => {
+			if (document.visibilityState === "visible") {
+				pin();
+			}
+		};
+		viewport.addEventListener("scroll", onScroll, { passive: true });
+		viewport.addEventListener("wheel", onWheel, { passive: true });
+		document.addEventListener("visibilitychange", onVisible);
+		pin();
+		// Belt and suspenders for growth whose rendering callbacks stall or land
+		// late (hidden window, post-layout settle): timer pins fire regardless of
+		// rendering state.
+		const t1 = window.setTimeout(pin, 0);
+		const t2 = window.setTimeout(pin, 120);
+		const observer = new ResizeObserver(pin);
+		// Observe the viewport (clientHeight changes) AND its content subtree root
+		// (scrollHeight changes) — either can strand the bottom out of view.
+		observer.observe(viewport);
+		for (const child of Array.from(viewport.children)) {
+			observer.observe(child);
+		}
+		return () => {
+			viewport.removeEventListener("scroll", onScroll);
+			viewport.removeEventListener("wheel", onWheel);
+			document.removeEventListener("visibilitychange", onVisible);
+			window.clearTimeout(t1);
+			window.clearTimeout(t2);
+			observer.disconnect();
+		};
+		// items + liveText re-run the effect on every content change so the
+		// immediate + timer pins fire for each committed row and live-text growth
+		// tick — this leg works even while the window is hidden.
+	}, [isListenMode, items, liveText]);
 
 	const showEphemeral = ephemeral !== null && ephemeralOpacity > 0;
 
@@ -159,28 +305,59 @@ export function SubtitleOverlay() {
 						"linear-gradient(to top, var(--color-subtitle-scrim-strong) 0%, var(--color-subtitle-scrim-medium) 55%, var(--color-subtitle-scrim-soft) 100%)",
 				}}
 				viewportRef={scrollRef}
+				// Scroll anchoring must be OFF: appended captions otherwise make
+				// Chrome emit browser-initiated scroll adjustments that the pin
+				// heuristic would misread as the user scrolling away (see the
+				// stick-to-bottom effect above).
+				viewportStyle={{ overflowAnchor: "none" }}
 			>
 				{/* `min-h-full` + `justify-end` on the *content* (not the
 				    scroll viewport) bottom-aligns short content yet lets it
 				    overflow downward once it exceeds the viewport. Putting
 				    `justify-end` on the viewport itself clipped the overflow
 				    at the top and made it unreachable, so older lines never
-				    scrolled away and `scrollTop = scrollHeight` was a no-op. */}
-				<div className="flex min-h-full flex-col justify-end gap-2 px-6 pt-14 pb-4">
-					{listenItems.map((item) => (
-						<p
-							className="font-sans text-foreground text-title leading-snug"
-							data-subtitle-line="true"
+				    scrolled away and pinning to the bottom was a no-op. */}
+				<div className="flex min-h-full flex-col justify-end gap-3 px-6 pt-14 pb-4">
+					{groupBySpeaker(listenItems).map((block) => (
+						<div
+							className="flex flex-col gap-1"
+							data-speaker-block={block.speaker ?? "unknown"}
 							dir="auto"
-							key={item.id}
-							style={{ textShadow: SUBTITLE_TEXT_SHADOW }}
+							key={block.key}
 						>
-							{item.text}
-						</p>
+							{block.speaker == null ? null : (
+								<span
+									aria-hidden
+									className="w-fit select-none rounded-md px-1.5 py-0.5 font-medium font-sans text-caption leading-none"
+									data-speaker-badge={block.speaker}
+									style={{
+										color: speakerColor(block.speaker),
+										background: speakerBadgeBackground(block.speaker),
+									}}
+								>
+									{`S${block.speaker + 1}`}
+								</span>
+							)}
+							{block.items.map((item) => (
+								<p
+									className="break-words font-sans text-foreground text-title leading-snug"
+									data-speaker={item.speaker ?? undefined}
+									data-subtitle-line="true"
+									dir="auto"
+									key={item.id}
+									style={{
+										textShadow: SUBTITLE_TEXT_SHADOW,
+										color: speakerColor(block.speaker),
+									}}
+								>
+									{item.text}
+								</p>
+							))}
+						</div>
 					))}
 					{liveText ? (
 						<p
-							className="font-sans text-foreground/75 text-title leading-snug"
+							className="break-words font-sans text-foreground-muted text-title italic leading-snug"
 							data-subtitle-line="live"
 							dir="auto"
 							style={{ textShadow: SUBTITLE_TEXT_SHADOW }}

@@ -56,6 +56,26 @@ describe("settings hydration store", () => {
 		expect(defaulted?.detail).toBe("model");
 	});
 
+	// A confirmed successful save clears the stale "will be retried" notice
+	// without touching unrelated warnings.
+	test("clearWarningKind removes only warnings of the given kind", () => {
+		const { pushWarning } = useSettingsHydrationStore.getState();
+		pushWarning("save-failed");
+		pushWarning("hotkey-rewrite", "ttsHotkey");
+
+		useSettingsHydrationStore.getState().clearWarningKind("save-failed");
+
+		const { warnings } = useSettingsHydrationStore.getState();
+		expect(warnings.map((w) => w.kind)).toEqual(["hotkey-rewrite"]);
+	});
+
+	test("clearWarningKind keeps the warnings array identity when nothing matches", () => {
+		useSettingsHydrationStore.getState().pushWarning("hotkey-rewrite");
+		const before = useSettingsHydrationStore.getState().warnings;
+		useSettingsHydrationStore.getState().clearWarningKind("save-failed");
+		expect(useSettingsHydrationStore.getState().warnings).toBe(before);
+	});
+
 	test("dismissWarning removes a single warning by id", () => {
 		const { pushWarning } = useSettingsHydrationStore.getState();
 		pushWarning("save-failed");

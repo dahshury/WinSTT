@@ -3,7 +3,7 @@ import { act, renderHook } from "@testing-library/react";
 import { IPC } from "@test/mocks/legacy-ipc";
 import type { LlmProvider } from "./types";
 import { resolveUnloadPending } from "./feature-block-helpers";
-import { useOllamaUnloadTracker } from "./FeatureBlock";
+import { useOllamaUnloadTracker } from "./use-ollama-lifecycle-trackers";
 
 /** Instrument the preload-installed bridge so tests can push backend events.
  *  The preload's afterEach reinstalls the default bridge, so no restore needed. */
