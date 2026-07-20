@@ -32,14 +32,14 @@ fn main() {
     // Optional overrides: `diarize_e2e <seg.onnx> <emb.onnx>` (e.g. the hf-hub
     // cached files the in-app toggle resolves) — same gates either way.
     let args: Vec<String> = std::env::args().collect();
-    let seg = args
-        .get(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("models/pyannote-segmentation-3.0.onnx"));
-    let emb = args
-        .get(2)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("models/wespeaker_en_voxceleb_resnet34.onnx"));
+    let seg = args.get(1).map_or_else(
+        || root.join("models/pyannote-segmentation-3.0.onnx"),
+        PathBuf::from,
+    );
+    let emb = args.get(2).map_or_else(
+        || root.join("models/wespeaker_en_voxceleb_resnet34.onnx"),
+        PathBuf::from,
+    );
     let wav = root.join("assets/test-2spk.wav");
     let truth_path = root.join("assets/test-2spk.truth.json");
     for p in [&seg, &emb, &wav, &truth_path] {

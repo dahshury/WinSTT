@@ -17,6 +17,15 @@ import {
 import { IPC } from "@test/mocks/legacy-ipc";
 import { SettingsPage } from "./SettingsPage";
 
+// Resolve the lazy chunks this suite renders before any test timeout or
+// animation clock starts. Under the full views suite Bun may otherwise compile
+// these modules while a waitFor/rAF assertion is already running.
+await Promise.all([
+	import("@/widgets/about-settings"),
+	import("@/widgets/recording-settings"),
+	import("@/widgets/tts-settings"),
+]);
+
 function renderSettingsPage() {
 	return render(
 		<IntlProvider>

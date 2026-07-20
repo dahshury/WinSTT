@@ -191,7 +191,10 @@ fn paste_via_clipboard(
     // the transcription. The deferred restore runs off-thread (auto-submit below is not
     // delayed) and is guarded so it only ever overwrites our own transcription text.
     if let (Some(snapshot), Some(written)) = (snapshot, written) {
-        debug!("[clipboard] restore_original_scheduled {}", snapshot.describe());
+        debug!(
+            "[clipboard] restore_original_scheduled {}",
+            snapshot.describe()
+        );
         crate::clipboard_snapshot::schedule_restore(app_handle, snapshot, written);
     }
 

@@ -120,6 +120,22 @@ if (typeof HTMLLabelElement !== "undefined") {
 // the one bun process, a suite that replaces them and forgets to restore would poison
 // later files — so the afterEach below re-installs the defaults to keep files isolated.
 let tauriCallbackId = 0;
+let idleCallbackId = 0;
+
+function installDefaultIdleCallbacks(): void {
+	// Happy DOM has no requestIdleCallback, so production idle work falls back to
+	// a short timer. SettingsPage uses that fallback to import every lazy panel;
+	// once those imports start they cannot be cancelled on unmount and can keep
+	// Bun's transpiler busy during unrelated tests. Keep idle work dormant by
+	// default; a test that exercises it can install and drive its own callback.
+	window.requestIdleCallback = () => {
+		idleCallbackId += 1;
+		return idleCallbackId;
+	};
+	window.cancelIdleCallback = () => {
+		/* noop idle callback */
+	};
+}
 
 function installDefaultNativeBridge(): void {
 	window.nativeBridge = {
@@ -183,6 +199,7 @@ function installDefaultTauriInternals(): void {
 
 installDefaultNativeBridge();
 installDefaultTauriInternals();
+installDefaultIdleCallbacks();
 
 // Unmount React roots before resetting the shared per-window globals. Removing
 // their DOM nodes without unmounting leaves subscriptions, effects, and timers
@@ -196,6 +213,7 @@ afterEach(() => {
 		}
 		installDefaultNativeBridge();
 		installDefaultTauriInternals();
+		installDefaultIdleCallbacks();
 	}
 	if (typeof document === "undefined") {
 		return;

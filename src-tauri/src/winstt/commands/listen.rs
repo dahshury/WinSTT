@@ -165,9 +165,7 @@ pub struct ListenSessionSnapshot {
 /// session card (small clone; no events to subscribe to cross-window).
 #[tauri::command]
 #[specta::specta]
-pub fn listen_session_snapshot(
-    loopback: State<'_, Arc<LoopbackManager>>,
-) -> ListenSessionSnapshot {
+pub fn listen_session_snapshot(loopback: State<'_, Arc<LoopbackManager>>) -> ListenSessionSnapshot {
     let (active, lines, live_preview) = loopback.session_snapshot();
     ListenSessionSnapshot {
         active,

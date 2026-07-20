@@ -303,9 +303,7 @@ mod tests {
     #[test]
     fn long_transcripts_split_on_line_boundaries() {
         let line = "a".repeat(100);
-        let text = std::iter::repeat_n(line.clone(), 12)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text = std::iter::repeat_n(line, 12).collect::<Vec<_>>().join("\n");
         let chunks = split_transcript(&text, 350);
         assert!(chunks.len() > 1);
         assert!(chunks.iter().all(|c| c.len() <= 350));
