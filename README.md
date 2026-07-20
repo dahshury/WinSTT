@@ -134,6 +134,14 @@ bun run docs:build:pages
 | `packages/` | Shared renderer packages, including the model picker |
 | `tools/` | Developer tooling: platform build helpers, i18n checks, benchmark helpers, and asset generation |
 
+## Support
+
+If WinSTT is useful to you, you can support its development on Ko-fi.
+
+<p align="center">
+  <a href="https://ko-fi.com/H2H07VS0D"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+</p>
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE) and
