@@ -398,6 +398,11 @@
 	   along the card's bottom edge — same accent vocabulary as the open-state
 	   hairline at the top edge, just put in motion. */
 	--animate-swap-sweep: swap-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+	/* Download glyph on the model-picker trigger's corner badge: an arrow that
+	   repeatedly drops through a small clipped viewport — the moving stand-in
+	   for the static "↓" while a pull is in flight. */
+	--animate-download-drop: download-drop 1.2s cubic-bezier(0.4, 0, 0.2, 1)
+		infinite;
 
 	/* File-transcription queue rows. row-in: staggered entrance (ease-out,
 	   transform + opacity only). glyph-pop: one-shot success overshoot on the
@@ -1022,6 +1027,22 @@
 	}
 	100% {
 		transform: translateX(200%);
+	}
+}
+
+/* Drives the trigger corner badge's download glyph — the arrow enters from
+   above, holds through the middle, and exits below; the badge's overflow
+   clip turns that into a continuous "bytes falling in" loop. */
+@keyframes download-drop {
+	0% {
+		transform: translateY(-120%);
+	}
+	35%,
+	55% {
+		transform: translateY(0);
+	}
+	100% {
+		transform: translateY(120%);
 	}
 }
 

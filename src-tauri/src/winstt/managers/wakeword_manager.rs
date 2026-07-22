@@ -25,7 +25,7 @@
 mod download;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,6 +36,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::winstt::audio_conditioning::{NormalizedFrame, StreamingRmsNormalizer};
 use crate::winstt::commands::events::WakeWordDetectedPayload;
+use crate::winstt::downloads::PauseCancelFlags;
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::wakeword::{
     KWS_BUNDLE_DIRNAME, KeywordSpec, KwsModelPaths, LegacyPorcupineDetector, LegacyPorcupinePaths,
@@ -60,9 +61,6 @@ pub(super) const LEGACY_PORCUPINE_WHEEL_SHA256: &str =
     "8f4e95c966f72258b417743e13e8c571d2fb79cdf2fe59571e6766638787481d";
 pub(super) const WAKEWORD_MODEL_STATUS_EVENT: &str = "wakeword:model-status";
 pub(super) const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
-const DOWNLOAD_CONTROL_NONE: u8 = 0;
-pub(super) const DOWNLOAD_CONTROL_PAUSE: u8 = 1;
-pub(super) const DOWNLOAD_CONTROL_CANCEL: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -162,7 +160,7 @@ pub struct WakeWordManager {
     /// Guards the background model fetch so repeated settings/runtime re-arms do
     /// not start parallel downloads or reopen the microphone with no detector.
     model_download_inflight: Arc<AtomicBool>,
-    model_download_control: Arc<AtomicU8>,
+    model_download_control: Arc<PauseCancelFlags>,
     model_download_snapshot: Arc<Mutex<WakeWordModelDownloadSnapshot>>,
     /// Streaming input conditioner for KWS frames. This is intentionally separate
     /// from STT's batch peak-normalizer: wakeword mode must not boost silence
@@ -183,7 +181,7 @@ impl WakeWordManager {
             armed: AtomicBool::new(false),
             detector: Mutex::new(None),
             model_download_inflight: Arc::new(AtomicBool::new(false)),
-            model_download_control: Arc::new(AtomicU8::new(DOWNLOAD_CONTROL_NONE)),
+            model_download_control: Arc::new(PauseCancelFlags::default()),
             model_download_snapshot: Arc::new(Mutex::new(WakeWordModelDownloadSnapshot::default())),
             audio_normalizer: Mutex::new(StreamingRmsNormalizer::wakeword()),
             feed_log_counter: AtomicU64::new(0),
@@ -343,7 +341,7 @@ impl WakeWordManager {
         let inflight = Arc::clone(&self.model_download_inflight);
         let control = Arc::clone(&self.model_download_control);
         let snapshot = Arc::clone(&self.model_download_snapshot);
-        control.store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+        control.reset();
         let partial_bytes = partial_download_bytes_for_engine(&app, engine);
         reset_download_snapshot(&snapshot, engine, partial_bytes, None);
         emit_wakeword_model_status(&app, &status_for_app(&app, &inflight, &snapshot));
@@ -358,7 +356,7 @@ impl WakeWordManager {
                     Ok(WakeWordDownloadOutcome::Complete) => {
                         info!("[wakeword] {} runtime assets ready", engine.label());
                         inflight.store(false, Ordering::Release);
-                        control.store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+                        control.reset();
                         mark_download_complete(&snapshot);
                         emit_wakeword_model_status(
                             &app,
@@ -372,7 +370,7 @@ impl WakeWordManager {
                             engine.label()
                         );
                         inflight.store(false, Ordering::Release);
-                        control.store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+                        control.reset();
                         mark_download_paused(&snapshot);
                         emit_wakeword_model_status(
                             &app,
@@ -385,7 +383,7 @@ impl WakeWordManager {
                             engine.label()
                         );
                         inflight.store(false, Ordering::Release);
-                        control.store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+                        control.reset();
                         clear_download_snapshot(&snapshot, engine);
                         emit_wakeword_model_status(
                             &app,
@@ -399,7 +397,7 @@ impl WakeWordManager {
                         );
                         let detail = err.clone();
                         inflight.store(false, Ordering::Release);
-                        control.store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+                        control.reset();
                         mark_download_failed(&snapshot, err);
                         IssueBuilder::new(
                             "wakeword_download",
@@ -419,8 +417,7 @@ impl WakeWordManager {
             Ok(_) => true,
             Err(err) => {
                 self.model_download_inflight.store(false, Ordering::Release);
-                self.model_download_control
-                    .store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+                self.model_download_control.reset();
                 mark_download_failed(&self.model_download_snapshot, err.to_string());
                 emit_wakeword_model_status(&self.app, &self.model_status());
                 warn!("[wakeword] failed to start KWS model download thread: {err}");
@@ -439,15 +436,13 @@ impl WakeWordManager {
 
     pub fn pause_model_bundle_download(&self) -> WakeWordModelStatusPayload {
         if self.model_bundle_download_inflight() {
-            self.model_download_control
-                .store(DOWNLOAD_CONTROL_PAUSE, Ordering::Release);
+            self.model_download_control.pause();
         }
         self.model_status()
     }
 
     pub fn resume_model_bundle_download(&self) -> WakeWordModelStatusPayload {
-        self.model_download_control
-            .store(DOWNLOAD_CONTROL_NONE, Ordering::Release);
+        self.model_download_control.resume();
         let _ = self.start_model_bundle_download_if_missing();
         self.model_status()
     }
@@ -455,8 +450,7 @@ impl WakeWordManager {
     pub fn cancel_model_bundle_download(&self) -> WakeWordModelStatusPayload {
         let engine = self.current_engine();
         if self.model_bundle_download_inflight() {
-            self.model_download_control
-                .store(DOWNLOAD_CONTROL_CANCEL, Ordering::Release);
+            self.model_download_control.cancel();
             return self.model_status();
         }
         cleanup_partial_download_for_engine(&self.app, engine);

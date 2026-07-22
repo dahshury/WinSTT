@@ -126,14 +126,7 @@ impl TranscriptionManager {
         // saw a poisoned lock and returned None. Mirror `lock_engine`: WouldBlock skips
         // the tick (a batch decode owns the lock), Poisoned is recovered via
         // `into_inner()` so realtime keeps working after a one-off panic.
-        let mut guard = match self.engine.try_lock() {
-            Ok(g) => g,
-            Err(std::sync::TryLockError::WouldBlock) => return None, // batch decode owns it — skip
-            Err(std::sync::TryLockError::Poisoned(p)) => {
-                warn!("Engine mutex poisoned by a previous panic, recovering (realtime)");
-                p.into_inner()
-            }
-        };
+        let mut guard = self.try_lock_engine()?;
 
         // The WinSTT-arm realtime decode (peak-normalize + configured-language opts) is owned by
         // the backend (audit #14). The core keeps only the `try_lock` non-blocking + poison
@@ -170,10 +163,7 @@ impl TranscriptionManager {
     /// transcription blocking pool after release; waiting here lets any in-flight realtime
     /// `stream_accept` finish and publish its covered-sample cache before finalization consumes it.
     fn loaded_capabilities(&self) -> LoadedTranscriptionCapabilities {
-        let guard = self.engine.lock().unwrap_or_else(|p| {
-            warn!("Engine mutex poisoned by a previous panic, recovering (capability peek)");
-            p.into_inner()
-        });
+        let guard = self.lock_engine();
         match &*guard {
             Some(LoadedEngine::Winstt(e)) => {
                 let kind = e.kind();
@@ -248,10 +238,7 @@ impl TranscriptionManager {
             final_tail.len(),
             (final_tail.len() as f32 / NATIVE_STREAM_SAMPLE_RATE as f32 * 1000.0).round() as u64
         );
-        let mut guard = self.engine.lock().unwrap_or_else(|p| {
-            warn!("Engine mutex poisoned by a previous panic, recovering (stream_finalize)");
-            p.into_inner()
-        });
+        let mut guard = self.lock_engine();
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::run_native_stream_finalize(&mut guard, &final_tail)
         }));
@@ -291,17 +278,25 @@ impl TranscriptionManager {
 
     /// Peek whether the loaded engine does NATIVE streaming (carries cross-chunk cache state so the
     /// realtime worker can feed only new samples per tick). `Some(true/false)` when an engine is
-    /// loaded; `None` when none is loaded yet OR the lock is contended (caller keeps probing / uses
-    /// the window path). Non-blocking.
+    /// loaded; `None` when none is loaded yet OR the lock is contended (the caller awaits the
+    /// engine lifecycle edge). Non-blocking.
     pub fn realtime_native_streaming(&self) -> Option<bool> {
-        match self.engine.try_lock() {
-            // realtime is WinSTT-arm-only; any other loaded engine → window path (returns
-            // nothing from transcribe_realtime, so the preview is simply empty for it).
-            Ok(guard) => (*guard)
-                .as_ref()
-                .map(|LoadedEngine::Winstt(e)| e.supports_native_streaming()),
-            Err(_) => None,
-        }
+        // This is a read-only capability probe, so deliberately use the raw mutex instead of an
+        // `EngineGuard`: dropping an `EngineGuard` publishes a lifecycle edge, which would make an
+        // unloaded-engine waiter wake itself and spin. The realtime worker observes the lifecycle
+        // generation *before* this probe, so any real install/release edge remains durable.
+        let guard = match self.engine.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                warn!("Engine mutex was poisoned during realtime capability probe, recovering");
+                poisoned.into_inner()
+            }
+        };
+        // Realtime is WinSTT-arm-only; any other loaded engine would use the window path.
+        guard
+            .as_ref()
+            .map(|LoadedEngine::Winstt(e)| e.supports_native_streaming())
     }
 
     /// Feed the next chunk of NEW 16 kHz samples into the loaded native-streaming engine (cache
@@ -319,13 +314,9 @@ impl TranscriptionManager {
         if new_samples.is_empty() {
             return RealtimeStreamOutcome::Text(RealtimeStreamText::interim(String::new()));
         }
-        let mut guard = match self.engine.try_lock() {
-            Ok(g) => g,
-            Err(std::sync::TryLockError::WouldBlock) => return RealtimeStreamOutcome::Skipped,
-            Err(std::sync::TryLockError::Poisoned(p)) => {
-                warn!("Engine mutex poisoned by a previous panic, recovering (stream_accept)");
-                p.into_inner()
-            }
+        let mut guard = match self.try_lock_engine() {
+            Some(guard) => guard,
+            None => return RealtimeStreamOutcome::Skipped,
         };
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::run_native_stream_accept(&mut guard, new_samples)
@@ -384,10 +375,7 @@ impl TranscriptionManager {
         if new_samples.is_empty() {
             return RealtimeStreamOutcome::Text(RealtimeStreamText::interim(String::new()));
         }
-        let mut guard = self.engine.lock().unwrap_or_else(|p| {
-            warn!("Engine mutex poisoned by a previous panic, recovering (listen stream_accept)");
-            p.into_inner()
-        });
+        let mut guard = self.lock_engine();
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::run_native_stream_accept(&mut guard, new_samples)
         }));
@@ -437,10 +425,7 @@ impl TranscriptionManager {
     /// non-streaming or unloaded engine. This waits for any in-flight final decode so a quick
     /// release+re-press cannot carry the previous stream's text/cache into the new recording.
     pub fn stream_reset_realtime(&self) {
-        let mut guard = self.engine.lock().unwrap_or_else(|p| {
-            warn!("Engine mutex poisoned by a previous panic, recovering (stream_reset)");
-            p.into_inner()
-        });
+        let mut guard = self.lock_engine();
         if let Some(LoadedEngine::Winstt(e)) = &mut *guard
             && e.supports_native_streaming()
         {

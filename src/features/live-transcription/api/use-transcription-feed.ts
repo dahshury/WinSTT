@@ -67,7 +67,6 @@ function shouldIgnoreEmptyRealtimeDrop(
 
 export function useTranscriptionFeed(): void {
 	const t = useTranslations("transcription");
-	const voiceActivitySeenRef = useRef(false);
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
@@ -85,6 +84,7 @@ export function useTranscriptionFeed(): void {
 	);
 	const setRealtimeText = useTranscriptionStore((s) => s.setRealtimeText);
 	const setRecordingActive = useTranscriptionStore((s) => s.setRecordingActive);
+	const setSpeechDetected = useTranscriptionStore((s) => s.setSpeechDetected);
 	const setTranscribing = useTranscriptionStore((s) => s.setTranscribing);
 	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
 	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
@@ -105,15 +105,16 @@ export function useTranscriptionFeed(): void {
 		if (previousMode === null || previousMode === recordingMode) {
 			return;
 		}
-		voiceActivitySeenRef.current = false;
 		clearCompletedSessionTimer();
 		setRecordingActive(false);
+		setSpeechDetected(false);
 		setTranscribing(false);
 		setRealtimeText("");
 		clearEphemeral();
 	}, [
 		recordingMode,
 		setRecordingActive,
+		setSpeechDetected,
 		setTranscribing,
 		setRealtimeText,
 		clearEphemeral,
@@ -125,10 +126,15 @@ export function useTranscriptionFeed(): void {
 		// recording_start only means "loopback capture is armed"; deleting visible
 		// captions there makes long-form subtitles jump.
 		const unsubStart = onRecordingStart(() => {
-			voiceActivitySeenRef.current = false;
 			clearCompletedSessionTimer();
 			if (recordingModeRef.current === "listen") {
 				setRecordingActive(true);
+				return;
+			}
+			// A cold overlay may have already recovered this same session from
+			// `stt_recording_snapshot`. If the earlier fire-and-forget start event
+			// is delivered afterward, do not reset the recovered VAD-seen latch.
+			if (useTranscriptionStore.getState().isRecordingActive) {
 				return;
 			}
 			beginRecordingSession();
@@ -143,7 +149,7 @@ export function useTranscriptionFeed(): void {
 		const unsubStop = onRecordingStop(() => {
 			if (
 				useTranscriptionStore.getState().isRecordingActive &&
-				voiceActivitySeenRef.current
+				useTranscriptionStore.getState().hasDetectedSpeech
 			) {
 				setTranscribing(true, "uploading");
 			}
@@ -165,20 +171,19 @@ export function useTranscriptionFeed(): void {
 		});
 
 		const unsubVadStart = onVadStart(() => {
-			voiceActivitySeenRef.current = true;
+			setSpeechDetected(true);
 			if (recordingModeRef.current === "listen") {
 				clearEphemeral();
 			}
 		});
 
 		const unsubTranscriptionStart = onTranscriptionStart(() => {
-			if (voiceActivitySeenRef.current) {
+			if (useTranscriptionStore.getState().hasDetectedSpeech) {
 				setTranscribing(true, "transcribing");
 			}
 		});
 
 		const unsubFinal = onFullSentence(({ text, speaker }) => {
-			voiceActivitySeenRef.current = false;
 			const isListenMode = recordingModeRef.current === "listen";
 			const sessionId = useTranscriptionStore.getState().recordingSessionId;
 			if (!isListenMode) {
@@ -192,7 +197,6 @@ export function useTranscriptionFeed(): void {
 		});
 
 		const unsubNoAudio = onNoAudioDetected(() => {
-			voiceActivitySeenRef.current = false;
 			clearCompletedSessionTimer();
 			setRealtimeText("");
 			clearEphemeral();
@@ -203,7 +207,6 @@ export function useTranscriptionFeed(): void {
 		// Genuine backend transcriber error — report it honestly in the same
 		// ephemeral pill slot instead of the misleading "(no audio detected)".
 		const unsubTranscriptionFailed = onTranscriptionFailed((payload = {}) => {
-			voiceActivitySeenRef.current = false;
 			clearCompletedSessionTimer();
 			const message = payload.message?.trim() || t("transcriptionFailed");
 			setRealtimeText("");
@@ -222,7 +225,6 @@ export function useTranscriptionFeed(): void {
 		// as a terminal event so the renderer state matches the server's
 		// post-abort INACTIVE state.
 		const unsubAborted = onSttSessionAborted(() => {
-			voiceActivitySeenRef.current = false;
 			clearCompletedSessionTimer();
 			setRecordingActive(false);
 			setTranscribing(false);
@@ -240,7 +242,6 @@ export function useTranscriptionFeed(): void {
 				reason === "offline_no_local"
 					? t("offlineNoLocalModel")
 					: t("transcriptionFailed");
-			voiceActivitySeenRef.current = false;
 			clearCompletedSessionTimer();
 			setRealtimeText("");
 			setRecordingActive(false);
@@ -265,6 +266,7 @@ export function useTranscriptionFeed(): void {
 		beginRecordingSession,
 		setRealtimeText,
 		setRecordingActive,
+		setSpeechDetected,
 		setTranscribing,
 		showEphemeral,
 		clearEphemeral,

@@ -224,24 +224,18 @@ export function usePermissionPreflight(): PermissionPreflightController {
 		}
 	});
 
-	// System privacy panels live outside the webview. Recheck while waiting for a
-	// grant and immediately when the user returns, then stop polling once ready.
+	// System privacy panels live outside the webview. Window focus and document
+	// visibility are the reliable return signals; explicit retries cover the case
+	// where the user leaves the privacy panel open without returning to WinSTT.
 	useEffect(() => {
 		const handleReturn = () => {
 			recheckOnReturn();
 		};
-		const pollWhileWaiting = () => {
-			if (awaitingGrantRef.current) {
-				recheckOnReturn();
-			}
-		};
 		window.addEventListener("focus", handleReturn);
 		document.addEventListener("visibilitychange", handleReturn);
-		const poll = window.setInterval(pollWhileWaiting, 1000);
 		return () => {
 			window.removeEventListener("focus", handleReturn);
 			document.removeEventListener("visibilitychange", handleReturn);
-			window.clearInterval(poll);
 		};
 	}, []);
 

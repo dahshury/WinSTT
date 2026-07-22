@@ -83,9 +83,9 @@ function findActiveWordIndex(words: WordTiming[], t: number): number {
 
 /**
  * Owns a row's `<audio>` element. On first play it lazily fetches both the WAV
- * and the per-word timestamps, then tracks playback position with a rAF loop —
- * the word-highlight sweep doubles as the progress indicator. No-ops when the
- * entry has no recording; called unconditionally per row (Rules of Hooks).
+ * and the per-word timestamps, then tracks playback position from the media
+ * element's own events. No-ops when the entry has no recording; called
+ * unconditionally per row (Rules of Hooks).
  */
 export function useHistoryPlayback(
 	entryId: string,
@@ -94,7 +94,8 @@ export function useHistoryPlayback(
 	source: PlaybackSource = "stt",
 ): PlaybackState {
 	const audioRef = useRef<HTMLAudioElement | null>(null);
-	const rafRef = useRef<number | null>(null);
+	const detachAudioEventsRef = useRef<(() => void) | null>(null);
+	const playbackRequestRef = useRef(0);
 	const [playing, setPlaying] = useState(false);
 	const [loading, setLoading] = useState(false);
 	const [words, setWords] = useState<WordTiming[] | null>(null);
@@ -108,31 +109,18 @@ export function useHistoryPlayback(
 
 	useEffect(
 		() => () => {
-			if (rafRef.current !== null) {
-				cancelAnimationFrame(rafRef.current);
-			}
+			playbackRequestRef.current += 1;
+			detachAudioEventsRef.current?.();
+			detachAudioEventsRef.current = null;
 			audioRef.current?.pause();
 			audioRef.current = null;
 		},
 		[],
 	);
 
-	const stopTicking = () => {
-		if (rafRef.current !== null) {
-			cancelAnimationFrame(rafRef.current);
-			rafRef.current = null;
-		}
-	};
-
-	const tick = () => {
-		if (audioRef.current) {
-			setCurrentTime(audioRef.current.currentTime);
-		}
-		rafRef.current = requestAnimationFrame(tick);
-	};
-
 	const beginPlayback = async () => {
 		if (!audioRef.current) {
+			const request = ++playbackRequestRef.current;
 			setLoading(true);
 			// Fetch the audio + word timings together on first play. TTS clips have
 			// no spoken-word alignment — the seek bar alone carries scrubbing.
@@ -144,6 +132,9 @@ export function useHistoryPlayback(
 					? Promise.resolve([])
 					: alignTranscriptionHistoryAudio(entryId),
 			]);
+			if (playbackRequestRef.current !== request) {
+				return;
+			}
 			setLoading(false);
 			if (!dataUri) {
 				return;
@@ -152,11 +143,7 @@ export function useHistoryPlayback(
 				setWords(timings);
 			}
 			const el = new Audio(dataUri);
-			el.onended = () => {
-				setPlaying(false);
-				setCurrentTime(0);
-				stopTicking();
-			};
+			const syncCurrentTime = () => setCurrentTime(el.currentTime);
 			// Duration for the seek bar. WAV metadata resolves near-instantly from
 			// the data URI; guard against the transient `Infinity`/`NaN` browsers
 			// report before the header is parsed.
@@ -165,8 +152,31 @@ export function useHistoryPlayback(
 					setDuration(el.duration);
 				}
 			};
-			el.onloadedmetadata = captureDuration;
-			el.ondurationchange = captureDuration;
+			const handleEnded = () => {
+				el.currentTime = 0;
+				setCurrentTime(0);
+				setPlaying(false);
+			};
+			const handlePlay = () => setPlaying(true);
+			const handlePause = () => setPlaying(false);
+			const eventBindings = [
+				["timeupdate", syncCurrentTime],
+				["seeking", syncCurrentTime],
+				["seeked", syncCurrentTime],
+				["loadedmetadata", captureDuration],
+				["durationchange", captureDuration],
+				["play", handlePlay],
+				["pause", handlePause],
+				["ended", handleEnded],
+			] as const;
+			for (const [eventName, listener] of eventBindings) {
+				el.addEventListener(eventName, listener);
+			}
+			detachAudioEventsRef.current = () => {
+				for (const [eventName, listener] of eventBindings) {
+					el.removeEventListener(eventName, listener);
+				}
+			};
 			captureDuration();
 			el.playbackRate = rateRef.current;
 			audioRef.current = el;
@@ -183,8 +193,6 @@ export function useHistoryPlayback(
 			return;
 		}
 		setPlaying(true);
-		stopTicking();
-		rafRef.current = requestAnimationFrame(tick);
 	};
 
 	const toggle = () => {
@@ -194,7 +202,6 @@ export function useHistoryPlayback(
 		if (playing && audioRef.current) {
 			audioRef.current.pause();
 			setPlaying(false);
-			stopTicking();
 			return;
 		}
 		fireAndForget(beginPlayback(), "history.beginPlayback");
@@ -202,8 +209,9 @@ export function useHistoryPlayback(
 
 	// Move the playhead (word click / seek-bar drag). The `<audio>` element is the
 	// source of truth, so set its `currentTime` and mirror it into state right away
-	// — the highlight and bar update instantly even while paused (the rAF loop only
-	// runs during playback). No-op until the recording has been loaded.
+	// — the highlight and bar update instantly even while paused, without waiting
+	// for the browser's next `seeking` / `timeupdate` event. No-op until the
+	// recording has been loaded.
 	const seek = (seconds: number) => {
 		const el = audioRef.current;
 		if (!el) {

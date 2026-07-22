@@ -1,5 +1,5 @@
 use enigo::{Enigo, Key, Keyboard, Mouse, Settings};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use tauri::{AppHandle, Manager};
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -32,7 +32,7 @@ impl EnigoState {
 /// Returns None if the state is not available or if getting the location fails.
 pub fn get_cursor_position(app_handle: &AppHandle) -> Option<(i32, i32)> {
     let enigo_state = app_handle.try_state::<EnigoState>()?;
-    let enigo = enigo_state.0.lock().ok()?;
+    let enigo = enigo_state.0.lock();
     enigo.location().ok()
 }
 

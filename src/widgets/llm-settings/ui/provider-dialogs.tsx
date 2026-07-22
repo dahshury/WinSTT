@@ -152,25 +152,23 @@ export function OllamaDialog({
 	);
 	const { installed, starting, startError } = state;
 	const isOpenRef = useRef(isOpen);
-	const startSuccessTimeoutRef = useRef<number | null>(null);
+	const isMountedRef = useRef(true);
+	const activeStartRef = useRef<symbol | null>(null);
 
 	useEffect(() => {
 		isOpenRef.current = isOpen;
-		if (!isOpen && startSuccessTimeoutRef.current !== null) {
-			window.clearTimeout(startSuccessTimeoutRef.current);
-			startSuccessTimeoutRef.current = null;
+		if (!isOpen) {
+			activeStartRef.current = null;
 		}
 	}, [isOpen]);
 
-	useEffect(
-		() => () => {
-			if (startSuccessTimeoutRef.current !== null) {
-				window.clearTimeout(startSuccessTimeoutRef.current);
-				startSuccessTimeoutRef.current = null;
-			}
-		},
-		[],
-	);
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+			activeStartRef.current = null;
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -204,12 +202,19 @@ export function OllamaDialog({
 	};
 
 	const handleStart = async () => {
+		const startAttempt = Symbol("ollama-start-attempt");
+		activeStartRef.current = startAttempt;
+		const isCurrentStart = () =>
+			isMountedRef.current &&
+			isOpenRef.current &&
+			activeStartRef.current === startAttempt;
 		dispatch({ type: "start-attempt" });
 		let result: Awaited<ReturnType<typeof startOllama>>;
 		try {
 			result = await startOllama();
 		} catch (err) {
-			if (isOpenRef.current) {
+			if (isCurrentStart()) {
+				activeStartRef.current = null;
 				dispatch({
 					type: "start-failed",
 					error: errorMessage(err) || t("ollamaStartFailed"),
@@ -217,9 +222,10 @@ export function OllamaDialog({
 			}
 			return;
 		}
-		if (!isOpenRef.current) {
+		if (!isCurrentStart()) {
 			return;
 		}
+		activeStartRef.current = null;
 		if (!result.started) {
 			dispatch({
 				type: "start-failed",
@@ -227,17 +233,8 @@ export function OllamaDialog({
 			});
 			return;
 		}
-		if (startSuccessTimeoutRef.current !== null) {
-			window.clearTimeout(startSuccessTimeoutRef.current);
-		}
-		startSuccessTimeoutRef.current = window.setTimeout(() => {
-			startSuccessTimeoutRef.current = null;
-			if (!isOpenRef.current) {
-				return;
-			}
-			dispatch({ type: "start-succeeded" });
-			onStarted();
-		}, 1500);
+		dispatch({ type: "start-succeeded" });
+		onStarted();
 	};
 
 	const showRun = installed === true;

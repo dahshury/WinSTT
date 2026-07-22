@@ -15,7 +15,13 @@ import {
 	useIsPresent,
 	useReducedMotion,
 } from "motion/react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	type FocusEvent,
+	type ReactNode,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -124,10 +130,8 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 			if (target && searchRegionRef.current?.contains(target)) {
 				return;
 			}
-			window.setTimeout(() => {
-				setSearchOpen(false);
-				setQuery("");
-			}, 120);
+			setSearchOpen(false);
+			setQuery("");
 		};
 		document.addEventListener("pointerdown", onOutsidePress, true);
 		return () =>
@@ -140,13 +144,15 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 		inputRef.current?.blur();
 	};
 
-	const handleSearchBlur = () => {
-		window.setTimeout(() => {
-			if (document.activeElement !== inputRef.current) {
-				setSearchOpen(false);
-				setQuery("");
-			}
-		}, 120);
+	const handleSearchRegionBlur = (event: FocusEvent<HTMLDivElement>) => {
+		const nextFocused = event.relatedTarget;
+		if (
+			nextFocused instanceof Node &&
+			event.currentTarget.contains(nextFocused)
+		) {
+			return;
+		}
+		closeSearch();
 	};
 
 	const openSearch = () => {
@@ -231,6 +237,7 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 					/>
 					<div
 						className="relative flex h-10 min-w-0 flex-1 items-center gap-2"
+						onBlur={handleSearchRegionBlur}
 						ref={searchRegionRef}
 					>
 						{searchOpen ? null : searchButton}
@@ -263,7 +270,6 @@ export function SettingsSidebar({ links, onPrefetch }: SettingsSidebarProps) {
 											size={17}
 										/>
 									}
-									onBlur={handleSearchBlur}
 									onKeyDown={(e) => {
 										if (e.key === "Escape") {
 											e.stopPropagation();

@@ -54,7 +54,7 @@ use tauri::{AppHandle, Listener, Manager};
 // so external call sites keep their existing `crate::X` paths after the split.
 pub use commands_registry::make_specta_builder;
 pub use startup::FILE_LOG_LEVEL;
-pub(crate) use startup::{log_model_duration, log_startup_duration, startup_profile_enabled};
+pub(crate) use startup::{log_model_duration, startup_profile_enabled};
 pub(crate) use window_state::show_main_window;
 
 static EXIT_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
@@ -783,9 +783,6 @@ fn continue_startup_after_splash_paint(
     } else if will_show_main {
         show_main_window(&app_handle);
     }
-    if tray_available && !will_show_main {
-        winstt::commands::windows::schedule_post_startup_prewarm(&app_handle);
-    }
     advance_startup_phase(&mut startup, &app_handle, "startup handoff scheduled");
     advance_startup_phase(&mut startup, &app_handle, "setup complete");
 }
@@ -918,7 +915,16 @@ pub fn run(cli_args: CliArgs) {
             });
             Ok(())
         })
-        .on_window_event(|window, event| match event {
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(_)) {
+                crate::winstt::commands::context_playground::notify_context_playground_focus_changed();
+                if let Some(realtime) = window.app_handle().try_state::<
+                    Arc<crate::winstt::managers::RealtimeManager>,
+                >() {
+                    realtime.notify_external_conditions_changed();
+                }
+            }
+            match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 // Closing the MAIN pill quits the whole app (the user expects X to close it,
                 // not silently hide-to-tray — KEEP quit-on-X, do NOT hide-to-tray).
@@ -1029,7 +1035,8 @@ pub fn run(cli_args: CliArgs) {
                     window.app_handle(),
                 );
             }
-            _ => {}
+                _ => {}
+            }
         })
         .invoke_handler(invoke_handler)
         .build(tauri::generate_context!())
@@ -1091,6 +1098,10 @@ fn cleanup_runtime_models_on_exit(app: &AppHandle) {
 
     if let Some(tts) = app.try_state::<Arc<winstt::managers::TtsManager>>() {
         tts.inner().cancel_all();
+    }
+
+    if let Some(realtime) = app.try_state::<Arc<winstt::managers::RealtimeManager>>() {
+        realtime.inner().shutdown();
     }
 
     if let Some(audio) = app.try_state::<Arc<managers::audio::AudioRecordingManager>>() {

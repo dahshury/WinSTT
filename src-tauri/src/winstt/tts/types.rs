@@ -214,13 +214,17 @@ pub type TtsResult<T> = Result<T, TtsError>;
 // ---------------------------------------------------------------------------
 
 /// A consumer-cancellable sink the engine pushes chunks into. The host bridges
-/// `push` to a Tauri `tts:chunk` event and polls `is_cancelled` between
+/// `push` to a Tauri `tts:chunk` event and checks `is_cancelled` between
 /// sentences (the cooperative cancel point, like the Python `should_cancel`).
 pub trait ChunkSink: Send {
     /// Forward one chunk. Returns `false` if the consumer is gone → stop producing.
     fn push(&self, chunk: SynthesisChunk) -> bool;
-    /// True once the consumer requested cancellation — polled between sentences.
+    /// True once the consumer requested cancellation — checked between sentences.
     fn is_cancelled(&self) -> bool;
+    /// Awaitable twin of [`Self::is_cancelled`]: cloud engines `select!` on it
+    /// to abort an in-flight HTTP request the instant cancel fires, instead of
+    /// polling the flag on a timer.
+    fn cancel_token(&self) -> tokio_util::sync::CancellationToken;
 }
 
 /// Cloud usage accumulated across one read-aloud session's per-sentence

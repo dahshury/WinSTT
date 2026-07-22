@@ -78,6 +78,7 @@ export function DataGridRow<TData>({
 		} else {
 			rowMapRef.current?.delete(virtualRowIndex);
 		}
+		tableMeta.onRowMount?.(virtualRowIndex, node);
 	};
 
 	const rowRef = useComposedRefs(ref, onRowChange);

@@ -559,7 +559,7 @@ impl TtsEngine for ElevenLabsEngine {
     }
 
     /// Cloud override of the default wrapper: race the in-flight POST against the
-    /// sink's cancel flag (flipped by `tts_cancel` / `cancel_all` -- the TTS island
+    /// sink's cancel token (fired by `tts_cancel` / `cancel_all` -- the TTS island
     /// X or the dictation overlay X). On cancel the request future is dropped,
     /// which aborts the ElevenLabs HTTP call mid-flight instead of only stopping
     /// the next sentence.
@@ -574,17 +574,16 @@ impl TtsEngine for ElevenLabsEngine {
         use tauri::async_runtime::block_on;
         let bytes = match self.build_synthesis_request(text, voice, speed)? {
             None => Vec::new(),
-            Some(req) => block_on(async {
-                tokio::select! {
-                    biased;
-                    () = async {
-                        while !sink.is_cancelled() {
-                            tokio::time::sleep(Duration::from_millis(20)).await;
-                        }
-                    } => Err(TtsError::Cancelled),
-                    res = self.fetch_mp3(&req, voice) => res,
-                }
-            })?,
+            Some(req) => {
+                let cancel = sink.cancel_token();
+                block_on(async {
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => Err(TtsError::Cancelled),
+                        res = self.fetch_mp3(&req, voice) => res,
+                    }
+                })?
+            }
         };
         sink.push(SynthesisChunk::mp3(bytes, 0, false));
         Ok(())

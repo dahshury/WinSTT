@@ -8,7 +8,13 @@ import {
 	type SttSwitchRollbackSnapshot,
 } from "@/bindings";
 import { NATIVE_EVENTS as IPC } from "../native-events";
-import { commandOrDefault, on, onCast, onTyped } from "../native-boundary";
+import {
+	commandOrDefault,
+	ipcOnReady,
+	on,
+	onCast,
+	onTyped,
+} from "../native-boundary";
 import { sttCallMethod } from "./stt-audio";
 
 function unwrapResult<T, E>(result: Result<T, E>): T {
@@ -440,6 +446,19 @@ export const listenSessionSnapshot = () =>
 		"listen_session_snapshot",
 		() => commands.listenSessionSnapshot(),
 		IDLE_LISTEN_SESSION,
+	);
+
+/** Subscribe to authoritative changes in the ongoing Listen-session transcript. */
+export const onListenSessionChanged = (
+	cb: (snapshot: ListenSessionSnapshot) => void,
+) => onCast<ListenSessionSnapshot>(IPC.LISTEN_SESSION_CHANGED, cb);
+
+/** Subscribe and resolve only once the native listen command is installed. */
+export const onListenSessionChangedReady = (
+	cb: (snapshot: ListenSessionSnapshot) => void,
+) =>
+	ipcOnReady(IPC.LISTEN_SESSION_CHANGED, (snapshot) =>
+		cb(snapshot as ListenSessionSnapshot),
 	);
 
 /**

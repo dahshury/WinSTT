@@ -26,6 +26,8 @@ export interface TranscriptDiffLabels {
 	largeRewrite: string;
 	changeCount: (count: number) => string;
 	moreChanges: (count: number) => string;
+	wordCount: (count: number) => string;
+	correctedWords: (count: number) => string;
 }
 
 /**
@@ -56,6 +58,10 @@ interface TranscriptDiffViewProps {
 }
 
 const DIFF_SUMMARY_LIMIT = 6;
+
+function countWords(text: string): number {
+	return text.match(/\S+/g)?.length ?? 0;
+}
 
 function truncateDiffSnippet(text: string, max = 38): string {
 	if (text.length <= max) {
@@ -279,6 +285,21 @@ export function TranscriptDiffView({
 		? 0
 		: Math.max(diff.changes.length - DIFF_SUMMARY_LIMIT, 0);
 	const changeCount = labels.changeCount(diff.changes.length);
+	const beforeWordCount = diff.hunks.reduce(
+		(total, hunk) => total + countWords(hunk.before),
+		0,
+	);
+	const afterWordCount = diff.hunks.reduce(
+		(total, hunk) => total + countWords(hunk.after),
+		0,
+	);
+	// A replace touching 3→2 words counts as 3 corrected: the larger side of each
+	// change is how many words the AI actually rewrote, inserted, or removed.
+	const correctedWordCount = diff.changes.reduce(
+		(total, change) =>
+			total + Math.max(countWords(change.before), countWords(change.after)),
+		0,
+	);
 	// Precomputed offset over change content — a stable, unique key per chip (identical
 	// edits can repeat, so kind + content isn't unique) without the bare array index.
 	// Built immutably up front so the map body never mutates a captured variable.
@@ -310,8 +331,8 @@ export function TranscriptDiffView({
 				</span>
 				<span className="text-[11px] text-foreground-muted leading-none">
 					{diff.coarse
-						? `${changeCount} · ${labels.largeRewrite}`
-						: changeCount}
+						? `${changeCount} · ${labels.correctedWords(correctedWordCount)} · ${labels.largeRewrite}`
+						: `${changeCount} · ${labels.correctedWords(correctedWordCount)}`}
 				</span>
 			</div>
 
@@ -348,6 +369,9 @@ export function TranscriptDiffView({
 							className="size-1.5 rounded-full bg-error/70"
 						/>
 						{labels.before}
+						<span className="ml-auto font-normal normal-case tracking-normal">
+							{labels.wordCount(beforeWordCount)}
+						</span>
 					</div>
 					<DiffText diff={diff} ordinals={ordinals} side="before" />
 				</section>
@@ -363,6 +387,9 @@ export function TranscriptDiffView({
 							className="size-1.5 rounded-full bg-success/70"
 						/>
 						{labels.after}
+						<span className="ml-auto font-normal normal-case tracking-normal">
+							{labels.wordCount(afterWordCount)}
+						</span>
 					</div>
 					<DiffText
 						diff={diff}

@@ -311,6 +311,65 @@ fn git_init_repo(root: &Path) {
     }
 }
 
+// Run this test in a child copy of the current test executable to get a
+// deterministic process whose lifetime is controlled without relying on shell
+// commands or timing-sensitive external programs. In the ordinary parent test
+// run the environment variable is absent, so the helper returns immediately.
+#[cfg(windows)]
+#[test]
+fn child_wait_test_helper() {
+    const DELAY_ENV: &str = "WINSTT_WORKSPACE_INDEX_WAIT_TEST_DELAY_MS";
+    let Ok(delay_ms) = std::env::var(DELAY_ENV) else {
+        return;
+    };
+    let delay_ms = delay_ms.parse::<u64>().unwrap();
+    std::thread::sleep(Duration::from_millis(delay_ms));
+}
+
+#[cfg(windows)]
+fn spawn_wait_test_child(delay: Duration) -> std::process::Child {
+    std::process::Command::new(std::env::current_exe().unwrap())
+        // Rust's test harness treats this as a substring filter, so the helper
+        // remains stable even if the crate/module prefix changes.
+        .arg("child_wait_test_helper")
+        .arg("--nocapture")
+        .env(
+            "WINSTT_WORKSPACE_INDEX_WAIT_TEST_DELAY_MS",
+            delay.as_millis().to_string(),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+#[cfg(windows)]
+#[test]
+fn process_handle_wait_returns_completed_status() {
+    let mut child = spawn_wait_test_child(Duration::ZERO);
+    let outcome = wait_for_child_exit(&mut child, Duration::from_secs(5)).unwrap();
+    let Some(status) = outcome else {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("short-lived child did not signal completion before timeout");
+    };
+    assert!(status.success());
+}
+
+#[cfg(windows)]
+#[test]
+fn process_handle_wait_times_out_without_consuming_child() {
+    let mut child = spawn_wait_test_child(Duration::from_secs(2));
+    let outcome = wait_for_child_exit(&mut child, Duration::from_millis(20)).unwrap();
+    assert!(outcome.is_none(), "live child should produce a timeout");
+
+    // A timeout deliberately leaves ownership/lifecycle with the caller, which
+    // is exactly what `run_git_ls_files` needs in order to kill and reap hung git.
+    child.kill().unwrap();
+    let _ = child.wait().unwrap();
+}
+
 #[cfg(windows)]
 #[test]
 fn git_enumeration_indexes_deep_files_and_respects_gitignore() {

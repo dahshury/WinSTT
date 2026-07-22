@@ -594,10 +594,11 @@ export function resolveOllamaParameterSize(model: OllamaModel): string | null {
 		model.name.trim().toLowerCase().startsWith(PRISM_BONSAI_PREFIX) &&
 		parsed
 	) {
-		return parsed;
+		return parsed.toUpperCase();
 	}
 	const structured = model.details?.parameterSize?.trim();
-	return structured || parsed || null;
+	const resolved = structured || parsed;
+	return resolved ? resolved.toUpperCase() : null;
 }
 
 /**

@@ -157,6 +157,10 @@ struct ActiveReason {
     reason: DuckReason,
     liveness: Option<Liveness>,
     since: Instant,
+    /// Liveness is a recovery fallback for a lost terminal callback, not a
+    /// hot-path status source. Once the grace period expires, remember the
+    /// last probe so subsequent checks stay deliberately low-frequency.
+    liveness_last_check: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -176,6 +180,9 @@ struct WorkerState {
     pending_restore: Vec<SessionVolumeSnapshot>,
     /// Last time the pending pool was attempted (rate-limits watchdog retries).
     pending_last_attempt: Option<Instant>,
+    /// Last attempt to restore a live duck that no longer has an owner. This
+    /// covers failed COM enumeration and a job panic without spinning.
+    idle_restore_last_attempt: Option<Instant>,
 }
 
 /// The side-effect surface of the ledger, so the transition logic is testable
@@ -195,7 +202,9 @@ trait DuckOps {
     fn clear_persisted(&mut self);
 }
 
-/// How often the worker wakes to run the watchdog while idle-waiting for jobs.
+/// Low-frequency recovery cadence once a liveness grace period has elapsed,
+/// and between retries of a live duck whose restore could not run. The worker
+/// does not wake at this cadence unless one of those recovery cases exists.
 const WATCHDOG_TICK: Duration = Duration::from_secs(5);
 /// How long a reason may hold the duck before the watchdog starts checking its
 /// liveness (covers e.g. the Read Aloud island being shown a beat AFTER its
@@ -291,12 +300,14 @@ fn handle_duck(
             existing.liveness = liveness;
         }
         existing.since = Instant::now();
+        existing.liveness_last_check = None;
         return;
     }
     state.active.push(ActiveReason {
         reason,
         liveness,
         since: Instant::now(),
+        liveness_last_check: None,
     });
     if state.ducked {
         // Piggyback on the existing duck: the sessions are already lowered and
@@ -335,9 +346,14 @@ fn try_restore_if_idle(state: &mut WorkerState, ops: &mut impl DuckOps) {
     }
     if state.snapshots.is_empty() {
         state.ducked = false;
+        state.idle_restore_last_attempt = None;
         persist_ledger(state, ops);
         return;
     }
+    // Record the attempt before entering COM. If COM panics, handle_job's
+    // containment keeps the worker alive and this timestamp prevents an
+    // immediate retry loop.
+    state.idle_restore_last_attempt = Some(Instant::now());
     let Some(resolved) = ops.restore(&state.snapshots) else {
         // The enumeration itself failed (audio-service hiccup). Keep the duck
         // marked live so the watchdog retries the whole restore; nothing has
@@ -356,6 +372,7 @@ fn try_restore_if_idle(state: &mut WorkerState, ops: &mut impl DuckOps) {
         }
     }
     state.ducked = false;
+    state.idle_restore_last_attempt = None;
     if unresolved > 0 {
         // Their sessions were missing or their writes did not verify; keep
         // them pending (journaled) and retry rather than assuming success.
@@ -374,9 +391,20 @@ fn watchdog_tick(state: &mut WorkerState, ops: &mut impl DuckOps) {
     // is force-released. Reasons without a probe are only released by their
     // explicit restore or the exit hook.
     if !state.active.is_empty() {
+        let now = Instant::now();
         let before = state.active.len();
-        state.active.retain(|a| {
-            a.since.elapsed() < REAP_GRACE || a.liveness.as_ref().is_none_or(|alive| alive())
+        state.active.retain_mut(|a| {
+            if now.saturating_duration_since(a.since) < REAP_GRACE
+                || a.liveness.is_none()
+                || a.liveness_last_check
+                    .is_some_and(|last| now.saturating_duration_since(last) < WATCHDOG_TICK)
+            {
+                return true;
+            }
+            // Set this before invoking user-supplied liveness so panic
+            // containment cannot turn a panicking probe into a busy loop.
+            a.liveness_last_check = Some(now);
+            a.liveness.as_ref().is_none_or(|alive| alive())
         });
         if state.active.len() < before {
             log::warn!(
@@ -397,6 +425,51 @@ fn watchdog_tick(state: &mut WorkerState, ops: &mut impl DuckOps) {
     {
         heal_pending(state, ops);
     }
+}
+
+/// Earliest moment at which watchdog recovery can do useful work. `None`
+/// means every remaining state transition has a reliable command callback, so
+/// the worker may block indefinitely on `rx.recv()`.
+fn next_watchdog_deadline(state: &WorkerState, now: Instant) -> Option<Instant> {
+    let liveness_deadline = state
+        .active
+        .iter()
+        .filter(|reason| reason.liveness.is_some())
+        .map(|reason| {
+            let grace_end = reason.since.checked_add(REAP_GRACE).unwrap_or(now);
+            if grace_end > now {
+                grace_end
+            } else {
+                reason
+                    .liveness_last_check
+                    .and_then(|last| last.checked_add(WATCHDOG_TICK))
+                    .unwrap_or(now)
+            }
+        })
+        .min();
+
+    let idle_restore_deadline = (state.active.is_empty() && state.ducked).then(|| {
+        state
+            .idle_restore_last_attempt
+            .and_then(|last| last.checked_add(WATCHDOG_TICK))
+            .unwrap_or(now)
+    });
+
+    let pending_restore_deadline = (!state.pending_restore.is_empty()).then(|| {
+        state
+            .pending_last_attempt
+            .and_then(|last| last.checked_add(PENDING_RETRY_INTERVAL))
+            .unwrap_or(now)
+    });
+
+    [
+        liveness_deadline,
+        idle_restore_deadline,
+        pending_restore_deadline,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
 }
 
 /// Exit hook body: release every reason, restore the live duck, and give the
@@ -489,7 +562,12 @@ fn worker_loop(rx: &mpsc::Receiver<ComJob>) {
     let mut state = WorkerState::default();
     let mut ops = RealOps;
     loop {
-        match rx.recv_timeout(WATCHDOG_TICK) {
+        let now = Instant::now();
+        let received = match next_watchdog_deadline(&state, now) {
+            Some(deadline) => rx.recv_timeout(deadline.saturating_duration_since(now)),
+            None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+        };
+        match received {
             Ok(job) => handle_job(&mut state, &mut ops, job),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Same panic containment as handle_job: the watchdog runs COM
@@ -1212,6 +1290,86 @@ mod tests {
             .expect("system uptime exceeds the pending retry interval");
     }
 
+    // ── worker scheduling ──
+
+    #[test]
+    fn scheduler_blocks_indefinitely_without_recovery_work() {
+        let mut state = WorkerState::default();
+        let now = Instant::now();
+
+        assert_eq!(next_watchdog_deadline(&state, now), None);
+
+        // A reason without a liveness fallback is driven exclusively by its
+        // explicit Restore message and must not create a timer.
+        state.active.push(ActiveReason {
+            reason: DuckReason::Dictation,
+            liveness: None,
+            since: now,
+            liveness_last_check: None,
+        });
+        state.ducked = true;
+        assert_eq!(next_watchdog_deadline(&state, now), None);
+    }
+
+    #[test]
+    fn scheduler_waits_until_liveness_grace_expires() {
+        let now = Instant::now();
+        let mut state = WorkerState::default();
+        state.active.push(ActiveReason {
+            reason: DuckReason::Dictation,
+            liveness: Some(Arc::new(|| true)),
+            since: now,
+            liveness_last_check: None,
+        });
+
+        assert_eq!(
+            next_watchdog_deadline(&state, now),
+            now.checked_add(REAP_GRACE)
+        );
+    }
+
+    #[test]
+    fn scheduler_rate_limits_post_grace_liveness_checks() {
+        let now = Instant::now();
+        let last_check = now
+            .checked_sub(Duration::from_secs(1))
+            .expect("system uptime exceeds one second");
+        let since = now
+            .checked_sub(REAP_GRACE + Duration::from_secs(1))
+            .expect("system uptime exceeds the reap grace");
+        let mut state = WorkerState::default();
+        state.active.push(ActiveReason {
+            reason: DuckReason::Dictation,
+            liveness: Some(Arc::new(|| true)),
+            since,
+            liveness_last_check: Some(last_check),
+        });
+
+        assert_eq!(
+            next_watchdog_deadline(&state, now),
+            last_check.checked_add(WATCHDOG_TICK)
+        );
+    }
+
+    #[test]
+    fn scheduler_uses_earliest_pending_recovery_deadline() {
+        let now = Instant::now();
+        let mut state = WorkerState {
+            ducked: true,
+            idle_restore_last_attempt: Some(now),
+            ..WorkerState::default()
+        };
+        state.pending_restore.push(snap("pending", 7, 0.8, 0.2));
+        state.pending_last_attempt = Some(now);
+
+        // Live restore recovery is due in five seconds, earlier than the
+        // pending pool's thirty-second retry.
+        assert_eq!(
+            next_watchdog_deadline(&state, now),
+            now.checked_add(WATCHDOG_TICK)
+        );
+    }
+
     // ── reduction math ──
 
     #[test]
@@ -1451,6 +1609,7 @@ mod tests {
         // Once the second recording ends too, the watchdog releases it.
         second.store(false, Ordering::SeqCst);
         expire_grace(&mut state);
+        state.active[0].liveness_last_check = Instant::now().checked_sub(WATCHDOG_TICK);
         watchdog_tick(&mut state, &mut ops);
         assert!(!state.ducked);
         assert_eq!(ops.restores.len(), 1);

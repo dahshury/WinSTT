@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::commands::settings::core_timeout_from_winstt;
@@ -44,6 +45,9 @@ pub use openrouter::{OpenRouterEndpointInfo, OpenRouterModelInfo, OpenRouterScan
 // and — ONLY under the "never unload" policy — re-warms so the model survives
 // an Ollama restart/eviction. Finite policies are deliberately left to count
 // down from the last real use (a periodic re-warm would reset them forever).
+// This loop is legitimately periodic (not a convert-to-callback candidate):
+// it self-heals against EXTERNAL state changes — Ollama restarting or evicting
+// a model out from under us — for which Ollama emits no event.
 const OLLAMA_WARMUP_INTERVAL: Duration = Duration::from_secs(60);
 const OLLAMA_WARMUP_TIMEOUT: Duration = Duration::from_secs(120);
 const OLLAMA_EVICT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -94,7 +98,8 @@ pub struct LlmManager {
     app: AppHandle,
     client: reqwest::Client,
     ollama: OllamaClient,
-    /// Cancelled request ids — the Ollama drain loop checks this between chunks.
+    /// In-flight request cancellation — the Ollama drain and cloud chat paths
+    /// hold each request's awaitable token and `select!` on it.
     cancelled: CancelRegistry,
     /// Monotonic request-id source for fire-and-emit calls without a renderer id.
     seq: AtomicU64,
@@ -102,9 +107,10 @@ pub struct LlmManager {
     warmup_loop_started: AtomicBool,
     /// Cached shared unload policy for Ollama `keep_alive`, updated by settings runtime hooks.
     ollama_keep_alive_timeout: crate::settings::AtomicModelUnloadTimeout,
-    /// Stops background warmup/chat bookkeeping from starting new model loads
-    /// once app shutdown begins.
-    shutting_down: AtomicBool,
+    /// Latching app-shutdown signal. Background tasks await it directly while
+    /// synchronous guards use `is_cancelled`, so shutdown never waits for a
+    /// periodic timer to notice an atomic flag.
+    shutdown: CancellationToken,
     /// Coalesces Ollama warmup passes and tracks models this process warmed.
     lifecycle: ModelSwapCoordinator,
     /// Models (by `llm_model_key`) whose dictation prompt-prefix has been primed
@@ -179,7 +185,7 @@ impl LlmManager {
             seq: AtomicU64::new(1),
             warmup_loop_started: AtomicBool::new(false),
             ollama_keep_alive_timeout: crate::settings::AtomicModelUnloadTimeout::new(timeout),
-            shutting_down: AtomicBool::new(false),
+            shutdown: CancellationToken::new(),
             lifecycle: ModelSwapCoordinator::new(),
             primed_prompts: Mutex::new(std::collections::HashSet::new()),
             openrouter_supported_parameters: Mutex::new(HashMap::new()),
@@ -224,12 +230,12 @@ impl LlmManager {
     }
 
     pub fn begin_shutdown(&self) {
-        self.shutting_down.store(true, Ordering::Release);
+        self.shutdown.cancel();
         self.cancel_all();
     }
 
     pub(crate) fn is_shutting_down(&self) -> bool {
-        self.shutting_down.load(Ordering::Acquire)
+        self.shutdown.is_cancelled()
     }
 
     fn track_cancel(&self, request_id: &str) {

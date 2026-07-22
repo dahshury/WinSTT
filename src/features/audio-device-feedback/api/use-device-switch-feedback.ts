@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useTranslations } from "use-intl";
 import {
 	resolveEffectivePriorityDeviceIndex,
@@ -7,11 +7,7 @@ import {
 } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
-import {
-	audioSetSelectedMicrophone,
-	onDeviceSwitchFailed,
-	settingsSave,
-} from "@/shared/api/ipc-client";
+import { onDeviceSwitchFailed, settingsSave } from "@/shared/api/ipc-client";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
@@ -98,39 +94,6 @@ export function useDeviceSwitchFeedback(): void {
 	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
 	const { devices, refresh } = useInputDevices();
 	const { sinkIds: outputSinkIds } = useOutputDevices();
-	const lastSyncedMicRef = useRef<string | null>(null);
-
-	// Bridge the renderer's `audio.inputDeviceIndex` selection to the BACKEND recorder's
-	// `selected_microphone`. These are SEPARATE settings stores: the device pickers write
-	// `inputDeviceIndex` (winstt-settings) but `get_effective_microphone_device` reads
-	// `selected_microphone` (the cpal device NAME, in the legacy store). Without this bridge,
-	// picking a mic in the UI never reaches the recorder — the symptom that left a silent
-	// Bluetooth headset selected. The device list comes from `audioGetDevices()` (cpal), so
-	// `device.name` matches what the backend expects. `set_selected_microphone` also restarts
-	// the input stream, so guard on the RESOLVED name to avoid a restart on every device
-	// refresh. Also syncs on startup → the persisted selection takes effect immediately.
-	useEffect(() => {
-		if (devices.length === 0) {
-			return;
-		}
-		// `AudioDevice.index` is a NUMBER (i32 from the backend AudioDevicePayload) and
-		// `savedIndex` is a number too — compare via String() on BOTH so a number/string
-		// mismatch can't make this silently never match (the earlier `=== String(savedIndex)`
-		// bug compared number-vs-string → always false → the mic selection never reached the
-		// recorder).
-		const name =
-			savedIndex == null
-				? "default"
-				: devices.find((d) => String(d.index) === String(savedIndex))?.name;
-		if (!name || name === lastSyncedMicRef.current) {
-			return;
-		}
-		lastSyncedMicRef.current = name;
-		audioSetSelectedMicrophone(name).catch((e) =>
-			console.error("set_selected_microphone failed:", e),
-		);
-	}, [devices, savedIndex]);
-
 	useEffect(() => {
 		const unsub = onDeviceSwitchFailed(({ errorMessage, fallbackIndex }) => {
 			updateAudio({ inputDeviceIndex: fallbackIndex });
@@ -172,9 +135,7 @@ export function useDeviceSwitchFeedback(): void {
 	// `inputDeviceIndex` at the highest-priority CONNECTED device. This is what
 	// makes plugging a preferred mic back in switch to it automatically — and it
 	// keeps the pickers' checkmark on the device the recorder will actually
-	// open (the backend applies the same rule at stream-open time). The
-	// `set_selected_microphone` bridge effect above then pushes the switch to
-	// the live stream.
+	// open (the backend applies the same rule at stream-open time).
 	useEffect(() => {
 		if (devices.length === 0 || savedPriority.length === 0) {
 			return;

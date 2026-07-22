@@ -20,14 +20,24 @@ impl TranscriptionManager {
     /// clear the flag and wake waiters. Returns `None` if a load is already in
     /// progress.
     pub fn try_start_loading(&self) -> Option<LoadingGuard> {
-        let mut is_loading = self.lock_is_loading();
-        if *is_loading {
+        // Keep the same lock order as `LoadingGuard::drop` and the idle-unload
+        // final check: lifecycle -> is_loading. Claiming the flag first and
+        // notifying second creates an AB-BA cycle with those paths.
+        let claimed = self.idle_watcher_signal.update(|| {
+            let mut is_loading = self.lock_is_loading();
+            if *is_loading {
+                return false;
+            }
+            *is_loading = true;
+            true
+        });
+        if !claimed {
             return None;
         }
-        *is_loading = true;
         Some(LoadingGuard {
             is_loading: self.is_loading.clone(),
             loading_condvar: self.loading_condvar.clone(),
+            idle_watcher_signal: self.idle_watcher_signal.clone(),
         })
     }
 
@@ -48,6 +58,7 @@ impl TranscriptionManager {
         }
         self.set_active_engine_providers(None);
         self.clear_warmed_model();
+        self.idle_watcher_signal.notify();
 
         // Emit unloaded event
         let _ = self.app_handle.emit(
@@ -173,6 +184,7 @@ impl TranscriptionManager {
                     let mut current = self.lock_current_model();
                     *current = Some(model_id.to_string());
                 }
+                self.warm_wait_signal.signal();
                 self.touch_activity();
                 Ok(())
             }
@@ -377,20 +389,22 @@ impl TranscriptionManager {
             return SttWarmupOutcome::InFlight;
         }
         // Clear `warming` on EVERY exit path (early return / panic) via RAII.
-        let warming_guard = WarmingGuard(&self.warming);
+        let warming_guard = WarmingGuard {
+            warming: self.warming.clone(),
+            warm_wait_signal: self.warm_wait_signal.clone(),
+        };
 
         // PREEMPTABLE: grab the engine with `try_lock`, NOT a blocking `lock()`. If a real
         // transcribe() already holds it, the warmup yields (the user's decode IS the warmup) —
         // it never blocks the dictation path. Hold the lock for the dummy decode itself; a real
         // decode that arrives after we grab the lock waits only on the engine mutex (not the
         // load condvar), and there's nothing to gain by warming twice.
-        let mut engine_guard = match self.engine.try_lock() {
-            Ok(g) => g,
-            Err(std::sync::TryLockError::WouldBlock) => {
+        let mut engine_guard = match self.try_lock_engine() {
+            Some(guard) => guard,
+            None => {
                 debug!("[stt] warmup yielded -- a real decode is using the engine");
-                return SttWarmupOutcome::InFlight;
+                return SttWarmupOutcome::EngineInFlight;
             }
-            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
         };
         // Decode dummy silence DIRECTLY (the backend's warmup bypasses the RMS silence-gate that
         // would reject all-zeros). Keep the engine IN the guard — a panic is caught and the engine
@@ -407,7 +421,10 @@ impl TranscriptionManager {
                     Err(_) => Err(anyhow::anyhow!("WinSTT warmup panicked")),
                 }
             } else {
-                Ok(())
+                // Batch decode owns the engine outside the mutex after `take()`. Its return/removal
+                // path publishes the next engine/lifecycle edge; do not mark warm prematurely.
+                drop(engine_guard);
+                return SttWarmupOutcome::EngineInFlight;
             };
         drop(engine_guard);
 
@@ -480,7 +497,24 @@ impl TranscriptionManager {
                 | SttWarmupOutcome::NothingToWarm
                 | SttWarmupOutcome::Failed => return,
                 SttWarmupOutcome::InFlight => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let remaining = deadline.saturating_sub(started.elapsed());
+                    if remaining.is_zero()
+                        || !self
+                            .warm_wait_signal
+                            .wait_while_warming(&self.warming, remaining)
+                    {
+                        break;
+                    }
+                }
+                SttWarmupOutcome::EngineInFlight => {
+                    let remaining = deadline.saturating_sub(started.elapsed());
+                    if remaining.is_zero()
+                        || !self
+                            .warm_wait_signal
+                            .wait_for_engine_return(&self.engine, remaining)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -614,6 +648,7 @@ impl TranscriptionManager {
             let mut current = self.lock_current_model();
             *current = Some(model_id.to_string());
         }
+        self.warm_wait_signal.signal();
         self.touch_activity();
 
         let _ = self.app_handle.emit(

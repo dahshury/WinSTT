@@ -6,12 +6,13 @@ import { useVisualizerStore } from "../model/visualizer-store";
 import { useVisualizerSync } from "./use-visualizer-sync";
 
 const originalApi = window.nativeBridge;
+const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
-// Track every mounted hook so afterEach can tear them down — without an
-// explicit unmount, useVisualizerSync's rAF loop keeps running across test
-// files (bun:test doesn't isolate hook state) and continually calls
-// `setAudioLevel(0)`, racing with sibling tests like use-multiband-volume
-// that set audioLevel non-zero and expect it to stay.
+const frameCallbacks = new Map<number, FrameRequestCallback>();
+let nextFrameId = 1;
+// Track every mounted hook so afterEach can tear down its subscriptions and
+// any event-triggered frame that has not fired yet.
 let mountedHooks: RenderHookResult<unknown, unknown>[] = [];
 function renderHookTracked<T>(cb: () => T): RenderHookResult<T, void> {
 	const result = renderHook(cb);
@@ -21,6 +22,17 @@ function renderHookTracked<T>(cb: () => T): RenderHookResult<T, void> {
 
 beforeEach(() => {
 	listeners.clear();
+	frameCallbacks.clear();
+	nextFrameId = 1;
+	globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+		const id = nextFrameId;
+		nextFrameId += 1;
+		frameCallbacks.set(id, callback);
+		return id;
+	};
+	globalThis.cancelAnimationFrame = (id: number) => {
+		frameCallbacks.delete(id);
+	};
 	useVisualizerStore.setState({
 		isRecording: false,
 		isSpeaking: false,
@@ -49,6 +61,8 @@ afterEach(() => {
 		h.unmount();
 	}
 	mountedHooks = [];
+	globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+	globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
 	window.nativeBridge = originalApi;
 	useSettingsStore.getState().resetSettings();
 });
@@ -57,6 +71,28 @@ function fire(channel: string, ...args: unknown[]) {
 	for (const cb of listeners.get(channel) ?? []) {
 		cb(...args);
 	}
+}
+
+function runNextFrame(): void {
+	const next = frameCallbacks.entries().next().value;
+	if (!next) {
+		throw new Error("Expected a scheduled animation frame");
+	}
+	const [id, callback] = next;
+	frameCallbacks.delete(id);
+	act(() => callback(performance.now()));
+}
+
+function drainFrames(limit = 100): number {
+	let count = 0;
+	while (frameCallbacks.size > 0) {
+		if (count >= limit) {
+			throw new Error(`Animation frames did not settle within ${limit} ticks`);
+		}
+		runNextFrame();
+		count += 1;
+	}
+	return count;
 }
 
 describe("useVisualizerSync", () => {
@@ -79,6 +115,80 @@ describe("useVisualizerSync", () => {
 		renderHookTracked(() => useVisualizerSync());
 		fire(IPC.STT_RECORDING_START);
 		expect(useVisualizerStore.getState().isRecording).toBe(true);
+		expect(frameCallbacks.size).toBe(0);
+	});
+
+	test("coalesces audio-level events into one frame and does not poll afterward", () => {
+		renderHookTracked(() => useVisualizerSync());
+		fire(IPC.STT_RECORDING_START);
+
+		fire(IPC.STT_AUDIO_LEVEL, { level: 0.2 });
+		fire(IPC.STT_AUDIO_LEVEL, { level: 0.7 });
+
+		expect(frameCallbacks.size).toBe(1);
+		expect(useVisualizerStore.getState().audioLevel).toBe(0);
+
+		runNextFrame();
+
+		expect(useVisualizerStore.getState().audioLevel).toBe(0.7);
+		expect(frameCallbacks.size).toBe(0);
+	});
+
+	test("reacts on the first session when the retained snapshot restores recording state", () => {
+		renderHookTracked(() => useVisualizerSync());
+
+		// The first overlay WebView can mount after recording-start was already
+		// emitted. Its lifecycle reconciliation restores this retained state, but
+		// the hook never receives the missed recording-start edge.
+		act(() => useVisualizerStore.getState().recordingStarted());
+		fire(IPC.STT_AUDIO_LEVEL, { level: 0.65 });
+
+		expect(frameCallbacks.size).toBe(1);
+		runNextFrame();
+		expect(useVisualizerStore.getState().audioLevel).toBe(0.65);
+		expect(frameCallbacks.size).toBe(0);
+	});
+
+	test("ignores audio-level and sentence events outside an active recording", () => {
+		renderHookTracked(() => useVisualizerSync());
+
+		fire(IPC.STT_AUDIO_LEVEL, { level: 0.7 });
+		fire(IPC.STT_FULL_SENTENCE, { text: "done" });
+
+		expect(frameCallbacks.size).toBe(0);
+		expect(useVisualizerStore.getState().audioLevel).toBe(0);
+		expect(useVisualizerStore.getState().sentencePulse).toBe(0);
+	});
+
+	test("runs sentence pulse decay only until it reaches zero", () => {
+		renderHookTracked(() => useVisualizerSync());
+		fire(IPC.STT_RECORDING_START);
+
+		fire(IPC.STT_FULL_SENTENCE, { text: "done" });
+		expect(frameCallbacks.size).toBe(1);
+
+		runNextFrame();
+		expect(useVisualizerStore.getState().sentencePulse).toBe(1);
+		expect(frameCallbacks.size).toBe(1);
+
+		const decayFrames = drainFrames();
+		expect(decayFrames).toBeGreaterThan(0);
+		expect(useVisualizerStore.getState().sentencePulse).toBe(0);
+		expect(frameCallbacks.size).toBe(0);
+	});
+
+	test("recording-stop cancels pending audio and pulse frames", () => {
+		renderHookTracked(() => useVisualizerSync());
+		fire(IPC.STT_RECORDING_START);
+		fire(IPC.STT_AUDIO_LEVEL, { level: 0.8 });
+		fire(IPC.STT_FULL_SENTENCE, { text: "done" });
+		expect(frameCallbacks.size).toBe(2);
+
+		fire(IPC.STT_RECORDING_STOP);
+
+		expect(frameCallbacks.size).toBe(0);
+		expect(useVisualizerStore.getState().audioLevel).toBe(0);
+		expect(useVisualizerStore.getState().sentencePulse).toBe(0);
 	});
 
 	test("recording-stop clears isRecording and isSpeaking", () => {

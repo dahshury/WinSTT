@@ -43,9 +43,22 @@ export interface PausedPullState {
 	/** Last known progress before the cancel landed — used to render the
 	 *  dimmed progress bar so the user can see "I was at 60% before stopping". */
 	progress: OllamaPullProgress;
+	/** True when the pull was NOT stopped by the user: the process died
+	 *  mid-download (app quit, crash, dev rebuild) or the stream errored
+	 *  (daemon restart, network drop). Unlike a user Stop, there is no
+	 *  cancelled stream whose straggler frames could resurrect the entry —
+	 *  so ANY incoming frame may revive it (see {@link applyActiveProgress}),
+	 *  which heals the case where the pull actually survived a webview reload. */
+	interrupted?: boolean;
 }
 
 const PAUSED_PULLS_STORAGE_KEY = "winstt:ollama-paused-pulls";
+/** Mirror of the ACTIVE pull map (model → last progress). A pull that dies
+ *  with the process never emits a cancelled/error frame, so without this
+ *  mirror it would leave no trace: the next session shows the quant as "not
+ *  installed" while gigabytes of resumable partial blobs sit in Ollama's
+ *  store. On hydrate, entries fold into `pausedPulls` as `interrupted`. */
+const ACTIVE_PULLS_STORAGE_KEY = "winstt:ollama-active-pulls";
 
 // Validate the persisted blob on hydrate — localStorage is user-writable and
 // can be left over from an older schema, so a raw `as` cast could smuggle
@@ -65,49 +78,121 @@ const ollamaPullProgressSchema = z.object({
 const pausedPullStateSchema = z.object({
 	pausedAt: z.number(),
 	progress: ollamaPullProgressSchema,
+	interrupted: z.boolean().optional(),
 });
 
 const pausedPullsSchema = z.record(z.string(), pausedPullStateSchema);
 
-/** Load persisted paused pulls. Gated on `hasTauriRuntime()` (the synchronously
- *  injected `__TAURI_INTERNALS__`, present from the first renderer module).
- *  This keeps module-load reads deterministic and remains false under plain Vite
- *  or a browser preview, so those environments start clean. */
-function loadPersistedPausedPulls(): Record<string, PausedPullState> {
-	if (
-		!hasTauriRuntime() ||
-		typeof window === "undefined" ||
-		!window.localStorage
-	) {
-		return {};
+const activePullsSchema = z.record(z.string(), ollamaPullProgressSchema);
+
+/** Gate for all persistence reads/writes: `hasTauriRuntime()` (the synchronously
+ *  injected `__TAURI_INTERNALS__`, present from the first renderer module) keeps
+ *  module-load reads deterministic and remains false under plain Vite or a
+ *  browser preview, so those environments start clean. */
+function canUseLocalStorage(): boolean {
+	return (
+		hasTauriRuntime() && typeof window !== "undefined" && !!window.localStorage
+	);
+}
+
+function readPersistedRecord<S extends z.ZodTypeAny>(
+	key: string,
+	schema: S,
+): z.infer<S> | undefined {
+	if (!canUseLocalStorage()) {
+		return undefined;
 	}
 	try {
-		const raw = window.localStorage.getItem(PAUSED_PULLS_STORAGE_KEY);
-		const parsed = pausedPullsSchema.safeParse(raw ? JSON.parse(raw) : null);
-		// `progress` widens to `OllamaPullProgress` (status is the same enum) — the
-		// cast crosses the generated-type ↔ zod boundary, not unchecked input.
-		return parsed.success
-			? (parsed.data as Record<string, PausedPullState>)
-			: {};
+		const raw = window.localStorage.getItem(key);
+		const parsed = schema.safeParse(raw ? JSON.parse(raw) : null);
+		return parsed.success ? parsed.data : undefined;
 	} catch {
-		return {};
+		return undefined;
 	}
+}
+
+/**
+ * Load the paused-pull map for a fresh renderer, folding in pulls that were
+ * ACTIVE when the previous session ended. The process that ran them is gone
+ * (app quit, crash, or a dev rebuild) and the daemon stops downloading the
+ * moment its client stream drops — so their last persisted progress re-enters
+ * the UI as an `interrupted` paused entry: the quant renders "partial N% /
+ * Resume" instead of silently reverting to "not installed" while resumable
+ * partial blobs sit in Ollama's store.
+ *
+ * After folding, both keys are rewritten: the merged map becomes the only
+ * source of truth under the paused key and the active key is cleared, so a
+ * later Discard can't be resurrected by stale active-pull leftovers.
+ */
+function loadInitialPausedPulls(): Record<string, PausedPullState> {
+	// `progress` widens to `OllamaPullProgress` (status is the same enum) — the
+	// cast crosses the generated-type ↔ zod boundary, not unchecked input.
+	const paused = (readPersistedRecord(
+		PAUSED_PULLS_STORAGE_KEY,
+		pausedPullsSchema,
+	) ?? {}) as Record<string, PausedPullState>;
+	const active = (readPersistedRecord(
+		ACTIVE_PULLS_STORAGE_KEY,
+		activePullsSchema,
+	) ?? {}) as Record<string, OllamaPullProgress>;
+	const merged = foldInterruptedActivePulls(paused, active);
+	if (Object.keys(active).length > 0) {
+		persistPausedPulls(merged);
+		persistActivePullProgress({});
+	}
+	return merged;
+}
+
+/**
+ * Fold last-known ACTIVE pull progress from a dead session into the paused map
+ * as `interrupted` entries. An artifact that already has an explicit paused
+ * snapshot (any alias spelling) keeps it — the user's Stop carries the real
+ * `pausedAt` and its snapshot was taken at the moment the cancel landed.
+ */
+export function foldInterruptedActivePulls(
+	paused: Readonly<Record<string, PausedPullState>>,
+	active: Readonly<Record<string, OllamaPullProgress>>,
+): Record<string, PausedPullState> {
+	const merged: Record<string, PausedPullState> = { ...paused };
+	for (const [model, progress] of Object.entries(active)) {
+		if (aliasKeys(merged, model).length > 0) {
+			continue;
+		}
+		merged[model] = { pausedAt: Date.now(), progress, interrupted: true };
+	}
+	return merged;
 }
 
 function persistPausedPulls(
 	pausedPulls: Record<string, PausedPullState>,
 ): void {
-	if (
-		!hasTauriRuntime() ||
-		typeof window === "undefined" ||
-		!window.localStorage
-	) {
+	if (!canUseLocalStorage()) {
 		return;
 	}
 	try {
 		window.localStorage.setItem(
 			PAUSED_PULLS_STORAGE_KEY,
 			JSON.stringify(pausedPulls),
+		);
+	} catch {
+		// Best-effort hint — ignore quota / serialization failures.
+	}
+}
+
+function persistActivePullProgress(
+	pulls: Readonly<Record<string, { progress: OllamaPullProgress }>>,
+): void {
+	if (!canUseLocalStorage()) {
+		return;
+	}
+	try {
+		const compact: Record<string, OllamaPullProgress> = {};
+		for (const [model, entry] of Object.entries(pulls)) {
+			compact[model] = entry.progress;
+		}
+		window.localStorage.setItem(
+			ACTIVE_PULLS_STORAGE_KEY,
+			JSON.stringify(compact),
 		);
 	} catch {
 		// Best-effort hint — ignore quota / serialization failures.
@@ -234,16 +319,23 @@ function withoutAliases<V>(
 	return next;
 }
 
-/** Build the next paused-pulls map when a pull is cancelled — snapshot the
- *  last known active progress so the UI can render "I was at 60% before stopping". */
+/** Build the next paused-pulls map when a pull stops — snapshot the last known
+ *  active progress so the UI can render "I was at 60% before stopping".
+ *  `interrupted` marks a stop the user did NOT ask for (stream error, dead
+ *  invoke) — those entries may be revived by any later frame. */
 function recordPausedSnapshot(
 	pausedPulls: Record<string, PausedPullState>,
 	model: string,
 	progress: OllamaPullProgress,
+	interrupted = false,
 ): Record<string, PausedPullState> {
+	const entry: PausedPullState = { progress, pausedAt: Date.now() };
+	if (interrupted) {
+		entry.interrupted = true;
+	}
 	return {
 		...pausedPulls,
-		[model]: { progress, pausedAt: Date.now() },
+		[model]: entry,
 	};
 }
 
@@ -282,9 +374,10 @@ function mergePullProgress(
 	return merged;
 }
 
-function applyCancelled(
+function applyStopped(
 	slices: PullSlices,
 	progress: OllamaPullProgress,
+	interrupted: boolean,
 ): Partial<PullSlices> {
 	const existing = slices.pulls[progress.model];
 	const nextPulls = withoutKey(slices.pulls, progress.model);
@@ -297,6 +390,7 @@ function applyCancelled(
 			slices.pausedPulls,
 			progress.model,
 			existing.progress,
+			interrupted,
 		),
 	};
 }
@@ -342,9 +436,18 @@ function applyActiveProgress(
 	// invoke, so a resume clicked in the detached picker revives the paused
 	// entry in EVERY window — otherwise the settings trigger kept showing the
 	// model as paused and never rendered the re-download's progress.
+	// `interrupted` snapshots are also revivable by ANY frame: they were
+	// created by hydration or a stream error, not by a user Stop, so no
+	// cancelled stream exists whose stragglers could resurrect them — a frame
+	// arriving means a pull is genuinely streaming (e.g. it survived a webview
+	// hot-reload while this window's store started fresh).
+	const everyPausedAliasInterrupted = pausedAliasKeys.every(
+		(key) => slices.pausedPulls[key]?.interrupted === true,
+	);
 	if (
 		!existing &&
 		pausedAliasKeys.length > 0 &&
+		!everyPausedAliasInterrupted &&
 		!isLeadingPullFrame(progress)
 	) {
 		return {};
@@ -381,10 +484,15 @@ function nextPullSlices(
 	if (!isTerminalStatus(progress.status)) {
 		return applyActiveProgress(slices, progress);
 	}
-	if (progress.status === "cancelled") {
-		return applyCancelled(slices, progress);
+	if (progress.status === "success") {
+		return applyTerminalClear(slices, progress.model);
 	}
-	return applyTerminalClear(slices, progress.model);
+	// cancelled = user Stop; error = the stream died on its own (daemon
+	// restart, network drop, dev rebuild racing the pull). Both keep a
+	// resumable snapshot — error used to terminal-clear pausedPulls too, so a
+	// mid-download failure silently reverted the quant to "not installed"
+	// while its partial blobs stayed resumable on disk.
+	return applyStopped(slices, progress, progress.status === "error");
 }
 
 /** Build the seed progress for a fresh or resumed pull — when resuming from
@@ -452,7 +560,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	isReachable: false,
 	error: null,
 	pulls: {},
-	pausedPulls: loadPersistedPausedPulls(),
+	pausedPulls: loadInitialPausedPulls(),
 	setModels: (models) => set({ models, isLoaded: true, error: null }),
 	setScanning: (scanning) => set({ isScanning: scanning }),
 	setError: (error) => set({ error, isLoaded: true }),
@@ -511,6 +619,28 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		const result = await pullOllamaModel(model);
 		if (result.success) {
 			await get().scanModels();
+		} else {
+			// The invoke can fail WITHOUT a terminal frame (llm.rs returns early on
+			// window-authorization / name-validation rejects) — without this the
+			// seeded entry would spin as "starting" forever. When an error frame
+			// already moved the entry to pausedPulls this is a no-op. Progress made
+			// before the failure stays resumable as an interrupted snapshot.
+			const current = get();
+			const entry = current.pulls[model];
+			if (entry) {
+				const cleanup: Partial<PullSlices> = {
+					pulls: withoutKey(current.pulls, model),
+				};
+				if (entry.progress.percent !== undefined) {
+					cleanup.pausedPulls = recordPausedSnapshot(
+						current.pausedPulls,
+						model,
+						entry.progress,
+						true,
+					);
+				}
+				set(cleanup);
+			}
 		}
 		return { success: result.success, error: result.error };
 	},
@@ -577,14 +707,24 @@ if (hasNativeRuntime()) {
 	onOllamaPullProgress((progress) =>
 		useLlmCatalogStore.getState().setPullProgress(progress),
 	);
-	// Persist paused pulls (only) when they change, so partial downloads survive a
-	// settings-window close. Change-detected by reference so frequent active-pull
-	// progress frames don't thrash localStorage.
+	// Persist paused pulls when they change, so partial downloads survive a
+	// settings-window close — and mirror the ACTIVE pull map so a pull that dies
+	// WITH the process (app quit, crash, dev rebuild: no cancelled/error frame
+	// ever arrives) re-enters the next session as an interrupted paused entry
+	// instead of vanishing while its partial blobs sit on disk. Both are
+	// change-detected by reference; `pulls` only gets a new reference about once
+	// per integer percent (see isRedundantProgressFrame), so the mirror costs
+	// ~100 writes per download, not one per NDJSON chunk.
 	let lastPaused = useLlmCatalogStore.getState().pausedPulls;
+	let lastPulls = useLlmCatalogStore.getState().pulls;
 	useLlmCatalogStore.subscribe((state) => {
 		if (state.pausedPulls !== lastPaused) {
 			lastPaused = state.pausedPulls;
 			persistPausedPulls(state.pausedPulls);
+		}
+		if (state.pulls !== lastPulls) {
+			lastPulls = state.pulls;
+			persistActivePullProgress(state.pulls);
 		}
 	});
 }

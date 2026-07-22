@@ -48,7 +48,9 @@ mock.module("@/shared/api/ipc-client", () => ({
 	}),
 }));
 
-const { useLlmCatalogStore } = await import("./llm-catalog-store");
+const { useLlmCatalogStore, foldInterruptedActivePulls } = await import(
+	"./llm-catalog-store"
+);
 
 // `useLlmCatalogStore` is a process-global Zustand singleton with no teardown
 // between bun:test files. This suite's `scanModels()` populates
@@ -277,21 +279,34 @@ describe("useLlmCatalogStore.setPullProgress", () => {
 		expect(useLlmCatalogStore.getState().pulls["llama3"]).toBeUndefined();
 	});
 
-	test("removes pull entry on 'error' terminal status", () => {
+	test("moves pull entry to an interrupted paused snapshot on 'error' terminal status", () => {
+		// An error mid-download (daemon restart, network drop) is NOT a reason to
+		// discard the partial: Ollama keeps the blobs on disk and a re-pull resumes
+		// from them. Wiping the entry made the download look like it silently
+		// vanished — the user's "reaches ~40% and then stops with nothing to show".
 		useLlmCatalogStore.setState({
 			pulls: {
 				llama3: {
-					progress: { model: "llama3", status: "pulling", statusText: "x" },
+					progress: {
+						model: "llama3",
+						status: "downloading",
+						statusText: "x",
+						percent: 40,
+					},
 					startedAt: Date.now(),
 				},
 			},
+			pausedPulls: {},
 		});
 		useLlmCatalogStore.getState().setPullProgress({
 			model: "llama3",
 			status: "error",
 			statusText: "failed",
 		});
-		expect(useLlmCatalogStore.getState().pulls["llama3"]).toBeUndefined();
+		const state = useLlmCatalogStore.getState();
+		expect(state.pulls["llama3"]).toBeUndefined();
+		expect(state.pausedPulls["llama3"]?.progress.percent).toBe(40);
+		expect(state.pausedPulls["llama3"]?.interrupted).toBe(true);
 	});
 
 	test("removes pull entry on 'cancelled' terminal status", () => {
@@ -589,7 +604,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		expect(useLlmCatalogStore.getState().pausedPulls["phi"]).toBeUndefined();
 	});
 
-	test("an 'error' status clears any paused entry for the same model", () => {
+	test("an 'error' status with no active pull preserves the paused entry", () => {
+		// A dying stream's error gasp (or a failed resume attempt) must not wipe
+		// the resumable snapshot — the partial blobs are still on disk.
 		useLlmCatalogStore.setState({
 			pulls: {},
 			pausedPulls: {
@@ -602,7 +619,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		useLlmCatalogStore
 			.getState()
 			.setPullProgress({ model: "phi", status: "error", error: "bad" });
-		expect(useLlmCatalogStore.getState().pausedPulls["phi"]).toBeUndefined();
+		expect(
+			useLlmCatalogStore.getState().pausedPulls["phi"]?.progress.percent,
+		).toBe(50);
 	});
 
 	test("late non-terminal progress after stop does not resurrect an active pull", () => {
@@ -971,5 +990,168 @@ describe("useLlmCatalogStore — cross-window resume revival", () => {
 		const state = useLlmCatalogStore.getState();
 		expect(Object.keys(state.pulls)).toEqual([]);
 		expect(Object.keys(state.pausedPulls)).toEqual(["smollm2"]);
+	});
+});
+
+describe("useLlmCatalogStore — interrupted pulls (process died mid-download)", () => {
+	const interruptedAt40 = (model: string) => ({
+		pausedAt: 1,
+		interrupted: true,
+		progress: { model, status: "downloading" as const, percent: 40 },
+	});
+
+	test("any frame revives an interrupted snapshot (pull survived a webview reload)", () => {
+		// Interrupted entries come from hydration or a stream error — no user
+		// Stop happened, so there is no cancelled stream whose stragglers could
+		// resurrect them. A frame arriving means a pull is genuinely streaming;
+		// keeping the entry frozen on "paused 40%" would hide live progress.
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: { smollm2: interruptedAt40("smollm2") },
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "downloading",
+			percent: 41,
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pausedPulls)).toEqual([]);
+		// Revived AND seeded from the snapshot (monotonic merge keeps 41).
+		expect(state.pulls["smollm2"]?.progress.percent).toBe(41);
+	});
+
+	test("a user-paused sibling alias still blocks revival by non-leading frames", () => {
+		useLlmCatalogStore.setState({
+			pulls: {},
+			pausedPulls: {
+				smollm2: interruptedAt40("smollm2"),
+				"smollm2:latest": {
+					pausedAt: 2,
+					progress: {
+						model: "smollm2:latest",
+						status: "downloading" as const,
+						percent: 45,
+					},
+				},
+			},
+		});
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "smollm2",
+			status: "downloading",
+			percent: 46,
+		});
+
+		const state = useLlmCatalogStore.getState();
+		expect(Object.keys(state.pulls)).toEqual([]);
+	});
+
+	test("foldInterruptedActivePulls turns dead-session actives into interrupted paused entries", () => {
+		const folded = foldInterruptedActivePulls(
+			{},
+			{
+				"qwen3.5:4b-q4_K_M": {
+					model: "qwen3.5:4b-q4_K_M",
+					status: "downloading",
+					percent: 40,
+				},
+			},
+		);
+		expect(folded["qwen3.5:4b-q4_K_M"]?.interrupted).toBe(true);
+		expect(folded["qwen3.5:4b-q4_K_M"]?.progress.percent).toBe(40);
+	});
+
+	test("foldInterruptedActivePulls keeps an explicit paused snapshot over a stale active alias", () => {
+		const folded = foldInterruptedActivePulls(
+			{
+				"smollm2:latest": {
+					pausedAt: 7,
+					progress: {
+						model: "smollm2:latest",
+						status: "downloading",
+						percent: 60,
+					},
+				},
+			},
+			{
+				smollm2: { model: "smollm2", status: "downloading", percent: 55 },
+			},
+		);
+		// One artifact — the user's Stop snapshot wins; no duplicate alias entry.
+		expect(Object.keys(folded)).toEqual(["smollm2:latest"]);
+		expect(folded["smollm2:latest"]?.progress.percent).toBe(60);
+		expect(folded["smollm2:latest"]?.interrupted).toBeUndefined();
+	});
+
+	test("active pull progress is mirrored to localStorage and cleared on success", () => {
+		window.localStorage.removeItem("winstt:ollama-active-pulls");
+		useLlmCatalogStore.setState({ pulls: {}, pausedPulls: {} });
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "phi",
+			status: "downloading",
+			percent: 40,
+		});
+		let raw = window.localStorage.getItem("winstt:ollama-active-pulls");
+		expect(raw).toBeTruthy();
+		let parsed = JSON.parse(raw ?? "{}") as Record<
+			string,
+			{ percent?: number }
+		>;
+		// This is exactly what the next session folds back in as "interrupted at
+		// 40% — Resume" when the process dies without a terminal frame.
+		expect(parsed["phi"]?.percent).toBe(40);
+
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "phi", status: "success" });
+		raw = window.localStorage.getItem("winstt:ollama-active-pulls");
+		parsed = JSON.parse(raw ?? "{}") as Record<string, { percent?: number }>;
+		expect(parsed["phi"]).toBeUndefined();
+	});
+});
+
+describe("useLlmCatalogStore.pullModel — failed invoke cleanup", () => {
+	test("a failed pull with no progress removes the stuck 'starting' seed", async () => {
+		ipcOverrides.pullSuccess = false;
+		try {
+			useLlmCatalogStore.setState({
+				pulls: {},
+				pausedPulls: {},
+				isScanning: false,
+			});
+			await useLlmCatalogStore.getState().pullModel("brand-new");
+			const state = useLlmCatalogStore.getState();
+			expect(state.pulls["brand-new"]).toBeUndefined();
+			expect(state.pausedPulls["brand-new"]).toBeUndefined();
+		} finally {
+			ipcOverrides.pullSuccess = true;
+		}
+	});
+
+	test("a failed resume keeps the prior percent as an interrupted snapshot", async () => {
+		ipcOverrides.pullSuccess = false;
+		try {
+			useLlmCatalogStore.setState({
+				pulls: {},
+				pausedPulls: {
+					phi: {
+						pausedAt: 1,
+						progress: { model: "phi", status: "downloading", percent: 40 },
+					},
+				},
+				isScanning: false,
+			});
+			await useLlmCatalogStore.getState().resumePull("phi");
+			const state = useLlmCatalogStore.getState();
+			expect(state.pulls["phi"]).toBeUndefined();
+			// The 40% partial is still on disk — the UI must keep offering Resume.
+			expect(state.pausedPulls["phi"]?.progress.percent).toBe(40);
+			expect(state.pausedPulls["phi"]?.interrupted).toBe(true);
+		} finally {
+			ipcOverrides.pullSuccess = true;
+		}
 	});
 });

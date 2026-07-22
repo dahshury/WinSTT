@@ -253,7 +253,7 @@ pub fn ollama_structured_output_schema() -> serde_json::Value {
             "learned_proper_nouns": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Dictionary terms learned from the dictated text only: proper nouns, acronyms, product names, project names, technical jargon, or domain-specific terms. Empty when none."
+                "description": "Canonical terms that the model actually corrected from a different, incorrect STT rendering in the input. This is correction memory, not vocabulary extraction. Empty when the input already contained the term correctly or when no STT correction occurred."
             },
             "learned_snippets": {
                 "type": "array",
@@ -327,14 +327,14 @@ pub fn ollama_dictionary_suggestion_tool() -> serde_json::Value {
         "type": "function",
         "function": {
             "name": OLLAMA_DICTIONARY_TOOL_NAME,
-            "description": "Suggest spoken proper nouns, acronyms, product names, technical jargon, or domain-specific terms that WinSTT should offer to remember in its dictionary. Only include words actually present in the user's dictation. Do not include common words, full sentences, URLs, emails, passwords, or secrets.",
+            "description": "Suggest only canonical terms that were corrected from a different, incorrect speech-to-text rendering in the input. This is correction memory, not vocabulary extraction: never suggest a term merely because it is a proper noun, product, acronym, or technical term, and never suggest a term the input already transcribed correctly. Use no suggestion when uncertain. Do not include common phrases, full sentences, URLs, emails, passwords, or secrets.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "terms": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "One to five canonical dictionary terms exactly as they should be remembered."
+                        "description": "Zero to five canonical terms that replace demonstrated STT mistakes. Return an empty array when no such correction occurred."
                     }
                 },
                 "required": ["terms"]

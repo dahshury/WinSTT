@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.7"
+version = "0.1.3-alpha.8"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
@@ -68,6 +68,10 @@ tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 once_cell = "1"
+# Callback-backed timed mutex acquisition for the encoder dictionary and Enigo
+# input state. Already in Tauri's dependency graph; declaring it directly lets
+# both paths park until release while preserving their bounded lock waits.
+parking_lot = "0.12.5"
 # Cross-platform: `decode_folder_uri` (context/workspace_index.rs) percent-decodes
 # `file:///…` workspace URIs and is compiled on every target, so this can't live
 # in the Windows-only block with the gitignore walk that uses it.

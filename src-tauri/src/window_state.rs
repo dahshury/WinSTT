@@ -3,7 +3,7 @@
 
 use tauri::{AppHandle, Manager};
 
-use crate::{splash, winstt};
+use crate::splash;
 
 /// Dedicated store for window geometry persisted across runs. Kept separate from
 /// the settings store so it never collides with a user-facing setting and can be
@@ -129,7 +129,6 @@ fn show_main_window_with_restore(app: &AppHandle, restore_from_tray: bool) {
                 log::error!("Failed to set activation policy to Regular: {}", e);
             }
         }
-        winstt::commands::windows::schedule_post_startup_prewarm(app);
         return;
     }
 

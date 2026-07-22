@@ -301,6 +301,61 @@ describe("usePushToTalk", () => {
 		expect(useHotkeyStore.getState().micPhase).toBe("idle");
 	});
 
+	test("recording-stop clears toggle active state at a mode boundary", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		fire(IPC.HOTKEY_PRESSED);
+		expect(useHotkeyStore.getState().isActive).toBe(true);
+
+		fire(IPC.STT_RECORDING_STOP);
+
+		expect(useHotkeyStore.getState().isActive).toBe(false);
+		expect(useHotkeyStore.getState().micPhase).toBe("idle");
+	});
+
+	test("changing recording mode resets the toggle latch", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		fire(IPC.HOTKEY_PRESSED);
+		expect(useHotkeyStore.getState().isActive).toBe(true);
+
+		act(() => {
+			useSettingsStore.setState({
+				settings: {
+					...useSettingsStore.getState().settings,
+					general: {
+						...useSettingsStore.getState().settings.general,
+						recordingMode: "ptt",
+					},
+				},
+			});
+		});
+
+		expect(useHotkeyStore.getState().isActive).toBe(false);
+	});
+
 	test("listen mode short-circuits press without changing the phase", () => {
 		useSettingsStore.setState({
 			settings: {

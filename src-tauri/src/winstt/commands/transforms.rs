@@ -29,8 +29,9 @@
 // SELECTION CAPTURE (mirrors selection-capture.ts captureSelection): UIA
 // TextPattern selection first (side-effect-free, via the context sidecar
 // `--selection`); on an empty UIA read, the clipboard-sandwich fallback runs —
-// save clipboard → SendInput Ctrl+C → poll for the clipboard to change → restore
-// the original clipboard. The paste-back (crate::clipboard::paste) re-runs its
+// save clipboard → subscribe to clipboard changes → SendInput Ctrl+C → restore
+// the original clipboard. A bounded sampler remains only where native change
+// notifications are unavailable. The paste-back (crate::clipboard::paste) re-runs its
 // own clipboard sandwich, so the user's clipboard is left exactly as it was.
 //
 // MODULE LAYOUT: the implementation is split across sibling submodules under

@@ -277,16 +277,15 @@ impl LlmManager {
             app: self.app.clone(),
             request_id: request_id.to_string(),
         };
+        // Awaitable cancel handle: `cancel(request_id)` / `cancel_all()` fire it,
+        // and the client `select!`s on it so Esc / Alt+S aborts the in-flight
+        // request instantly instead of waiting on a poll tick.
+        let cancel = self.cancelled.cancel_token(request_id);
         let state = self
             .ollama
-            .stream_chat(
-                endpoint,
-                body,
-                || self.is_cancelled(request_id),
-                |delta| {
-                    sink.on_delta(delta);
-                },
-            )
+            .stream_chat(endpoint, body, &cancel, |delta| {
+                sink.on_delta(delta);
+            })
             .await;
         let state = match state {
             Ok(state) => state,
@@ -300,29 +299,30 @@ impl LlmManager {
             self.clear_cancel(request_id);
             return Err(format!("Ollama stream error: {err}"));
         }
-        let mut side_effects = llm::extract_dictation_side_effects(&state.content);
-        if emit_dictionary_suggestions {
-            side_effects.learned_proper_nouns = llm::merge_dictionary_suggestions(
-                llm::extract_dictionary_terms_from_tool_calls(&state.tool_calls)
-                    .into_iter()
-                    .chain(side_effects.learned_proper_nouns),
-            );
-        } else {
-            side_effects.learned_proper_nouns.clear();
-            side_effects.learned_snippets.clear();
-            side_effects.suggested_modifier_presets.clear();
-        }
-        // Persist structured dictionary suggestions immediately. If the settings
-        // store cannot be updated, fall back to the legacy review-strip event so
-        // the suggestion is not lost.
-        if emit_dictionary_suggestions {
-            self.persist_dictation_learning(&side_effects);
-        }
         if let Err(err) = ensure_ollama_stream_has_content(&state) {
             self.clear_cancel(request_id);
             return Err(err);
         }
         let (answer, reasoning) = finalize_chat_answer(&state.content, fallback);
+        let mut side_effects = llm::extract_dictation_side_effects(&state.content);
+        if emit_dictionary_suggestions {
+            side_effects.learned_proper_nouns = llm::filter_dictionary_corrections(
+                llm::extract_dictionary_terms_from_tool_calls(&state.tool_calls)
+                    .into_iter()
+                    .chain(side_effects.learned_proper_nouns),
+                fallback,
+                &answer,
+            );
+            // Persist only after the model's candidate terms have survived the
+            // raw-input vs cleaned-output correction proof above. If the store
+            // update fails, persist_dictation_learning emits the legacy review
+            // event so the suggestion is not lost.
+            self.persist_dictation_learning(&side_effects);
+        } else {
+            side_effects.learned_proper_nouns.clear();
+            side_effects.learned_snippets.clear();
+            side_effects.suggested_modifier_presets.clear();
+        }
         if let Some(r) = reasoning
             && !r.is_empty()
         {
@@ -368,25 +368,22 @@ impl LlmManager {
 
     /// Stream a model pull (`POST /api/pull`, stream=true), emitting
     /// `llm:pull-progress` for every coalesced NDJSON frame (broadcast to all
-    /// windows via `self.app`). `is_cancelled` is polled between frames so the
-    /// renderer's stop button aborts mid-stream. Mirrors `pullOllamaModel` +
+    /// windows via `self.app`). `cancel` (the renderer's stop button) aborts
+    /// mid-stream the instant it fires. Mirrors `pullOllamaModel` +
     /// `readPullStream` in the reference handler.
     ///
     /// Returns `PullOutcome` so the command can build the `OllamaPullResult`.
     /// (Emit is done internally rather than via a callback so the future stays
     /// `Send` for the Tauri command runtime — a `&dyn Fn` arg held across an
     /// `.await` would not be.)
-    pub async fn ollama_pull_stream<F>(
+    pub async fn ollama_pull_stream(
         &self,
         endpoint: &str,
         model: &str,
-        is_cancelled: F,
-    ) -> PullOutcome
-    where
-        F: Fn() -> bool + Send,
-    {
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> PullOutcome {
         self.ollama
-            .pull_stream(endpoint, model, is_cancelled, |payload| {
+            .pull_stream(endpoint, model, cancel, |payload| {
                 self.emit_pull(payload);
             })
             .await

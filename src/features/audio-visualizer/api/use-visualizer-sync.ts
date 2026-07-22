@@ -19,7 +19,9 @@ const PULSE_DECAY = 0.03;
  * Subscribes to recording / VAD / audio-level IPC events and drives the
  * visualizer store with real RMS audio levels from the server.
  *
- * The rAF loop only runs while a recording is in progress. On
+ * Audio levels are coalesced into at most one pending rAF commit. Sentence
+ * pulses use a short-lived rAF chain that stops once the pulse reaches zero;
+ * there is no always-on polling loop while recording. On
  * `recording_stop`, the store is committed to zero synchronously via
  * `recordingStopped()` — there is deliberately no post-stop fade-out tween.
  * A fade driven by rAF would pause along with the rest of the renderer
@@ -39,20 +41,21 @@ export function useVisualizerSync(): void {
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
 
-	const rafRef = useRef(0);
+	const audioFrameRef = useRef(0);
+	const pulseFrameRef = useRef(0);
 	const activeRef = useRef(false);
 
-	// Mutable accumulators updated from IPC callbacks, read in rAF loop.
+	// Mutable accumulators updated from IPC callbacks and committed on the next
+	// scheduled frame.
 	const rawLevelRef = useRef(0);
 	const sentenceFiredRef = useRef(false);
 
 	// Smoothed values persisted across frames.
 	const pulseRef = useRef(0);
 
-	// Last value actually committed to the store, so the rAF loop can skip a
+	// Last value actually committed to the store, so callbacks can skip a
 	// `set` (and the useAgentState/animator recompute it triggers downstream)
-	// on frames where nothing changed — e.g. sustained silence or a fully
-	// decayed pulse sitting at 0.
+	// when nothing changed.
 	const committedLevelRef = useRef(0);
 	const committedPulseRef = useRef(0);
 
@@ -60,51 +63,11 @@ export function useVisualizerSync(): void {
 	// "mode actually changed" apart from "hook just mounted".
 	const prevRecordingModeRef = useRef(recordingMode);
 
-	// Hold the latest animate fn in a ref so subscription effects can schedule
-	// frames without listing it as a dependency (the function closes over
-	// store setters which are stable, but the ref keeps things honest).
-	// @crap-exclude rAF callback — covered via E2E
-	const animateRef = useRef<() => void>(() => undefined);
-	// Same trick for the shared teardown used by recording-stop, session-abort,
+	// Keep the shared teardown used by recording-stop, session-abort,
 	// loopback-stop, and recording-mode-change: keeping it behind a ref means
 	// the IPC subscription effects below can depend on a stable reference
 	// instead of resubscribing every render.
 	const resetRef = useRef<() => void>(() => undefined);
-	// Keep the latest animate fn in the ref without writing `.current` during
-	// render (the React Compiler forbids that). A layout effect runs before any
-	// rAF the subscription effects schedule, so `animateRef.current` is fresh
-	// before the first frame ticks. It closes over the stable store setters and
-	// refs, so it never goes stale between renders.
-	useLayoutEffect(() => {
-		animateRef.current = () => {
-			if (!activeRef.current) {
-				return;
-			}
-
-			if (rawLevelRef.current !== committedLevelRef.current) {
-				committedLevelRef.current = rawLevelRef.current;
-				setAudioLevel(rawLevelRef.current);
-			}
-
-			let pulse = pulseRef.current;
-			if (sentenceFiredRef.current) {
-				pulse = 1;
-				sentenceFiredRef.current = false;
-			} else {
-				pulse = Math.max(0, pulse - PULSE_DECAY);
-			}
-			// Always advance the decay, even when the commit below is skipped,
-			// so a pulse sitting just above 0 keeps decaying toward it instead
-			// of freezing at its last-committed value.
-			pulseRef.current = pulse;
-			if (pulse !== committedPulseRef.current) {
-				committedPulseRef.current = pulse;
-				setSentencePulse(pulse);
-			}
-
-			rafRef.current = requestAnimationFrame(() => animateRef.current());
-		};
-	}, [setAudioLevel, setSentencePulse]);
 
 	// Shared teardown for recording-stop, session-abort, loopback-stop, and
 	// recording-mode-change — every path that means "whatever was happening
@@ -113,7 +76,10 @@ export function useVisualizerSync(): void {
 	// `recordingStopped()`'s already-zero state.
 	useLayoutEffect(() => {
 		resetRef.current = () => {
-			cancelAnimationFrame(rafRef.current);
+			cancelAnimationFrame(audioFrameRef.current);
+			cancelAnimationFrame(pulseFrameRef.current);
+			audioFrameRef.current = 0;
+			pulseFrameRef.current = 0;
 			activeRef.current = false;
 			rawLevelRef.current = 0;
 			pulseRef.current = 0;
@@ -125,24 +91,23 @@ export function useVisualizerSync(): void {
 	}, [recordingStopped]);
 
 	useEffect(() => {
-		// Cancel any in-flight frame before scheduling a new one. Without
-		// this, rapid PTT cycles leak an extra rAF callback each cycle —
-		// each callback calls requestAnimationFrame(animate) again, so the
-		// scheduled-frame count grows exponentially and the renderer drowns
-		// (which keeps the overlay BrowserWindow too busy to process its
-		// hide() IPC, leaving the pill stuck on screen).
+		// Cancel any in-flight work from the previous session before starting a
+		// new one. Frames are scheduled only when an audio/sentence event arrives.
 		return onRecordingStart(() => {
-			cancelAnimationFrame(rafRef.current);
+			cancelAnimationFrame(audioFrameRef.current);
+			cancelAnimationFrame(pulseFrameRef.current);
+			audioFrameRef.current = 0;
+			pulseFrameRef.current = 0;
 			activeRef.current = true;
 			rawLevelRef.current = 0;
 			pulseRef.current = 0;
+			sentenceFiredRef.current = false;
 			committedLevelRef.current = 0;
 			committedPulseRef.current = 0;
 			// Reset isRecording + audioLevel + sentencePulse in one store
 			// update so the visualizer doesn't briefly render the previous
 			// cycle's last frame after the pill re-shows.
 			recordingStarted();
-			rafRef.current = requestAnimationFrame(() => animateRef.current());
 		});
 	}, [recordingStarted]);
 
@@ -153,8 +118,8 @@ export function useVisualizerSync(): void {
 	// User-initiated cancel. The server's abort flow doesn't emit
 	// RecordingStopped (it only flips the state machine to INACTIVE), and the
 	// relay's session-aborted gate now drops no_audio_detected too — so
-	// without an explicit reset here the rAF loop keeps ticking and the
-	// visualizer is stuck rendering the last frame's amplitude (the bars
+	// without an explicit reset here the visualizer is stuck rendering the
+	// last frame's amplitude (the bars
 	// stay tall, the radial dots keep spinning) until the next recording
 	// kicks in. Treat the abort as a synthetic recording_stop.
 	useEffect(
@@ -169,7 +134,7 @@ export function useVisualizerSync(): void {
 	// The backend emits this when it tears down a loopback (listen-mode)
 	// session — e.g. on mode switch or manual stop. `useListenMode` reacts to
 	// it for its own isListening flag; the visualizer needs its own
-	// subscription so a lingering rAF loop / stale isRecording doesn't
+	// subscription so scheduled visualizer work / stale isRecording doesn't
 	// outlive the session that started it. Redundant with the recordingMode
 	// effect below and with `stt:recording-stop` when both fire — resetting
 	// twice is a harmless no-op.
@@ -177,7 +142,7 @@ export function useVisualizerSync(): void {
 
 	// Switching recordingMode (e.g. listen -> ptt) doesn't itself emit a
 	// recording-lifecycle IPC event, so a stale isRecording=true + a running
-	// rAF loop left over from the mode being exited would otherwise persist
+	// visualizer left over from the mode being exited would otherwise persist
 	// until the next start/stop cycle happened to clear it — including
 	// lighting useAgentState's frozen "listening" center dot with nothing
 	// actually recording. Treat any mode change as "whatever was happening
@@ -202,22 +167,89 @@ export function useVisualizerSync(): void {
 	}, [setSpeaking]);
 
 	useEffect(() => {
+		// A lazily-created overlay can mount after recording-start was emitted.
+		// Overlay lifecycle reconciliation restores the retained recording snapshot
+		// into the shared store, but this hook's private frame-cancellation latch did
+		// not see that missed edge. Accept the reconciled store state on the first
+		// data event and latch it locally for the rest of the session.
+		const ensureActive = (): boolean => {
+			if (activeRef.current) {
+				return true;
+			}
+			if (!useVisualizerStore.getState().isRecording) {
+				return false;
+			}
+			activeRef.current = true;
+			return true;
+		};
+
+		const flushAudioLevel = () => {
+			audioFrameRef.current = 0;
+			if (
+				!activeRef.current ||
+				rawLevelRef.current === committedLevelRef.current
+			) {
+				return;
+			}
+
+			committedLevelRef.current = rawLevelRef.current;
+			setAudioLevel(rawLevelRef.current);
+		};
+
+		const advanceSentencePulse = (): void => {
+			pulseFrameRef.current = 0;
+			if (!activeRef.current) {
+				return;
+			}
+
+			const pulse = sentenceFiredRef.current
+				? 1
+				: Math.max(0, pulseRef.current - PULSE_DECAY);
+			sentenceFiredRef.current = false;
+			pulseRef.current = pulse;
+			if (pulse !== committedPulseRef.current) {
+				committedPulseRef.current = pulse;
+				setSentencePulse(pulse);
+			}
+
+			if (pulse > 0) {
+				pulseFrameRef.current = requestAnimationFrame(advanceSentencePulse);
+			}
+		};
+
 		const unsubAudioLevel = onAudioLevel((level) => {
+			if (!ensureActive()) {
+				return;
+			}
 			rawLevelRef.current = level;
+			if (audioFrameRef.current === 0) {
+				audioFrameRef.current = requestAnimationFrame(flushAudioLevel);
+			}
 		});
 		const unsubSentence = onFullSentence(() => {
+			if (!ensureActive()) {
+				return;
+			}
 			sentenceFiredRef.current = true;
+			if (pulseFrameRef.current === 0) {
+				pulseFrameRef.current = requestAnimationFrame(advanceSentencePulse);
+			}
 		});
 		return () => {
 			unsubAudioLevel();
 			unsubSentence();
+			cancelAnimationFrame(audioFrameRef.current);
+			cancelAnimationFrame(pulseFrameRef.current);
+			audioFrameRef.current = 0;
+			pulseFrameRef.current = 0;
 		};
-	}, []);
+	}, [setAudioLevel, setSentencePulse]);
 
 	useEffect(
 		() => () => {
 			activeRef.current = false;
-			cancelAnimationFrame(rafRef.current);
+			cancelAnimationFrame(audioFrameRef.current);
+			cancelAnimationFrame(pulseFrameRef.current);
 		},
 		[],
 	);

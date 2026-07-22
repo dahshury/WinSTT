@@ -52,6 +52,8 @@ function historyDiffLabels(
 		largeRewrite: t("diffLargeRewrite"),
 		changeCount: (count) => t("diffChangeCount", { count }),
 		moreChanges: (count) => t("diffMoreChanges", { count }),
+		wordCount: (count) => t("diffWordCount", { count }),
+		correctedWords: (count) => t("diffCorrectedWords", { count }),
 	};
 }
 

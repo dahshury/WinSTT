@@ -78,6 +78,20 @@ describe("usePermissionPreflight", () => {
 		});
 	});
 
+	test("rechecks from the window focus callback", async () => {
+		let calls = 0;
+		commands.permissionRunPreflight = async () => {
+			calls += 1;
+			return successfulResult(BLOCKED_STATUS);
+		};
+
+		renderPermissionPreflight();
+		await waitFor(() => expect(calls).toBe(1));
+
+		act(() => window.dispatchEvent(new Event("focus")));
+		await waitFor(() => expect(calls).toBe(2));
+	});
+
 	test("clears busy state and exposes a permission request failure", async () => {
 		commands.permissionRunPreflight = async () =>
 			successfulResult(BLOCKED_STATUS);

@@ -63,14 +63,19 @@ struct LlmUnloadStatus {
     timestamp: f64,
 }
 
-/// Drive `pass` up to `attempts` times, returning `true` the moment it succeeds
-/// and sleeping `delay` between tries (never after the last). This is the
-/// freshly-triggered-warm safety net: a warm pass returns `false` when it lost
-/// the pass-claim to an in-flight pass or Ollama was momentarily unreachable
-/// (just auto-spawned at boot, busy unloading the previous model during a
-/// switch). Without these quick retries the model would stay cold until the 60s
-/// periodic tick — the user-visible "first post-process is slow" gap. After the
-/// budget is spent the periodic loop keeps the long-term retry going.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WarmPassResult {
+    Complete,
+    Contended,
+    RetryableTransport,
+}
+
+/// Drive `pass` up to `attempts` times, returning `true` the moment it succeeds.
+/// Lifecycle contention is already awaited through `ModelSwapCoordinator`'s
+/// release notification, so it retries immediately after that bounded wait.
+/// Only an unreachable endpoint / transient transport failure uses `delay` as
+/// network backoff. After the budget is spent the periodic loop keeps the
+/// long-term retry going.
 async fn retry_until_complete<F, Fut>(
     attempts: u32,
     delay: Duration,
@@ -79,23 +84,43 @@ async fn retry_until_complete<F, Fut>(
 ) -> bool
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = bool>,
+    Fut: std::future::Future<Output = WarmPassResult>,
 {
     for attempt in 1..=attempts {
-        if pass().await {
-            return true;
-        }
-        if attempt < attempts {
-            log::debug!(
-                "[llm] warm ({reason}): attempt {attempt}/{attempts} did not complete (contended/unreachable), retrying"
-            );
-            tokio::time::sleep(delay).await;
+        match pass().await {
+            WarmPassResult::Complete => return true,
+            WarmPassResult::Contended => {
+                log::debug!(
+                    "[llm] warm ({reason}): attempt {attempt}/{attempts} remained contended after the release-notified wait; retrying"
+                );
+            }
+            WarmPassResult::RetryableTransport => {
+                if attempt < attempts {
+                    log::debug!(
+                        "[llm] warm ({reason}): attempt {attempt}/{attempts} hit a transient transport failure; backing off before retry"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+            }
         }
     }
     log::warn!(
         "[llm] warm ({reason}): gave up after {attempts} attempts; the 60s periodic loop will keep retrying"
     );
     false
+}
+
+/// Wait for the legitimate periodic keep-alive deadline or for app shutdown.
+/// `false` means shutdown won and the caller must exit without another pass.
+async fn wait_for_warmup_tick(
+    shutdown: &tokio_util::sync::CancellationToken,
+    interval: Duration,
+) -> bool {
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => false,
+        () = tokio::time::sleep(interval) => true,
+    }
 }
 
 impl LlmManager {
@@ -130,8 +155,7 @@ impl LlmManager {
                 }
             );
             loop {
-                tokio::time::sleep(OLLAMA_WARMUP_INTERVAL).await;
-                if mgr.is_shutting_down() {
+                if !wait_for_warmup_tick(&mgr.shutdown, OLLAMA_WARMUP_INTERVAL).await {
                     log::debug!("[llm] warmup loop: stopping for app shutdown");
                     return;
                 }
@@ -169,23 +193,36 @@ impl LlmManager {
             OLLAMA_WARM_TRIGGER_ATTEMPTS,
             OLLAMA_WARM_TRIGGER_RETRY_DELAY,
             reason,
-            || self.warm_enabled_models(),
+            || self.warm_enabled_models_once(OLLAMA_WARM_TRIGGER_RETRY_DELAY),
         )
         .await
     }
 
-    /// Run one warmup pass over the enabled Ollama models. Returns `true` when
-    /// the pass ran to completion against a reachable endpoint (or had nothing
-    /// to do), `false` when it should be retried (another pass was in flight,
-    /// or Ollama was unreachable).
+    /// Run one warmup pass, waiting on lifecycle release notifications for
+    /// contention. The public boolean preserves the existing command contract;
+    /// freshly-triggered retries use the richer result internally so only
+    /// transport failures incur a timer backoff.
     pub async fn warm_enabled_models(&self) -> bool {
+        self.warm_enabled_models_once(OLLAMA_WARM_TRIGGER_RETRY_DELAY)
+            .await
+            == WarmPassResult::Complete
+    }
+
+    async fn warm_enabled_models_once(&self, contention_wait: Duration) -> WarmPassResult {
         if self.is_shutting_down() {
             log::debug!("[llm] warm pass: skipped (app shutdown in progress)");
-            return true;
+            return WarmPassResult::Complete;
         }
-        let Some(_pass) = self.lifecycle.try_claim(LLM_WARMUP_PASS_KEY) else {
-            log::debug!("[llm] warm pass: skipped (another warmup pass is in flight)");
-            return false;
+        let claim_deadline = tokio::time::Instant::now() + contention_wait;
+        let Some(_pass) = self
+            .lifecycle
+            .claim_when_idle(LLM_WARMUP_PASS_KEY, claim_deadline)
+            .await
+        else {
+            log::debug!(
+                "[llm] warm pass: another warmup pass remained in flight for {contention_wait:?}"
+            );
+            return WarmPassResult::Contended;
         };
 
         let settings = read_settings_raw(&self.app);
@@ -195,7 +232,7 @@ impl LlmManager {
             log::debug!("[llm] warm pass: no enabled Ollama models to warm; evicting stale");
             self.evict_stale_warmed_models(&endpoint, &[]).await;
             self.clear_warmup_status();
-            return true;
+            return WarmPassResult::Complete;
         }
         log::debug!("[llm] warm pass: endpoint='{endpoint}' models={models:?}");
 
@@ -227,7 +264,7 @@ impl LlmManager {
                 reachable: false,
                 timestamp: warmup_timestamp(),
             });
-            return false;
+            return WarmPassResult::RetryableTransport;
         }
 
         self.publish_warmup_status(LlmWarmupStatus {
@@ -252,11 +289,17 @@ impl LlmManager {
         let mut results = Vec::with_capacity(models.len());
         for model in &models {
             results.push(
-                self.warmup_ollama_model(&endpoint, model, keep_alive.clone())
+                self.warmup_ollama_model(&endpoint, model, keep_alive.clone(), contention_wait)
                     .await,
             );
         }
 
+        let any_transport_failure = results
+            .iter()
+            .any(|r| matches!(r.outcome, LlmWarmupOutcome::Unreachable));
+        let any_contention = results
+            .iter()
+            .any(|r| matches!(r.outcome, LlmWarmupOutcome::Loading));
         let any_retryable = results
             .iter()
             .any(|r| Self::warmup_outcome_is_retryable(&r.outcome));
@@ -283,7 +326,13 @@ impl LlmManager {
         // Report a retryable per-model failure (transient transport / non-404
         // HTTP) as "not complete" so the trigger/boot retry loop re-attempts the
         // pass instead of leaving the model cold until the 60s tick.
-        !any_retryable
+        if any_transport_failure {
+            WarmPassResult::RetryableTransport
+        } else if any_contention {
+            WarmPassResult::Contended
+        } else {
+            WarmPassResult::Complete
+        }
     }
 
     async fn ensure_ollama_reachable(&self, endpoint: &str) -> (bool, bool) {
@@ -316,6 +365,9 @@ impl LlmManager {
         (up, true)
     }
 
+    /// Bounded readiness poll for a just-spawned `ollama serve`. This must stay
+    /// a timer: the daemon is an external process whose port-bind emits no
+    /// event we can subscribe to — an HTTP probe is the only signal.
     async fn wait_for_ollama(&self, endpoint: &str, total: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + total;
         loop {
@@ -451,18 +503,14 @@ impl LlmManager {
     ) {
         let model_key = llm_model_key(endpoint, model);
         let deadline = tokio::time::Instant::now() + per_model_timeout;
-        let _claim = loop {
-            if let Some(claim) = self.lifecycle.try_claim(model_key.clone()) {
-                break Some(claim);
-            }
-            if tokio::time::Instant::now() >= deadline {
-                // Proceed unclaimed after the bounded wait: Ollama serializes
-                // work per model, so a late keep_alive:0 still applies in order,
-                // and the settings re-check below keeps a wanted model resident.
-                break None;
-            }
-            tokio::time::sleep(Duration::from_millis(150)).await;
-        };
+        // Release-notified wait (no polling): acquires the instant the in-flight
+        // warm/unload drops its claim. Proceed unclaimed after the bounded wait:
+        // Ollama serializes work per model, so a late keep_alive:0 still applies
+        // in order, and the settings re-check below keeps a wanted model resident.
+        let _claim = self
+            .lifecycle
+            .claim_when_idle(model_key.clone(), deadline)
+            .await;
         let current = read_settings_raw(&self.app);
         if ollama_models_for_enabled_features(&current)
             .iter()
@@ -531,6 +579,7 @@ impl LlmManager {
         endpoint: &str,
         model: &str,
         keep_alive: serde_json::Value,
+        contention_wait: Duration,
     ) -> LlmWarmupModelStatus {
         if self.is_shutting_down() {
             return LlmWarmupModelStatus {
@@ -565,12 +614,19 @@ impl LlmManager {
                 error_body: None,
             };
         }
-        let Some(_claim) = self.lifecycle.try_claim(model_key.clone()) else {
+        let claim_deadline = tokio::time::Instant::now() + contention_wait;
+        let Some(_claim) = self
+            .lifecycle
+            .claim_when_idle(model_key.clone(), claim_deadline)
+            .await
+        else {
             // A load OR a settings-driven eviction of this model is in flight.
-            // Report Loading (retryable) so the trigger loop re-checks once the
-            // claim frees up — if the holder was an eviction, the model is cold
-            // afterwards and the retry warms it back.
-            log::debug!("[llm] warm '{model}': a load/unload for this model is already in flight");
+            // We already waited on its release notification for the bounded
+            // contention budget; report Loading so the trigger loop can attach
+            // another release-notified wait without a fixed sleep.
+            log::debug!(
+                "[llm] warm '{model}': load/unload remained in flight for {contention_wait:?}"
+            );
             return LlmWarmupModelStatus {
                 model: model.to_string(),
                 outcome: LlmWarmupOutcome::Loading,
@@ -850,16 +906,20 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
-    // A warm pass that fails (`false`) the first `fail_first` times, then
-    // succeeds (`true`). Records how many times it was called.
+    // A warm pass that hits a transient transport failure the first
+    // `fail_first` times, then succeeds. Records how many times it was called.
     fn flaky_pass(
         fail_first: u32,
         calls: &Cell<u32>,
-    ) -> impl Fn() -> std::future::Ready<bool> + '_ {
+    ) -> impl Fn() -> std::future::Ready<WarmPassResult> + '_ {
         move || {
             let n = calls.get() + 1;
             calls.set(n);
-            std::future::ready(n > fail_first)
+            std::future::ready(if n > fail_first {
+                WarmPassResult::Complete
+            } else {
+                WarmPassResult::RetryableTransport
+            })
         }
     }
 
@@ -892,6 +952,47 @@ mod tests {
         assert_eq!(calls.get(), 5, "never exceeds the attempt budget");
     }
 
+    #[tokio::test]
+    async fn contention_retries_without_transport_backoff() {
+        let calls = Cell::new(0);
+        let pass = || {
+            let n = calls.get() + 1;
+            calls.set(n);
+            std::future::ready(if n == 1 {
+                WarmPassResult::Contended
+            } else {
+                WarmPassResult::Complete
+            })
+        };
+
+        let ok = tokio::time::timeout(
+            Duration::from_millis(100),
+            retry_until_complete(2, Duration::from_secs(60), "test", pass),
+        )
+        .await
+        .expect("contention must not sleep for the transport backoff");
+
+        assert!(ok);
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn shutdown_interrupts_periodic_tick_wait() {
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let waiter_shutdown = shutdown.clone();
+        let waiter = tokio::spawn(async move {
+            wait_for_warmup_tick(&waiter_shutdown, Duration::from_secs(60)).await
+        });
+        tokio::task::yield_now().await;
+        shutdown.cancel();
+
+        let ticked = tokio::time::timeout(Duration::from_millis(100), waiter)
+            .await
+            .expect("shutdown should wake the periodic wait immediately")
+            .expect("periodic wait task should not panic");
+        assert!(!ticked);
+    }
+
     #[test]
     fn only_transient_outcomes_are_retryable() {
         // A transport blip (Ollama still starting / momentary connection loss)
@@ -901,8 +1002,8 @@ mod tests {
         ));
         // ...as is a contended lifecycle claim: the holder may be a
         // settings-driven EVICTION (rapid disable→enable), after which the model
-        // is cold and only a re-check warms it back. No load happens while the
-        // claim is contended, so retrying is free.
+        // is cold and only a re-check warms it back. The production path awaits
+        // the coordinator's release notification before reporting Loading.
         assert!(LlmManager::warmup_outcome_is_retryable(
             &LlmWarmupOutcome::Loading
         ));

@@ -20,7 +20,7 @@
 //     above the taskbar.
 //
 use std::sync::{
-    Mutex,
+    Condvar, Mutex, PoisonError,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
@@ -49,7 +49,50 @@ static OVERLAY_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(false);
 /// visible. Hide disables this before the renderer's close animation can report
 /// stale rects back to Rust.
 static OVERLAY_HIT_REGIONS_ENABLED: AtomicBool = AtomicBool::new(false);
-static OVERLAY_PAGE_LOADED: AtomicBool = AtomicBool::new(false);
+/// Serializes the generation predicate with native show/hide/reveal calls. An
+/// atomic predicate alone leaves a check-then-act gap where a stale renderer
+/// acknowledgement can pass its check, a new generation can show, and the stale
+/// acknowledgement can then hide that new window.
+static OVERLAY_NATIVE_VISIBILITY_LOCK: Mutex<()> = Mutex::new(());
+/// A fresh native show stays transparent until the renderer reports its first
+/// non-empty painted hit region. Zero means there is no reveal outstanding.
+static OVERLAY_PENDING_REVEAL_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct OverlayPageLoadState {
+    generation: u64,
+    loaded_generation: Option<u64>,
+}
+
+impl OverlayPageLoadState {
+    fn begin_navigation(&mut self) {
+        self.generation = self.generation.wrapping_add(1).max(1);
+        self.loaded_generation = None;
+    }
+
+    fn finish_navigation(&mut self) {
+        // Be defensive if a platform emits Finished without Started.
+        if self.generation == 0 {
+            self.generation = 1;
+        }
+        self.loaded_generation = Some(self.generation);
+    }
+
+    fn current_navigation_is_loaded(&self) -> bool {
+        self.generation != 0 && self.loaded_generation == Some(self.generation)
+    }
+}
+
+/// Page readiness is scoped to the current navigation rather than remaining
+/// sticky forever after the first WebView load. This matters when WebView2
+/// recreates or reloads the overlay page in the same process.
+static OVERLAY_PAGE_LOAD_STATE: (Mutex<OverlayPageLoadState>, Condvar) = (
+    Mutex::new(OverlayPageLoadState {
+        generation: 0,
+        loaded_generation: None,
+    }),
+    Condvar::new(),
+);
 static LATEST_OVERLAY_HIT_REGIONS: Mutex<Vec<OverlayHitRect>> = Mutex::new(Vec::new());
 
 /// The transparent overlay window can host both the STT pill and the TTS
@@ -63,8 +106,7 @@ const OVERLAY_WIDTH: f64 = 720.0;
 const OVERLAY_HEIGHT: f64 = 240.0;
 const FLOATING_BOTTOM_HIDE_GRACE_MS: u64 = 220;
 const DYNAMIC_ISLAND_HIDE_GRACE_MS: u64 = 400;
-const OVERLAY_HIDE_REAPPLY_DELAYS_MS: &[u64] = &[50, 150, 400];
-const OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS: u64 = 80;
+const OVERLAY_REVEAL_FAILSAFE_MS: u64 = 500;
 const OVERLAY_OFFSCREEN_POS: f64 = -10_000.0;
 
 /// Grown overlay height while the editable preview-before-pasting pill is open.
@@ -316,23 +358,35 @@ fn ensure_overlay_is_panel(window: &tauri::WebviewWindow) {
     });
 }
 
+pub(crate) fn mark_overlay_page_loading() {
+    let (lock, cvar) = &OVERLAY_PAGE_LOAD_STATE;
+    let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    state.begin_navigation();
+    cvar.notify_all();
+}
+
 pub(crate) fn mark_overlay_page_loaded() {
-    OVERLAY_PAGE_LOADED.store(true, Ordering::SeqCst);
+    let (lock, cvar) = &OVERLAY_PAGE_LOAD_STATE;
+    let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    state.finish_navigation();
+    cvar.notify_all();
 }
 
 pub(crate) fn wait_for_overlay_page_loaded(timeout: Duration) -> bool {
-    if OVERLAY_PAGE_LOADED.load(Ordering::SeqCst) {
-        return true;
-    }
-
     let started = Instant::now();
-    while started.elapsed() < timeout {
-        if OVERLAY_PAGE_LOADED.load(Ordering::SeqCst) {
-            return true;
+    let (lock, cvar) = &OVERLAY_PAGE_LOAD_STATE;
+    let mut state = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    while !state.current_navigation_is_loaded() {
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        state = cvar
+            .wait_timeout(state, timeout - elapsed)
+            .unwrap_or_else(PoisonError::into_inner)
+            .0;
     }
-    OVERLAY_PAGE_LOADED.load(Ordering::SeqCst)
+    state.current_navigation_is_loaded()
 }
 
 #[cfg_attr(
@@ -381,7 +435,7 @@ fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Re
     // race-ahead first show) are surfaced to the caller, which already ignores them.
     let clamped = opacity.clamp(0.0, 1.0);
     let script = format!(
-        "(function(){{var r=document.documentElement;if(r){{r.style.transition='opacity {OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS}ms linear';r.style.opacity='{clamped}';}}}})();"
+        "(function(){{var r=document.documentElement;if(r){{r.style.transition='opacity {OVERLAY_OPACITY_TRANSITION_MS}ms linear';r.style.opacity='{clamped}';}}}})();"
     );
     window.eval(&script).map_err(|e| e.to_string())
 }
@@ -421,17 +475,20 @@ fn overlay_hide_is_still_desired(generation: u64) -> bool {
         && OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation
 }
 
-fn schedule_overlay_hide_reapply(window: tauri::WebviewWindow, generation: u64, base_delay: u64) {
-    for delay in OVERLAY_HIDE_REAPPLY_DELAYS_MS {
-        let win = window.clone();
-        let total_delay = base_delay + *delay;
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(total_delay));
-            if overlay_hide_is_still_desired(generation) {
-                apply_overlay_hide(&win);
-            }
-        });
+fn overlay_reveal_is_still_desired(generation: u64) -> bool {
+    OVERLAY_DESIRED_VISIBLE.load(Ordering::SeqCst)
+        && OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation
+        && OVERLAY_PENDING_REVEAL_GENERATION.load(Ordering::SeqCst) == generation
+}
+
+/// Caller must hold `OVERLAY_NATIVE_VISIBILITY_LOCK`, keeping the predicate and
+/// native opacity transition atomic with respect to every hide/show path.
+fn reveal_overlay_if_current_locked(window: &tauri::WebviewWindow, generation: u64) {
+    if !overlay_reveal_is_still_desired(generation) {
+        return;
     }
+    let _ = set_overlay_window_opacity(window, 1.0);
+    OVERLAY_PENDING_REVEAL_GENERATION.store(0, Ordering::SeqCst);
 }
 
 /// Position + reveal the overlay window without re-activating it (showInactive
@@ -450,6 +507,9 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     // pipeline reveals without touching the shared window-spec module.
     #[cfg(target_os = "macos")]
     ensure_overlay_is_panel(&window);
+    let _native_visibility = OVERLAY_NATIVE_VISIBILITY_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     // Mark a fresh show so any in-flight deferred-hide thread cancels itself.
     let generation = OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     OVERLAY_DESIRED_VISIBLE.store(true, Ordering::SeqCst);
@@ -472,9 +532,12 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     // empty while the renderer paints and reports its first visible region. On a
     // re-show the existing region already matches the on-screen pill, so leave it
     // untouched and let the renderer's ResizeObserver morph it smoothly.
-    if !was_visible && !apply_latest_overlay_hit_regions(&window) {
+    let already_painted = if was_visible || apply_latest_overlay_hit_regions(&window) {
+        true
+    } else {
         set_empty_overlay_hit_region(&window);
-    }
+        false
+    };
     if let Some((x, y)) = position {
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
@@ -498,20 +561,22 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     // Tell the renderer the overlay window is now on screen (parity with the legacy
     // `overlay:show` event; the OverlayPage also self-clears on visibilitychange).
     let _ = window.emit(crate::winstt::commands::events::names::OVERLAY_SHOW, reason);
-    if was_visible {
+    if already_painted {
+        OVERLAY_PENDING_REVEAL_GENERATION.store(0, Ordering::SeqCst);
         let _ = set_overlay_window_opacity(&window, 1.0);
         return;
     }
+    // The renderer's first non-empty hit-region report is the authoritative
+    // painted callback. Keep the native window transparent until that arrives;
+    // the one-shot timer below is only a recovery path for a dead renderer/IPC.
+    OVERLAY_PENDING_REVEAL_GENERATION.store(generation, Ordering::SeqCst);
     let win = window;
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(
-            OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS,
-        ));
-        if OVERLAY_DESIRED_VISIBLE.load(Ordering::SeqCst)
-            && OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation
-        {
-            let _ = set_overlay_window_opacity(&win, 1.0);
-        }
+        std::thread::sleep(std::time::Duration::from_millis(OVERLAY_REVEAL_FAILSAFE_MS));
+        let _native_visibility = OVERLAY_NATIVE_VISIBILITY_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        reveal_overlay_if_current_locked(&win, generation);
     });
 }
 
@@ -747,13 +812,46 @@ pub fn set_overlay_hit_regions(app: AppHandle, rects: Vec<OverlayHitRect>) -> Re
         return Ok(());
     };
     remember_overlay_hit_regions(&rects);
+    let _native_visibility = OVERLAY_NATIVE_VISIBILITY_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     if !OVERLAY_HIT_REGIONS_ENABLED.load(Ordering::SeqCst) {
         // During the close grace window, keep the last painted region alive.
         // SetWindowRgn clips rendering, not just hit-testing, so clearing here
         // would cut off the renderer's exit animation.
         return Ok(());
     }
-    apply_overlay_hit_regions(&window, &rects)
+    apply_overlay_hit_regions(&window, &rects)?;
+    if !rects.is_empty() {
+        let generation = OVERLAY_PENDING_REVEAL_GENERATION.load(Ordering::SeqCst);
+        if generation != 0 {
+            reveal_overlay_if_current_locked(&window, generation);
+        }
+    }
+    Ok(())
+}
+
+/// Renderer acknowledgement that every painted overlay hit region has completed
+/// its exit transition. The generation makes a delayed acknowledgement harmless
+/// across rapid hide -> show -> hide cycles.
+#[tauri::command]
+#[specta::specta]
+pub fn overlay_ack_hide_transition(app: AppHandle, generation: String) -> Result<(), String> {
+    let generation = generation
+        .parse::<u64>()
+        .map_err(|_| "invalid overlay hide generation".to_string())?;
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
+        return Ok(());
+    };
+    let _native_visibility = OVERLAY_NATIVE_VISIBILITY_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if !overlay_hide_is_still_desired(generation) {
+        return Ok(());
+    }
+    OVERLAY_PENDING_REVEAL_GENERATION.store(0, Ordering::SeqCst);
+    apply_overlay_hide(&window);
+    Ok(())
 }
 
 /// Show the WinSTT recording overlay, honoring the suppression gates + position.
@@ -858,21 +956,23 @@ pub fn hide_recording_overlay(app: &AppHandle) {
     }
 }
 
-/// Hide the shared overlay window. Emits `overlay:hide` first so the renderer
-/// can play its exit, then applies an opacity-zero/offscreen/hide pass with
-/// retries. The delay is mode-specific: the dynamic island needs the longer
-/// slide-up grace; floating-bottom only needs enough time for its opacity fade.
+/// Hide the shared overlay window. The renderer acknowledges when its painted
+/// hit regions finish exiting; the mode-specific timer is a single hard
+/// fallback for an unavailable or wedged renderer.
 fn hide_overlay_window(app: &AppHandle) {
     hide_overlay_window_with_options(app, false);
 }
 
 fn hide_overlay_window_with_options(app: &AppHandle, force_renderer_grace: bool) {
+    let _native_visibility = OVERLAY_NATIVE_VISIBILITY_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     OVERLAY_DESIRED_VISIBLE.store(false, Ordering::SeqCst);
     OVERLAY_HIT_REGIONS_ENABLED.store(false, Ordering::SeqCst);
+    OVERLAY_PENDING_REVEAL_GENERATION.store(0, Ordering::SeqCst);
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return;
     };
-    let _ = window.emit(crate::winstt::commands::events::names::OVERLAY_HIDE, ());
     // Click-through is deliberately NOT restored here: flipping the cursor flag
     // makes tao rewrite the window ex-style + fire a SWP_FRAMECHANGED repaint,
     // which flashed a white rectangle (the region-clipped WebView2 clear color)
@@ -884,16 +984,22 @@ fn hide_overlay_window_with_options(app: &AppHandle, force_renderer_grace: bool)
     // Snapshot the current generation; only hide if no newer show lands during the
     // grace window (the press→release→press race guard — the reference's `desired`).
     let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+    let _ = window.emit(
+        crate::winstt::commands::events::names::OVERLAY_HIDE,
+        generation.to_string(),
+    );
     let mode = read_settings(app).general.overlay_mode;
     let grace_ms = overlay_hide_grace_ms(mode, force_renderer_grace);
-    let win = window.clone();
+    let win = window;
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(grace_ms));
+        let _native_visibility = OVERLAY_NATIVE_VISIBILITY_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if overlay_hide_is_still_desired(generation) {
             apply_overlay_hide(&win);
         }
     });
-    schedule_overlay_hide_reapply(window, generation, grace_ms);
 }
 
 /// Re-anchor a CURRENTLY-VISIBLE overlay after a live `general.overlayMode` /
@@ -1055,5 +1161,23 @@ mod tests {
             overlay_hide_grace_ms(OverlayMode::FloatingBottom, true),
             DYNAMIC_ISLAND_HIDE_GRACE_MS
         );
+    }
+
+    #[test]
+    fn page_readiness_is_invalidated_by_each_navigation() {
+        let mut state = OverlayPageLoadState::default();
+        assert!(!state.current_navigation_is_loaded());
+
+        state.begin_navigation();
+        assert!(!state.current_navigation_is_loaded());
+        state.finish_navigation();
+        assert!(state.current_navigation_is_loaded());
+
+        let first_generation = state.generation;
+        state.begin_navigation();
+        assert!(state.generation > first_generation);
+        assert!(!state.current_navigation_is_loaded());
+        state.finish_navigation();
+        assert!(state.current_navigation_is_loaded());
     }
 }

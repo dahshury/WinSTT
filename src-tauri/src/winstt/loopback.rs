@@ -11,8 +11,8 @@
 //
 // THREADING: the capture loop owns a daemon thread; `start()` is non-blocking (it spawns the
 // thread and returns) so it never stalls the Tauri async command loop — the exact antipattern
-// the project memory warns about for `start_loopback`. `stop()` flips an atomic + joins (bounded
-// by the 200 ms WASAPI event-wait timeout).
+// the project memory warns about for `start_loopback`. `stop()` signals a Win32 event that shares
+// the capture thread's kernel wait with WASAPI's buffer-ready event, then joins immediately.
 //
 // PORTABILITY: the WASAPI capture thread + COM init are gated `#[cfg(windows)]`.
 // The SlowTrackingAgc, the multichannel→mono fold, and the channel plumbing are platform-agnostic
@@ -20,8 +20,6 @@
 
 #[cfg(windows)]
 use std::sync::Arc;
-#[cfg(windows)]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 #[cfg(windows)]
 use std::thread::JoinHandle;
@@ -189,7 +187,7 @@ pub enum LoopbackError {
 #[derive(Default)]
 pub struct LoopbackCapture {
     #[cfg(windows)]
-    stop: Arc<AtomicBool>,
+    stop_event: Option<Arc<windows_impl::StopEvent>>,
     #[cfg(windows)]
     worker: Option<JoinHandle<()>>,
     /// Linux PipeWire/PulseAudio capture session (child process + reader thread).
@@ -243,11 +241,13 @@ impl LoopbackCapture {
 
         let info = windows_impl::resolve_render_device(device_id.as_deref())
             .map_err(|e| LoopbackError::Backend(format!("resolve render device: {e}")))?;
-        self.stop.store(false, Ordering::SeqCst);
-        let stop = self.stop.clone();
+        let stop_event = Arc::new(
+            windows_impl::StopEvent::new()
+                .map_err(|e| LoopbackError::Backend(format!("create stop event: {e}")))?,
+        );
         let capture_device_id = Some(info.id.clone());
         let capture_info = info.clone();
-        let thread_stop = stop;
+        let thread_stop = stop_event.clone();
         let worker = std::thread::Builder::new()
             .name("loopback-capture".into())
             .spawn(move || {
@@ -256,7 +256,7 @@ impl LoopbackCapture {
                     capture_info,
                     sink,
                     thread_stop.clone(),
-                ) && !thread_stop.load(Ordering::SeqCst)
+                ) && !thread_stop.is_signaled()
                 {
                     log::error!("[loopback] WASAPI capture failed: {err}");
                 }
@@ -268,6 +268,7 @@ impl LoopbackCapture {
             info.sample_rate,
             info.channels,
         );
+        self.stop_event = Some(stop_event);
         self.worker = Some(worker);
         Ok(info)
     }
@@ -337,10 +338,13 @@ impl LoopbackCapture {
     pub fn stop(&mut self) {
         #[cfg(windows)]
         {
-            self.stop.store(true, Ordering::SeqCst);
+            if let Some(stop_event) = &self.stop_event {
+                stop_event.signal();
+            }
             if let Some(worker) = self.worker.take() {
                 let _ = worker.join();
             }
+            self.stop_event = None;
         }
         #[cfg(target_os = "linux")]
         {
@@ -621,16 +625,70 @@ mod windows_impl {
 
     use crate::audio_toolkit::audio::FrameResampler;
     use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use wasapi::{Direction, SampleType, StreamMode, deinitialize, initialize_mta};
+    use windows::Win32::Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+    };
+    use windows::core::PCWSTR;
 
-    /// Buffer duration requested from WASAPI (hundred-nanosecond units). 200 ms
-    /// shared-mode buffer keeps the event wait responsive to `stop`.
+    /// Buffer duration requested from WASAPI (hundred-nanosecond units).
     const BUFFER_DURATION_HNS: i64 = 2_000_000; // 200 ms in 100-ns ticks.
-    /// Event-wait timeout per loop iteration (ms) — bounds stop latency.
-    const EVENT_TIMEOUT_MS: u32 = 200;
     /// Resampler frame size (matches the recorder's 30 ms emit cadence so the
     /// downstream Silero VAD receives whole 30 ms / 480-sample frames).
     const RESAMPLER_FRAME_MS: u64 = 30;
+
+    /// Manual-reset event used to wake the capture thread on shutdown.
+    pub(super) struct StopEvent(OwnedHandle);
+
+    impl StopEvent {
+        pub(super) fn new() -> windows::core::Result<Self> {
+            // SAFETY: null security/name pointers are permitted; the returned
+            // event handle is immediately transferred into `OwnedHandle`.
+            let handle = unsafe { CreateEventW(None, true, false, PCWSTR::null())? };
+            // SAFETY: `CreateEventW` returned a fresh, owned, non-null HANDLE.
+            Ok(Self(unsafe { OwnedHandle::from_raw_handle(handle.0) }))
+        }
+
+        fn handle(&self) -> HANDLE {
+            HANDLE(self.0.as_raw_handle())
+        }
+
+        pub(super) fn signal(&self) {
+            // SAFETY: `OwnedHandle` keeps this event valid for the call and
+            // Win32 event signaling is thread-safe.
+            if let Err(err) = unsafe { SetEvent(self.handle()) } {
+                log::warn!("[loopback] failed to signal capture stop event: {err}");
+            }
+        }
+
+        pub(super) fn is_signaled(&self) -> bool {
+            // SAFETY: the event remains owned by `self`; a zero timeout only
+            // observes its latched state.
+            unsafe { WaitForSingleObject(self.handle(), 0) == WAIT_OBJECT_0 }
+        }
+    }
+
+    /// `wasapi` 0.23 does not expose the native handle held by its public
+    /// single-field `Handle` wrapper. Keep this compatibility shim isolated so
+    /// the buffer-ready event can participate in a multi-object kernel wait.
+    fn native_wasapi_event(event: &wasapi::Handle) -> HANDLE {
+        assert_eq!(
+            std::mem::size_of::<wasapi::Handle>(),
+            std::mem::size_of::<HANDLE>(),
+            "wasapi event handle layout changed"
+        );
+        assert_eq!(
+            std::mem::align_of::<wasapi::Handle>(),
+            std::mem::align_of::<HANDLE>(),
+            "wasapi event handle alignment changed"
+        );
+        // SAFETY: wasapi 0.23's `Handle` is a single native HANDLE field (see its
+        // `api.rs`) and owns/ closes that handle. We copy only the value for the
+        // duration of this borrow; ownership remains with `event`.
+        unsafe { std::ptr::read_unaligned(event as *const wasapi::Handle as *const HANDLE) }
+    }
 
     /// RAII COM-apartment guard. `initialize_mta()` returns an `HRESULT`; we only
     /// pair a `deinitialize()` with an init that actually entered the apartment
@@ -753,7 +811,7 @@ mod windows_impl {
         device_id: Option<&str>,
         _info: DeviceInfo,
         sink: Sender<Vec<f32>>,
-        stop: Arc<AtomicBool>,
+        stop: Arc<StopEvent>,
     ) -> anyhow::Result<()> {
         let _com = ComGuard::enter();
 
@@ -789,6 +847,7 @@ mod windows_impl {
         let h_event = client
             .set_get_eventhandle()
             .map_err(|e| anyhow::anyhow!("set_get_eventhandle: {e:?}"))?;
+        let buffer_ready_event = native_wasapi_event(&h_event);
         let capture = client
             .get_audiocaptureclient()
             .map_err(|e| anyhow::anyhow!("get_audiocaptureclient: {e:?}"))?;
@@ -812,12 +871,12 @@ mod windows_impl {
         const MAX_ERRORS: u32 = 5;
 
         let result = (|| -> anyhow::Result<()> {
-            while !stop.load(Ordering::SeqCst) {
+            loop {
                 // Drain all currently-available bytes into `raw`.
                 match capture.read_from_device_to_deque(&mut raw) {
                     Ok(_) => consecutive_errors = 0,
                     Err(e) => {
-                        if stop.load(Ordering::SeqCst) {
+                        if stop.is_signaled() {
                             break;
                         }
                         consecutive_errors += 1;
@@ -858,11 +917,25 @@ mod windows_impl {
                     }
                 }
 
-                // Wait for the next buffer-ready event (bounded → stop-responsive).
-                if h_event.wait_for_event(EVENT_TIMEOUT_MS).is_err() {
-                    // Timeout is normal during silence; loop re-checks `stop`.
+                // Sleep until either shutdown or WASAPI reports a ready buffer.
+                // The stop event is first so shutdown wins if both are signaled.
+                let wait_handles = [stop.handle(), buffer_ready_event];
+                // SAFETY: both handles remain owned for the entire wait; the
+                // stop event is held by `stop` and `h_event` owns the WASAPI event.
+                let wait_result = unsafe { WaitForMultipleObjects(&wait_handles, false, INFINITE) };
+                if wait_result == WAIT_OBJECT_0 {
+                    break;
+                }
+                if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
                     continue;
                 }
+                if wait_result == WAIT_FAILED {
+                    return Err(anyhow::anyhow!(
+                        "WaitForMultipleObjects(buffer-ready, stop) failed: {}",
+                        windows::core::Error::from_win32()
+                    ));
+                }
+                anyhow::bail!("unexpected WASAPI wait result: {}", wait_result.0);
             }
             Ok(())
         })();

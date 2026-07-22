@@ -49,12 +49,34 @@ function fire(channel: string, ...args: unknown[]) {
 	}
 }
 
+// Track held modifier codes so dispatched events carry a realistic modifier
+// bitmask: a real browser event always reports its own modifier as down on
+// keydown / up on keyup, and the recorder now reconciles its held set against
+// that bitmask (stale-keyup pruning).
+const heldCodes = new Set<string>();
+afterEach(() => {
+	heldCodes.clear();
+});
+
+function familyHeld(prefix: "Control" | "Shift" | "Alt" | "Meta"): boolean {
+	return heldCodes.has(`${prefix}Left`) || heldCodes.has(`${prefix}Right`);
+}
+
 function keyEvent(type: "keydown" | "keyup", code: string) {
+	if (type === "keydown") {
+		heldCodes.add(code);
+	} else {
+		heldCodes.delete(code);
+	}
 	window.dispatchEvent(
 		new KeyboardEvent(type, {
 			bubbles: true,
 			cancelable: true,
 			code,
+			ctrlKey: familyHeld("Control"),
+			shiftKey: familyHeld("Shift"),
+			altKey: familyHeld("Alt"),
+			metaKey: familyHeld("Meta"),
 		}),
 	);
 }
@@ -156,6 +178,18 @@ describe("useKeyRecorder", () => {
 		});
 		expect(recorded).toEqual(["LCtrl+LMeta"]);
 		expect(result.current.recording).toBe(false);
+	});
+
+	test("a swallowed modifier keyup cannot strand a stale modifier", () => {
+		const { result } = renderHook(() => useKeyRecorder());
+		act(() => result.current.startRecording());
+		act(() => keyEvent("keydown", "AltLeft"));
+		// Windows swallows the Alt keyup (e.g. during the Alt+Shift keyboard
+		// layout switch): no keyup ever arrives, but the NEXT event's modifier
+		// bitmask reports Alt as up — the recorder must reconcile against it.
+		heldCodes.delete("AltLeft");
+		act(() => keyEvent("keydown", "ShiftLeft"));
+		expect(result.current.liveKeys).toEqual(["LShift"]);
 	});
 
 	test("stopRecording ignores a lone modifier key", async () => {

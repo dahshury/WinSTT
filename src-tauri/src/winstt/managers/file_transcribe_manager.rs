@@ -143,6 +143,10 @@ struct QueueState {
     active: Option<String>,
     /// Generation token for the auto-clear timer (bumped to cancel a pending one).
     auto_clear_gen: u64,
+    /// Generation-owned worker slot. Keeping this in the queue mutex makes an
+    /// idle worker's retirement atomic with enqueue deciding whether to spawn.
+    active_worker: Option<u64>,
+    next_worker_generation: u64,
 }
 
 pub struct FileTranscribeManager {
@@ -156,12 +160,22 @@ pub struct FileTranscribeManager {
     last_broadcast_active: Mutex<Option<bool>>,
     /// Wakes the worker when a file is enqueued / pause released / cancel.
     cv: Condvar,
-    /// Guards the worker against the cv (the cv pairs with this mutex).
-    worker_gate: Mutex<()>,
-    /// Set while a worker thread is alive (one at a time).
-    worker_alive: AtomicBool,
     /// Monotonic id counter for enqueued files.
     counter: AtomicU64,
+}
+
+/// Panic-safe cleanup for a claimed worker slot. The generation check ensures
+/// an older worker can never clear a replacement worker that was admitted after
+/// orderly retirement.
+struct FileWorkerRetirement {
+    manager: Arc<FileTranscribeManager>,
+    generation: u64,
+}
+
+impl Drop for FileWorkerRetirement {
+    fn drop(&mut self) {
+        self.manager.retire_worker(self.generation);
+    }
 }
 
 impl FileTranscribeManager {
@@ -173,8 +187,6 @@ impl FileTranscribeManager {
             dictation_paused: AtomicBool::new(false),
             last_broadcast_active: Mutex::new(None),
             cv: Condvar::new(),
-            worker_gate: Mutex::new(()),
-            worker_alive: AtomicBool::new(false),
             counter: AtomicU64::new(0),
         }
     }
@@ -427,18 +439,31 @@ impl FileTranscribeManager {
 
     /// Spawn the sequential worker thread if one isn't already running.
     fn ensure_worker(self: &Arc<Self>) {
-        if self.worker_alive.swap(true, Ordering::AcqRel) {
-            self.cv.notify_all();
-            return;
-        }
+        let worker_generation = {
+            let mut state = self.lock_state();
+            let Some(generation) = claim_worker_slot(&mut state) else {
+                self.cv.notify_all();
+                return;
+            };
+            generation
+        };
         let me = Arc::clone(self);
-        std::thread::spawn(move || {
-            me.run_worker();
-            me.worker_alive.store(false, Ordering::Release);
-        });
+        let spawned = std::thread::Builder::new()
+            .name("file-transcribe-worker".into())
+            .spawn(move || {
+                let _retirement = FileWorkerRetirement {
+                    manager: Arc::clone(&me),
+                    generation: worker_generation,
+                };
+                me.run_worker(worker_generation);
+            });
+        if let Err(error) = spawned {
+            self.retire_worker(worker_generation);
+            log::error!("[file-transcribe] failed to spawn queue worker: {error}");
+        }
     }
 
-    fn run_worker(self: &Arc<Self>) {
+    fn run_worker(self: &Arc<Self>, worker_generation: u64) {
         loop {
             // Block the WHOLE pump while dictation holds the model.
             if self.dictation_paused.load(Ordering::Acquire) {
@@ -461,20 +486,23 @@ impl FileTranscribeManager {
                         st.active = Some(st.items[i].id.clone());
                         Some(st.items[i].clone())
                     }
-                    None => None,
+                    None => {
+                        // Retire under the predicate-owning mutex. An enqueue is
+                        // therefore ordered either before this check (and is
+                        // observed here) or after retirement (and claims a new
+                        // worker); it can no longer fall into the old atomic-
+                        // flag gap and leave queued work stranded.
+                        if !st.items.iter().any(|it| it.status.is_busy()) {
+                            retire_worker_slot(&mut st, worker_generation);
+                            return;
+                        }
+                        None
+                    }
                 }
             };
             let Some(item) = next else {
-                // No queued work. If there's still busy work (paused rows) keep the
-                // worker parked on the cv; otherwise exit so a future enqueue
-                // respawns it.
-                let still_busy = {
-                    let st = self.lock_state();
-                    st.items.iter().any(|it| it.status.is_busy())
-                };
-                if !still_busy {
-                    return;
-                }
+                // No queued work, but paused work remains: retain the worker and
+                // wait for the state transition that makes it runnable.
                 self.park();
                 continue;
             };
@@ -483,17 +511,22 @@ impl FileTranscribeManager {
         }
     }
 
-    /// Park the worker on the condvar with a short timeout (a lost-wakeup safety
-    /// net: a `notify_all` racing the predicate check would otherwise sleep the
-    /// worker forever, since the queue/pause predicates live in a separate mutex).
-    /// The worker re-evaluates on every wake/timeout — cheap and missed-signal
-    /// proof, matching the event-driven re-pump of the single-threaded reference
-    /// queue this ports.
+    /// Park until the queue becomes runnable. The condvar waits on the SAME
+    /// mutex that owns the queue predicate, so enqueue/resume/cancel cannot land
+    /// between the predicate check and the wait and become a lost wakeup.
     fn park(&self) {
-        let gate = self.worker_gate.lock_recover();
-        let _ = self
+        let state = self.lock_state();
+        let _state = self
             .cv
-            .wait_timeout(gate, std::time::Duration::from_millis(200));
+            .wait_while(state, |state| {
+                worker_should_park(state, self.dictation_paused.load(Ordering::Acquire))
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+
+    fn retire_worker(&self, worker_generation: u64) {
+        let mut state = self.lock_state();
+        retire_worker_slot(&mut state, worker_generation);
     }
 
     fn process_file(self: &Arc<Self>, item: &QueueItem) {
@@ -885,4 +918,82 @@ fn now_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis())
+}
+
+/// Whether the file pump must remain parked instead of re-evaluating or exiting.
+/// Kept pure so the condvar predicate and its edge cases stay testable.
+fn worker_should_park(state: &QueueState, dictation_paused: bool) -> bool {
+    dictation_paused
+        || (state.items.iter().any(|item| item.status.is_busy())
+            && !state
+                .items
+                .iter()
+                .any(|item| item.status == QueueStatus::Queued))
+}
+
+fn claim_worker_slot(state: &mut QueueState) -> Option<u64> {
+    if state.active_worker.is_some() {
+        return None;
+    }
+    state.next_worker_generation = state.next_worker_generation.wrapping_add(1).max(1);
+    let generation = state.next_worker_generation;
+    state.active_worker = Some(generation);
+    Some(generation)
+}
+
+fn retire_worker_slot(state: &mut QueueState, generation: u64) {
+    if state.active_worker == Some(generation) {
+        state.active_worker = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queue_state_with(status: QueueStatus) -> QueueState {
+        QueueState {
+            items: vec![QueueItem {
+                id: "test".into(),
+                file_path: PathBuf::from("test.wav"),
+                file_name: "test.wav".into(),
+                status,
+                progress: 0.0,
+                stage: String::new(),
+                message: String::new(),
+                text: None,
+                paused_by_user: status == QueueStatus::Paused,
+            }],
+            ..QueueState::default()
+        }
+    }
+
+    #[test]
+    fn worker_waits_only_while_the_queue_is_not_runnable() {
+        assert!(!worker_should_park(&QueueState::default(), false));
+        assert!(!worker_should_park(
+            &queue_state_with(QueueStatus::Queued),
+            false
+        ));
+        assert!(worker_should_park(
+            &queue_state_with(QueueStatus::Paused),
+            false
+        ));
+        assert!(worker_should_park(&QueueState::default(), true));
+    }
+
+    #[test]
+    fn retiring_worker_cannot_clear_or_hide_its_replacement() {
+        let mut state = QueueState::default();
+        let first = claim_worker_slot(&mut state).expect("first worker");
+        assert!(claim_worker_slot(&mut state).is_none());
+
+        retire_worker_slot(&mut state, first);
+        let replacement = claim_worker_slot(&mut state).expect("replacement worker");
+        assert_ne!(replacement, first);
+
+        // Late cleanup from the retired thread must not clear the replacement.
+        retire_worker_slot(&mut state, first);
+        assert_eq!(state.active_worker, Some(replacement));
+    }
 }

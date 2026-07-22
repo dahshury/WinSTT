@@ -151,6 +151,37 @@ function sortKeys(keys: readonly string[]): string[] {
 	});
 }
 
+/** Side-specific modifier token → its DOM `getModifierState` family name. */
+const MODIFIER_FAMILY: Record<string, string> = {
+	LCtrl: "Control",
+	RCtrl: "Control",
+	LAlt: "Alt",
+	RAlt: "Alt",
+	LShift: "Shift",
+	RShift: "Shift",
+	LMeta: "Meta",
+	RMeta: "Meta",
+};
+
+/**
+ * Drop held modifiers whose family the OS reports as UP. DOM keyups are
+ * routinely swallowed on Windows (the Alt+Shift keyboard-layout switch,
+ * Win-key menu handling), which strands a stale modifier in the held set; the
+ * event's modifier bitmask on the NEXT key event is always current, so it is
+ * the authority. (Ported from the dimread/starter recorder rework — only the
+ * reconciliation applies here: this recorder's peak-commit model is kept
+ * because modifier-only push-to-talk combos must stay recordable.)
+ */
+function pruneStaleModifiers(
+	held: readonly string[],
+	event: Pick<KeyboardEvent, "getModifierState">,
+): string[] {
+	return held.filter((key) => {
+		const family = MODIFIER_FAMILY[key];
+		return family === undefined || event.getModifierState(family);
+	});
+}
+
 function comboFromPeak(keys: readonly string[]): string | null {
 	if (
 		keys.length === 0 ||
@@ -254,7 +285,9 @@ export function useKeyRecorder({
 				return;
 			}
 
-			heldKeysRef.current = sortKeys([...heldKeysRef.current, key]);
+			heldKeysRef.current = sortKeys(
+				pruneStaleModifiers([...heldKeysRef.current, key], event),
+			);
 			if (heldKeysRef.current.length > peakKeysRef.current.length) {
 				peakKeysRef.current = heldKeysRef.current;
 			}
@@ -272,7 +305,10 @@ export function useKeyRecorder({
 			event.preventDefault();
 			event.stopPropagation();
 
-			heldKeysRef.current = heldKeysRef.current.filter((held) => held !== key);
+			heldKeysRef.current = pruneStaleModifiers(
+				heldKeysRef.current.filter((held) => held !== key),
+				event,
+			);
 			dispatch({ type: "live", keys: heldKeysRef.current });
 		};
 

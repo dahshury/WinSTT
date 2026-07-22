@@ -4,8 +4,8 @@ use crate::utils;
 use log::debug;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -22,6 +22,10 @@ use misc_actions::{
     SkipPostProcessingAction, TransformAction,
 };
 use transcribe::TranscribeAction;
+
+const WAKEWORD_RECORDING_START_TIMEOUT: Duration = Duration::from_secs(2);
+
+type RecordingTransitionSignal = (Mutex<u64>, Condvar);
 
 #[derive(Clone, serde::Serialize)]
 pub(super) struct RecordingErrorEvent {
@@ -57,6 +61,12 @@ pub(super) fn last_transcription() -> String {
 
 pub(crate) fn request_post_processing_skip(app: &AppHandle, restore_focus: bool) -> bool {
     post_process::request_post_processing_skip(app, restore_focus)
+}
+
+/// Wake the dictation post-processing watcher to re-check its escape flags
+/// (Alt+S skip / session cancel). See `post_process::notify_post_processing_escape`.
+pub(crate) fn notify_post_processing_escape() {
+    post_process::notify_post_processing_escape();
 }
 
 pub(super) fn cancelled_session_cleanup(app: &AppHandle, session_id: u64, phase: &str) -> bool {
@@ -150,31 +160,221 @@ fn schedule_wakeword_followup_timeout(app: &AppHandle) {
     }
     .clamp(1.0, 30.0);
     let timeout = Duration::from_millis((seconds * 1000.0).round() as u64);
+    let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
+        crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
+        return;
+    };
+    let audio = Arc::clone(&audio);
+    let recording_signal = audio.recording_transition_signal();
     let app = app.clone();
 
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(250));
-        let recording_generation = {
-            let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
-                return;
-            };
-            if !audio.is_recording() {
-                crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(&app);
-                return;
-            }
-            audio.recording_generation()
+        let Some(recording_generation) = wait_for_active_recording_generation(
+            &recording_signal,
+            WAKEWORD_RECORDING_START_TIMEOUT,
+            || {
+                let generation = audio.recording_generation();
+                audio
+                    .is_active_recording_generation(generation)
+                    .then_some(generation)
+            },
+        ) else {
+            crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(&app);
+            return;
         };
 
         std::thread::sleep(timeout);
-        let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
-            return;
-        };
-        if audio.is_recording()
-            && audio.recording_generation() == recording_generation
+        if audio.is_active_recording_generation(recording_generation)
             && !audio.speech_seen_since_recording_start()
             && let Some(coord) = app.try_state::<crate::TranscriptionCoordinator>()
         {
             coord.request_silence_stop("transcribe", recording_generation);
         }
     });
+}
+
+/// Wait for recorder startup on its transition callback. The monotonic epoch closes the
+/// predicate-to-park race: a transition between the state check and the signal lock is observed
+/// as an epoch change, so no notification can be lost. The timeout is a failure backstop, not a
+/// polling cadence.
+fn wait_for_active_recording_generation(
+    signal: &RecordingTransitionSignal,
+    timeout: Duration,
+    mut active_generation: impl FnMut() -> Option<u64>,
+) -> Option<u64> {
+    let started = Instant::now();
+    let (epoch, wake) = signal;
+    let mut observed_epoch = *lock_recover(epoch);
+
+    loop {
+        if let Some(generation) = active_generation() {
+            return Some(generation);
+        }
+
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            return None;
+        }
+
+        // Never hold the signal mutex while consulting recorder state: recorder startup takes
+        // its state lock before pulsing this signal. Comparing epochs after the predicate check
+        // preserves the wake without inverting that lock order.
+        let guard = lock_recover(epoch);
+        if *guard != observed_epoch {
+            observed_epoch = *guard;
+            drop(guard);
+            continue;
+        }
+        let guard = wait_timeout_recover(wake, guard, timeout - elapsed);
+        observed_epoch = *guard;
+        drop(guard);
+    }
+}
+
+fn lock_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn wait_timeout_recover<'a, T>(
+    wake: &Condvar,
+    guard: std::sync::MutexGuard<'a, T>,
+    timeout: Duration,
+) -> std::sync::MutexGuard<'a, T> {
+    match wake.wait_timeout(guard, timeout) {
+        Ok((guard, _)) => guard,
+        Err(poisoned) => poisoned.into_inner().0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecordingTransitionSignal, lock_recover, wait_for_active_recording_generation};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::time::Duration;
+
+    fn pulse(signal: &RecordingTransitionSignal) {
+        let (epoch, wake) = signal;
+        let mut epoch = lock_recover(epoch);
+        *epoch = epoch.wrapping_add(1);
+        drop(epoch);
+        wake.notify_all();
+    }
+
+    #[test]
+    fn wakeword_start_wait_wakes_on_recording_transition() {
+        let signal: Arc<RecordingTransitionSignal> = Arc::new((Mutex::new(0), Condvar::new()));
+        let generation = Arc::new(Mutex::new(None));
+        let waiter_signal = Arc::clone(&signal);
+        let waiter_generation = Arc::clone(&generation);
+        let (checked_tx, checked_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let waiter = std::thread::spawn(move || {
+            let mut checked = false;
+            let result = wait_for_active_recording_generation(
+                &waiter_signal,
+                Duration::from_secs(2),
+                || {
+                    let generation = *lock_recover(&waiter_generation);
+                    if !checked {
+                        checked = true;
+                        checked_tx.send(()).unwrap();
+                    }
+                    generation
+                },
+            );
+            done_tx.send(result).unwrap();
+        });
+
+        checked_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        *lock_recover(&generation) = Some(17);
+        pulse(&signal);
+
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Some(17)
+        );
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn wakeword_start_wait_does_not_lose_transition_before_park() {
+        let signal: Arc<RecordingTransitionSignal> = Arc::new((Mutex::new(0), Condvar::new()));
+        let generation = Arc::new(Mutex::new(None));
+        let waiter_signal = Arc::clone(&signal);
+        let waiter_generation = Arc::clone(&generation);
+        let (checked_tx, checked_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let waiter = std::thread::spawn(move || {
+            let mut first_check = true;
+            let result = wait_for_active_recording_generation(
+                &waiter_signal,
+                Duration::from_secs(2),
+                || {
+                    let generation = *lock_recover(&waiter_generation);
+                    if first_check {
+                        first_check = false;
+                        checked_tx.send(()).unwrap();
+                        continue_rx.recv().unwrap();
+                    }
+                    generation
+                },
+            );
+            done_tx.send(result).unwrap();
+        });
+
+        checked_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        *lock_recover(&generation) = Some(23);
+        pulse(&signal);
+        continue_tx.send(()).unwrap();
+
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Some(23)
+        );
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn wakeword_start_wait_rechecks_recording_predicate_after_each_transition() {
+        let signal: Arc<RecordingTransitionSignal> = Arc::new((Mutex::new(0), Condvar::new()));
+        let state = Arc::new(Mutex::new((31, false)));
+        let waiter_signal = Arc::clone(&signal);
+        let waiter_state = Arc::clone(&state);
+        let (checked_tx, checked_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let waiter = std::thread::spawn(move || {
+            let mut checks = 0;
+            let result = wait_for_active_recording_generation(
+                &waiter_signal,
+                Duration::from_secs(2),
+                || {
+                    checks += 1;
+                    checked_tx.send(checks).unwrap();
+                    let (generation, is_recording) = *lock_recover(&waiter_state);
+                    is_recording.then_some(generation)
+                },
+            );
+            done_tx.send(result).unwrap();
+        });
+
+        checked_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        pulse(&signal);
+        checked_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
+        *lock_recover(&state) = (31, true);
+        pulse(&signal);
+        checked_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Some(31)
+        );
+        waiter.join().unwrap();
+    }
 }

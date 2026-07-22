@@ -19,7 +19,6 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use tauri::{AppHandle, LogicalPosition, Manager};
 
 use super::windows::{ensure_window, placement::work_area_for_point};
@@ -40,33 +39,26 @@ const OFFSCREEN: f64 = -9999.0;
 
 static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
 
-/// Instant of the last programmatic tray-menu resize (`resize_window`). A
-/// `set_size` on this window makes WebView2 transiently drop and regain focus
-/// (observed on Windows: `Focused(false)` lands just before the `Resized`
-/// event, `Focused(true)` follows right after), which used to trip the
-/// blur-hide handler whenever the menu was resized while open. Blur events
-/// inside this grace window are ignored.
-static LAST_TRAY_MENU_RESIZE: Mutex<Option<Instant>> = Mutex::new(None);
-const RESIZE_BLUR_GRACE: Duration = Duration::from_millis(500);
+/// Whether a programmatic tray-menu resize is awaiting its native `Resized`
+/// callback. WebView2 transiently emits `Focused(false)` while `set_size` is in
+/// flight, so that blur is suppressed by lifecycle state instead of by guessing
+/// how long the resize might take. `Resized` is the authoritative completion;
+/// `Focused(true)` also clears the state if WebView2 restores focus first.
+static TRAY_MENU_RESIZE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-fn stamp_now(slot: &Mutex<Option<Instant>>) {
-    if let Ok(mut guard) = slot.lock() {
-        *guard = Some(Instant::now());
-    }
+/// Called immediately before `resize_window` applies a new tray-menu size.
+pub(crate) fn begin_tray_menu_resize() {
+    TRAY_MENU_RESIZE_IN_FLIGHT.store(true, Ordering::Release);
 }
 
-fn within_grace(slot: &Mutex<Option<Instant>>, grace: Duration) -> bool {
-    slot.lock()
-        .ok()
-        .and_then(|guard| *guard)
-        .is_some_and(|at| at.elapsed() < grace)
+/// Abort a resize whose `set_size` call failed before a native callback could
+/// arrive. Successful resizes are completed by the window lifecycle callbacks.
+pub(crate) fn cancel_tray_menu_resize() {
+    TRAY_MENU_RESIZE_IN_FLIGHT.store(false, Ordering::Release);
 }
 
-/// Called by `resize_window` right before it applies a new tray-menu size, so
-/// the blur-hide handler can tell a resize-induced focus transient from a real
-/// click-away.
-pub(crate) fn note_tray_menu_resize() {
-    stamp_now(&LAST_TRAY_MENU_RESIZE);
+fn complete_tray_menu_resize() {
+    TRAY_MENU_RESIZE_IN_FLIGHT.store(false, Ordering::Release);
 }
 
 const TRAY_MENU_WILL_OPEN_EVENT: &str = "winstt:tray-menu-will-open";
@@ -232,6 +224,7 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
 /// Windows show animation on the next open; the position check is the source of
 /// truth for whether the popup is open.
 fn hide_tray_menu_window(window: &tauri::WebviewWindow) {
+    complete_tray_menu_resize();
     dispatch_tray_menu_dom_event(window, TRAY_MENU_HIDDEN_EVENT);
     let _ = window.set_position(LogicalPosition::new(OFFSCREEN, OFFSCREEN));
 }
@@ -291,9 +284,8 @@ pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y
     }
 }
 
-/// Install the tray-menu window's lifecycle behaviors ONCE (called from lib.rs
-/// setup — REPORTED in libOther). Two parities with the reference's
-/// `tray-menu-window.ts`:
+/// Install the tray-menu window's lifecycle behaviors once, on the first
+/// user-driven open. Two parities with the reference's `tray-menu-window.ts`:
 ///   1. RESIZE → RE-ANCHOR: the renderer's ResizeObserver reports the menu's real
 ///      `w-fit` content size via TRAY_MENU_RESIZE → `resize_window`. When the OS
 ///      resize lands, re-place the menu against the stored anchor so the now
@@ -307,9 +299,8 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
         return;
     }
 
-    // The window is created lazily on first open; defer wiring until then by
-    // re-checking on each open is over-engineered — instead create it now (hidden)
-    // so the event hook is attached exactly once.
+    // The caller is the first-open path. Create the window here and attach the
+    // event hook exactly once; startup never constructs this WebView eagerly.
     let Ok(window) = ensure_window(app, TRAY_MENU_LABEL) else {
         TRAY_MENU_LIFECYCLE_INSTALLED.store(false, Ordering::SeqCst);
         log::warn!("tray-menu window unavailable; skipping lifecycle wiring");
@@ -329,6 +320,7 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
             {
                 let _ = position_tray_menu(&app_handle, &window, anchor);
             }
+            complete_tray_menu_resize();
         }
         tauri::WindowEvent::Focused(false) => {
             // Only dismiss-on-blur if the menu is actually on screen. While the
@@ -339,16 +331,15 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
             if let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL)
                 && is_tray_menu_on_screen(&window)
             {
-                // Suppress while a programmatic resize is in flight:
-                // `set_size` on this window makes WebView2 momentarily drop focus
-                // before regaining it (see LAST_TRAY_MENU_RESIZE). A real
-                // click-away outside these windows still dismisses immediately.
-                let resizing = within_grace(&LAST_TRAY_MENU_RESIZE, RESIZE_BLUR_GRACE);
-                if !resizing {
+                // Suppress only while a programmatic resize is awaiting its
+                // native completion callback. Once `Resized` (or restored focus)
+                // arrives, the next real click-away dismisses immediately.
+                if !TRAY_MENU_RESIZE_IN_FLIGHT.load(Ordering::Acquire) {
                     hide_tray_menu_internal(&app_handle);
                 }
             }
         }
+        tauri::WindowEvent::Focused(true) => complete_tray_menu_resize(),
         _ => {}
     });
 

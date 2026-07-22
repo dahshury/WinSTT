@@ -79,4 +79,47 @@ describe("DictionaryTable", () => {
 				.hasAttribute("disabled"),
 		).toBe(true);
 	});
+
+	test("keeps row selection active while the delete control is pressed", () => {
+		const entries = [
+			{ id: "1", term: "visualizer" },
+			{ id: "2", term: "race" },
+		] satisfies DictionaryEntry[];
+		const { container, onChange } = renderTable(entries);
+
+		const selectAll = container.querySelector<HTMLElement>(
+			'[aria-label="Select all"]',
+		);
+		expect(selectAll).not.toBeNull();
+		fireEvent.click(selectAll as HTMLElement);
+
+		const deleteButton = screen.getByRole("button", { name: "Delete rows" });
+		const elementsFromPointDescriptor = Object.getOwnPropertyDescriptor(
+			document,
+			"elementsFromPoint",
+		);
+		Object.defineProperty(document, "elementsFromPoint", {
+			configurable: true,
+			value: () => [],
+		});
+		try {
+			fireEvent.mouseDown(deleteButton);
+			expect(screen.getByRole("button", { name: "Delete rows" })).toBe(
+				deleteButton,
+			);
+		} finally {
+			if (elementsFromPointDescriptor) {
+				Object.defineProperty(
+					document,
+					"elementsFromPoint",
+					elementsFromPointDescriptor,
+				);
+			} else {
+				Reflect.deleteProperty(document, "elementsFromPoint");
+			}
+		}
+
+		fireEvent.click(deleteButton);
+		expect(onChange).toHaveBeenCalledWith([]);
+	});
 });

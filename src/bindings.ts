@@ -90,6 +90,18 @@ async quitApp() : Promise<void> {
     await TAURI_INVOKE("quit_app");
 },
 /**
+ * Renderer acknowledgement that the splash exit animation completed. The
+ * sequence makes duplicate or delayed callbacks idempotent.
+ */
+async splashCloseAnimationComplete(sequence: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("splash_close_animation_complete", { sequence }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * Copy the most recent *completed* transcription to the system clipboard. Invoked
  * by the HTML tray menu's "Copy Last Transcript" item. Reads the history DB directly,
  * so it works whether or not the STT server is connected. Returns `false` when there's
@@ -248,22 +260,6 @@ async getAvailableMicrophones() : Promise<Result<AudioDevice[], string>> {
     else return __commandError__(e);
 }
 },
-async setSelectedMicrophone(deviceName: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_selected_microphone", { deviceName }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async getSelectedMicrophone() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_selected_microphone") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
 async getAvailableOutputDevices() : Promise<Result<AudioDevice[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_output_devices") };
@@ -293,22 +289,6 @@ async playTestSound(soundType: string) : Promise<void> {
 },
 async checkCustomSounds() : Promise<CustomSounds> {
     return await TAURI_INVOKE("check_custom_sounds");
-},
-async setClamshellMicrophone(deviceName: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("set_clamshell_microphone", { deviceName }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
-},
-async getClamshellMicrophone() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_clamshell_microphone") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return __commandError__(e);
-}
 },
 async isRecording() : Promise<boolean> {
     return await TAURI_INVOKE("is_recording");
@@ -742,8 +722,8 @@ async ollamaStart() : Promise<Result<OllamaStartResultPayload, string>> {
 },
 /**
  * `ollama_pull` — pull a model, streaming `llm:pull-progress` for every frame.
- * Honors the `ollama_cancel_pull` registry (polled between NDJSON frames).
- * Returns `OllamaPullResult` (`{ success, model, cancelled?, error? }`).
+ * Honors the `ollama_cancel_pull` registry (awaitable token — cancel aborts the
+ * drain instantly). Returns `OllamaPullResult` (`{ success, model, cancelled?, error? }`).
  */
 async ollamaPull(model: string) : Promise<Result<OllamaPullResultPayload, string>> {
     try {
@@ -858,8 +838,8 @@ async stopListen() : Promise<void> {
     await TAURI_INVOKE("stop_listen");
 },
 /**
- * `listen_session_snapshot` — poll surface for the History tab's live
- * session card (small clone; no events to subscribe to cross-window).
+ * `listen_session_snapshot` — initial snapshot for the History tab's live
+ * session card. Subsequent changes arrive through `listen:session-changed`.
  */
 async listenSessionSnapshot() : Promise<ListenSessionSnapshot> {
     return await TAURI_INVOKE("listen_session_snapshot");
@@ -1011,6 +991,14 @@ async winsttGetParameter(parameter: string) : Promise<JsonValue> {
  */
 async winsttSetParameter(parameter: string, value: JsonValue) : Promise<void> {
     await TAURI_INVOKE("winstt_set_parameter", { parameter, value });
+},
+/**
+ * `stt_recording_snapshot` — read-only reconciliation surface for the current
+ * dictation. Events remain the low-latency path; this snapshot recovers any
+ * start/VAD edge emitted before a newly-created overlay registered listeners.
+ */
+async sttRecordingSnapshot() : Promise<SttRecordingSnapshot> {
+    return await TAURI_INVOKE("stt_recording_snapshot");
 },
 /**
  * `stt_predownload_quant` — start a byte-level pause/resume capable download for one
@@ -1876,6 +1864,19 @@ async cancelPreview() : Promise<Result<null, string>> {
 }
 },
 /**
+ * Renderer acknowledgement that every painted overlay hit region has completed
+ * its exit transition. The generation makes a delayed acknowledgement harmless
+ * across rapid hide -> show -> hide cycles.
+ */
+async overlayAckHideTransition(generation: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("overlay_ack_hide_transition", { generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * Renderer feedback loop for native hit-testing. The overlay window is larger
  * than the visual pill so the renderer has layout room, but this command clips
  * the native window to only the currently painted pill/control rectangles.
@@ -1936,7 +1937,10 @@ async winsttDiag(label: string, level: string, message: string) : Promise<void> 
  * For the anchored pickers the renderer passes the trigger's viewport rect
  * (`x`/`y`/`width`/`height`); we convert it to a screen anchor via the CALLING
  * window (`webview`) and place the popup. For the plain windows the rect is
- * absent and we center + show.
+ * absent and we center + show. This command must remain async: a synchronous
+ * Tauri command may execute on the IPC/UI path, where first-use WebView
+ * construction can block the event loop. The async command body runs on
+ * Tauri's worker runtime and lets Wry marshal native creation safely.
  */
 async openWindow(name: string, x: number | null, y: number | null, width: number | null, height: number | null, pickerKind: string | null, pickerFeature: string | null, pickerTarget: string | null) : Promise<Result<null, string>> {
     try {
@@ -1969,6 +1973,32 @@ async closeWindow(name: string) : Promise<Result<null, string>> {
 async closeSelfWindow() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("close_self_window") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `window_model_picker_ready` — renderer-ready handshake for anchor delivery.
+ * The model-picker invokes this after its lifecycle listeners are registered.
+ * If an open raced renderer startup, this sends the latest stored anchor
+ * exactly once. Future opens arrive through the installed listener.
+ */
+async windowModelPickerReady() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("window_model_picker_ready") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `window_model_picker_close_complete` — renderer acknowledgement carrying
+ * the close generation whose CSS exit animation actually completed.
+ */
+async windowModelPickerCloseComplete(sequence: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("window_model_picker_close_complete", { sequence }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return __commandError__(e);
@@ -2260,7 +2290,6 @@ model?: string;
 openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
 export type AppProfileRule = { id?: string; enabled?: boolean; appExe?: string; titlePattern?: string; urlPattern?: string; configurationId?: string; configurationName?: string; config?: AppProfileConfig }
 export type AppProfilesSettings = { rules?: AppProfileRule[] }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; update_checks_enabled?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; debug_mode?: boolean; log_level?: LogLevel; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: CoreAutoSubmitKey; mute_while_recording?: boolean; append_trailing_space?: boolean; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
@@ -2411,7 +2440,6 @@ accuracy_score: number }
  */
 export type ClearResult = { cleared: boolean }
 export type ClearUpdaterHistoryResult = { cleared: boolean }
-export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * Rolling aggregate for one `(provider, operation)` pair.
  */
@@ -2465,7 +2493,6 @@ export type ContextSnapshotView = { appExe?: string | null; axHtml?: string | nu
  * capture in debug/harness workflows.
  */
 export type ContextWindowEntry = { hwnd: string; processId: number; label: string; exe: string; title: string }
-export type CoreAutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 /**
  * `customModifierSchema` — user-authored cleanup modifier. Persists the full
  * definition even while `enabled` is false so the authored name/prompt survives
@@ -3166,7 +3193,6 @@ export type OpenRouterTtsModelPayload = { id: string; name: string; description?
  * `OpenRouterTtsScanResult` — `{ models, reachable, error? }`.
  */
 export type OpenRouterTtsScanResultPayload = { models: OpenRouterTtsModelPayload[]; reachable: boolean; error?: string | null }
-export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 /**
  * Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
  * should remain native-hit-testable. Native overlay implementations use this
@@ -3200,7 +3226,6 @@ export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
  * value), so an `Option<Section>` round-trips losslessly.
  */
 export type PartialWinsttSettings = { global?: GlobalSettings | null; model?: ModelSettings | null; quality?: QualitySettings | null; audio?: AudioSettings | null; general?: GeneralSettings | null; hotkey?: HotkeySettings | null; dictionary?: DictionaryEntry[] | null; snippets?: SnippetEntry[] | null; llm?: LlmSettings | null; tts?: TtsSettings | null; integrations?: IntegrationsSettings | null }
-export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PermissionGrantState = "not_required" | "granted" | "required"
 export type PermissionPlatform = "macos" | "windows" | "other"
@@ -3401,6 +3426,13 @@ export type SttModelLifecycleSnapshot = { modelId: string; quantization: string;
  */
 verificationMs: number | null; selectedModel: string | null; residentModel: string | null; warm: boolean; error: string | null }
 export type SttModelSnapshot = { selectedModel: string; selectedRealtimeModel: string; residentModel: string | null; residentRealtimeModel: string | null; warm: boolean; quantization: string; device: DeviceType }
+/**
+ * Authoritative lifecycle state retained by Rust for renderers that mount
+ * after one or more fire-and-forget STT events have already been emitted.
+ * The overlay uses this once its listeners are installed (and whenever its
+ * hidden webview is shown) to close the cold-start event-subscription race.
+ */
+export type SttRecordingSnapshot = { dictationSessionId: number; isRecording: boolean; isSpeaking: boolean; pipelineActive: boolean; speechSeen: boolean }
 export type SttSwitchKind = "main" | "realtime"
 export type SttSwitchModelRequest = { kind: SttSwitchKind; modelId: string; quantization: string | null; device: DeviceType | null;
 /**
@@ -3657,7 +3689,6 @@ source?: TtsSource; cloud?: TtsCloud }
  * `tts.source` — local Kokoro vs cloud ElevenLabs.
  */
 export type TtsSource = "local" | "cloud"
-export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type UpdaterCommandResult = { triggered: boolean; reason?: string | null }
 export type UpdaterStatusEntry = { bytesPerSecond?: number | null; message?: string | null; percent?: number | null; status: string; total?: number | null; transferred?: number | null; timestamp: number; version?: string | null }
 /**
@@ -3696,7 +3727,6 @@ export type WakeWordModelStatusPayload = { available: boolean; artifactLabel: st
  * One wake-word preset for the renderer dropdown.
  */
 export type WakeWordPresetPayload = { name: string; phrase: string }
-export type WhisperAcceleratorSetting = "auto" | "cpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * The complete WinSTT settings tree, nested by the settings sections, ported
@@ -3715,14 +3745,7 @@ export type WinsttSettings = {
  * settings exports like `core`. Serde default 0 = pre-versioning store;
  * the boot migration stamps it to CURRENT after applying the pending steps.
  */
-schemaVersion?: number; global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings;
-/**
- * Backend-only fields that have no renderer-facing settings section: the hotkey
- * `bindings` map, audio-feedback and paste/clipboard settings, the keyboard
- * implementation, accelerators, and tray/debug/update-check toggles.
- * The renderer never reads or writes `core`.
- */
-core?: AppSettings }
+schemaVersion?: number; global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings }
 /**
  * One word with start/end seconds (the renderer's highlight sweep input).
  */

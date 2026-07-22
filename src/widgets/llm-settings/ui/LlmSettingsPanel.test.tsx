@@ -79,7 +79,10 @@ describe("LlmSettingsPanel", () => {
 		const caveman = screen.getAllByText("Caveman")[0];
 		const group = caveman?.closest("button")?.parentElement;
 		expect(group?.className).toContain("flex");
-		expect(group?.className).toContain("w-64");
+		// Wide enough to hold all four `sm`-sized segments in one row without
+		// clipping "Caveman" (see modifier-presets.tsx) — NOT the compact `xs`
+		// row, whose segments read smaller than the 3-option Summarize switcher.
+		expect(group?.className).toContain("w-[21rem]");
 		expect(group?.className).not.toContain("grid-cols-2");
 	});
 

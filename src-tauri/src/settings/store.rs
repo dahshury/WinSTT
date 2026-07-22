@@ -4,8 +4,8 @@ use tauri::AppHandle;
 
 use super::defaults::*;
 use super::types::{
-    AppSettings, AutoSubmitKey, ClipboardHandling, OrtAcceleratorSetting, PasteMethod,
-    ShortcutBinding, WhisperAcceleratorSetting,
+    AppSettings, ClipboardHandling, OrtAcceleratorSetting, PasteMethod, ShortcutBinding,
+    WhisperAcceleratorSetting,
 };
 
 pub fn get_default_settings() -> AppSettings {
@@ -89,15 +89,11 @@ pub fn get_default_settings() -> AppSettings {
     AppSettings {
         bindings,
         update_checks_enabled: default_update_checks_enabled(),
-        selected_microphone: None,
-        clamshell_microphone: None,
         selected_output_device: None,
         debug_mode: false,
         log_level: default_log_level(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
-        auto_submit: default_auto_submit(),
-        auto_submit_key: AutoSubmitKey::default(),
         mute_while_recording: false,
         append_trailing_space: false,
         show_tray_icon: default_show_tray_icon(),
@@ -145,16 +141,4 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
             default_binding: String::new(),
             current_binding: String::new(),
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_settings_disable_auto_submit() {
-        let settings = get_default_settings();
-        assert!(!settings.auto_submit);
-        assert_eq!(settings.auto_submit_key, AutoSubmitKey::Enter);
-    }
 }

@@ -75,6 +75,56 @@ where
     cleanup_dictionary_terms(raw_terms)
 }
 
+fn dictionary_comparison_tokens(text: &str) -> Vec<String> {
+    let mut normalized = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            normalized.extend(ch.to_lowercase());
+        } else {
+            match ch {
+                '+' => normalized.push_str(" plus "),
+                '#' => normalized.push_str(" sharp "),
+                '&' => normalized.push_str(" and "),
+                _ => normalized.push(' '),
+            }
+        }
+    }
+    normalized.split_whitespace().map(str::to_string).collect()
+}
+
+fn contains_token_phrase(text: &str, term: &str) -> bool {
+    let haystack = dictionary_comparison_tokens(text);
+    let needle = dictionary_comparison_tokens(term);
+    !needle.is_empty()
+        && needle.len() <= haystack.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle.as_slice())
+}
+
+/// Keep only suggestions for which the model output demonstrates an actual STT
+/// correction: the canonical term must be new relative to the raw transcript
+/// and must occur in the cleaned result. This is intentionally a minimum proof
+/// gate rather than a vocabulary classifier; whether a word is "well known" is
+/// model- and language-dependent, while "it was already transcribed correctly"
+/// is deterministic.
+pub fn filter_dictionary_corrections<I>(
+    raw_terms: I,
+    raw_transcript: &str,
+    cleaned_text: &str,
+) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    cleanup_dictionary_terms(raw_terms)
+        .into_iter()
+        .filter(|term| {
+            !contains_token_phrase(raw_transcript, term)
+                && contains_token_phrase(cleaned_text, term)
+        })
+        .collect()
+}
+
 pub const OLLAMA_DICTIONARY_TOOL_NAME: &str = "suggest_dictionary_terms";
 
 pub const HISTORY_TAGS: &[&str] = &[
@@ -136,7 +186,7 @@ macro_rules! history_tag_rubric {
 pub(super) const OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED: &str = concat!(
     "Side-channel extraction: return the cleaned dictation only in the JSON `text` field. ",
     "Fill every side-channel field from the same dictated text in this one response; multiple items are allowed. ",
-    "`learned_proper_nouns`: proper nouns, acronyms, product names, project names, technical jargon, or domain-specific terms to remember for future speech recognition; use canonical spelling/capitalization; never include common words, full sentences, URLs, emails, passwords, or secrets. ",
+    "`learned_proper_nouns` is STT-correction memory, NOT a list of notable vocabulary. Add a canonical term only when the original TEXT contained a different, incorrect speech-to-text rendering and you corrected that exact rendering in `text`. If TEXT already contains the term correctly, ignoring capitalization or punctuation, do not add it. Never add a word merely because it is a proper noun, acronym, product, project, technical term, domain term, or important topic. Correctly transcribed familiar names such as Gmail, Docker, Kubernetes, and Microsoft must produce an empty array. Example: TEXT `open G mail` -> text `Open Gmail.` and learned_proper_nouns [`Gmail`]; TEXT `open Gmail` -> text `Open Gmail.` and learned_proper_nouns []. When uncertain whether an STT error occurred, use an empty array. Use canonical spelling/capitalization; never include common phrases, full sentences, URLs, emails, passwords, or secrets. ",
     "`learned_snippets`: only explicit snippet/text-expansion commands such as \"when I say X, expand to Y\" or \"add snippet X expands to Y\"; normalize a spoken slash trigger like \"slash thanks\" to \"/thanks\" when clear; never create snippets from ordinary content. If a snippet expansion contains a password, API key, token, account number, SSN, medical/legal secret, or private contact detail, do not save the snippet and instead mark privacy. ",
     "`suggested_modifier_presets`: extract explicit reusable formatting commands such as \"create/add/save a reusable modifier/preset called X that ...\"; name comes from the called/named phrase and prompt is the reusable instruction. Do not create a preset when words like formal, concise, technical, or summary are ordinary dictated content. ",
     "`history_tag`: choose ",
@@ -1002,5 +1052,51 @@ mod tests {
             "someone@example.test".to_string(),
         ]);
         assert_eq!(merged, vec!["WinSTT", "Base UI"]);
+    }
+
+    #[test]
+    fn auto_dictionary_prompt_defines_correction_memory_not_vocabulary_extraction() {
+        assert!(OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED.contains("STT-correction memory"));
+        assert!(
+            OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED
+                .contains("TEXT `open Gmail` -> text `Open Gmail.` and learned_proper_nouns []")
+        );
+    }
+
+    #[test]
+    fn dictionary_corrections_reject_terms_already_known_by_stt() {
+        let filtered = filter_dictionary_corrections(
+            vec![
+                "Gmail".to_string(),
+                "Docker".to_string(),
+                "billing email notification".to_string(),
+            ],
+            "Open Gmail in Docker and check the billing email notification.",
+            "Open Gmail in Docker and check the billing email notification.",
+        );
+
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn dictionary_corrections_keep_demonstrated_stt_repairs() {
+        let filtered = filter_dictionary_corrections(
+            vec!["Gmail".to_string(), "WinSTT".to_string()],
+            "Open G mail and then launch Win S T T.",
+            "Open Gmail and then launch WinSTT.",
+        );
+
+        assert_eq!(filtered, vec!["Gmail", "WinSTT"]);
+    }
+
+    #[test]
+    fn dictionary_corrections_require_term_in_cleaned_output() {
+        let filtered = filter_dictionary_corrections(
+            vec!["ImaginaryProduct".to_string()],
+            "Open the settings page.",
+            "Open the settings page.",
+        );
+
+        assert!(filtered.is_empty());
     }
 }

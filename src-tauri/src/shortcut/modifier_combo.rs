@@ -3,10 +3,7 @@ mod platform {
     use log::{debug, error, warn};
     use once_cell::sync::Lazy;
     use std::sync::mpsc::{Receiver, Sender, channel};
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    };
+    use std::sync::{Arc, Condvar, Mutex};
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
     use tauri::AppHandle;
@@ -55,13 +52,22 @@ mod platform {
     // ── polling backend (fallback) ─────────────────────────────────────────────
 
     struct PollHandle {
-        stop: Arc<AtomicBool>,
+        stop: Arc<(Mutex<bool>, Condvar)>,
         thread: Option<JoinHandle<()>>,
+    }
+
+    fn request_poll_stop(stop: &(Mutex<bool>, Condvar)) {
+        let (stopped, wake) = stop;
+        let mut stopped = stopped
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *stopped = true;
+        wake.notify_all();
     }
 
     impl Drop for PollHandle {
         fn drop(&mut self) {
-            self.stop.store(true, Ordering::SeqCst);
+            request_poll_stop(&self.stop);
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
@@ -185,17 +191,6 @@ mod platform {
         Ok(true)
     }
 
-    /// Whether the blocking PTT hook currently sees any combo key physically held.
-    /// `None` when the hook backend is not active (polling fallback, or a full
-    /// hotkey handled by the Tauri backend). Callers that poll `GetAsyncKeyState`
-    /// (the PTT release watchdog) MUST prefer this — the hook swallows the combo's
-    /// physical events, so the async key state never sees them go down.
-    pub fn ptt_hook_combo_key_down() -> Option<bool> {
-        let guard = HOOK_SHARED.lock().ok()?;
-        let shared = guard.as_ref()?;
-        Some(shared.tracker.any_key_down())
-    }
-
     /// Whether the blocking PTT hook currently sees the FULL combo engaged (every
     /// required modifier physically down). `None` when the hook backend is not
     /// active. The cycle-gesture hook (`mode_cycle`) prefers this over
@@ -211,7 +206,7 @@ mod platform {
     // ── polling listener (observe-only fallback) ───────────────────────────────
 
     fn start_poll_listener(app: &AppHandle, combo: ModifierCombo) -> Result<PollHandle, String> {
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let thread_stop = Arc::clone(&stop);
         let app = app.clone();
         let thread = thread::Builder::new()
@@ -224,9 +219,16 @@ mod platform {
         })
     }
 
-    fn run_listener(app: AppHandle, combo: ModifierCombo, stop: Arc<AtomicBool>) {
+    fn run_listener(app: AppHandle, combo: ModifierCombo, stop: Arc<(Mutex<bool>, Condvar)>) {
         let mut pressed = false;
-        while !stop.load(Ordering::SeqCst) {
+        loop {
+            let (stopped, wake) = &*stop;
+            if *stopped
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+            {
+                break;
+            }
             let down = combo.requirements.iter().all(ModifierRequirement::is_down);
             if down != pressed {
                 pressed = down;
@@ -235,7 +237,17 @@ mod platform {
                 }
                 dispatch(&app, &combo.label, down);
             }
-            thread::sleep(POLL_INTERVAL);
+
+            let stopped = stopped
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let stopped = match wake.wait_timeout(stopped, POLL_INTERVAL) {
+                Ok((stopped, _)) => stopped,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+            if *stopped {
+                break;
+            }
         }
 
         if pressed {
@@ -301,10 +313,6 @@ mod platform {
             self.groups
                 .iter()
                 .all(|group| group.iter().any(|vk| self.physical_down.contains(vk)))
-        }
-
-        fn any_key_down(&self) -> bool {
-            !self.physical_down.is_empty()
         }
 
         /// Process a PHYSICAL key event for `vk`. Returns `(swallow, transition)`.
@@ -535,9 +543,16 @@ mod platform {
         let Some(shared) = guard.as_mut() else {
             return false;
         };
+        let watched = shared.tracker.all_vks.contains(&vk);
         let (swallow, transition) = shared.tracker.process(vk, down);
+        let events = shared.events.clone();
+        drop(guard);
+
+        if watched {
+            super::super::ptt_release_watchdog::physical_key_transition();
+        }
         if let Some(transition) = transition {
-            let _ = shared.events.send(transition);
+            let _ = events.send(transition);
         }
         swallow
     }
@@ -695,7 +710,9 @@ mod platform {
 
     #[cfg(test)]
     mod tests {
-        use super::{ComboTracker, HookEvent, is_modifier_only_accelerator};
+        use super::{ComboTracker, HookEvent, is_modifier_only_accelerator, request_poll_stop};
+        use std::sync::{Arc, Condvar, Mutex};
+        use std::thread;
 
         const VK_LCTRL: u16 = 0xA2;
         const VK_RCTRL: u16 = 0xA3;
@@ -817,16 +834,35 @@ mod platform {
         }
 
         #[test]
-        fn tracker_reports_physical_hold_for_watchdog() {
+        fn tracker_reports_combo_engagement_for_watchdog() {
             let mut tracker = ctrl_win_tracker();
-            assert!(!tracker.any_key_down());
+            assert!(!tracker.combo_satisfied());
             let _ = tracker.process(VK_LCTRL, true);
             let _ = tracker.process(VK_LWIN, true);
-            assert!(tracker.any_key_down());
+            assert!(tracker.combo_satisfied());
             let _ = tracker.process(VK_LWIN, false);
-            assert!(tracker.any_key_down()); // Ctrl still physically held
+            assert!(!tracker.combo_satisfied());
             let _ = tracker.process(VK_LCTRL, false);
-            assert!(!tracker.any_key_down());
+            assert!(!tracker.combo_satisfied());
+        }
+
+        #[test]
+        fn poll_stop_recovers_poison_before_signaling() {
+            let stop = Arc::new((Mutex::new(false), Condvar::new()));
+            let poison_target = Arc::clone(&stop);
+            let _ = thread::spawn(move || {
+                let _guard = poison_target.0.lock().expect("stop mutex should lock");
+                panic!("poison stop mutex");
+            })
+            .join();
+
+            request_poll_stop(&stop);
+
+            let stopped = stop
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(*stopped);
         }
     }
 }
@@ -905,11 +941,6 @@ mod platform {
     // Stubs kept for a uniform module surface; the PTT low-level-hook combo state
     // is a Windows-only concept, so nothing calls these on other platforms.
     #[allow(dead_code)]
-    pub fn ptt_hook_combo_key_down() -> Option<bool> {
-        None
-    }
-
-    #[allow(dead_code)]
     pub fn ptt_hook_combo_engaged() -> Option<bool> {
         None
     }
@@ -922,4 +953,4 @@ pub(crate) use platform::{
 // platform module still defines stubs (re-exported for a uniform surface), so the
 // re-export is unused there — allow it rather than fail `-D warnings` on Linux.
 #[cfg_attr(not(windows), allow(unused_imports))]
-pub(crate) use platform::{ptt_hook_combo_engaged, ptt_hook_combo_key_down};
+pub(crate) use platform::ptt_hook_combo_engaged;

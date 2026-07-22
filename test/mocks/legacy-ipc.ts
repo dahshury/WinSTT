@@ -7,7 +7,6 @@ import { NATIVE_EVENTS } from "@/shared/api/native-events";
  */
 const LEGACY_TEST_COMMANDS = {
 	APP_GET_SYSTEM_LOCALE: "app:get-system-locale",
-	AUDIO_SET_SELECTED_MICROPHONE: "audio:set-selected-microphone",
 	AUTOSTART_GET: "autostart:get",
 	AUTOSTART_SET: "autostart:set",
 	AUDIO_GET_DEVICES: "audio:get-devices",

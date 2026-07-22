@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { commands } from "@/bindings";
 import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
-import { ipcOn } from "@/shared/api/ipc-client";
+import { ipcOnReady } from "@/shared/api/ipc-client";
 import {
 	DEFAULT_MODEL_PICKER_MODE,
 	DESIRED_HEIGHT,
 	DESIRED_WIDTH,
 	desiredSizeForMode,
 	type DetachedModelPickerMode,
-	MODEL_PICKER_CLOSE_MS,
 	normalizeDetachedModelPickerMode,
 	type PanelPhase,
 	type PanelRect,
@@ -23,6 +22,7 @@ interface PanelRectState {
 	warmPanel: PanelRect;
 	shouldMountBody: boolean;
 	dropdownStateClass: string;
+	completeCloseTransition: () => void;
 	/** Bumps every time the panel fully closes. The host folds this into the
 	 *  picker-body `key` so the warm-mounted (never-unmounting) body is remounted
 	 *  while hidden — clearing transient in-picker UI like the search query so the
@@ -33,8 +33,8 @@ interface PanelRectState {
 /**
  * Owns the detached-window panel positioning state machine: panel/panelPhase
  * state + refs, the MODEL_PICKER_ANCHOR / MODEL_PICKER_CLOSING IPC effects, the
- * generation-guarded close timer, the one-shot MODEL_PICKER_RESIZE send, and the
- * derived reveal / warmPanel / dropdownStateClass values the host renders.
+ * renderer-ready anchor handshake, close-animation acknowledgement, the one-shot
+ * MODEL_PICKER_RESIZE send, and the derived panel values the host renders.
  */
 export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	// Main reports where to draw the panel inside the full-screen window
@@ -43,15 +43,13 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	const [panel, setPanelState] = useState<PanelRect | null>(null);
 	const [panelPhase, setPanelPhaseState] = useState<PanelPhase>("hidden");
 	// Bumped on every full close so the host can remount the warm picker body
-	// (while hidden) and reset its transient search query. Distinct from
-	// `openGenerationRef` below, which bumps on OPEN to guard the close timer.
+	// (while hidden) and reset its transient search query.
 	const [bodyGeneration, setBodyGenerationState] = useState(0);
 	const panelRef = useRef<PanelRect | null>(null);
 	const panelPhaseRef = useRef<PanelPhase>("hidden");
-	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const closeSequenceRef = useRef<number | null>(null);
 	const revealRafRef = useRef<number | null>(null);
 	const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const openGenerationRef = useRef(0);
 	const [bumpBodyGeneration] = useState(
 		() => () => setBodyGenerationState((generation) => generation + 1),
 	);
@@ -62,12 +60,6 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	const [setPanelPhase] = useState(() => (next: PanelPhase) => {
 		panelPhaseRef.current = next;
 		setPanelPhaseState(next);
-	});
-	const [clearCloseTimer] = useState(() => () => {
-		if (closeTimerRef.current !== null) {
-			clearTimeout(closeTimerRef.current);
-			closeTimerRef.current = null;
-		}
 	});
 	const [clearRevealWait] = useState(() => () => {
 		if (revealRafRef.current !== null) {
@@ -97,29 +89,37 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		});
 		revealTimerRef.current = setTimeout(reveal, 400);
 	});
-	useEffect(
-		() => () => {
-			clearCloseTimer();
-			clearRevealWait();
-		},
-		[clearCloseTimer, clearRevealWait],
-	);
-	// A real rect positions + reveals. Legacy/null anchors can still arrive from
-	// an older hidden-window close path; ignore them once a fresh open is active
-	// so a stale close cannot blank the panel while the backdrop is visible.
-	useEffect(
-		() =>
-			ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => {
+	useEffect(() => () => clearRevealWait(), [clearRevealWait]);
+	const [completeCloseTransition] = useState(() => () => {
+		const sequence = closeSequenceRef.current;
+		if (sequence === null) {
+			return;
+		}
+		closeSequenceRef.current = null;
+		clearRevealWait();
+		if (panelRef.current !== null || panelPhaseRef.current !== "hidden") {
+			setPanel(null);
+			setPanelPhase("hidden");
+			bumpBodyGeneration();
+		}
+		void commands.windowModelPickerCloseComplete(sequence);
+	});
+
+	useEffect(() => {
+		let disposed = false;
+		let unsubscribeAnchor: () => void = () => undefined;
+		let unsubscribeClosing: () => void = () => undefined;
+
+		const installLifecycleSubscriptions = async () => {
+			const anchorSubscription = ipcOnReady(IPC.MODEL_PICKER_ANCHOR, (rect) => {
 				if (rect) {
 					const payload = rect as PanelRect & { mode?: unknown };
-					openGenerationRef.current += 1;
-					clearCloseTimer();
+					closeSequenceRef.current = null;
 					setPanel({
 						...payload,
 						mode: normalizeDetachedModelPickerMode(payload.mode),
 					});
-					// Already revealed (repair/re-anchor or a duplicate re-emit):
-					// just track the rect — re-gating would restart the animation.
+					// Already revealed (repair/re-anchor): just track the latest rect.
 					if (
 						panelPhaseRef.current === "open" ||
 						panelPhaseRef.current === "pre-open"
@@ -142,62 +142,78 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 				) {
 					return;
 				}
-				clearCloseTimer();
 				clearRevealWait();
 				setPanel(null);
 				setPanelPhase("hidden");
 				bumpBodyGeneration();
-			}),
-		[
-			clearCloseTimer,
-			clearRevealWait,
-			scheduleReveal,
-			setPanel,
-			setPanelPhase,
-			bumpBodyGeneration,
-		],
-	);
-	useEffect(() => {
-		const unsubscribe = ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
-			if (panelRef.current === null) {
+			});
+			const closingSubscription = ipcOnReady(
+				IPC.MODEL_PICKER_CLOSING,
+				(rawSequence) => {
+					if (typeof rawSequence !== "number") {
+						return;
+					}
+					closeSequenceRef.current = rawSequence;
+					// If the panel never revealed, there is no exit animation to await.
+					if (
+						panelRef.current === null ||
+						panelPhaseRef.current === "pre-open"
+					) {
+						completeCloseTransition();
+						return;
+					}
+					setPanelPhase("closing");
+				},
+			);
+			let cleanups: [() => void, () => void];
+			try {
+				cleanups = await Promise.all([anchorSubscription, closingSubscription]);
+			} catch (error) {
+				// If only one native registration failed, tear down the other one
+				// when it resolves rather than leaking a half-installed lifecycle.
+				void anchorSubscription
+					.then((cleanup) => cleanup())
+					.catch(() => undefined);
+				void closingSubscription
+					.then((cleanup) => cleanup())
+					.catch(() => undefined);
+				throw error;
+			}
+			const [anchorCleanup, closingCleanup] = cleanups;
+			if (disposed) {
+				anchorCleanup();
+				closingCleanup();
 				return;
 			}
-			// Closed before the reveal gate fired: the panel was never visible,
-			// so playing the out-animation would flash it in. Drop straight to
-			// hidden instead.
-			if (panelPhaseRef.current === "pre-open") {
-				clearRevealWait();
-				setPanel(null);
-				setPanelPhase("hidden");
-				bumpBodyGeneration();
-				return;
+			unsubscribeAnchor = anchorCleanup;
+			unsubscribeClosing = closingCleanup;
+			// Listener installation is the only prerequisite for the snapshot.
+			// Do not gate this acknowledgement on requestAnimationFrame: a freshly
+			// created or native-hidden WebView can throttle rAF, which would make the
+			// anchor wait for a frame while the frame waits for an anchor to render.
+			// The anchor callback's separate reveal gate still waits for paint.
+			if (!disposed) {
+				void commands.windowModelPickerReady();
 			}
-			const closeGeneration = openGenerationRef.current;
-			clearCloseTimer();
-			setPanelPhase("closing");
-			closeTimerRef.current = setTimeout(() => {
-				closeTimerRef.current = null;
-				if (
-					openGenerationRef.current !== closeGeneration ||
-					panelPhaseRef.current !== "closing"
-				) {
-					return;
-				}
-				setPanel(null);
-				setPanelPhase("hidden");
-				bumpBodyGeneration();
-			}, MODEL_PICKER_CLOSE_MS);
+		};
+
+		void installLifecycleSubscriptions().catch((error) => {
+			unsubscribeAnchor();
+			console.warn("[model-picker] lifecycle subscription failed:", error);
 		});
+
 		return () => {
-			clearCloseTimer();
-			unsubscribe();
+			disposed = true;
+			unsubscribeAnchor();
+			unsubscribeClosing();
 		};
 	}, [
-		clearCloseTimer,
+		bumpBodyGeneration,
 		clearRevealWait,
+		completeCloseTransition,
+		scheduleReveal,
 		setPanel,
 		setPanelPhase,
-		bumpBodyGeneration,
 	]);
 
 	const mode = panel?.mode ?? DEFAULT_MODEL_PICKER_MODE;
@@ -264,6 +280,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		warmPanel,
 		shouldMountBody,
 		dropdownStateClass,
+		completeCloseTransition,
 		openGeneration: bodyGeneration,
 	};
 }

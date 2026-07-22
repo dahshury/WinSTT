@@ -13,8 +13,8 @@
 //!     that is present regardless of which backend owns the transcribe combo.
 //!
 //! Held-state is resolved per backend: when the modifier-only combo hook is active
-//! its swallowed keys never reach `GetAsyncKeyState`, so we ask that hook whether
-//! the combo is engaged; otherwise we poll the parsed accelerator keys directly.
+//! its swallowed keys never reach the other hook, so we ask that hook whether the
+//! combo is engaged; otherwise this hook's own physical-key tracker is authoritative.
 //!
 //! The hook only ever ACTS on ArrowUp; every other key is a trivial pass-through,
 //! so it does not interfere with the delicate PTT combo swallowing policy.
@@ -23,6 +23,7 @@
 mod platform {
     use log::{debug, warn};
     use once_cell::sync::Lazy;
+    use std::collections::HashSet;
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::sync::{Mutex, atomic::AtomicBool};
     use std::thread::{self, JoinHandle};
@@ -30,6 +31,7 @@ mod platform {
     use tauri::{AppHandle, Emitter};
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
         PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
@@ -43,8 +45,8 @@ mod platform {
     const VK_UP: u16 = 0x26;
 
     static LISTENER: Lazy<Mutex<Option<CycleListener>>> = Lazy::new(|| Mutex::new(None));
-    /// Shared state read by the hook procedure. `Some` exactly while the hook is
-    /// installed.
+    /// Shared state read by the hook procedure. It is published immediately
+    /// before installation and marked active only after installation succeeds.
     static HOOK_SHARED: Lazy<Mutex<Option<CycleShared>>> = Lazy::new(|| Mutex::new(None));
 
     struct CycleListener {
@@ -76,10 +78,73 @@ mod platform {
 
     struct CycleShared {
         requirements: Vec<KeyRequirement>,
+        hook_active: bool,
+        /// Durable physical state for full accelerators. A `WH_KEYBOARD_LL`
+        /// callback runs before Windows updates `GetAsyncKeyState`, so consumers
+        /// must read this tracker after the callback instead of sampling the OS
+        /// state and potentially going back to sleep on a stale key-down value.
+        physical_keys: PhysicalComboState,
         events: Sender<()>,
+        /// False when ArrowUp is itself part of the transcribe accelerator. The
+        /// hook remains installed in that case to publish PTT release callbacks,
+        /// but the conflicting cycle gesture is disabled.
+        cycle_enabled: bool,
         /// True between the ArrowUp key-down we consumed and its key-up, so
         /// auto-repeat while held fires exactly one cycle per physical press.
         up_active: AtomicBool,
+    }
+
+    #[derive(Default)]
+    struct PhysicalComboState {
+        down: HashSet<u16>,
+    }
+
+    impl PhysicalComboState {
+        fn set(&mut self, vk: u16, down: bool) {
+            if down {
+                self.down.insert(vk);
+            } else {
+                self.down.remove(&vk);
+            }
+        }
+
+        fn requirement_satisfied(&self, requirement: KeyRequirement) -> bool {
+            match requirement {
+                KeyRequirement::Exact(vk) => self.down.contains(&vk),
+                KeyRequirement::Any(left, right) => {
+                    self.down.contains(&left) || self.down.contains(&right)
+                }
+            }
+        }
+
+        fn combo_satisfied(&self, requirements: &[KeyRequirement]) -> bool {
+            requirements
+                .iter()
+                .copied()
+                .all(|requirement| self.requirement_satisfied(requirement))
+        }
+
+        /// Seed keys that were already held when the hook was installed. From
+        /// the first hook callback onward, `set` is the only source of truth.
+        fn seed_from_async_state(&mut self, requirements: &[KeyRequirement]) {
+            self.down.clear();
+            for requirement in requirements {
+                match *requirement {
+                    KeyRequirement::Exact(vk) => self.seed_vk(vk),
+                    KeyRequirement::Any(left, right) => {
+                        self.seed_vk(left);
+                        self.seed_vk(right);
+                    }
+                }
+            }
+        }
+
+        fn seed_vk(&mut self, vk: u16) {
+            // SAFETY: one initial state read for a parsed virtual-key. Runtime
+            // transitions are tracked from the low-level hook, not from this API.
+            let down = (unsafe { GetAsyncKeyState(VIRTUAL_KEY(vk).0 as i32) } as u16 & 0x8000) != 0;
+            self.set(vk, down);
+        }
     }
 
     /// Install / update / tear down the cycle hook to match the transcribe
@@ -93,11 +158,11 @@ mod platform {
         };
 
         // If the transcribe hotkey ITSELF uses ArrowUp, the gesture would collide
-        // with the accelerator (and swallowing ArrowUp would break PTT). Skip it.
-        if requirements.iter().any(|r| r.contains(VK_UP)) {
-            debug!("[mode-cycle] transcribe hotkey uses ArrowUp; gesture disabled");
-            disable();
-            return;
+        // with the accelerator (and swallowing ArrowUp would break PTT). Keep the
+        // hook for event-driven PTT release observation, but disable cycling.
+        let cycle_enabled = !requirements.iter().any(|r| r.contains(VK_UP));
+        if !cycle_enabled {
+            debug!("[mode-cycle] transcribe hotkey uses ArrowUp; cycle gesture disabled");
         }
 
         let mut listener = match LISTENER.lock() {
@@ -116,7 +181,7 @@ mod platform {
         // Drop the old hook first so only one is ever installed.
         listener.take();
 
-        match install(app, requirements) {
+        match install(app, requirements, cycle_enabled) {
             Ok(hook) => {
                 debug!("[mode-cycle] armed cycle gesture for transcribe hotkey '{accelerator}'");
                 *listener = Some(CycleListener {
@@ -134,13 +199,28 @@ mod platform {
         }
     }
 
-    fn install(app: &AppHandle, requirements: Vec<KeyRequirement>) -> Result<HookHandle, String> {
+    /// Durable full-accelerator state owned by the low-level hook. `None` means
+    /// the hook is unavailable and callers must use their bounded polling fallback.
+    pub fn ptt_hook_combo_engaged() -> Option<bool> {
+        let shared = HOOK_SHARED.lock().ok()?;
+        let shared = shared.as_ref()?;
+        if !shared.hook_active {
+            return None;
+        }
+        Some(shared.physical_keys.combo_satisfied(&shared.requirements))
+    }
+
+    fn install(
+        app: &AppHandle,
+        requirements: Vec<KeyRequirement>,
+        cycle_enabled: bool,
+    ) -> Result<HookHandle, String> {
         let (event_tx, event_rx) = channel::<()>();
         let (ready_tx, ready_rx) = channel::<Result<u32, String>>();
 
         let hook_thread = thread::Builder::new()
             .name("winstt-mode-cycle-hook".into())
-            .spawn(move || run_hook_thread(requirements, event_tx, ready_tx))
+            .spawn(move || run_hook_thread(requirements, cycle_enabled, event_tx, ready_tx))
             .map_err(|err| format!("failed to start cycle-hook thread: {err}"))?;
 
         let hook_thread_id = match ready_rx.recv_timeout(Duration::from_secs(5)) {
@@ -173,6 +253,7 @@ mod platform {
 
     fn run_hook_thread(
         requirements: Vec<KeyRequirement>,
+        cycle_enabled: bool,
         events: Sender<()>,
         ready: Sender<Result<u32, String>>,
     ) {
@@ -182,7 +263,10 @@ mod platform {
             Ok(mut shared) => {
                 *shared = Some(CycleShared {
                     requirements,
+                    hook_active: false,
+                    physical_keys: PhysicalComboState::default(),
                     events,
+                    cycle_enabled,
                     up_active: AtomicBool::new(false),
                 });
             }
@@ -206,6 +290,17 @@ mod platform {
                 }
             };
 
+        // Snapshot keys held before installation. The hook thread has not begun
+        // pumping callbacks yet, so queued transitions will be applied after this
+        // seed and become the authoritative state before any waiter is notified.
+        if let Ok(mut shared) = HOOK_SHARED.lock()
+            && let Some(shared) = shared.as_mut()
+        {
+            let requirements = shared.requirements.clone();
+            shared.physical_keys.seed_from_async_state(&requirements);
+            shared.hook_active = true;
+        }
+
         // SAFETY: plain current-thread id read for the WM_QUIT teardown post.
         let _ = ready.send(Ok(unsafe { GetCurrentThreadId() }));
 
@@ -224,6 +319,9 @@ mod platform {
         if let Ok(mut shared) = HOOK_SHARED.lock() {
             shared.take();
         }
+        // A watchdog that observed the hook as available may be parked without
+        // a timeout. Wake it so it can switch to the hook-unavailable fallback.
+        super::super::ptt_release_watchdog::physical_key_transition();
     }
 
     fn run_dispatcher(app: AppHandle, events: Receiver<()>) {
@@ -256,8 +354,23 @@ mod platform {
                 let msg = wparam.0 as u32;
                 let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
                 let is_up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
+                if is_down || is_up {
+                    record_ptt_key_transition(kb.vkCode as u16, is_down);
+                }
                 if (is_down || is_up) && handle_arrow_up(is_down) {
                     return LRESULT(1);
+                }
+            } else if !kb.flags.contains(LLKHF_INJECTED) {
+                let msg = wparam.0 as u32;
+                if msg == WM_KEYDOWN
+                    || msg == WM_SYSKEYDOWN
+                    || msg == WM_KEYUP
+                    || msg == WM_SYSKEYUP
+                {
+                    record_ptt_key_transition(
+                        kb.vkCode as u16,
+                        msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN,
+                    );
                 }
             }
         }
@@ -274,9 +387,16 @@ mod platform {
         let Some(shared) = guard.as_ref() else {
             return false;
         };
+        if !shared.cycle_enabled {
+            return false;
+        }
 
         if down {
-            if !transcribe_held(&shared.requirements) {
+            let transcribe_held = match super::super::modifier_combo::ptt_hook_combo_engaged() {
+                Some(engaged) => engaged,
+                None => shared.physical_keys.combo_satisfied(&shared.requirements),
+            };
+            if !transcribe_held {
                 // Plain ArrowUp — not part of the gesture; let it through.
                 return false;
             }
@@ -297,14 +417,51 @@ mod platform {
         }
     }
 
-    /// Whether the transcribe hotkey is physically held right now.
-    fn transcribe_held(requirements: &[KeyRequirement]) -> bool {
-        match super::super::modifier_combo::ptt_hook_combo_engaged() {
-            // Modifier-only combo backend owns (and swallows) the keys — trust its
-            // tracker rather than the async key state.
-            Some(engaged) => engaged,
-            // Full accelerator (or no backend): the physical keys reach async state.
-            None => requirements.iter().all(|r| r.is_down()),
+    fn record_ptt_key_transition(vk: u16, down: bool) {
+        // Publish the durable state before waking the watchdog. Release the hook
+        // lock first because the waiter immediately queries this state.
+        let watched = HOOK_SHARED.lock().is_ok_and(|mut shared| {
+            let Some(state) = shared.as_mut() else {
+                return false;
+            };
+            let watched = state.requirements.iter().any(|r| r.contains(vk));
+            if watched {
+                state.physical_keys.set(vk, down);
+            }
+            watched
+        });
+        if watched {
+            super::super::ptt_release_watchdog::physical_key_transition();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{PhysicalComboState, parse_requirements};
+
+        #[test]
+        fn full_accelerator_release_is_visible_immediately_from_hook_state() {
+            let requirements = parse_requirements("Ctrl+Space").unwrap();
+            let mut state = PhysicalComboState::default();
+            state.set(0xA2, true); // left Ctrl
+            state.set(0x20, true); // Space
+            assert!(state.combo_satisfied(&requirements));
+
+            // This is applied inside the low-level key-up callback, before
+            // GetAsyncKeyState changes. The waiter must already see released.
+            state.set(0x20, false);
+            assert!(!state.combo_satisfied(&requirements));
+        }
+
+        #[test]
+        fn sided_modifier_requirement_tracks_either_physical_key() {
+            let requirements = parse_requirements("Ctrl+Space").unwrap();
+            let mut state = PhysicalComboState::default();
+            state.set(0xA3, true); // right Ctrl satisfies generic Ctrl
+            state.set(0x20, true);
+            assert!(state.combo_satisfied(&requirements));
+            state.set(0xA3, false);
+            assert!(!state.combo_satisfied(&requirements));
         }
     }
 }
@@ -315,6 +472,9 @@ mod platform {
 
     pub fn update(_app: &AppHandle, _accelerator: &str) {}
     pub fn disable() {}
+    pub fn ptt_hook_combo_engaged() -> Option<bool> {
+        None
+    }
 }
 
-pub(crate) use platform::{disable, update};
+pub(crate) use platform::{disable, ptt_hook_combo_engaged, update};

@@ -8,7 +8,10 @@ import { usePushToTalk } from "@/features/push-to-talk";
 import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
-import { notifyRendererReady } from "@/shared/api/ipc-client";
+import {
+	notifyRendererReady,
+	waitForPendingNativeListeners,
+} from "@/shared/api/ipc-client";
 import { useAfterFirstPaint } from "@/shared/lib/use-after-first-paint";
 import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 import { useRecordingModeCycle } from "@/widgets/recording-settings";
@@ -25,7 +28,15 @@ function signalRendererStartupReady(): Promise<void> {
 	// hydration; the old readiness probes duplicated those IPC calls and threw
 	// their results away. This single acknowledged command proves both that the
 	// React tree mounted and that the IPC bridge is responsive.
-	startupReadyPromise = notifyRendererReady().catch((error: unknown) => {
+	startupReadyPromise = (async () => {
+		const listenersReady = await waitForPendingNativeListeners();
+		if (!listenersReady) {
+			console.warn(
+				"[IpcProvider] Listener readiness deadline elapsed; continuing startup",
+			);
+		}
+		await notifyRendererReady();
+	})().catch((error: unknown) => {
 		startupReadyPromise = null;
 		console.error("[IpcProvider] Failed to notify renderer readiness:", error);
 	});

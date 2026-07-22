@@ -183,6 +183,8 @@ function DiffReviewTopPanel({
 		largeRewrite: tp("diffLargeRewrite"),
 		changeCount: (count) => tp("changeCount", { count }),
 		moreChanges: (count) => tp("moreChanges", { count }),
+		wordCount: (count) => tp("wordCount", { count }),
+		correctedWords: (count) => tp("correctedWords", { count }),
 	};
 	const rejected = new Set(store.rejectedChanges);
 

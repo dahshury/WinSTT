@@ -227,8 +227,6 @@ export function ipcClientMock(): Record<string, unknown> {
 				(d: { devices: unknown[] }) => d.devices,
 				cb,
 			),
-		audioSetSelectedMicrophone: (deviceName: string) =>
-			invoke<void>(IPC.AUDIO_SET_SELECTED_MICROPHONE, { deviceName }),
 		startMicrophoneLevelMonitor: (targets: unknown[]) =>
 			invokeOrDefault<void>(
 				IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR,
@@ -244,6 +242,32 @@ export function ipcClientMock(): Record<string, unknown> {
 			invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, ""),
 		listContextApps: () =>
 			invokeOrDefault<unknown[]>(IPC.CONTEXT_LIST_APPS, []),
+
+		// App-data usage (About tab). The real exports call the generated command
+		// bindings directly and throw on a backend `Result::Err` — mirror that so
+		// suites stubbing `commands.*` observe the same unwrap semantics.
+		appDataUsage: async () => {
+			const result = (await commands.appDataUsage()) as {
+				status: string;
+				data?: unknown;
+				error?: unknown;
+			};
+			if (result.status === "ok") {
+				return result.data;
+			}
+			throw new Error(String(result.error));
+		},
+		removeAppDataCategory: async (key: string) => {
+			const result = (await commands.removeAppDataCategory(key)) as {
+				status: string;
+				data?: unknown;
+				error?: unknown;
+			};
+			if (result.status === "ok") {
+				return result.data;
+			}
+			throw new Error(String(result.error));
+		},
 
 		// Settings
 		settingsSave: (settings: unknown) => send(IPC.SETTINGS_SAVE, { settings }),
@@ -336,6 +360,7 @@ export function ipcClientMock(): Record<string, unknown> {
 		notifyRendererReady: () => Promise.resolve(undefined),
 		trayWindowOpenSettings: () => Promise.resolve(undefined),
 		windowOpenContextPlayground: () => Promise.resolve(undefined),
+		footprintWindowOpen: () => Promise.resolve(undefined),
 		windowShowMain: () => Promise.resolve(undefined),
 		windowCloseNamed: () => Promise.resolve(undefined),
 		windowResizeNamed: () => Promise.resolve(undefined),
@@ -367,6 +392,7 @@ export function ipcClientMock(): Record<string, unknown> {
 				cb,
 			),
 		onNoAudioDetected: (cb: () => void) => on(IPC.STT_NO_AUDIO_DETECTED, cb),
+		onCaptureActive: (cb: () => void) => on(IPC.STT_CAPTURE_ACTIVE, cb),
 		onRecordingStart: (cb: () => void) => on(IPC.STT_RECORDING_START, cb),
 		onRecordingStop: (cb: () => void) => on(IPC.STT_RECORDING_STOP, cb),
 		onVadStart: (cb: () => void) => on(IPC.STT_VAD_START, cb),
@@ -389,6 +415,12 @@ export function ipcClientMock(): Record<string, unknown> {
 		// Hotkey event subscriptions
 		onHotkeyPressed: (cb: () => void) => on(IPC.HOTKEY_PRESSED, cb),
 		onHotkeyReleased: (cb: () => void) => on(IPC.HOTKEY_RELEASED, cb),
+		onPttModifierOnlyUnsupported: (cb: (combo: string) => void) =>
+			onCast<string>(IPC.PTT_MODIFIER_ONLY_UNSUPPORTED, cb),
+		onPostProcessingProfileSwap: (cb: () => void) =>
+			on(IPC.LLM_PROFILE_SWAP, () => cb()),
+		onRecordingModeCycle: (cb: () => void) =>
+			on(IPC.RECORDING_MODE_CYCLE, () => cb()),
 		onHotkeyRecordingUpdate: (cb: (keys: string[]) => void) =>
 			onTyped(
 				IPC.HOTKEY_RECORDING_UPDATE,
@@ -514,6 +546,8 @@ export function ipcClientMock(): Record<string, unknown> {
 				cb,
 			),
 		onLoopbackStopped: (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb),
+		onListenSessionChanged: (cb: (snapshot: unknown) => void) =>
+			onCast(IPC.LISTEN_SESSION_CHANGED, cb),
 		onDeviceSwitchFailed: (cb: (p: unknown) => void) =>
 			onTyped(IPC.STT_DEVICE_SWITCH_FAILED, (d: unknown) => d, cb),
 

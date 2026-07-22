@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { PulseDot } from "./PulseDot";
 
 describe("PulseDot", () => {
-	test("renders a decorative dot with the loading-ui pulse animation", () => {
+	test("renders a decorative thinking orb by default", () => {
 		const { container } = render(<PulseDot />);
 
 		const dot = container.querySelector('[data-slot="pulse-dot"]');
@@ -13,11 +13,9 @@ describe("PulseDot", () => {
 		}
 
 		expect(screen.queryByRole("status")).toBeNull();
-		expect(dot.getAttribute("data-slot")).toBe("pulse-dot");
 		expect(dot.getAttribute("aria-hidden")).toBe("true");
-		expect(dot.className).toContain("rounded-full");
-		expect(dot.getAttribute("style")).toContain("loading-ui-pulse-dot");
-		expect(dot.textContent).toBe("");
+		// The orb canvas fills the caller-sized box.
+		expect(dot.querySelector("canvas")).not.toBeNull();
 	});
 
 	test("uses a caller-provided accessible label as a status name", () => {

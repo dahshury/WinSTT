@@ -37,14 +37,12 @@
 // This module is split into siblings under `windows/`:
 //   - `settings_modal` — the settings-modal fade/opacity state machine.
 //   - `placement` — monitor work-area geometry + picker placement.
-// The public surface (`ensure_window`, the prewarm/modal lifecycle, and the 7
+// The public surface (`ensure_window`, the modal lifecycle, and the 9
 // `#[tauri::command]` fns) stays here so every external path is byte-for-byte
 // unchanged; the submodules' entry points are re-used below.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
@@ -57,8 +55,8 @@ pub(crate) mod placement;
 mod settings_modal;
 
 use placement::{
-    anchor_from_rect, center_window, close_model_picker_with_animation, place_picker,
-    resolve_opener, warm_model_picker_compositor,
+    anchor_from_rect, center_window, close_model_picker_with_animation,
+    complete_model_picker_close, emit_model_picker_anchor_snapshot, place_picker, resolve_opener,
 };
 use settings_modal::close_main_modal_window;
 
@@ -309,8 +307,8 @@ const WINDOW_SPECS: &[WindowSpec] = &[
     // Ported from context-playground-window.ts (600×780, min 440×420).
     // Present in dev (debug_assertions) or with the `context-playground`
     // feature; dropped from `spec_for`/`open_window` in shipping builds. It is NOT
-    // in POST_STARTUP_PREWARM_LABELS, so it is never prewarmed. Pairs with
-    // `CONTEXT_PLAYGROUND_ENABLED` (= `import.meta.env.DEV`) in debug-flags.ts.
+    // opened only on demand. Pairs with `CONTEXT_PLAYGROUND_ENABLED`
+    // (= `import.meta.env.DEV`) in debug-flags.ts.
     #[cfg(any(debug_assertions, feature = "context-playground"))]
     WindowSpec {
         label: "context-playground",
@@ -476,8 +474,8 @@ struct PickerState {
     height: f64,
     mode: PickerMode,
     /// True from close-animation start until the next anchored open. A picker
-    /// in this grace is still `is_visible()` (the hide is delayed so the faded
-    /// frame composits — see `MODEL_PICKER_HIDE_DELAY_MS`), so placement
+    /// in this grace is still `is_visible()` (the renderer acknowledges after
+    /// the faded frame composites), so placement
     /// triggers like `resize_window` must NOT re-place it: `place_model_picker`
     /// re-shows the window and cancels the pending hide, reopening the picker.
     closing: bool,
@@ -588,7 +586,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
     // sets `main` as the OWNER window: the modal is always above it in the z-order,
     // is hidden when the pill is minimized, and is destroyed with it — exactly the
     // "they're the same thing" relationship we want. The pill is built in lib.rs
-    // `setup` BEFORE `prewarm_windows`, so it always exists here. A failure to
+    // `setup` before secondary windows can be opened, so it normally exists here. A failure to
     // parent (e.g. main somehow gone) degrades to a plain centered window — still
     // modal via `set_main_modal`, just not OS-owned.
     if matches!(spec.label, "settings" | "whats-new") {
@@ -631,10 +629,15 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
                 payload.event(),
                 payload.url()
             );
-            if diag_label == "overlay"
-                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
-            {
-                crate::winstt::commands::overlay::mark_overlay_page_loaded();
+            if diag_label == "overlay" {
+                match payload.event() {
+                    tauri::webview::PageLoadEvent::Started => {
+                        crate::winstt::commands::overlay::mark_overlay_page_loading();
+                    }
+                    tauri::webview::PageLoadEvent::Finished => {
+                        crate::winstt::commands::overlay::mark_overlay_page_loaded();
+                    }
+                }
             }
         });
     }
@@ -655,22 +658,31 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         let picker_label = spec.label;
         let app_handle = app.clone();
         window.on_window_event(move |event| {
-            if !matches!(event, tauri::WindowEvent::Focused(false)) {
-                return;
-            }
             let Some(window) = app_handle.get_webview_window(picker_label) else {
                 return;
             };
             if !window.is_visible().unwrap_or(false) {
                 return;
             }
-            close_model_picker_with_animation(&app_handle, &window);
+            match event {
+                // Showing a hidden WebView2 can resume its renderer after the
+                // immediate placement emit. Native focus is the reliable
+                // lifecycle callback that proves this open reached the window;
+                // replay the current anchor without timer-based retries.
+                tauri::WindowEvent::Focused(true) => {
+                    emit_model_picker_anchor_snapshot(&app_handle, &window);
+                }
+                tauri::WindowEvent::Focused(false) => {
+                    close_model_picker_with_animation(&app_handle, &window);
+                }
+                _ => {}
+            }
         });
     }
 
     // On Linux, Tao unwraps the native GTK window for cursor-ignore requests.
-    // Hidden prewarmed windows are not realized yet, so defer overlay click-through
-    // setup until the show path calls `set_ignore_cursor_events` after `show()`.
+    // On Linux, defer overlay click-through setup until the show path calls
+    // `set_ignore_cursor_events` after `show()`, when the native window is realized.
     if spec.ignore_cursor {
         #[cfg(not(target_os = "linux"))]
         {
@@ -701,96 +713,7 @@ pub(crate) fn show_onboarding_window_internal(app: &AppHandle) -> Result<(), Str
     window.set_focus().map_err(|e| e.to_string())
 }
 
-const POST_STARTUP_PREWARM_DELAY_MS: u64 = 250;
-static POST_STARTUP_PREWARM_SCHEDULED: AtomicBool = AtomicBool::new(false);
-
-/// Secondary windows worth prewarming shortly after first paint.
-///
-/// `overlay` is included here so the first PTT session only has to reveal an
-/// already-loaded transparent webview, avoiding the first-use black rectangle.
-/// `tray-menu` has a custom off-screen lifecycle warmup. Lower-probability
-/// windows stay lazy.
-const POST_STARTUP_PREWARM_LABELS: &[&str] = &[
-    "overlay",
-    "settings",
-    "model-picker",
-    "model-footprint",
-    // Prewarmed hidden so its renderer is already subscribed to `settings:changed`
-    // and can show the mode/preset pill instantly on the first hotkey switch.
-    "tray-indicator",
-];
-
-/// Pre-create hidden secondary windows after the main pill paints, so first
-/// interaction paths usually show an already-loaded webview. This keeps WebView2
-/// creation off startup's first-paint path while avoiding lazy creation inside
-/// command handlers, which can hang on Windows while the main thread is blocked.
-/// Idempotent: `ensure_window` early-returns for any window that already exists.
-pub(crate) fn prewarm_windows(app: &AppHandle) {
-    // Deferred off the critical path. `run_on_main_thread` schedules the
-    //    closure on the event loop, so it runs once `setup` has returned and the loop is
-    //    pumping — i.e. after the pill is visible. WebView2 creation still happens on the
-    //    main thread (required) but no longer blocks first paint.
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        for spec in WINDOW_SPECS {
-            if spec.label == "main" {
-                continue; // created in lib.rs setup
-            }
-            if !POST_STARTUP_PREWARM_LABELS.contains(&spec.label) {
-                continue;
-            }
-            let started = Instant::now();
-            match ensure_window(&app, spec.label) {
-                Ok(window) => {
-                    log::debug!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label);
-                    // The picker also needs its COMPOSITOR warmed (an off-screen
-                    // show/hide cycle), or the first user open eats the open
-                    // animation during WebView2's cold-composite.
-                    if spec.label == "model-picker" {
-                        warm_model_picker_compositor(&app, &window);
-                    }
-                    if crate::startup_profile_enabled() {
-                        log::info!(
-                            "[startup] prewarmed window '{}': {} ms",
-                            spec.label,
-                            started.elapsed().as_millis()
-                        );
-                    }
-                }
-                Err(e) => log::warn!("[prewarm] '{}' failed: {e}", spec.label),
-            }
-        }
-    });
-}
-
 // ── Settings modal (pill input gate) ────────────────────────────────────────
-
-/// Schedule noncritical secondary WebView2 creation after the main window is visible.
-/// Required startup model warmups keep their normal priority; this only moves
-/// hidden utility windows off the first-paint path.
-pub(crate) fn schedule_post_startup_prewarm(app: &AppHandle) {
-    if POST_STARTUP_PREWARM_SCHEDULED.swap(true, Ordering::SeqCst) {
-        return;
-    }
-
-    let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(POST_STARTUP_PREWARM_DELAY_MS));
-
-        let app_for_main = app.clone();
-        if let Err(e) = app.run_on_main_thread(move || {
-            let started = Instant::now();
-            if crate::startup_profile_enabled() {
-                log::info!("[startup] post-startup prewarm started");
-            }
-            crate::winstt::commands::tray_menu::install_tray_menu_lifecycle(&app_for_main);
-            prewarm_windows(&app_for_main);
-            crate::log_startup_duration("post-startup prewarm scheduled", started);
-        }) {
-            log::warn!("post-startup prewarm scheduling failed: {e}");
-        }
-    });
-}
 
 // Enable/disable the main pill's input while the Settings modal is up.
 pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
@@ -845,14 +768,17 @@ pub fn winstt_diag(app: AppHandle, label: String, level: String, message: String
 /// For the anchored pickers the renderer passes the trigger's viewport rect
 /// (`x`/`y`/`width`/`height`); we convert it to a screen anchor via the CALLING
 /// window (`webview`) and place the popup. For the plain windows the rect is
-/// absent and we center + show.
+/// absent and we center + show. This command must remain async: a synchronous
+/// Tauri command may execute on the IPC/UI path, where first-use WebView
+/// construction can block the event loop. The async command body runs on
+/// Tauri's worker runtime and lets Wry marshal native creation safely.
 #[tauri::command]
 #[specta::specta]
 #[expect(
     clippy::too_many_arguments,
     reason = "Tauri IPC command exposes optional window geometry as generated binding parameters"
 )]
-pub fn open_window(
+pub async fn open_window(
     app: AppHandle,
     webview: tauri::WebviewWindow,
     name: String,
@@ -1077,6 +1003,37 @@ pub fn close_self_window(app: AppHandle, webview: tauri::WebviewWindow) -> Resul
     Ok(())
 }
 
+/// `window_model_picker_ready` — renderer-ready handshake for anchor delivery.
+/// The model-picker invokes this after its lifecycle listeners are registered.
+/// If an open raced renderer startup, this sends the latest stored anchor
+/// exactly once. Future opens arrive through the installed listener.
+#[tauri::command]
+#[specta::specta]
+pub fn window_model_picker_ready(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if webview.label() != "model-picker" {
+        return Err("window_model_picker_ready is restricted to model-picker".into());
+    }
+    emit_model_picker_anchor_snapshot(&app, &webview);
+    Ok(())
+}
+
+/// `window_model_picker_close_complete` — renderer acknowledgement carrying
+/// the close generation whose CSS exit animation actually completed.
+#[tauri::command]
+#[specta::specta]
+pub fn window_model_picker_close_complete(
+    webview: tauri::WebviewWindow,
+    sequence: u64,
+) -> Result<(), String> {
+    if webview.label() != "model-picker" {
+        return Err("window_model_picker_close_complete is restricted to model-picker".into());
+    }
+    complete_model_picker_close(&webview, sequence)
+}
+
 /// `resize_window` — set the desired footprint of the labelled window.
 ///
 /// For the pickers the renderer's ResizeObserver reports the real content size
@@ -1133,14 +1090,19 @@ pub fn resize_window(
         });
         if current != Some((next_w, next_h)) {
             // `set_size` on the tray menu makes WebView2 transiently drop focus;
-            // stamp the resize FIRST so the blur-hide handler in tray_menu.rs can
-            // ignore that transient instead of collapsing the open menu.
+            // mark the resize in flight FIRST so the blur-hide handler can wait
+            // for the native `Resized` callback instead of using a time window.
             if label == "tray-menu" {
-                crate::winstt::commands::tray_menu::note_tray_menu_resize();
+                crate::winstt::commands::tray_menu::begin_tray_menu_resize();
             }
-            window
-                .set_size(LogicalSize::new(f64::from(next_w), f64::from(next_h)))
-                .map_err(|e| e.to_string())?;
+            if let Err(error) =
+                window.set_size(LogicalSize::new(f64::from(next_w), f64::from(next_h)))
+            {
+                if label == "tray-menu" {
+                    crate::winstt::commands::tray_menu::cancel_tray_menu_resize();
+                }
+                return Err(error.to_string());
+            }
 
             // The tray menu is `w-fit` and only reports its true content size after
             // mount (TRAY_MENU_RESIZE). Re-anchor it from the stored click point so it

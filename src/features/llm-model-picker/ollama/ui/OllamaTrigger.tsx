@@ -3,12 +3,14 @@
 import { Combobox } from "@base-ui/react/combobox";
 import {
 	ArrowDown01Icon,
+	ArrowDown02Icon,
 	BinaryCodeIcon,
 	Brain01Icon,
 	CodeIcon,
 	GpuIcon,
 	Image01Icon,
 	Mic01Icon,
+	NeuralNetworkIcon,
 	Wrench01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -33,6 +35,7 @@ import {
 	formatOllamaDisplayName,
 	formatOllamaSize,
 	getOllamaFamily,
+	resolveOllamaParameterSize,
 	resolveOllamaQuantization,
 } from "../lib/family-helpers";
 import {
@@ -152,11 +155,22 @@ function selectedOllamaMeta(
 	model: OllamaModel,
 	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined,
 ): SelectedModelMetaItem[] {
+	const parameterSize = resolveOllamaParameterSize(model);
 	const quantization = resolveOllamaQuantization(model);
 	const memory = resolveOllamaMemoryBytes(model, getFit);
 	const memoryLabel =
 		memory.bytes === null ? null : formatOllamaSize(memory.bytes);
 	const items: SelectedModelMetaItem[] = [];
+	if (parameterSize) {
+		items.push({
+			key: "params",
+			label: parameterSize,
+			icon: NeuralNetworkIcon,
+			tone: "neutral",
+			title: "Parameters",
+			description: `Model parameter count: ${parameterSize}.`,
+		});
+	}
 	if (quantization) {
 		items.push({
 			key: "quant",
@@ -501,14 +515,19 @@ export function OllamaTriggerButton({
 	);
 }
 
-/** Thin status overlay rendered along the trigger's bottom edge whenever an
- *  Ollama pull is in flight. Conveys two things at a glance while the popup
- *  is closed:
+/** Status overlay rendered over the trigger whenever an Ollama pull is in
+ *  flight. Conveys two things at a glance while the popup is closed:
  *
- *    1. A 2px progress strip that fills left → right as bytes land.
- *    2. A label `Downloading <model> · NN%` so the user knows *which* model
- *       is in flight (multiple feature toggles can share the same picker).
- */
+ *    1. A 2px progress strip along the bottom edge that fills left → right
+ *       as bytes land.
+ *    2. A corner badge tucked into the top-right with an animated download
+ *       arrow + `<model> · NN%` so the user knows *which* model is in flight
+ *       (multiple feature toggles can share the same picker).
+ *
+ *  The badge sits in the trigger's top gutter (the body content is vertically
+ *  centered in the 3.25rem card) so it never collides with the publisher chip
+ *  or name the way the old bottom-left label did — and the trigger keeps its
+ *  exact dimensions because both pieces are absolutely positioned. */
 function TriggerPullProgressOverlay({
 	summary,
 }: {
@@ -518,10 +537,19 @@ function TriggerPullProgressOverlay({
 	return (
 		<span
 			aria-hidden="true"
-			className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-1 text-[9px] text-accent leading-none"
+			className="pointer-events-none absolute inset-0 text-[9px] text-accent leading-none"
 		>
-			<span className="truncate font-medium uppercase tracking-wide">
-				↓ {beautified} · {summary.percent}%
+			<span className="absolute end-0 top-0 flex max-w-[70%] items-center gap-1 rounded-bl-md bg-accent/10 py-0.5 ps-1.5 pe-2.5">
+				<span className="relative size-2.5 shrink-0 overflow-hidden">
+					<HugeiconsIcon
+						className="size-2.5 motion-safe:animate-download-drop"
+						icon={ArrowDown02Icon}
+						strokeWidth={2.5}
+					/>
+				</span>
+				<span className="truncate font-medium uppercase tracking-wide">
+					{beautified} · {summary.percent}%
+				</span>
 			</span>
 			<span className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-accent/20">
 				<span

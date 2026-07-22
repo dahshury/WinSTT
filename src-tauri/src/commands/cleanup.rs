@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -331,12 +330,6 @@ pub async fn remove_application_data(
         deleted_ollama_models,
         ollama_errors,
     };
-
-    let app_for_exit = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(250));
-        app_for_exit.exit(0);
-    });
 
     Ok(result)
 }

@@ -454,14 +454,17 @@ fn build_index_via_git(root: &Path) -> Option<WorkspaceIndex> {
 /// Run `git -C <root> ls-files --cached --others --exclude-standard -z`, returning
 /// its raw stdout bytes, or `None` on spawn failure / non-zero exit / timeout.
 /// Spawns the child and waits up to [`GIT_LS_FILES_TIMEOUT`]; a hung git is killed
-/// and treated as a failure (→ walk fallback). Uses only `std::process`/`thread`.
+/// and treated as a failure (→ walk fallback). On Windows, the wait is driven by
+/// the child process handle becoming signalled rather than by periodic
+/// process-status checks.
 ///
 /// Stdout is drained on a DEDICATED thread so a large listing (this repo emits
 /// ~0.5 MB, far past the OS pipe buffer) can never wedge the child on a full pipe
-/// while the main thread polls for exit — the classic `try_wait` + un-drained
-/// pipe deadlock. The reader thread owns the pipe and reads it to EOF; we join it
-/// after the child exits (or after killing it on timeout, which closes the pipe
-/// and lets the reader hit EOF).
+/// while the main thread waits for exit — the classic wait + un-drained pipe
+/// deadlock. The reader thread owns the pipe and reads it to EOF; we join it after
+/// the child exits (or after killing it on timeout, which closes the pipe and lets
+/// the reader hit EOF).
+#[cfg(windows)]
 fn run_git_ls_files(root: &Path) -> Option<Vec<u8>> {
     use std::io::Read;
     use std::process::{Command, Stdio};
@@ -483,7 +486,7 @@ fn run_git_ls_files(root: &Path) -> Option<Vec<u8>> {
         .ok()?;
 
     // Hand the stdout pipe to a reader thread so the child is never blocked on a
-    // full pipe while we poll `try_wait` below.
+    // full pipe while we wait for its process handle below.
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -491,31 +494,52 @@ fn run_git_ls_files(root: &Path) -> Option<Vec<u8>> {
         buf
     });
 
-    // Bounded wait for exit; kill (closing the pipe → reader hits EOF) on timeout.
-    let deadline = Instant::now() + GIT_LS_FILES_TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = reader.join();
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
-                return None;
-            }
+    // Bounded kernel wait for exit; kill (closing the pipe → reader hits EOF) on
+    // timeout. No timer loop wakes this thread while git is still running.
+    let status = match wait_for_child_exit(&mut child, GIT_LS_FILES_TIMEOUT) {
+        Ok(Some(status)) => status,
+        Ok(None) | Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return None;
         }
     };
 
     let stdout = reader.join().ok()?;
     if status.success() { Some(stdout) } else { None }
+}
+
+/// Wait until `child` exits or `timeout` elapses. A Windows process handle is
+/// signalled exactly once, when the process terminates, so this gives the caller
+/// a reliable completion callback without timer polling. `None` means timeout;
+/// the caller still owns the child and is responsible for terminating it.
+#[cfg(windows)]
+fn wait_for_child_exit(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::WaitForSingleObject;
+
+    // `u32::MAX` is Win32's INFINITE sentinel, so keep a finite duration below
+    // it even if a future caller supplies an unusually large timeout.
+    let timeout_ms = timeout.as_millis().min(u128::from(u32::MAX - 1)) as u32;
+    let wait_result = unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), timeout_ms) };
+    match wait_result {
+        WAIT_OBJECT_0 => child.wait().map(Some),
+        WAIT_TIMEOUT => Ok(None),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
+/// Workspace indexing is Windows-only. Keep the module's pure helpers available
+/// to cross-platform tests without spawning a platform-specific git process.
+#[cfg(not(windows))]
+fn run_git_ls_files(_root: &Path) -> Option<Vec<u8>> {
+    None
 }
 
 /// The production walk: `ignore`-crate, gitignore + global-gitignore aware, with

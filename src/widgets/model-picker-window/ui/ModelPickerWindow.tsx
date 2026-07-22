@@ -159,6 +159,7 @@ export function ModelPickerWindow() {
 		mode,
 		shouldMountBody,
 		dropdownStateClass,
+		completeCloseTransition,
 		openGeneration,
 	} = usePanelRect(catalogLoaded);
 
@@ -201,6 +202,14 @@ export function ModelPickerWindow() {
 					className={["absolute flex flex-col t-dropdown", dropdownStateClass]
 						.filter(Boolean)
 						.join(" ")}
+					onAnimationEnd={(event) => {
+						if (
+							event.target === event.currentTarget &&
+							event.animationName === "dropdown-out"
+						) {
+							completeCloseTransition();
+						}
+					}}
 					data-origin={warmPanel.origin ?? "bottom-right"}
 					style={{
 						left: warmPanel.x,

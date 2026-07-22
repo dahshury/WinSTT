@@ -18,9 +18,7 @@
 // errors are reported back synchronously through a ready-channel so the
 // manager can log a clear warning and keep the loopback-only session alive.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -35,11 +33,14 @@ use super::SlowTrackingAgc;
 const FRAME_MS: u64 = 30;
 /// How long `start()` waits for the worker to report the stream opened.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
-/// Worker recv timeout so the stop flag is honoured during silence.
-const RECV_TIMEOUT: Duration = Duration::from_millis(200);
+
+enum WorkerMessage {
+    Audio(Vec<f32>),
+    Stop,
+}
 
 pub struct MicrophoneCapture {
-    stop: Arc<AtomicBool>,
+    stop_tx: Option<Sender<WorkerMessage>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -52,7 +53,7 @@ impl Default for MicrophoneCapture {
 impl MicrophoneCapture {
     pub fn new() -> Self {
         Self {
-            stop: Arc::new(AtomicBool::new(false)),
+            stop_tx: None,
             worker: None,
         }
     }
@@ -73,35 +74,39 @@ impl MicrophoneCapture {
         if self.is_active() {
             return Err("microphone capture already active".to_string());
         }
-        self.stop.store(false, Ordering::SeqCst);
-        let stop = self.stop.clone();
+        let (worker_tx, worker_rx) = mpsc::channel::<WorkerMessage>();
+        let callback_tx = worker_tx.clone();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<String, String>>(1);
 
         let worker = std::thread::Builder::new()
             .name("listen-mic-capture".into())
-            .spawn(move || worker_body(preferred_names, sink, stop, ready_tx))
+            .spawn(move || worker_body(preferred_names, sink, callback_tx, worker_rx, ready_tx))
             .map_err(|e| format!("spawn mic capture thread: {e}"))?;
 
         match ready_rx.recv_timeout(OPEN_TIMEOUT) {
             Ok(Ok(name)) => {
+                self.stop_tx = Some(worker_tx);
                 self.worker = Some(worker);
                 Ok(name)
             }
             Ok(Err(err)) => {
+                drop(worker_tx);
                 let _ = worker.join();
                 Err(err)
             }
             Err(_) => {
                 // Worker wedged on open — signal stop and detach; it exits on
                 // its own once (if ever) the open returns.
-                self.stop.store(true, Ordering::SeqCst);
+                let _ = worker_tx.send(WorkerMessage::Stop);
                 Err("timed out opening the microphone".to_string())
             }
         }
     }
 
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(WorkerMessage::Stop);
+        }
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -137,7 +142,8 @@ fn pick_device(host: &cpal::Host, preferred_names: &[String]) -> Option<cpal::De
 fn worker_body(
     preferred_names: Vec<String>,
     sink: Sender<Vec<f32>>,
-    stop: Arc<AtomicBool>,
+    worker_tx: Sender<WorkerMessage>,
+    worker_rx: mpsc::Receiver<WorkerMessage>,
     ready_tx: mpsc::SyncSender<Result<String, String>>,
 ) {
     let host = crate::audio_toolkit::get_cpal_host();
@@ -157,14 +163,13 @@ fn worker_body(
     let device_rate = config.sample_rate() as usize;
 
     // The callback only folds to mono; AGC + resampling run on this thread.
-    let (raw_tx, raw_rx) = mpsc::channel::<Vec<f32>>();
     let stream_result = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_stream::<f32>(&device, &config, channels, raw_tx),
-        cpal::SampleFormat::I16 => build_stream::<i16>(&device, &config, channels, raw_tx),
-        cpal::SampleFormat::U16 => build_stream::<u16>(&device, &config, channels, raw_tx),
-        cpal::SampleFormat::I32 => build_stream::<i32>(&device, &config, channels, raw_tx),
-        cpal::SampleFormat::U8 => build_stream::<u8>(&device, &config, channels, raw_tx),
-        cpal::SampleFormat::I8 => build_stream::<i8>(&device, &config, channels, raw_tx),
+        cpal::SampleFormat::F32 => build_stream::<f32>(&device, &config, channels, worker_tx),
+        cpal::SampleFormat::I16 => build_stream::<i16>(&device, &config, channels, worker_tx),
+        cpal::SampleFormat::U16 => build_stream::<u16>(&device, &config, channels, worker_tx),
+        cpal::SampleFormat::I32 => build_stream::<i32>(&device, &config, channels, worker_tx),
+        cpal::SampleFormat::U8 => build_stream::<u8>(&device, &config, channels, worker_tx),
+        cpal::SampleFormat::I8 => build_stream::<i8>(&device, &config, channels, worker_tx),
         other => Err(format!("unsupported mic sample format: {other:?}")),
     };
     let stream = match stream_result {
@@ -193,12 +198,7 @@ fn worker_body(
         }
     };
 
-    while !stop.load(Ordering::SeqCst) {
-        let mono = match raw_rx.recv_timeout(RECV_TIMEOUT) {
-            Ok(chunk) => chunk,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
-        };
+    while let Ok(WorkerMessage::Audio(mono)) = worker_rx.recv() {
         // AGC in the int16 domain — identical treatment to the loopback path so
         // the mixer sums two comparably-levelled streams.
         let mut mono_i16: Vec<i16> = mono
@@ -227,7 +227,7 @@ fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::SupportedStreamConfig,
     channels: usize,
-    raw_tx: mpsc::Sender<Vec<f32>>,
+    worker_tx: mpsc::Sender<WorkerMessage>,
 ) -> Result<cpal::Stream, String>
 where
     T: cpal::Sample + cpal::SizedSample + Send + 'static,
@@ -243,7 +243,7 @@ where
                 })
                 .collect()
         };
-        let _ = raw_tx.send(mono);
+        let _ = worker_tx.send(WorkerMessage::Audio(mono));
     };
     device
         .build_input_stream(

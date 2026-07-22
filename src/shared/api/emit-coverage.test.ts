@@ -152,12 +152,11 @@ const BACKEND_EVENTS_WITHOUT_FRONTEND_LISTENER = new Set<string>([
 	// realtime:stabilized is emitted for parity but the renderer currently consumes
 	// only realtime:update (the live-preview pane).
 	"realtime:stabilized",
-	// Paste/recording errors and overlay show/hide are emitted for parity; the
-	// renderer paints overlay state from its stores and has no dedicated listener.
+	// Paste/recording errors and overlay show are emitted for parity; the renderer
+	// paints overlay state from its stores and has no dedicated listener.
 	"output:paste-error",
 	"recording:error",
 	"overlay:show",
-	"overlay:hide",
 	// Startup progress drives the splash window via direct JS eval (splash.rs); the
 	// emitted event is a parity broadcast with no React listener.
 	"startup:progress",

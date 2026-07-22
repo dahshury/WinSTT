@@ -5,7 +5,7 @@ use tauri_specta::{Builder, collect_commands, collect_events};
 
 use tauri::{AppHandle, Emitter};
 
-use crate::{commands, helpers, managers, shortcut, tray, winstt};
+use crate::{commands, helpers, managers, shortcut, splash, tray, winstt};
 
 // These window/update/quit commands live alongside `collect_commands!` (they were
 // inline in `lib.rs` before the split). tauri-specta resolves a command's generated
@@ -43,6 +43,20 @@ pub(crate) fn quit_app(app: AppHandle) {
     crate::startup::request_app_exit(&app, "Quit requested");
 }
 
+/// Renderer acknowledgement that the splash exit animation completed. The
+/// sequence makes duplicate or delayed callbacks idempotent.
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn splash_close_animation_complete(
+    webview: tauri::WebviewWindow,
+    sequence: u64,
+) -> Result<(), String> {
+    if webview.label() != splash::SPLASH_LABEL {
+        return Err("splash_close_animation_complete is restricted to splash".into());
+    }
+    splash::schedule_splash_close(&webview, sequence)
+}
+
 /// Build the tauri-specta `Builder` with the full command + event registry.
 /// Single source of truth for both `run()` (which mounts it on the live app) and
 /// the `export_bindings` test (which calls `.export(...)` without starting the app).
@@ -58,6 +72,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         trigger_update_check,
         show_main_window_command,
         quit_app,
+        splash_close_animation_complete,
         tray::copy_last_transcript,
         commands::cancel_operation,
         commands::is_portable,
@@ -77,15 +92,11 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::audio::get_windows_microphone_permission_status,
         commands::audio::open_microphone_privacy_settings,
         commands::audio::get_available_microphones,
-        commands::audio::set_selected_microphone,
-        commands::audio::get_selected_microphone,
         commands::audio::get_available_output_devices,
         commands::audio::set_selected_output_device,
         commands::audio::get_selected_output_device,
         commands::audio::play_test_sound,
         commands::audio::check_custom_sounds,
-        commands::audio::set_clamshell_microphone,
-        commands::audio::get_clamshell_microphone,
         commands::audio::is_recording,
         helpers::clamshell::is_laptop,
         // ── WinSTT commands (lib_wiring.md §3) ──
@@ -157,6 +168,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::dictation::winstt_emit_ready,
         winstt::commands::dictation::winstt_get_parameter,
         winstt::commands::dictation::winstt_set_parameter,
+        winstt::commands::dictation::stt_recording_snapshot,
         winstt::commands::download::stt_predownload_quant,
         winstt::commands::download::download_pause_quant,
         winstt::commands::download::download_resume_quant,
@@ -243,6 +255,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::transforms::apply_transform_preview,
         winstt::commands::preview::confirm_paste,
         winstt::commands::preview::cancel_preview,
+        winstt::commands::overlay::overlay_ack_hide_transition,
         winstt::commands::overlay::set_overlay_hit_regions,
         // Debug-only raw context playground surface. These command ids stay in the
         // stable registry for binding compatibility, but the command bodies
@@ -256,6 +269,8 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::windows::open_window,
         winstt::commands::windows::close_window,
         winstt::commands::windows::close_self_window,
+        winstt::commands::windows::window_model_picker_ready,
+        winstt::commands::windows::window_model_picker_close_complete,
         winstt::commands::windows::resize_window,
         winstt::commands::windows::anchor_window,
         winstt::commands::onboarding::onboarding_finish,

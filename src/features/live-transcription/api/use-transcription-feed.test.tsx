@@ -18,6 +18,7 @@ beforeEach(() => {
 		currentRealtime: "",
 		ephemeral: null,
 		isRecordingActive: false,
+		hasDetectedSpeech: false,
 		isTranscribing: false,
 		processingPhase: null,
 		recordingSessionId: 0,
@@ -188,6 +189,7 @@ describe("useTranscriptionFeed", () => {
 		fire(IPC.STT_RECORDING_START);
 		const state = useTranscriptionStore.getState();
 		expect(state.isRecordingActive).toBe(true);
+		expect(state.hasDetectedSpeech).toBe(false);
 		expect(state.isTranscribing).toBe(true);
 		expect(state.items.map((i) => i.text)).toEqual([
 			"still visible listen row",
@@ -215,6 +217,7 @@ describe("useTranscriptionFeed", () => {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
 		fire(IPC.STT_VAD_START);
+		expect(useTranscriptionStore.getState().hasDetectedSpeech).toBe(true);
 		const state = useTranscriptionStore.getState();
 		expect(state.items.map((i) => i.text)).toEqual(["visible finalized row"]);
 		expect(state.currentRealtime).toBe("words still forming");
@@ -334,6 +337,21 @@ describe("useTranscriptionFeed", () => {
 		expect(state.processingPhase).toBeNull();
 		expect(state.recordingSessionId).toBe(42);
 		expect(state.transcribingStartedAt).toBeNull();
+	});
+
+	test("a late recording_start does not erase speech recovered from the backend snapshot", () => {
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			hasDetectedSpeech: true,
+			recordingSessionId: 7,
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_START);
+		const state = useTranscriptionStore.getState();
+		expect(state.recordingSessionId).toBe(7);
+		expect(state.hasDetectedSpeech).toBe(true);
 	});
 
 	test("transcription_start marks final decode as transcribing after VAD speech", () => {

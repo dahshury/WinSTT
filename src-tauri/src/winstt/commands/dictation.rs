@@ -18,6 +18,8 @@
 // transcription coordinator / audio consumer / VAD loop); this module gives them a
 // single typed helper so those one-liner edits stay mechanical (see libWiring note).
 
+use serde::Serialize;
+use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::TranscriptionCoordinator;
@@ -101,6 +103,40 @@ pub fn winstt_get_parameter(app: AppHandle, parameter: String) -> serde_json::Va
                 serde_json::Value::Bool(rm.is_recording())
             }),
         _ => serde_json::Value::Null,
+    }
+}
+
+/// Authoritative lifecycle state retained by Rust for renderers that mount
+/// after one or more fire-and-forget STT events have already been emitted.
+/// The overlay uses this once its listeners are installed (and whenever its
+/// hidden webview is shown) to close the cold-start event-subscription race.
+#[derive(Clone, Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SttRecordingSnapshot {
+    pub dictation_session_id: u64,
+    pub is_recording: bool,
+    pub is_speaking: bool,
+    pub pipeline_active: bool,
+    pub speech_seen: bool,
+}
+
+/// `stt_recording_snapshot` — read-only reconciliation surface for the current
+/// dictation. Events remain the low-latency path; this snapshot recovers any
+/// start/VAD edge emitted before a newly-created overlay registered listeners.
+#[tauri::command]
+#[specta::specta]
+pub fn stt_recording_snapshot(app: AppHandle) -> SttRecordingSnapshot {
+    let audio = app.try_state::<Arc<AudioRecordingManager>>();
+    SttRecordingSnapshot {
+        dictation_session_id: crate::transcription_coordinator::current_dictation_session(),
+        is_recording: audio.as_ref().is_some_and(|manager| manager.is_recording()),
+        is_speaking: audio
+            .as_ref()
+            .is_some_and(|manager| manager.speech_is_active()),
+        pipeline_active: crate::transcription_coordinator::is_dictation_pipeline_active(),
+        speech_seen: audio
+            .as_ref()
+            .is_some_and(|manager| manager.speech_seen_since_recording_start()),
     }
 }
 

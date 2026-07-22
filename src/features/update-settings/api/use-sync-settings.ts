@@ -14,6 +14,7 @@ import {
 	settingsSaveAck,
 	sttRequestDiarizationToggle,
 	sttSetParameter,
+	waitForPendingNativeListeners,
 } from "@/shared/api/ipc-client";
 import type { SettingsDecodeDiagnostics } from "@/shared/config/settings-codec";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
@@ -31,9 +32,6 @@ import {
 // the recurring "disk gets stale tiny" → "switching to tiny" loop).
 // Matches the guard in `useSyncActiveModel`.
 const SAVE_IPC_LOAD_GUARD_MS = 500;
-
-// Backoff before auto-retrying a failed backend settings hydration (audit #39).
-const HYDRATION_RETRY_MS = 2000;
 
 import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
@@ -74,8 +72,6 @@ export function useSyncSettings(): void {
 	// broadcast (imported or another window's save). The save effect reads it to
 	// avoid RESTARTING the user's debounce window on broadcast-origin churn.
 	const broadcastOriginRef = useRef(false);
-	// Auto-retry backoff timer for a transient hydration failure (audit #39).
-	const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Initialised from the store's current snapshot (a non-reactive getState
 	// read, equal to `settings` on first render) rather than the reactive
 	// `settings` binding, so the sync effect below doesn't touch the ref with
@@ -100,7 +96,6 @@ export function useSyncSettings(): void {
 	// Reconcile with the backend store (source of truth) after localStorage hydration.
 	// Without a backend (plain Vite/browser), leave the local cache as the editable
 	// source and suppress backend side effects.
-	// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the cleanup below is complete: it flips `cancelled` (guarding every deferred `setSettings`/status write) and clears `retryTimerRef`. The only timer this effect creates is that retry `setTimeout`, assigned inside the async `.catch` continuation, which the rule's data-flow heuristic can't trace back to the effect-scope cleanup.
 	useEffect(() => {
 		const loadBaseline = getSettingsStoreState().settings;
 		let cancelled = false;
@@ -113,9 +108,21 @@ export function useSyncSettings(): void {
 			};
 		}
 		setHydrationStatus("loading");
-		settingsLoadSnapshotStrict()
+		void waitForPendingNativeListeners()
+			.then(() => settingsLoadSnapshotStrict())
 			.then(({ revision, settings: loaded }) => {
 				if (cancelled) {
+					return;
+				}
+				if (
+					settingsRevisionRef.current !== undefined &&
+					revision < settingsRevisionRef.current
+				) {
+					// A newer broadcast landed while this snapshot was in flight.
+					// Keep it authoritative and only finish the hydration gate.
+					hasIpcLoadResolvedRef.current = true;
+					markIpcLoadResolved();
+					setHydrationStatus("ready");
 					return;
 				}
 				const current = getSettingsStoreState().settings;
@@ -139,28 +146,12 @@ export function useSyncSettings(): void {
 				const message = error instanceof Error ? error.message : String(error);
 				console.error("[settings] failed to hydrate backend settings:", error);
 				setHydrationStatus("error", message);
-				// Audit #39: a hydration error used to permanently disable persistence
-				// + server sync for the window session. Schedule a bounded auto-retry
-				// (bumping `retryToken` re-runs this effect); once a retry resolves,
-				// status flips back to "ready" and the save/connect effects resume.
-				if (retryTimerRef.current) {
-					clearTimeout(retryTimerRef.current);
-				}
-				retryTimerRef.current = setTimeout(() => {
-					retryTimerRef.current = null;
-					useSettingsHydrationStore.getState().requestRetry();
-				}, HYDRATION_RETRY_MS);
 			});
 		return () => {
 			cancelled = true;
-			// Clear this effect's own pending auto-retry timer so a re-run
-			// (retryToken bump) or unmount doesn't leak a `requestRetry()` fire.
-			if (retryTimerRef.current) {
-				clearTimeout(retryTimerRef.current);
-				retryTimerRef.current = null;
-			}
 		};
-		// `retryToken` in the deps re-runs hydration after `requestRetry()`.
+		// `retryToken` re-runs hydration only after an explicit user retry or a
+		// backend settings-changed event proves the settings service is responsive.
 	}, [setHydrationStatus, setSettings, retryToken]);
 
 	// Listen for settings changed from other windows (e.g. settings window → main window).
@@ -181,6 +172,12 @@ export function useSyncSettings(): void {
 			revision: number;
 			settings: AppSettings;
 		}): void => {
+			const hydration = useSettingsHydrationStore.getState();
+			if (hydration.status === "error") {
+				// The event is a reliable signal that the settings backend is alive.
+				// Retry once per such system event instead of probing every two seconds.
+				hydration.requestRetry();
+			}
 			if (
 				settingsRevisionRef.current !== undefined &&
 				revision < settingsRevisionRef.current
@@ -275,10 +272,6 @@ export function useSyncSettings(): void {
 		window.addEventListener("beforeunload", flush);
 		return () => {
 			window.removeEventListener("beforeunload", flush);
-			if (retryTimerRef.current) {
-				clearTimeout(retryTimerRef.current);
-				retryTimerRef.current = null;
-			}
 			flush();
 		};
 	}, []);

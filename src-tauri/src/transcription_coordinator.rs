@@ -47,6 +47,9 @@ pub(crate) fn cancel_current_dictation_session() -> Option<u64> {
     }
     let session_id = current_dictation_session();
     CANCELLED_DICTATION_THROUGH.fetch_max(session_id, Ordering::SeqCst);
+    // Wake the post-processing watcher so an in-flight LLM cleanup is dropped
+    // now instead of when its next cancellation-aware await resolves.
+    crate::actions::notify_post_processing_escape();
     Some(session_id)
 }
 
@@ -86,6 +89,14 @@ enum Command {
     },
     ProcessingFinished {
         session_id: u64,
+    },
+    /// A recording-mode change is a hard lifecycle boundary. If a mic capture is
+    /// still open, stop it through the normal TranscribeAction finalizer so the
+    /// captured audio continues through transcription/paste instead of being
+    /// discarded. The acknowledgement is sent after the recorder has closed and
+    /// the async transcription task has been launched.
+    FinalizeRecordingModeChange {
+        completed: Sender<()>,
     },
 }
 
@@ -278,6 +289,30 @@ impl TranscriptionCoordinator {
             warn!("Transcription coordinator channel closed");
         }
     }
+
+    /// Close any active mic capture at a recording-mode boundary without
+    /// cancelling its output. Waiting for the coordinator acknowledgement keeps
+    /// a newly selected mode (especially Listen) from opening another capture
+    /// before the old recorder has handed its audio to the normal paste pipeline.
+    pub fn finalize_recording_mode_change(&self) {
+        let (completed_tx, completed_rx) = mpsc::channel();
+        if self
+            .tx
+            .send(Command::FinalizeRecordingModeChange {
+                completed: completed_tx,
+            })
+            .is_err()
+        {
+            warn!("Transcription coordinator channel closed during recording-mode change");
+            return;
+        }
+
+        if completed_rx.recv_timeout(Duration::from_secs(5)).is_err() {
+            warn!(
+                "Timed out waiting for active recording to finalize during recording-mode change"
+            );
+        }
+    }
 }
 
 /// Handle one coordinator command, mutating the pipeline `stage` (and its bookkeeping). Pulled
@@ -452,6 +487,30 @@ fn handle_command(
                 finish_dictation_session(session_id);
                 crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
             }
+        }
+        Command::FinalizeRecordingModeChange { completed } => {
+            *pending_release = None;
+            recover_wedged_stage(app, stage, processing_since);
+
+            let recording_binding = match &*stage {
+                Stage::Recording { binding_id, .. } => Some(binding_id.clone()),
+                Stage::Idle | Stage::Processing { .. } if recorder_is_recording(app) => {
+                    // Defensive recovery for a recorder that outlived its stage.
+                    // All mic dictation modes use this one binding.
+                    warn!(
+                        "Finalizing recorder with no matching coordinator Recording stage during mode change"
+                    );
+                    Some("transcribe".to_string())
+                }
+                Stage::Idle | Stage::Processing { .. } => None,
+            };
+
+            if let Some(binding_id) = recording_binding {
+                stop(app, stage, &binding_id, "recording-mode-change");
+                *processing_since = Some(Instant::now());
+            }
+
+            let _ = completed.send(());
         }
     }
 }

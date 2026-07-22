@@ -6,7 +6,7 @@
 //   - the three in-process scrape caches (search / tags / catalog) with their TTLs,
 //   - the one shared `reqwest::Client` (connection pooling + consistent TLS),
 //   - the burst-control fetch `Semaphore`,
-//   - the in-flight pull-cancel set (B4 `lock_recover` policy preserved),
+//   - the in-flight pull-cancel registry (shared `CancelRegistry`, awaitable tokens),
 //   - the last warmup-status snapshot.
 //
 // The pure HTML parsing + the compiled-regex statics stay in `ollama_library.rs`
@@ -19,12 +19,14 @@
 // free functions re-exported from `ollama_pull.rs`. The `OnceLock` is a set-once
 // handle, NOT a mutable cache — all mutable state lives on the `Arc<OllamaManager>`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 
+use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::commands::ollama_library::{
     OllamaLibraryCatalogResult, OllamaLibraryHit, OllamaLibrarySearchResult,
     OllamaLibraryTagsResult,
@@ -63,8 +65,10 @@ pub struct OllamaManager {
     /// for typed tags that aren't in the recommended catalog.
     hit_cache: Mutex<HashMap<String, CacheEntry<OllamaLibraryHit>>>,
     catalog_cache: Mutex<Option<CacheEntry<OllamaLibraryCatalogResult>>>,
-    /// Models whose in-flight pull was cancelled — the streaming pull drain polls this.
-    pull_cancelled: Mutex<HashSet<String>>,
+    /// In-flight pull cancellation, keyed by model. The streaming pull drain
+    /// holds the model's awaitable [`CancellationToken`] and `select!`s on it,
+    /// so a cancel aborts the pull instantly (no between-chunk polling).
+    pull_cancelled: CancelRegistry,
     /// Last published warmup snapshot (renderer reads it via `llm_warmup_status`).
     last_warmup_status: Mutex<Option<LlmWarmupStatus>>,
 }
@@ -85,7 +89,7 @@ impl OllamaManager {
             tags_cache: Mutex::new(HashMap::new()),
             hit_cache: Mutex::new(HashMap::new()),
             catalog_cache: Mutex::new(None),
-            pull_cancelled: Mutex::new(HashSet::new()),
+            pull_cancelled: CancelRegistry::new(),
             last_warmup_status: Mutex::new(None),
         }
     }
@@ -183,22 +187,29 @@ impl OllamaManager {
         });
     }
 
-    // ── Pull-cancel set (B4 `lock_recover` policy) ─────────────────────────────────
+    // ── Pull-cancel registry ───────────────────────────────────────────────────────
 
-    /// Mark a model's in-flight pull as cancelled. Idempotent.
+    /// Mark a model's in-flight pull as cancelled — fires the model's awaitable
+    /// token, aborting the streaming drain instantly. Idempotent.
     pub fn mark_pull_cancelled(&self, model: &str) {
-        self.pull_cancelled.lock_recover().insert(model.to_string());
+        self.pull_cancelled.cancel(model);
     }
 
-    /// True if the given model's pull has been cancelled. The streaming pull loop in
-    /// `ollama_pull` checks this between NDJSON chunks.
+    /// True if the given model's pull has been cancelled.
     pub fn is_pull_cancelled(&self, model: &str) -> bool {
-        self.pull_cancelled.lock_recover().contains(model)
+        self.pull_cancelled.is_cancelled(model, false)
     }
 
     /// Clear a model's cancel flag once the pull loop has torn down (or completed).
     pub fn clear_pull_cancel(&self, model: &str) {
-        self.pull_cancelled.lock_recover().remove(model);
+        self.pull_cancelled.clear(model);
+    }
+
+    /// Awaitable cancel handle for `model`'s in-flight pull. `ollama_pull` passes
+    /// it into the streaming drain, which `select!`s on it between (and during)
+    /// NDJSON frames.
+    pub fn pull_cancel_token(&self, model: &str) -> CancellationToken {
+        self.pull_cancelled.cancel_token(model)
     }
 
     // ── Warmup snapshot ────────────────────────────────────────────────────────────

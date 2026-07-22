@@ -48,7 +48,6 @@ const DEFAULT_ROW_HEIGHT = "short";
 const OVERSCAN = 6;
 const VIEWPORT_OFFSET = 1;
 const HORIZONTAL_PAGE_SIZE = 5;
-const SCROLL_SYNC_RETRY_COUNT = 16;
 const MIN_COLUMN_SIZE = 60;
 const MAX_COLUMN_SIZE = 800;
 const SEARCH_SHORTCUT_KEY = "f";
@@ -58,6 +57,8 @@ const AUTO_SCROLL_SPEED_RAMP_ZONE = AUTO_SCROLL_EDGE_ZONE * 3;
 const AUTO_SCROLL_MIN_SPEED = 8;
 const AUTO_SCROLL_MAX_SPEED = 40;
 const AUTO_SCROLL_SELECTION_THROTTLE_MS = 32;
+const DATA_COMMIT_FAILSAFE_MS = 5000;
+const FOCUS_MOUNT_FAILSAFE_MS = 5000;
 
 const DOMAIN_REGEX = /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i;
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}.*)?$/;
@@ -110,6 +111,20 @@ interface DataGridStore {
 	batch: (fn: () => void) => void;
 }
 
+interface DataCommitWaiter<TData> {
+	previousData: TData[];
+	expectedRowCount: number;
+	timeoutId: number;
+	resolve: (committed: boolean) => void;
+}
+
+interface PendingFocusOperation {
+	columnId: string;
+	requestedRowIndex: number;
+	rowIndex: number | null;
+	timeoutId: number;
+}
+
 function useStore<T>(
 	store: DataGridStore,
 	selector: (state: DataGridState) => T,
@@ -121,6 +136,8 @@ function useStore<T>(
 
 interface UseDataGridProps<TData>
 	extends Omit<TableOptions<TData>, "pageCount" | "getCoreRowModel"> {
+	/** Keeps related controls outside the grid viewport in the same interaction scope. */
+	interactionBoundaryRef?: React.RefObject<HTMLElement | null>;
 	onDataChange?: (data: TData[]) => void;
 	onRowAdd?: (
 		event?: React.MouseEvent<HTMLDivElement>,
@@ -173,6 +190,10 @@ function useDataGrid<TData>({
 	)[0];
 	const footerRef = React.useRef<HTMLDivElement>(null);
 	const focusGuardRef = React.useRef(false);
+	const dataCommitWaitersRef = useLazyRef(
+		() => new Set<DataCommitWaiter<TData>>(),
+	);
+	const pendingFocusRef = React.useRef<PendingFocusOperation | null>(null);
 
 	const propsRef = useAsRef({
 		...props,
@@ -267,6 +288,53 @@ function useDataGrid<TData>({
 			},
 		};
 	}, [listenersRef, stateRef]);
+
+	const settleDataCommitWaiter = (
+		waiter: DataCommitWaiter<TData>,
+		committed: boolean,
+	) => {
+		if (!dataCommitWaitersRef.current.delete(waiter)) {
+			return;
+		}
+		window.clearTimeout(waiter.timeoutId);
+		waiter.resolve(committed);
+	};
+
+	const waitForDataCommit = (
+		previousData: TData[],
+		expectedRowCount: number,
+	) => {
+		if (
+			propsRef.current.data !== previousData ||
+			propsRef.current.data.length >= expectedRowCount
+		) {
+			return { promise: Promise.resolve(true), cancel: () => undefined };
+		}
+
+		let waiter: DataCommitWaiter<TData> | null = null;
+		const promise = new Promise<boolean>((resolve) => {
+			waiter = {
+				previousData,
+				expectedRowCount,
+				resolve,
+				timeoutId: 0,
+			};
+			dataCommitWaitersRef.current.add(waiter);
+			waiter.timeoutId = window.setTimeout(() => {
+				if (waiter) {
+					settleDataCommitWaiter(waiter, false);
+				}
+			}, DATA_COMMIT_FAILSAFE_MS);
+		});
+		return {
+			promise,
+			cancel: () => {
+				if (waiter) {
+					settleDataCommitWaiter(waiter, false);
+				}
+			},
+		};
+	};
 
 	const focusedCell = useStore(store, (state) => state.focusedCell);
 	const editingCell = useStore(store, (state) => state.editingCell);
@@ -831,31 +899,27 @@ function useDataGrid<TData>({
 			}
 
 			if (expandRows && rowsNeeded > 0) {
-				const expectedRowCount = rowCount + rowsNeeded;
+				const pendingDataCommit = waitForDataCommit(
+					propsRef.current.data,
+					rowCount + rowsNeeded,
+				);
 
-				if (propsRef.current.onRowsAdd) {
-					await propsRef.current.onRowsAdd(rowsNeeded);
-				} else if (propsRef.current.onRowAdd) {
-					for (let i = 0; i < rowsNeeded; i++) {
-						// eslint-disable-next-line react-doctor/async-await-in-loop -- rows must be appended sequentially; each onRowAdd() mutates the backing data store and the next append depends on the prior row existing. Parallelizing would race the store and corrupt row order.
-						await propsRef.current.onRowAdd();
+				try {
+					if (propsRef.current.onRowsAdd) {
+						await propsRef.current.onRowsAdd(rowsNeeded);
+					} else if (propsRef.current.onRowAdd) {
+						for (let i = 0; i < rowsNeeded; i++) {
+							// eslint-disable-next-line react-doctor/async-await-in-loop -- rows must be appended sequentially; each onRowAdd() mutates the backing data store and the next append depends on the prior row existing. Parallelizing would race the store and corrupt row order.
+							await propsRef.current.onRowAdd();
+						}
 					}
+				} catch (error) {
+					pendingDataCommit.cancel();
+					throw error;
 				}
 
-				let attempts = 0;
-				const maxAttempts = 50;
-				let currentTableRowCount =
-					tableRef.current?.getRowModel().rows.length ?? 0;
-
-				while (
-					currentTableRowCount < expectedRowCount &&
-					attempts < maxAttempts
-				) {
-					// eslint-disable-next-line react-doctor/async-await-in-loop -- sequential polling: each iteration waits 100ms then re-reads the row count to detect when the async data sync has caught up. Iterations are inherently dependent (poll-until-ready), not parallelizable.
-					await new Promise((resolve) => setTimeout(resolve, 100));
-					currentTableRowCount =
-						tableRef.current?.getRowModel().rows.length ?? 0;
-					attempts++;
+				if (!(await pendingDataCommit.promise)) {
+					return;
 				}
 			}
 
@@ -1172,38 +1236,121 @@ function useDataGrid<TData>({
 		}
 	};
 
-	// Release focus guard after delay to allow async data re-renders to settle.
-	// 300ms accounts for db sync and virtualized cell mounting
-	const releaseFocusGuard = (immediate = false) => {
-		if (immediate) {
-			focusGuardRef.current = false;
+	const releaseFocusGuard = () => {
+		const pending = pendingFocusRef.current;
+		if (pending) {
+			window.clearTimeout(pending.timeoutId);
+		}
+		pendingFocusRef.current = null;
+		focusGuardRef.current = false;
+	};
+
+	const adjustFocusedRowIntoView = (rowIndex: number) => {
+		const container = dataGridRef.current;
+		const targetRow = rowMapRef.current.get(rowIndex);
+		if (!(container && targetRow)) {
 			return;
 		}
 
-		setTimeout(() => {
-			focusGuardRef.current = false;
-		}, 300);
+		const containerRect = container.getBoundingClientRect();
+		const headerHeight = headerRef.current?.getBoundingClientRect().height ?? 0;
+		const footerHeight = footerRef.current?.getBoundingClientRect().height ?? 0;
+		const viewportTop = containerRect.top + headerHeight + VIEWPORT_OFFSET;
+		const viewportBottom =
+			containerRect.bottom - footerHeight - VIEWPORT_OFFSET;
+		const rowRect = targetRow.getBoundingClientRect();
+
+		if (rowRect.top < viewportTop) {
+			container.scrollTop -= viewportTop - rowRect.top;
+		} else if (rowRect.bottom > viewportBottom) {
+			container.scrollTop += rowRect.bottom - viewportBottom;
+		}
+	};
+
+	const finishPendingFocus = (cellElement: HTMLDivElement | null) => {
+		const pending = pendingFocusRef.current;
+		if (!pending) {
+			return;
+		}
+
+		window.clearTimeout(pending.timeoutId);
+		pendingFocusRef.current = null;
+		if (pending.rowIndex !== null) {
+			adjustFocusedRowIntoView(pending.rowIndex);
+		}
+		if (cellElement && document.body.contains(cellElement)) {
+			cellElement.focus();
+		} else {
+			dataGridRef.current?.focus();
+		}
+		focusGuardRef.current = false;
+	};
+
+	const startPendingFocus = (
+		operation: Omit<PendingFocusOperation, "timeoutId">,
+	) => {
+		releaseFocusGuard();
+		focusGuardRef.current = true;
+		const pending: PendingFocusOperation = { ...operation, timeoutId: 0 };
+		pendingFocusRef.current = pending;
+		pending.timeoutId = window.setTimeout(() => {
+			if (pendingFocusRef.current === pending) {
+				finishPendingFocus(null);
+			}
+		}, FOCUS_MOUNT_FAILSAFE_MS);
+	};
+
+	const finishPendingFocusAfterRowCommit = (rowIndex: number) => {
+		queueMicrotask(() => {
+			const pending = pendingFocusRef.current;
+			if (!pending || pending.rowIndex !== rowIndex) {
+				return;
+			}
+			finishPendingFocus(
+				cellMapRef.current.get(getCellKey(rowIndex, pending.columnId)) ?? null,
+			);
+		});
+	};
+
+	const onCellMount = (
+		rowIndex: number,
+		columnId: string,
+		node: HTMLDivElement | null,
+	) => {
+		const pending = pendingFocusRef.current;
+		if (
+			node &&
+			pending?.rowIndex === rowIndex &&
+			pending.columnId === columnId
+		) {
+			finishPendingFocus(node);
+		}
+	};
+
+	const onRowMount = (rowIndex: number, node: HTMLDivElement | null) => {
+		const pending = pendingFocusRef.current;
+		if (!(node && pending?.rowIndex === rowIndex)) {
+			return;
+		}
+		adjustFocusedRowIntoView(rowIndex);
+		finishPendingFocusAfterRowCommit(rowIndex);
 	};
 
 	const focusCellWrapper = (rowIndex: number, columnId: string) => {
-		focusGuardRef.current = true;
-
-		requestAnimationFrame(() => {
-			const cellKey = getCellKey(rowIndex, columnId);
-			const cellWrapperElement = cellMapRef.current.get(cellKey);
-
-			if (!cellWrapperElement) {
-				const container = dataGridRef.current;
-				if (container) {
-					container.focus();
-				}
-				releaseFocusGuard();
-				return;
-			}
-
-			cellWrapperElement.focus();
-			releaseFocusGuard();
+		startPendingFocus({
+			columnId,
+			requestedRowIndex: rowIndex,
+			rowIndex,
 		});
+
+		const cellWrapperElement = cellMapRef.current.get(
+			getCellKey(rowIndex, columnId),
+		);
+		if (cellWrapperElement) {
+			finishPendingFocus(cellWrapperElement);
+		} else if (rowMapRef.current.has(rowIndex)) {
+			finishPendingFocusAfterRowCommit(rowIndex);
+		}
 	};
 
 	const focusCell = (rowIndex: number, columnId: string) => {
@@ -2118,6 +2265,8 @@ function useDataGrid<TData>({
 		...propsRef.current.meta,
 		dataGridRef,
 		cellMapRef,
+		onCellMount,
+		onRowMount,
 		get focusedCell() {
 			return store.getState().focusedCell;
 		},
@@ -2324,11 +2473,49 @@ function useDataGrid<TData>({
 		rowVirtualizerRef.current = rowVirtualizer;
 	}
 
-	const onScrollToRow = async (opts: Partial<CellPosition>) => {
+	const resumePendingScrollFocus = () => {
+		const pending = pendingFocusRef.current;
+		if (!pending || pending.rowIndex !== null) {
+			return;
+		}
+
+		const currentRowCount = propsRef.current.data.length;
+		if (pending.requestedRowIndex >= currentRowCount) {
+			return;
+		}
+
+		const safeRowIndex = Math.min(
+			pending.requestedRowIndex,
+			Math.max(0, currentRowCount - 1),
+		);
+		pending.rowIndex = safeRowIndex;
+
+		const isBottomHalf = safeRowIndex > currentRowCount / 2;
+		rowVirtualizer.scrollToIndex(safeRowIndex, {
+			align: isBottomHalf ? "end" : "start",
+		});
+
+		store.batch(() => {
+			store.setState("focusedCell", {
+				rowIndex: safeRowIndex,
+				columnId: pending.columnId,
+			});
+			store.setState("editingCell", null);
+		});
+
+		const cellElement = cellMapRef.current.get(
+			getCellKey(safeRowIndex, pending.columnId),
+		);
+		if (cellElement) {
+			finishPendingFocus(cellElement);
+		} else if (rowMapRef.current.has(safeRowIndex)) {
+			finishPendingFocusAfterRowCommit(safeRowIndex);
+		}
+	};
+
+	const onScrollToRow = (opts: Partial<CellPosition>) => {
 		const rowIndex = opts?.rowIndex ?? 0;
 		const columnId = opts?.columnId;
-
-		focusGuardRef.current = true;
 
 		const navigableIds = propsRef.current.columns.flatMap((c) => {
 			const id =
@@ -2339,87 +2526,43 @@ function useDataGrid<TData>({
 		const targetColumnId = columnId ?? navigableIds[0];
 
 		if (!targetColumnId) {
-			releaseFocusGuard(true);
 			return;
 		}
 
-		async function onScrollAndFocus(retryCount: number) {
-			if (!targetColumnId) {
-				return;
-			}
-			const currentRowCount = propsRef.current.data.length;
+		startPendingFocus({
+			columnId: targetColumnId,
+			requestedRowIndex: rowIndex,
+			rowIndex: null,
+		});
+		resumePendingScrollFocus();
+	};
 
-			// If the requested row doesn't exist yet, wait for data to update
-			if (rowIndex >= currentRowCount && retryCount > 0) {
-				await new Promise((resolve) => setTimeout(resolve, 50));
-				await onScrollAndFocus(retryCount - 1);
-				return;
-			}
-
-			const safeRowIndex = Math.min(rowIndex, Math.max(0, currentRowCount - 1));
-
-			const isBottomHalf = safeRowIndex > currentRowCount / 2;
-			rowVirtualizer.scrollToIndex(safeRowIndex, {
-				align: isBottomHalf ? "end" : "start",
-			});
-
-			await new Promise((resolve) => requestAnimationFrame(resolve));
-
-			// Adjust scroll position to account for sticky header/footer
-			const container = dataGridRef.current;
-			const targetRow = rowMapRef.current.get(safeRowIndex);
-
-			if (container && targetRow) {
-				const containerRect = container.getBoundingClientRect();
-				const headerHeight =
-					headerRef.current?.getBoundingClientRect().height ?? 0;
-				const footerHeight =
-					footerRef.current?.getBoundingClientRect().height ?? 0;
-
-				const viewportTop = containerRect.top + headerHeight + VIEWPORT_OFFSET;
-				const viewportBottom =
-					containerRect.bottom - footerHeight - VIEWPORT_OFFSET;
-
-				const rowRect = targetRow.getBoundingClientRect();
-				const isFullyVisible =
-					rowRect.top >= viewportTop && rowRect.bottom <= viewportBottom;
-
-				if (!isFullyVisible) {
-					if (rowRect.top < viewportTop) {
-						// Scroll up as row is partially hidden by header
-						container.scrollTop -= viewportTop - rowRect.top;
-					} else if (rowRect.bottom > viewportBottom) {
-						// Scroll down as row is partially hidden by footer
-						container.scrollTop += rowRect.bottom - viewportBottom;
-					}
-				}
-			}
-
-			store.batch(() => {
-				store.setState("focusedCell", {
-					rowIndex: safeRowIndex,
-					columnId: targetColumnId,
-				});
-				store.setState("editingCell", null);
-			});
-
-			const cellKey = getCellKey(safeRowIndex, targetColumnId);
-			const cellElement = cellMapRef.current.get(cellKey);
-
-			if (cellElement) {
-				cellElement.focus();
-				releaseFocusGuard();
-			} else if (retryCount > 0) {
-				await new Promise((resolve) => requestAnimationFrame(resolve));
-				await onScrollAndFocus(retryCount - 1);
-			} else {
-				dataGridRef.current?.focus();
-				releaseFocusGuard();
+	useIsomorphicLayoutEffect(() => {
+		for (const waiter of dataCommitWaitersRef.current) {
+			if (
+				waiter.previousData !== data ||
+				data.length >= waiter.expectedRowCount
+			) {
+				settleDataCommitWaiter(waiter, true);
 			}
 		}
+		resumePendingScrollFocus();
+		// Data identity is the commit signal. All operation details are read from
+		// refs so unrelated grid state does not replay pending work.
+		// eslint-disable-next-line react-doctor/exhaustive-deps
+	}, [data, data.length]);
 
-		await onScrollAndFocus(SCROLL_SYNC_RETRY_COUNT);
-	};
+	React.useEffect(
+		() => () => {
+			for (const waiter of dataCommitWaitersRef.current) {
+				window.clearTimeout(waiter.timeoutId);
+				waiter.resolve(false);
+			}
+			dataCommitWaitersRef.current.clear();
+			releaseFocusGuard();
+		},
+		[dataCommitWaitersRef],
+	);
 
 	const onRowAdd = async (event?: React.MouseEvent<HTMLDivElement>) => {
 		if (propsRef.current.readOnly || !propsRef.current.onRowAdd) {
@@ -3201,9 +3344,15 @@ function useDataGrid<TData>({
 				return;
 			}
 
+			const target = event.target as Node;
+			const isInsideInteractionBoundary =
+				propsRef.current.interactionBoundaryRef?.current?.contains(target) ??
+				false;
+
 			if (
 				dataGridRef.current &&
-				!dataGridRef.current.contains(event.target as Node)
+				!dataGridRef.current.contains(target) &&
+				!isInsideInteractionBoundary
 			) {
 				const elements = document.elementsFromPoint(
 					event.clientX,
@@ -3232,7 +3381,7 @@ function useDataGrid<TData>({
 		return () => {
 			document.removeEventListener("mousedown", onOutsideClick);
 		};
-	}, [store, blurCellRef, onSelectionClearRef]);
+	}, [store, blurCellRef, onSelectionClearRef, propsRef]);
 
 	React.useEffect(() => {
 		function onSelectStart(event: Event) {

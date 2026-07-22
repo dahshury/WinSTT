@@ -36,15 +36,6 @@ const OUTPUT_DEVICE_PICKER_HEIGHT = 320;
 // under the third card.
 const LLM_PICKER_HEIGHT = 580;
 export const PANEL_HEIGHT = "h-full";
-// Duration of the close FADE (keep in sync with `--dropdown-close-dur` in
-// `src/app/styles/globals.css` and `MODEL_PICKER_CLOSE_MS` in
-// `src-tauri/.../windows/placement.rs`). The Rust side hides the OS window a
-// beat LATER (`MODEL_PICKER_HIDE_DELAY_MS`) so the fully-faded transparent
-// frame is actually composited before the hide — otherwise the last frame
-// WebView2 holds is the visible panel, which flashes at the OLD trigger's
-// position the next time the window is shown.
-export const MODEL_PICKER_CLOSE_MS = 120;
-
 export function isPrimaryInlineModelList(element: HTMLElement): boolean {
 	return (
 		element.getAttribute("role") === "listbox" &&

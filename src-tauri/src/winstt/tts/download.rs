@@ -1,7 +1,7 @@
 use super::kokoro::{self, KokoroConfig};
 use super::voices::KOKORO_VOICE_CATALOG;
 use crate::winstt::downloads::{
-    TransferControl, TransferOutcome, TransferRequest, transfer_url_blocking,
+    TransferControl, TransferControlState, TransferOutcome, TransferRequest, transfer_url_blocking,
 };
 
 // ---------------------------------------------------------------------------
@@ -20,12 +20,8 @@ pub enum DownloadError {
 /// `(on_progress, should_pause, should_cancel)` triple.
 pub trait DownloadControl: Send + Sync {
     fn on_progress(&self, fraction: f64, downloaded: u64, total: u64);
-    fn should_pause(&self) -> bool {
-        false
-    }
-    fn should_cancel(&self) -> bool {
-        false
-    }
+    /// Awaitable, latched pause/cancel state used to interrupt an in-flight HTTP wait.
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<TransferControlState>;
 }
 
 /// Download the two Kokoro model files into `cfg.cache_dir`, resumable via HTTP
@@ -86,7 +82,7 @@ fn download_one(
             progress_interval: std::time::Duration::from_millis(100),
             url,
         },
-        Some(&control_adapter),
+        control.map(|_| &control_adapter as &dyn TransferControl),
         |progress| {
             if let Some(c) = control {
                 c.on_progress(
@@ -120,11 +116,9 @@ struct DownloadControlAdapter<'a> {
 }
 
 impl TransferControl for DownloadControlAdapter<'_> {
-    fn should_cancel(&self) -> bool {
-        self.control.is_some_and(|control| control.should_cancel())
-    }
-
-    fn should_pause(&self) -> bool {
-        self.control.is_some_and(|control| control.should_pause())
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<TransferControlState> {
+        self.control
+            .expect("DownloadControlAdapter is only passed when a control exists")
+            .subscribe()
     }
 }

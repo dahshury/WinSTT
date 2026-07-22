@@ -57,9 +57,15 @@ async function settleOpenAnimation(): Promise<void> {
 /** The initial reveal is gated on the lazy tab panel mounting, so the first
  *  open is only observable once the chunk resolves — poll for it. */
 async function waitForOpen(): Promise<void> {
-	await waitFor(() => {
-		expect(settingsShell().className).toContain("is-open");
-	});
+	// Generous timeout: the reveal is gated on a lazy panel mount, and under the
+	// full views suite on a loaded CI runner the default 1s can be exceeded while
+	// the chunk is still committing. It still resolves the instant it opens.
+	await waitFor(
+		() => {
+			expect(settingsShell().className).toContain("is-open");
+		},
+		{ timeout: 5000 },
+	);
 }
 
 type BridgeListener = (...args: unknown[]) => void;
@@ -159,10 +165,18 @@ describe("SettingsPage", () => {
 		fireEvent.click(screen.getByRole("tab", { name: /about/i }));
 
 		expect(
-			await screen.findByRole("button", { name: "Export settings" }),
+			await screen.findByRole(
+				"button",
+				{ name: "Export settings" },
+				{ timeout: 5000 },
+			),
 		).toBeDefined();
 		expect(
-			await screen.findByRole("button", { name: "Import settings" }),
+			await screen.findByRole(
+				"button",
+				{ name: "Import settings" },
+				{ timeout: 5000 },
+			),
 		).toBeDefined();
 		expect(screen.queryByTestId("settings-update-button")).toBeNull();
 	});
@@ -211,9 +225,7 @@ describe("SettingsPage", () => {
 
 			expect(settingsShell().className).toContain("is-closing");
 
-			await act(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 5));
-			});
+			fireEvent.transitionEnd(settingsShell(), { propertyName: "opacity" });
 
 			expect(settingsShell().className).not.toContain("is-open");
 			expect(settingsShell().className).not.toContain("is-closing");
@@ -343,7 +355,7 @@ describe("SettingsPage", () => {
 		}
 	});
 
-	test("requests the native hide before the close fade fully completes", async () => {
+	test("requests the native hide when the close opacity transition completes", async () => {
 		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
 		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
 		document.documentElement.style.setProperty("--modal-close-dur", "100ms");
@@ -357,11 +369,33 @@ describe("SettingsPage", () => {
 			expect(settingsShell().className).toContain("is-closing");
 			expect(bridge.closeSelfCalls()).toBe(0);
 
-			// The hide is scheduled ~40ms BEFORE the 100ms fade ends so the IPC +
-			// OS hide latency overlaps the (already ~transparent) fade tail
-			// instead of holding a fully-faded dark window on screen.
+			fireEvent.transitionEnd(settingsShell(), { propertyName: "opacity" });
+			expect(bridge.closeSelfCalls()).toBe(1);
+			expect(settingsShell().className).not.toContain("is-closing");
+
+			// Transform completion and duplicate browser events are harmless.
+			fireEvent.transitionEnd(settingsShell(), { propertyName: "transform" });
+			fireEvent.transitionEnd(settingsShell(), { propertyName: "opacity" });
+			expect(bridge.closeSelfCalls()).toBe(1);
+		} finally {
+			bridge.restore();
+			document.documentElement.style.removeProperty("--modal-close-dur");
+		}
+	});
+
+	test("falls back to a bounded close when WebView2 drops transitionend", async () => {
+		useSettingsStore.setState({ settings: DEFAULT_SETTINGS, isLoaded: true });
+		useSettingsHydrationStore.setState({ error: null, status: "unavailable" });
+		document.documentElement.style.setProperty("--modal-close-dur", "1ms");
+		const bridge = installNativeBridgeStub();
+
+		try {
+			renderSettingsPage();
+			await waitForOpen();
+			fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
 			await act(async () => {
-				await new Promise((resolve) => setTimeout(resolve, 90));
+				await new Promise((resolve) => setTimeout(resolve, 120));
 			});
 			expect(bridge.closeSelfCalls()).toBe(1);
 			expect(settingsShell().className).not.toContain("is-closing");

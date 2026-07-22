@@ -14,3 +14,9 @@ export async function setOverlayHitRegions(
 ): Promise<void> {
 	unwrapResult(await commands.setOverlayHitRegions(rects));
 }
+
+export async function acknowledgeOverlayHideTransition(
+	generation: string,
+): Promise<void> {
+	unwrapResult(await commands.overlayAckHideTransition(generation));
+}

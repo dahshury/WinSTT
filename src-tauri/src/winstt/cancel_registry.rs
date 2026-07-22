@@ -1,11 +1,12 @@
 // Shared in-flight cancel registry.
 //
-// Several managers (cloud STT, LLM, TTS) track which request ids have been
-// cancelled. There are two consumption styles:
-//   - POLL: a drain loop checks `is_cancelled(id)` between chunks (native Ollama).
+// Several managers (cloud STT, LLM, TTS, Ollama pulls) track which request ids
+// have been cancelled. There are two consumption styles:
+//   - CHECK: synchronous code checks `is_cancelled(id)` at its own safe points
+//     (e.g. between pipeline stages, before starting a request).
 //   - AWAIT: an async worker holds the `cancel_token(id)` and `tokio::select!`s on
 //     `token.cancelled()`, dropping its in-flight reqwest/genai future to abort
-//     the request the instant cancel fires (cloud LLM/STT/TTS mid-flight abort).
+//     the request the instant cancel fires (Ollama chat/pull, cloud LLM/STT/TTS).
 //
 // Presence in `cancelled` == cancelled (poll path). `tokens` holds a latching
 // `CancellationToken` per id (await path); `cancel`/`cancel_all` fire both so the

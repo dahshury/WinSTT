@@ -196,4 +196,8 @@ impl ChunkSink for EmitChunkSink {
     fn is_cancelled(&self) -> bool {
         self.cancelled.is_cancelled()
     }
+
+    fn cancel_token(&self) -> CancellationToken {
+        self.cancelled.clone()
+    }
 }

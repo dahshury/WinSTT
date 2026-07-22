@@ -1,12 +1,13 @@
 use crate::input::{self, EnigoState};
 #[cfg(target_os = "linux")]
 use crate::settings::TypingTool;
-use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod, get_settings};
+use crate::settings::{ClipboardHandling, PasteMethod, get_settings};
+use crate::winstt::settings_schema::{AutoSubmitKey, WinsttSettings};
 use enigo::{Direction, Enigo, Key, Keyboard};
 use log::{debug, warn};
+use parking_lot::MutexGuard;
 #[cfg(target_os = "linux")]
 use std::process::Command;
-use std::sync::{MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -29,35 +30,23 @@ fn lock_enigo<'a>(
 ) -> Result<MutexGuard<'a, Enigo>, ClipboardError> {
     let started = Instant::now();
     debug!("[clipboard] enigo_lock_start context={context}");
-    loop {
-        match enigo_state.0.try_lock() {
-            Ok(guard) => {
-                let elapsed_ms = started.elapsed().as_millis();
-                debug!(
-                    "[clipboard] enigo_lock_complete context={context} duration_ms={elapsed_ms}"
-                );
-                warn_if_slow_paste_phase("enigo_lock", elapsed_ms);
-                return Ok(guard);
-            }
-            Err(TryLockError::Poisoned(err)) => {
-                return Err(ClipboardError::Input(format!(
-                    "Failed to lock Enigo: {err}"
-                )));
-            }
-            Err(TryLockError::WouldBlock) => {
-                if started.elapsed() >= Duration::from_millis(ENIGO_LOCK_TIMEOUT_MS) {
-                    warn!(
-                        "[clipboard] enigo_lock_timeout context={context} duration_ms={}",
-                        started.elapsed().as_millis()
-                    );
-                    return Err(ClipboardError::Input(format!(
-                        "Timed out locking Enigo after {ENIGO_LOCK_TIMEOUT_MS}ms"
-                    )));
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
+    let Some(guard) = enigo_state
+        .0
+        .try_lock_for(Duration::from_millis(ENIGO_LOCK_TIMEOUT_MS))
+    else {
+        warn!(
+            "[clipboard] enigo_lock_timeout context={context} duration_ms={}",
+            started.elapsed().as_millis()
+        );
+        return Err(ClipboardError::Input(format!(
+            "Timed out locking Enigo after {ENIGO_LOCK_TIMEOUT_MS}ms"
+        )));
+    };
+
+    let elapsed_ms = started.elapsed().as_millis();
+    debug!("[clipboard] enigo_lock_complete context={context} duration_ms={elapsed_ms}");
+    warn_if_slow_paste_phase("enigo_lock", elapsed_ms);
+    Ok(guard)
 }
 
 /// Typed error for the paste/clipboard pipeline. Used for internal error construction
@@ -633,27 +622,13 @@ fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), Cli
                 ClipboardError::Input(format!("Failed to release Control key: {}", e))
             })?;
         }
-        AutoSubmitKey::CmdEnter => {
-            enigo.key(Key::Meta, Direction::Press).map_err(|e| {
-                ClipboardError::Input(format!("Failed to press Meta/Cmd key: {}", e))
-            })?;
-            enigo
-                .key(Key::Return, Direction::Press)
-                .map_err(|e| ClipboardError::Input(format!("Failed to press Return key: {}", e)))?;
-            enigo.key(Key::Return, Direction::Release).map_err(|e| {
-                ClipboardError::Input(format!("Failed to release Return key: {}", e))
-            })?;
-            enigo.key(Key::Meta, Direction::Release).map_err(|e| {
-                ClipboardError::Input(format!("Failed to release Meta/Cmd key: {}", e))
-            })?;
-        }
     }
 
     Ok(())
 }
 
-fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool {
-    auto_submit && paste_method != PasteMethod::None
+fn should_send_auto_submit(settings: &WinsttSettings, paste_method: PasteMethod) -> bool {
+    settings.general.auto_submit && paste_method != PasteMethod::None
 }
 
 /// Dictation paste: append the trailing space (if enabled) and honor the auto-submit Enter.
@@ -724,8 +699,8 @@ pub fn paste_streaming_edit(
 }
 
 fn submit_after_dictation_paste_inner(app_handle: AppHandle) -> Result<(), ClipboardError> {
-    let settings = get_settings(&app_handle);
-    if !should_send_auto_submit(settings.auto_submit, settings.paste_method) {
+    let settings = crate::winstt::commands::settings::read_settings(&app_handle);
+    if !should_send_auto_submit(&settings, settings.core.paste_method) {
         return Ok(());
     }
 
@@ -735,7 +710,7 @@ fn submit_after_dictation_paste_inner(app_handle: AppHandle) -> Result<(), Clipb
     let mut enigo = lock_enigo(&enigo_state, "auto_submit")?;
 
     std::thread::sleep(Duration::from_millis(50));
-    send_return_key(&mut enigo, settings.auto_submit_key)
+    send_return_key(&mut enigo, settings.general.auto_submit_key)
 }
 
 /// Send the configured auto-submit key without inserting text. Used by streaming
@@ -822,13 +797,15 @@ fn paste_inner(
     select_all_first: bool,
 ) -> Result<(), ClipboardError> {
     let paste_started = Instant::now();
-    let settings = get_settings(&app_handle);
-    let paste_method = settings.paste_method;
-    let paste_delay_ms = settings.paste_delay_ms;
+    let settings = crate::winstt::commands::settings::read_settings(&app_handle);
+    let core_settings = &settings.core;
+    let general_settings = &settings.general;
+    let paste_method = core_settings.paste_method;
+    let paste_delay_ms = core_settings.paste_delay_ms;
 
     // Append trailing space if enabled — SKIPPED in replace mode (an in-place rewrite must not
     // gain a stray trailing space the original selection didn't have).
-    let text = if settings.append_trailing_space && !replace_mode {
+    let text = if core_settings.append_trailing_space && !replace_mode {
         format!("{} ", text)
     } else {
         text
@@ -877,7 +854,7 @@ fn paste_inner(
                 &mut enigo,
                 &text,
                 #[cfg(target_os = "linux")]
-                settings.typing_tool,
+                core_settings.typing_tool,
             )?;
             let elapsed_ms = phase_started.elapsed().as_millis();
             debug!("[clipboard] direct_paste_complete duration_ms={elapsed_ms}");
@@ -888,7 +865,7 @@ fn paste_inner(
             // skip the snapshot/restore sandwich entirely instead of restoring the old
             // content only to overwrite it again below.
             let restore_original =
-                settings.clipboard_handling != ClipboardHandling::CopyToClipboard;
+                core_settings.clipboard_handling != ClipboardHandling::CopyToClipboard;
             paste_via_clipboard(
                 &mut enigo,
                 &text,
@@ -908,21 +885,21 @@ fn paste_inner(
     // Auto-submit (Enter) is a DICTATION affordance — SKIPPED in replace mode so a Transforms
     // rewrite-in-place doesn't fire a spurious Enter (submitting the form / inserting a newline
     // the user never asked for).
-    if !replace_mode && should_send_auto_submit(settings.auto_submit, paste_method) {
+    if !replace_mode && should_send_auto_submit(&settings, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         let phase_started = Instant::now();
         debug!(
             "[clipboard] auto_submit_start key={:?}",
-            settings.auto_submit_key
+            general_settings.auto_submit_key
         );
-        send_return_key(&mut enigo, settings.auto_submit_key)?;
+        send_return_key(&mut enigo, general_settings.auto_submit_key)?;
         let elapsed_ms = phase_started.elapsed().as_millis();
         debug!("[clipboard] auto_submit_complete duration_ms={elapsed_ms}");
         warn_if_slow_paste_phase("auto_submit", elapsed_ms);
     }
 
     // After pasting, optionally copy to clipboard based on settings
-    if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+    if core_settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         let clipboard = app_handle.clipboard();
         let phase_started = Instant::now();
         debug!(
@@ -950,20 +927,25 @@ mod tests {
 
     #[test]
     fn auto_submit_requires_setting_enabled() {
-        assert!(!should_send_auto_submit(false, PasteMethod::CtrlV));
-        assert!(!should_send_auto_submit(false, PasteMethod::Direct));
+        let settings = WinsttSettings::default();
+        assert!(!should_send_auto_submit(&settings, PasteMethod::CtrlV));
+        assert!(!should_send_auto_submit(&settings, PasteMethod::Direct));
     }
 
     #[test]
     fn auto_submit_skips_none_paste_method() {
-        assert!(!should_send_auto_submit(true, PasteMethod::None));
+        let mut settings = WinsttSettings::default();
+        settings.general.auto_submit = true;
+        assert!(!should_send_auto_submit(&settings, PasteMethod::None));
     }
 
     #[test]
     fn auto_submit_runs_for_active_paste_methods() {
-        assert!(should_send_auto_submit(true, PasteMethod::CtrlV));
-        assert!(should_send_auto_submit(true, PasteMethod::Direct));
-        assert!(should_send_auto_submit(true, PasteMethod::CtrlShiftV));
-        assert!(should_send_auto_submit(true, PasteMethod::ShiftInsert));
+        let mut settings = WinsttSettings::default();
+        settings.general.auto_submit = true;
+        assert!(should_send_auto_submit(&settings, PasteMethod::CtrlV));
+        assert!(should_send_auto_submit(&settings, PasteMethod::Direct));
+        assert!(should_send_auto_submit(&settings, PasteMethod::CtrlShiftV));
+        assert!(should_send_auto_submit(&settings, PasteMethod::ShiftInsert));
     }
 }

@@ -37,6 +37,35 @@ describe("CheckboxItem trailing-control propagation", () => {
 		expect(onToggle).not.toHaveBeenCalled();
 	});
 
+	// Regression: the row commits its toggle on `pointerup`, not `click` (see
+	// `handleRowPointerUp`). The trailing wrapper originally stopped only
+	// click/keydown, so a real click on a trailing control — which is
+	// pointerdown → pointerup → click — still bubbled its pointerup to the row
+	// and flipped the checkbox. Concretely: clicking a modifier's
+	// Low/Medium/High/Caveman level segment toggled the whole modifier off
+	// instead of switching its level. A synthetic `fireEvent.click` never
+	// dispatches pointerup, so it can't catch this; fire the pointer event
+	// directly on the trailing control.
+	test("trailing-control pointerup does not toggle the row", () => {
+		const onToggle = mock(() => undefined);
+
+		const { getByText } = render(
+			<CheckboxGroup checkedIndices={new Set([0])}>
+				<CheckboxItem
+					checked={true}
+					index={0}
+					label="Concise"
+					onToggle={onToggle}
+					trailing={<button type="button">caveman</button>}
+				/>
+			</CheckboxGroup>,
+		);
+
+		fireEvent.pointerUp(getByText("caveman"));
+
+		expect(onToggle).not.toHaveBeenCalled();
+	});
+
 	test("clicking the row itself still toggles", () => {
 		const onToggle = mock(() => undefined);
 

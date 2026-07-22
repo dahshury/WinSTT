@@ -3,13 +3,14 @@ use crate::settings::ModelUnloadTimeout;
 use crate::winstt::settings_schema::RecordingMode;
 use crate::winstt::sync_ext::MutexExt;
 use anyhow::Result;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use serde::Serialize;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread;
-use std::time::{Duration, SystemTime};
-use tauri::{AppHandle, Manager};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
 // The ONLY `crate::winstt::*` symbols this legacy core names (audit #14): the engine
 // type (`Transcriber`) the `LoadedEngine::Winstt` arm boxes, and the backend trait surface the
 // core delegates every WinSTT-specific step to. All WinSTT logic lives behind `SttBackend`.
@@ -261,8 +262,11 @@ pub enum SttWarmupOutcome {
     NothingToWarm,
     /// Another warmup holds the flag, a real decode holds the engine (that
     /// decode IS the warm), or a degenerate-decode recovery reload is running —
-    /// the state will settle shortly; re-check.
+    /// the state will settle shortly; re-check after the warm lifecycle signal.
     InFlight,
+    /// This warm attempt owned the warming flag but yielded to a contended engine. Its own guard
+    /// publishes one edge; the engine owner's release publishes the edge the waiter needs.
+    EngineInFlight,
     /// The dummy decode failed and no recovery is running; waiting longer will
     /// not make the engine warmer.
     Failed,
@@ -281,30 +285,198 @@ impl LoadedEngine {
         }
     }
 }
+
+/// Wake-up edge for the idle-unload watcher. The generation makes notifications durable across
+/// the small gap between evaluating the lifecycle state and entering `Condvar::wait*`.
+#[derive(Default)]
+struct IdleWatcherSignal {
+    generation: Mutex<u64>,
+    condvar: Condvar,
+}
+
+impl IdleWatcherSignal {
+    fn notify(&self) {
+        let mut generation = self.generation.lock_recover();
+        *generation = generation.wrapping_add(1);
+        self.condvar.notify_all();
+    }
+
+    /// Serialize a lifecycle state mutation with the idle watcher's final predicate check.
+    /// Callers must acquire any subordinate state locks only inside `update` so the global order
+    /// remains lifecycle -> is_loading -> engine -> recording-state -> activity.
+    fn update<R>(&self, mutate: impl FnOnce() -> R) -> R {
+        let mut generation = self.generation.lock_recover();
+        let result = mutate();
+        *generation = generation.wrapping_add(1);
+        self.condvar.notify_all();
+        result
+    }
+}
+
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
 /// Ensures the loading flag is always reset, even on early returns or panics.
 pub struct LoadingGuard {
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
+    idle_watcher_signal: Arc<IdleWatcherSignal>,
 }
 
 impl Drop for LoadingGuard {
     fn drop(&mut self) {
         // Recover a poisoned lock so the loading flag is always cleared (uniform
         // with the manager's poison-recovery discipline); never panic in a Drop.
-        let mut is_loading = self.is_loading.lock_recover();
-        *is_loading = false;
-        self.loading_condvar.notify_all();
+        self.idle_watcher_signal.update(|| {
+            let mut is_loading = self.is_loading.lock_recover();
+            *is_loading = false;
+            self.loading_condvar.notify_all();
+        });
     }
 }
 
-/// RAII guard that clears the `warming` flag on drop — so a post-swap warmup decode
-/// always clears its in-progress marker, even on an early return or a caught panic.
-struct WarmingGuard<'a>(&'a AtomicBool);
+/// Generation-counted condition signal for synchronous warm-state waiters. Snapshotting the
+/// generation before a warm attempt makes a release durable even when it lands just before the
+/// waiter enters `Condvar::wait_timeout_while`.
+#[derive(Default)]
+struct WarmWaitSignal {
+    generation: Mutex<u64>,
+    changed: Condvar,
+}
 
-impl Drop for WarmingGuard<'_> {
+impl WarmWaitSignal {
+    fn signal(&self) {
+        let mut generation = self.generation.lock_recover();
+        *generation = generation.wrapping_add(1);
+        self.changed.notify_all();
+    }
+
+    fn observe(&self) -> u64 {
+        *self.generation.lock_recover()
+    }
+
+    fn wait_for_change_after(&self, observed: u64, timeout: Duration) -> bool {
+        let generation = self.generation.lock_recover();
+        if *generation != observed {
+            return true;
+        }
+        let (generation, _) = self
+            .changed
+            .wait_timeout_while(generation, timeout, |generation| *generation == observed)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *generation != observed
+    }
+
+    fn wait_for_change_after_blocking(&self, observed: u64) {
+        let generation = self.generation.lock_recover();
+        if *generation != observed {
+            return;
+        }
+        drop(
+            self.changed
+                .wait_while(generation, |generation| *generation == observed)
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+    }
+
+    /// Wait until the current warmup owner settles or another lifecycle edge makes the caller's
+    /// target stale. The predicate is checked while holding the generation lock, so a guard that
+    /// clears `warming` immediately before signaling cannot slip through the check/wait gap.
+    fn wait_while_warming(&self, warming: &AtomicBool, timeout: Duration) -> bool {
+        let generation = self.generation.lock_recover();
+        if !warming.load(Ordering::Acquire) {
+            return true;
+        }
+        let observed = *generation;
+        let (generation, _) = self
+            .changed
+            .wait_timeout_while(generation, timeout, |generation| {
+                *generation == observed && warming.load(Ordering::Acquire)
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *generation != observed || !warming.load(Ordering::Acquire)
+    }
+
+    /// Wait for the engine owner that preempted a warm attempt. Holding the generation lock while
+    /// probing the mutex closes the release-before-wait race: `EngineGuard` unlocks the engine
+    /// first, then takes this lock to publish its edge.
+    fn wait_for_engine_return(
+        &self,
+        engine: &Mutex<Option<LoadedEngine>>,
+        timeout: Duration,
+    ) -> bool {
+        let generation = self.generation.lock_recover();
+        match engine.try_lock() {
+            Ok(guard) if guard.is_some() => {
+                drop(guard);
+                return true;
+            }
+            // Batch transcription temporarily takes the logical engine out of the mutex. Its
+            // return (or fatal removal/current-model clear) publishes the lifecycle edge below.
+            Ok(guard) => drop(guard),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                drop(poisoned.into_inner());
+                return true;
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+        let observed = *generation;
+        let (generation, _) = self
+            .changed
+            .wait_timeout_while(generation, timeout, |generation| *generation == observed)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *generation != observed
+    }
+}
+
+/// Manager-owned engine guard. Its drop unlocks first, then publishes the reliable release edge
+/// that a preempted warmup waits for.
+struct EngineGuard<'a> {
+    guard: Option<MutexGuard<'a, Option<LoadedEngine>>>,
+    warm_wait_signal: Arc<WarmWaitSignal>,
+}
+
+impl Deref for EngineGuard<'_> {
+    type Target = Option<LoadedEngine>;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.as_deref().expect("engine guard must be present")
+    }
+}
+
+impl DerefMut for EngineGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard
+            .as_deref_mut()
+            .expect("engine guard must be present")
+    }
+}
+
+impl Drop for EngineGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        drop(self.guard.take());
+        self.warm_wait_signal.signal();
+    }
+}
+
+/// Release publisher for lifecycle code that owns only the raw shared engine mutex.
+struct WarmReleaseGuard(Arc<WarmWaitSignal>);
+
+impl Drop for WarmReleaseGuard {
+    fn drop(&mut self) {
+        self.0.signal();
+    }
+}
+
+/// RAII guard that clears the `warming` flag and wakes waiters on drop, including every early
+/// return and caught-panic path.
+struct WarmingGuard {
+    warming: Arc<AtomicBool>,
+    warm_wait_signal: Arc<WarmWaitSignal>,
+}
+
+impl Drop for WarmingGuard {
+    fn drop(&mut self) {
+        self.warming.store(false, Ordering::Release);
+        self.warm_wait_signal.signal();
     }
 }
 
@@ -313,6 +485,181 @@ const STT_IDLE_UNLOAD_NEVER_SECS: u64 = u64::MAX;
 
 fn encode_stt_idle_unload_timeout(timeout: ModelUnloadTimeout) -> u64 {
     timeout.to_seconds().unwrap_or(STT_IDLE_UNLOAD_NEVER_SECS)
+}
+
+struct IdleWatcherContext {
+    app_handle: AppHandle,
+    engine: Weak<Mutex<Option<LoadedEngine>>>,
+    current_model_id: Weak<Mutex<Option<String>>>,
+    active_providers: Weak<Mutex<Option<Vec<String>>>>,
+    last_activity: Weak<Mutex<Instant>>,
+    model_unload_timeout_secs: Weak<AtomicU64>,
+    listen_mode_resident: Weak<AtomicBool>,
+    shutdown_signal: Weak<AtomicBool>,
+    is_loading: Weak<Mutex<bool>>,
+    model_lifecycle: Weak<ModelSwapCoordinator>,
+    signal: Arc<IdleWatcherSignal>,
+    warm_wait_signal: Arc<WarmWaitSignal>,
+}
+
+impl IdleWatcherContext {
+    fn is_recording(&self) -> bool {
+        self.app_handle
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|audio| audio.is_recording())
+    }
+
+    /// Returns the exact time until the next idle deadline. `None` means there is no deadline and
+    /// the watcher can sleep until a lifecycle notification arrives.
+    fn next_wait(&self) -> Option<Duration> {
+        let engine = self.engine.upgrade()?;
+        let timeout = self.model_unload_timeout_secs.upgrade()?;
+        let listen_mode = self.listen_mode_resident.upgrade()?;
+        let is_loading = self.is_loading.upgrade()?;
+        let last_activity = self.last_activity.upgrade()?;
+
+        let timeout_secs = timeout.load(Ordering::Acquire);
+        if listen_mode.load(Ordering::Acquire)
+            || timeout_secs == 0
+            || timeout_secs == STT_IDLE_UNLOAD_NEVER_SECS
+            || *is_loading.lock_recover()
+            || self.is_recording()
+        {
+            return None;
+        }
+        let release = WarmReleaseGuard(self.warm_wait_signal.clone());
+        let engine_empty = engine.lock_recover().is_none();
+        drop(release); // the temporary engine guard has already unlocked
+        if engine_empty {
+            return None;
+        }
+
+        let timeout = Duration::from_secs(timeout_secs);
+        let deadline = *last_activity.lock_recover() + timeout;
+        Some(deadline.saturating_duration_since(Instant::now()))
+    }
+
+    /// Re-check every unload precondition while owning the engine lock, so an activity signal
+    /// delivered at the deadline cannot unload a model that has just become busy.
+    fn unload_if_still_idle(&self) {
+        let Some(engine) = self.engine.upgrade() else {
+            return;
+        };
+        let Some(timeout) = self.model_unload_timeout_secs.upgrade() else {
+            return;
+        };
+        let Some(listen_mode) = self.listen_mode_resident.upgrade() else {
+            return;
+        };
+        let Some(is_loading) = self.is_loading.upgrade() else {
+            return;
+        };
+        let Some(last_activity) = self.last_activity.upgrade() else {
+            return;
+        };
+
+        // Serialize the final predicate check with every activity/policy mutation. Keep the
+        // established subordinate lock order
+        // lifecycle -> is_loading -> engine -> recording-state -> activity.
+        let _lifecycle = self.signal.generation.lock_recover();
+        let loading = is_loading.lock_recover();
+        // Declared first so it publishes after the engine guard unlocks on every return path.
+        let _release = WarmReleaseGuard(self.warm_wait_signal.clone());
+        let mut engine = engine.lock_recover();
+        let timeout_secs = timeout.load(Ordering::Acquire);
+        if engine.is_none()
+            || *loading
+            || listen_mode.load(Ordering::Acquire)
+            || timeout_secs == 0
+            || timeout_secs == STT_IDLE_UNLOAD_NEVER_SECS
+            || self.is_recording()
+        {
+            return;
+        }
+
+        let last = *last_activity.lock_recover();
+        let deadline = last + Duration::from_secs(timeout_secs);
+        let now = Instant::now();
+        if now < deadline {
+            return;
+        }
+
+        let mut old_engine = engine.take();
+        drop(loading);
+        drop(engine);
+        let idle_for = now.saturating_duration_since(last);
+        let unload_start = Instant::now();
+        info!(
+            "Model idle for {}s (limit: {}s), unloading",
+            idle_for.as_secs(),
+            timeout_secs
+        );
+        if let Some(engine) = old_engine.as_mut() {
+            engine.shutdown();
+        }
+        if let Some(current_model_id) = self.current_model_id.upgrade() {
+            *current_model_id.lock_recover() = None;
+        }
+        if let Some(active_providers) = self.active_providers.upgrade() {
+            *active_providers.lock_recover() = None;
+        }
+        if let Some(model_lifecycle) = self.model_lifecycle.upgrade() {
+            model_lifecycle.clear_all_warm();
+        }
+        let _ = self.app_handle.emit(
+            crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
+            ModelStateEvent {
+                event_type: "unloaded".to_string(),
+                model_id: None,
+                model_name: None,
+                error: None,
+            },
+        );
+        info!(
+            "Model unloaded due to inactivity (took {}ms)",
+            unload_start.elapsed().as_millis()
+        );
+        crate::log_model_duration("stt idle unload", unload_start);
+    }
+
+    fn run(self) {
+        debug!("Idle watcher thread started");
+        let mut observed_generation = *self.signal.generation.lock_recover();
+        while let Some(shutdown) = self.shutdown_signal.upgrade() {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+
+            let wait = self.next_wait();
+            if wait.is_some_and(|duration| duration.is_zero()) {
+                self.unload_if_still_idle();
+                continue;
+            }
+
+            let mut generation = self.signal.generation.lock_recover();
+            if *generation != observed_generation {
+                observed_generation = *generation;
+                continue;
+            }
+            generation = match wait {
+                Some(duration) => {
+                    let (guard, _) = self
+                        .signal
+                        .condvar
+                        .wait_timeout(generation, duration)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    guard
+                }
+                None => self
+                    .signal
+                    .condvar
+                    .wait(generation)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            };
+            observed_generation = *generation;
+        }
+        debug!("Idle watcher thread shutting down gracefully");
+    }
 }
 
 fn is_degenerate_decode_error(err: &anyhow::Error) -> bool {
@@ -344,8 +691,42 @@ fn is_device_lost_error(err: &anyhow::Error) -> bool {
         || msg.contains("887a0007") // DXGI_ERROR_DEVICE_RESET
 }
 
+/// Resources whose teardown must happen exactly once, after the final manager clone disappears.
+/// `Arc` runs this value's `Drop` for the single thread that releases its last strong reference,
+/// avoiding the check-then-act race inherent in observing `Arc::strong_count` from manager drops.
+struct TranscriptionManagerLifecycle {
+    shutdown_signal: Arc<AtomicBool>,
+    idle_watcher_signal: Arc<IdleWatcherSignal>,
+    watcher_handle: Mutex<Option<thread::JoinHandle<()>>>,
+    engine: Arc<Mutex<Option<LoadedEngine>>>,
+    warm_wait_signal: Arc<WarmWaitSignal>,
+}
+
+impl Drop for TranscriptionManagerLifecycle {
+    fn drop(&mut self) {
+        self.shutdown_signal.store(true, Ordering::Release);
+        self.idle_watcher_signal.notify();
+
+        if let Some(handle) = self.watcher_handle.lock_recover().take() {
+            match handle.join() {
+                Err(e) => warn!("Failed to join idle watcher thread: {:?}", e),
+                Ok(()) => debug!("Idle watcher thread joined successfully"),
+            }
+        }
+
+        let _release = WarmReleaseGuard(self.warm_wait_signal.clone());
+        let mut engine = self.engine.lock_recover().take();
+        if let Some(engine) = engine.as_mut() {
+            engine.shutdown();
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct TranscriptionManager {
+    /// The only owner of watcher/engine teardown. Cloning the manager clones this `Arc`; Rust runs
+    /// the lifecycle's `Drop` exactly once when the final manager clone is released.
+    lifecycle: Arc<TranscriptionManagerLifecycle>,
     engine: Arc<Mutex<Option<LoadedEngine>>>,
     app_handle: AppHandle,
     current_model_id: Arc<Mutex<Option<String>>>,
@@ -355,11 +736,10 @@ pub struct TranscriptionManager {
     /// tell the truth for DML-incompatible engines that `override_dml_to_cpu_for_kind` routed to
     /// CPU despite a GPU device setting.
     active_providers: Arc<Mutex<Option<Vec<String>>>>,
-    last_activity: Arc<AtomicU64>,
+    last_activity: Arc<Mutex<Instant>>,
     model_unload_timeout_secs: Arc<AtomicU64>,
     listen_mode_resident: Arc<AtomicBool>,
-    shutdown_signal: Arc<AtomicBool>,
-    watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+    idle_watcher_signal: Arc<IdleWatcherSignal>,
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
     /// True while a post-swap kernel WARMUP decode is running. Distinct from `is_loading`
@@ -368,6 +748,9 @@ pub struct TranscriptionManager {
     /// `transcribe()` simply wins the engine mutex; warmup `try_lock`s and yields when the
     /// engine is busy.
     warming: Arc<AtomicBool>,
+    /// Wakes the blocking swap orchestrator when a warmup owner settles, an engine owner
+    /// releases, or the resident/warm model lifecycle changes.
+    warm_wait_signal: Arc<WarmWaitSignal>,
     /// Shared warm-state tracker for the currently-resident model. The heavyweight load gate stays
     /// in `is_loading`; this coordinator records whether that resident engine has paid warmup.
     model_lifecycle: Arc<ModelSwapCoordinator>,
@@ -391,109 +774,118 @@ impl TranscriptionManager {
             runtime_settings.global.model_unload_timeout,
         );
         let listen_mode_resident = runtime_settings.general.recording_mode == RecordingMode::Listen;
+        let engine = Arc::new(Mutex::new(None));
+        let shutdown_signal = Arc::new(AtomicBool::new(false));
+        let idle_watcher_signal = Arc::new(IdleWatcherSignal::default());
+        let warm_wait_signal = Arc::new(WarmWaitSignal::default());
+        let lifecycle = Arc::new(TranscriptionManagerLifecycle {
+            shutdown_signal,
+            idle_watcher_signal: idle_watcher_signal.clone(),
+            watcher_handle: Mutex::new(None),
+            engine: engine.clone(),
+            warm_wait_signal: warm_wait_signal.clone(),
+        });
         let manager = Self {
-            engine: Arc::new(Mutex::new(None)),
+            lifecycle,
+            engine,
             app_handle: app_handle.clone(),
             current_model_id: Arc::new(Mutex::new(None)),
             active_providers: Arc::new(Mutex::new(None)),
-            last_activity: Arc::new(AtomicU64::new(Self::now_ms())),
+            last_activity: Arc::new(Mutex::new(Instant::now())),
             model_unload_timeout_secs: Arc::new(AtomicU64::new(encode_stt_idle_unload_timeout(
                 model_unload_timeout,
             ))),
             listen_mode_resident: Arc::new(AtomicBool::new(listen_mode_resident)),
-            shutdown_signal: Arc::new(AtomicBool::new(false)),
-            watcher_handle: Arc::new(Mutex::new(None)),
+            idle_watcher_signal,
             is_loading: Arc::new(Mutex::new(false)),
             loading_condvar: Arc::new(Condvar::new()),
             warming: Arc::new(AtomicBool::new(false)),
+            warm_wait_signal,
             model_lifecycle: Arc::new(ModelSwapCoordinator::new()),
             backend: Arc::new(WinsttSttBackend),
             realtime_reuse: Arc::new(Mutex::new(None)),
         };
 
-        // Start the idle watcher
+        // The watcher owns only weak lifecycle references, so it cannot keep the manager alive.
+        // Every relevant state transition notifies its condvar; the only timeout is the exact
+        // configured idle deadline.
         {
-            let app_handle_cloned = app_handle.clone();
-            let manager_cloned = manager.clone();
-            let shutdown_signal = manager.shutdown_signal.clone();
-            let handle = thread::spawn(move || {
-                debug!("Idle watcher thread started");
-                while !shutdown_signal.load(Ordering::Relaxed) {
-                    thread::sleep(Duration::from_secs(10)); // Check every 10 seconds
-
-                    // Check shutdown signal again after sleep
-                    if shutdown_signal.load(Ordering::Relaxed) {
-                        break;
-                    }
-
-                    if manager_cloned.listen_mode_forces_model_resident() {
-                        manager_cloned.touch_activity();
-                        continue;
-                    }
-
-                    // Skip Immediately — that variant is handled by
-                    // maybe_unload_immediately() after each transcription.
-                    // Treating it as 0s here would unload the model mid-recording.
-                    let timeout_secs = manager_cloned.idle_unload_timeout_secs();
-                    if timeout_secs == 0 {
-                        continue;
-                    }
-
-                    // While recording, keep the idle timer fresh so the
-                    // model is never unloaded mid-session.
-                    let is_recording = app_handle_cloned
-                        .try_state::<Arc<AudioRecordingManager>>()
-                        .is_some_and(|a| a.is_recording());
-                    if is_recording {
-                        manager_cloned.touch_activity();
-                        continue;
-                    }
-
-                    if timeout_secs != STT_IDLE_UNLOAD_NEVER_SECS {
-                        let last = manager_cloned.last_activity.load(Ordering::Relaxed);
-                        let now_ms = TranscriptionManager::now_ms();
-                        let idle_ms = now_ms.saturating_sub(last);
-                        let limit_ms = timeout_secs * 1000;
-
-                        if idle_ms > limit_ms {
-                            // idle -> unload
-                            if manager_cloned.is_model_loaded() {
-                                let unload_start = std::time::Instant::now();
-                                info!(
-                                    "Model idle for {}s (limit: {}s), unloading",
-                                    idle_ms / 1000,
-                                    timeout_secs
-                                );
-                                match manager_cloned.unload_model() {
-                                    Ok(()) => {
-                                        let unload_duration = unload_start.elapsed();
-                                        info!(
-                                            "Model unloaded due to inactivity (took {}ms)",
-                                            unload_duration.as_millis()
-                                        );
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to unload idle model: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                debug!("Idle watcher thread shutting down gracefully");
-            });
-            *manager.watcher_handle.lock_recover() = Some(handle);
+            let watcher = IdleWatcherContext {
+                app_handle: app_handle.clone(),
+                engine: Arc::downgrade(&manager.engine),
+                current_model_id: Arc::downgrade(&manager.current_model_id),
+                active_providers: Arc::downgrade(&manager.active_providers),
+                last_activity: Arc::downgrade(&manager.last_activity),
+                model_unload_timeout_secs: Arc::downgrade(&manager.model_unload_timeout_secs),
+                listen_mode_resident: Arc::downgrade(&manager.listen_mode_resident),
+                shutdown_signal: Arc::downgrade(&manager.lifecycle.shutdown_signal),
+                is_loading: Arc::downgrade(&manager.is_loading),
+                model_lifecycle: Arc::downgrade(&manager.model_lifecycle),
+                signal: manager.idle_watcher_signal.clone(),
+                warm_wait_signal: manager.warm_wait_signal.clone(),
+            };
+            let handle = thread::spawn(move || watcher.run());
+            *manager.lifecycle.watcher_handle.lock_recover() = Some(handle);
         }
 
         Ok(manager)
     }
 
     /// Lock the engine mutex, recovering from poison if a previous transcription panicked.
-    fn lock_engine(&self) -> MutexGuard<'_, Option<LoadedEngine>> {
-        self.engine.lock().unwrap_or_else(|poisoned| {
+    fn lock_engine(&self) -> EngineGuard<'_> {
+        let guard = self.engine.lock().unwrap_or_else(|poisoned| {
             warn!("Engine mutex was poisoned by a previous panic, recovering");
             poisoned.into_inner()
+        });
+        EngineGuard {
+            guard: Some(guard),
+            warm_wait_signal: self.warm_wait_signal.clone(),
+        }
+    }
+
+    /// Non-blocking engine acquisition for warm/realtime paths. A `None` result is paired with
+    /// the current owner's [`EngineGuard`] release notification.
+    fn try_lock_engine(&self) -> Option<EngineGuard<'_>> {
+        let guard = match self.engine.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                warn!("Engine mutex was poisoned by a previous panic, recovering");
+                poisoned.into_inner()
+            }
+        };
+        Some(EngineGuard {
+            guard: Some(guard),
+            warm_wait_signal: self.warm_wait_signal.clone(),
         })
+    }
+
+    pub(crate) fn observe_engine_lifecycle(&self) -> u64 {
+        self.warm_wait_signal.observe()
+    }
+
+    pub(crate) fn wait_for_realtime_conditions_change(
+        &self,
+        observed: u64,
+        timeout: Option<Duration>,
+    ) {
+        match timeout {
+            Some(timeout) => {
+                self.warm_wait_signal
+                    .wait_for_change_after(observed, timeout);
+            }
+            None => self
+                .warm_wait_signal
+                .wait_for_change_after_blocking(observed),
+        }
+    }
+
+    /// Wake the realtime worker when a non-engine predicate it shares with the
+    /// engine lifecycle changes (window focus, settings, or recording state).
+    /// The generation counter makes this a durable edge, so a change that lands
+    /// just before the worker parks is still observed.
+    pub(crate) fn notify_realtime_conditions_changed(&self) {
+        self.warm_wait_signal.signal();
     }
 
     /// Lock the `is_loading` flag, recovering from poison — uniform with `lock_engine`
@@ -516,6 +908,7 @@ impl TranscriptionManager {
 
     fn clear_warmed_model(&self) {
         self.model_lifecycle.clear_all_warm();
+        self.warm_wait_signal.signal();
     }
 
     fn is_model_warm(&self, model_id: &str) -> bool {
@@ -535,6 +928,7 @@ impl TranscriptionManager {
         let current = self.lock_current_model();
         if current.as_deref() == Some(model_id) {
             self.model_lifecycle.mark_warm(model_id);
+            self.warm_wait_signal.signal();
         }
     }
 
@@ -597,16 +991,18 @@ impl TranscriptionManager {
         }
     }
 
-    fn now_ms() -> u64 {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64
-    }
-
     /// Reset the idle timer to now.
     fn touch_activity(&self) {
-        self.last_activity.store(Self::now_ms(), Ordering::Relaxed);
+        self.idle_watcher_signal.update(|| {
+            *self.last_activity.lock_recover() = Instant::now();
+        });
+    }
+
+    /// Recording start/stop is a lifecycle callback for the idle deadline. Both edges count as
+    /// activity; this keeps the model resident for the whole capture and starts a fresh deadline
+    /// when capture finishes without making the watcher poll recording state.
+    pub(crate) fn recording_activity_changed(&self) {
+        self.touch_activity();
     }
 
     fn idle_unload_timeout_secs(&self) -> u64 {
@@ -618,51 +1014,22 @@ impl TranscriptionManager {
         timeout: ModelUnloadTimeout,
         listen_mode_resident: bool,
     ) {
-        self.model_unload_timeout_secs
-            .store(encode_stt_idle_unload_timeout(timeout), Ordering::Release);
-        self.listen_mode_resident
-            .store(listen_mode_resident, Ordering::Release);
+        self.idle_watcher_signal.update(|| {
+            self.model_unload_timeout_secs
+                .store(encode_stt_idle_unload_timeout(timeout), Ordering::Release);
+            let previous_listen_mode = self
+                .listen_mode_resident
+                .swap(listen_mode_resident, Ordering::AcqRel);
+            if previous_listen_mode != listen_mode_resident {
+                // Leaving Listen mode starts a new idle period instead of inheriting an
+                // arbitrarily old timestamp; entering it also records the residency activity.
+                *self.last_activity.lock_recover() = Instant::now();
+            }
+        });
     }
 
     pub(crate) fn listen_mode_forces_model_resident(&self) -> bool {
         self.listen_mode_resident.load(Ordering::Acquire)
-    }
-}
-
-impl Drop for TranscriptionManager {
-    fn drop(&mut self) {
-        // Skip shutdown unless this is the very last clone. TranscriptionManager
-        // is cloned by initiate_model_load() and the watcher thread — those
-        // clones dropping must not kill the watcher. The watcher thread holds
-        // its own clone, so engine's strong_count is always >= 2 while the
-        // watcher is alive. When it reaches 1, only this instance remains
-        // and we can safely shut down.
-        if Arc::strong_count(&self.engine) > 1 {
-            return;
-        }
-
-        // Signal the watcher thread to shutdown
-        self.shutdown_signal.store(true, Ordering::Relaxed);
-
-        // Wait for the thread to finish gracefully
-        if let Some(handle) = self.watcher_handle.lock_recover().take() {
-            match handle.join() {
-                Err(e) => {
-                    warn!("Failed to join idle watcher thread: {:?}", e);
-                }
-                Ok(()) => {
-                    debug!("Idle watcher thread joined successfully");
-                }
-            }
-        }
-
-        let mut engine = {
-            let mut guard = self.lock_engine();
-            guard.take()
-        };
-        if let Some(engine) = engine.as_mut() {
-            engine.shutdown();
-        }
     }
 }
 
@@ -677,6 +1044,29 @@ mod tests {
     // Whisper-hallucination clips ("Thank you.") measured rms ≤ 0.0014; real speech
     // recordings measured rms ≥ 0.0074. The 0.003 floor must reject the former and pass
     // the latter — regression guard for the "Thank you. on silence" bug.
+
+    #[test]
+    fn warm_wait_signal_wakes_on_release_edge() {
+        let signal = std::sync::Arc::new(super::WarmWaitSignal::default());
+        let observed = signal.observe();
+        let publisher = signal.clone();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            publisher.signal();
+        });
+
+        assert!(signal.wait_for_change_after(observed, std::time::Duration::from_secs(1)));
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn warm_wait_signal_preserves_edge_before_wait_begins() {
+        let signal = super::WarmWaitSignal::default();
+        let observed = signal.observe();
+        signal.signal();
+
+        assert!(signal.wait_for_change_after(observed, std::time::Duration::from_secs(1)));
+    }
 
     #[test]
     fn device_lost_error_is_classified_but_degenerate_is_not() {

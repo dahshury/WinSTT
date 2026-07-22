@@ -4,7 +4,7 @@ use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
 #[cfg(target_os = "windows")]
-use std::time::Duration;
+use std::sync::{Condvar, Mutex, PoisonError};
 #[cfg(target_os = "windows")]
 use tauri::Manager;
 
@@ -19,6 +19,10 @@ const WINDOWS_LID_NOT_PRESENT: i8 = 2;
 
 #[cfg(target_os = "windows")]
 static WINDOWS_LID_STATE: AtomicI8 = AtomicI8::new(WINDOWS_LID_UNKNOWN);
+/// Pulsed by the lid message loop after every `WINDOWS_LID_STATE` store, so the
+/// reconfigure thread parks on the event instead of polling the atomic.
+#[cfg(target_os = "windows")]
+static WINDOWS_LID_SIGNAL: (Mutex<()>, Condvar) = (Mutex::new(()), Condvar::new());
 #[cfg(target_os = "windows")]
 static WINDOWS_LID_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -155,22 +159,26 @@ fn windows_has_lid() -> Result<bool, String> {
 #[cfg(target_os = "windows")]
 fn watch_windows_lid_reconfigure(app: tauri::AppHandle) {
     let mut previous = WINDOWS_LID_STATE.load(Ordering::SeqCst);
+    let (lock, cvar) = &WINDOWS_LID_SIGNAL;
 
     loop {
-        std::thread::sleep(Duration::from_secs(5));
+        // Park until the message loop reports a lid transition (event-driven,
+        // no poll): `WM_POWERBROADCAST` stores the new state, then pulses the
+        // signal. The predicate loop absorbs spurious wakeups.
+        let mut guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        while WINDOWS_LID_STATE.load(Ordering::SeqCst) == previous {
+            guard = cvar.wait(guard).unwrap_or_else(PoisonError::into_inner);
+        }
+        drop(guard);
 
         let current = WINDOWS_LID_STATE.load(Ordering::SeqCst);
-        if current == previous {
-            continue;
-        }
         previous = current;
 
         if !matches!(current, WINDOWS_LID_OPEN | WINDOWS_LID_CLOSED) {
             continue;
         }
 
-        // Clamshell mic is canonical in the WinSTT store (`audio.clamshellMicrophone`,
-        // a device index). No legacy `AppSettings` mirror anymore.
+        // Clamshell microphone selection is a canonical audio-device index.
         let settings = crate::winstt::commands::settings::read_settings_raw(&app);
         if settings.audio.clamshell_microphone.is_none() {
             continue;
@@ -235,8 +243,17 @@ fn run_windows_lid_message_loop() {
         match setting.Data[0] {
             0 => WINDOWS_LID_STATE.store(WINDOWS_LID_CLOSED, Ordering::SeqCst),
             1 => WINDOWS_LID_STATE.store(WINDOWS_LID_OPEN, Ordering::SeqCst),
-            other => log::debug!("[clamshell] unknown Windows lid state payload: {other}"),
+            other => {
+                log::debug!("[clamshell] unknown Windows lid state payload: {other}");
+                return;
+            }
         }
+        // Store-then-notify handshake: taking (and dropping) the signal mutex
+        // guarantees the reconfigure thread is parked before we notify, so the
+        // transition cannot be missed.
+        let (lock, cvar) = &WINDOWS_LID_SIGNAL;
+        drop(lock.lock().unwrap_or_else(PoisonError::into_inner));
+        cvar.notify_all();
     }
 
     // SAFETY: All Win32 handles/pointers used here are created in this block and checked for

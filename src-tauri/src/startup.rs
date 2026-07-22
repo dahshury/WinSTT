@@ -104,12 +104,6 @@ fn env_flag_enabled(name: &str) -> bool {
     })
 }
 
-pub(crate) fn log_startup_duration(label: &str, started: Instant) {
-    if startup_profile_enabled() {
-        log::info!("[startup] {label}: {} ms", started.elapsed().as_millis());
-    }
-}
-
 pub(crate) fn log_model_duration(label: &str, started: Instant) {
     if model_profile_enabled() {
         log::info!(

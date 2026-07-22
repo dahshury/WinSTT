@@ -8,6 +8,7 @@ import { useLlmProcessingStore } from "@/features/llm-processing";
 import { useTranscriptPreviewStore } from "@/features/transcript-preview";
 import { useTtsPlaybackStore } from "../model/tts-playback-store";
 import { OverlayPage } from "./OverlayPage";
+import { reconcileOverlayRecordingSnapshot } from "./overlay-hit-regions";
 
 // Pristine schema defaults, NOT a live `getState()` snapshot: sibling suites
 // mutate the global `useSettingsStore` and module-eval order isn't isolated,
@@ -43,6 +44,7 @@ beforeEach(() => {
 		currentRealtime: "",
 		ephemeral: null,
 		isRecordingActive: false,
+		hasDetectedSpeech: false,
 		isTranscribing: false,
 		processingPhase: null,
 		recordingSessionId: 0,
@@ -55,7 +57,7 @@ beforeEach(() => {
 		thinkingText: "",
 		transformStartedAt: null,
 	});
-	useVisualizerStore.setState({ isSpeaking: false });
+	useVisualizerStore.getState().recordingStopped();
 	useTtsPlaybackStore.setState({
 		status: "idle",
 		requestId: null,
@@ -77,6 +79,7 @@ afterEach(() => {
 		currentRealtime: "",
 		ephemeral: null,
 		isRecordingActive: false,
+		hasDetectedSpeech: false,
 		isTranscribing: false,
 		processingPhase: null,
 		recordingSessionId: 0,
@@ -89,7 +92,7 @@ afterEach(() => {
 		thinkingText: "",
 		transformStartedAt: null,
 	});
-	useVisualizerStore.setState({ isSpeaking: false });
+	useVisualizerStore.getState().recordingStopped();
 	useTtsPlaybackStore.setState({
 		status: "idle",
 		requestId: null,
@@ -100,6 +103,55 @@ afterEach(() => {
 });
 
 describe("OverlayPage", () => {
+	test("recovers a first-use recording whose start and VAD events beat the cold overlay", () => {
+		const { container } = renderOverlay();
+		expect(
+			container
+				.querySelector("#winstt-overlay-island")
+				?.parentElement?.getAttribute("data-open"),
+		).toBe("false");
+
+		act(() => {
+			reconcileOverlayRecordingSnapshot({
+				dictationSessionId: 1,
+				isRecording: true,
+				isSpeaking: true,
+				pipelineActive: true,
+				speechSeen: true,
+			});
+		});
+
+		const transcription = useTranscriptionStore.getState();
+		expect(transcription.isRecordingActive).toBe(true);
+		expect(transcription.hasDetectedSpeech).toBe(true);
+		expect(useVisualizerStore.getState().isRecording).toBe(true);
+		expect(useVisualizerStore.getState().isSpeaking).toBe(true);
+		expect(
+			container
+				.querySelector("#winstt-overlay-island")
+				?.parentElement?.getAttribute("data-open"),
+		).toBe("true");
+	});
+
+	test("an idle startup snapshot cannot reveal the dynamic island", () => {
+		const { container } = renderOverlay();
+		act(() => {
+			reconcileOverlayRecordingSnapshot({
+				dictationSessionId: 0,
+				isRecording: false,
+				isSpeaking: false,
+				pipelineActive: false,
+				speechSeen: false,
+			});
+		});
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+		expect(
+			container
+				.querySelector("#winstt-overlay-island")
+				?.parentElement?.getAttribute("data-open"),
+		).toBe("false");
+	});
+
 	test("renders without crashing", () => {
 		const { container } = renderOverlay();
 		expect(container).not.toBeNull();
@@ -1424,6 +1476,7 @@ describe("OverlayPage", () => {
 		const t = useTranscriptionStore.getState();
 		expect(t.currentRealtime).toBe("");
 		expect(t.ephemeral).toBeNull();
+		expect(t.hasDetectedSpeech).toBe(false);
 		// NOT clobbered — the arming IPC's value survives the content reset.
 		expect(t.isRecordingActive).toBe(true);
 		expect(t.isTranscribing).toBe(false);

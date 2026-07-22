@@ -30,7 +30,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::managers::history::HistoryManager;
 use crate::managers::transcription::{RealtimeStreamOutcome, TranscriptionManager};
@@ -40,6 +40,7 @@ use crate::audio_toolkit::vad::{
     SileroVad, SmoothedVad, VAD_FRAME_SAMPLES, VadFrame, VoiceActivityDetector,
 };
 use crate::winstt::commands::dictation::SttEvents;
+use crate::winstt::commands::events::names;
 use crate::winstt::diarize::DiarizationManager;
 use crate::winstt::loopback::mic_capture::MicrophoneCapture;
 use crate::winstt::loopback::{DeviceInfo, LoopbackCapture};
@@ -54,8 +55,14 @@ const POST_SPEECH_SILENCE_DURATION: f64 = 2.0;
 /// short CPU/GPU stalls from turning into dropped captions during long media playback.
 const LISTEN_MAX_BUFFER_SECONDS: f64 = 300.0;
 
-/// Timeout used to notice render devices that stop delivering zero-filled frames during silence.
-const LOOPBACK_RECV_TIMEOUT: Duration = Duration::from_millis(200);
+/// Grace period before a stalled render device is considered idle. This is a
+/// one-shot deadline after the last frame, not a periodic consumer wake-up.
+const LOOPBACK_IDLE_GRACE: Duration = Duration::from_millis(200);
+
+/// The VAD consumes 30 ms frames; when a render device stops delivering
+/// zero-filled frames, the consumer advances the outstanding silence by the
+/// exact remaining VAD-frame duration in one deadline.
+const VAD_FRAME_DURATION: Duration = Duration::from_millis(30);
 
 /// Loopback needs much more permissive VAD than close-talk mic dictation: system audio is often
 /// normalized, compressed, mixed with music/effects, or quieter than microphone speech. This
@@ -406,6 +413,11 @@ pub struct LoopbackManager {
     transcription: Arc<TranscriptionManager>,
     /// True while loopback capture is running (listen mode active).
     capturing: AtomicBool,
+    /// Serializes the complete start/stop transaction. Model loading and device
+    /// opening happen before a start is committed, so a concurrent stop must
+    /// wait and then tear down that exact session; concurrent starts likewise
+    /// cannot both pass the initial idle check.
+    lifecycle: Mutex<()>,
     /// The native WASAPI capture (render endpoint, shared-mode loopback). Owned
     /// behind a mutex so start/stop are serialized.
     capture: Mutex<LoopbackCapture>,
@@ -433,6 +445,7 @@ impl LoopbackManager {
             app: app.clone(),
             transcription,
             capturing: AtomicBool::new(false),
+            lifecycle: Mutex::new(()),
             capture: Mutex::new(LoopbackCapture::new()),
             active_device: Mutex::new(None),
             consumer: Mutex::new(None),
@@ -474,13 +487,13 @@ impl LoopbackManager {
         model_id: String,
         capture_microphone: bool,
     ) -> Result<DeviceInfo, String> {
+        let _lifecycle = self.lifecycle.lock_recover();
         if self.is_capturing() {
             if let Some(info) = self.active_device.lock_recover().clone() {
                 return Ok(info);
             }
             return Err("loopback capture is already active".to_string());
         }
-
         // Build the VAD up front so a missing model fails the start cleanly
         // (before we open the audio backend). Wrap Silero in SmoothedVad with the
         // SAME prefill/hangover/onset tuning the mic recorder uses so listen-mode
@@ -615,12 +628,15 @@ impl LoopbackManager {
 
         *self.consumer.lock_recover() = Some(handle);
         self.capturing.store(true, Ordering::Release);
+
+        self.emit_session_snapshot();
         Ok(started_device)
     }
 
     /// Stop loopback capture + the consumer thread, then persist the finished
     /// session's transcript to history. Idempotent.
     pub fn stop(&self) {
+        let _lifecycle = self.lifecycle.lock_recover();
         self.stop_flag.store(true, Ordering::Release);
         self.capturing.store(false, Ordering::Release);
 
@@ -643,15 +659,27 @@ impl LoopbackManager {
         }
 
         self.persist_session();
+        self.emit_session_snapshot();
     }
 
     /// Save the finished session's committed captions as one history row
     /// (source = "listen"). No-op for empty sessions, when history is
     /// disabled, or when the history manager is gone (app shutdown).
     fn persist_session(&self) {
-        let lines: Vec<String> = std::mem::take(&mut self.session_lines.lock_recover().lines);
+        let lines: Vec<String> = {
+            let mut state = self.session_lines.lock_recover();
+            state.live_preview.clear();
+            std::mem::take(&mut state.lines)
+        };
         let model_id = self.session_model_id.lock_recover().take();
         self.persist_lines(lines, model_id);
+    }
+
+    /// Broadcast the authoritative session snapshot after every transcript or
+    /// lifecycle mutation. The History renderer takes one initial command
+    /// snapshot, then stays current exclusively through this push channel.
+    fn emit_session_snapshot(&self) {
+        emit_listen_session_snapshot(&self.app, &self.session_lines, self.is_capturing());
     }
 
     /// The current session's transcript state for the History tab's live card:
@@ -676,7 +704,9 @@ impl LoopbackManager {
         }
         let lines: Vec<String> = std::mem::take(&mut self.session_lines.lock_recover().lines);
         let model_id = self.session_model_id.lock_recover().clone();
-        self.persist_lines(lines, model_id)
+        let saved = self.persist_lines(lines, model_id);
+        self.emit_session_snapshot();
+        saved
     }
 
     /// Shared writer for stop-finalize and finalize-now: one history row per
@@ -770,6 +800,7 @@ fn consumer_loop(
     // — no level has been emitted yet, so there is nothing to re-announce as zero.
     let mut audio_level_is_zero = true;
     let mut mixer = mix_microphone.then(ListenMixer::new);
+    let mut last_frame_received = Instant::now();
     transcription.stream_reset_realtime();
 
     loop {
@@ -777,45 +808,64 @@ fn consumer_loop(
             break;
         }
 
-        // Block for the next capture chunk; a short timeout lets us re-check the
-        // stop flag during silent stretches without busy-spinning.
-        let chunks: Vec<Vec<f32>> = match rx.recv_timeout(LOOPBACK_RECV_TIMEOUT) {
-            Ok(frame) => match (mixer.as_mut(), frame) {
-                (Some(mixer), ListenFrame::Loopback(chunk)) => {
-                    mixer.push_loopback(&chunk);
-                    mixer.drain_ready()
+        let transcript_pending = transcript_finalization_pending(
+            speech.len(),
+            in_speech,
+            &realtime.last_raw_text,
+            &realtime.last_emit_text,
+        );
+        let deadline = next_consumer_deadline(
+            last_frame_received,
+            audio_level_is_zero,
+            in_speech,
+            silence_frames,
+            silence_frames_to_end,
+            transcript_pending,
+        );
+
+        // Once all idle work is settled, wait for a real producer callback (or
+        // channel close on stop). A timed receive exists only while a concrete
+        // zero-level, silence, or transcript-finalization deadline is pending.
+        let received = match deadline {
+            Some(deadline) => rx.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        let chunks: Vec<Vec<f32>> = match received {
+            Ok(frame) => {
+                last_frame_received = Instant::now();
+                match (mixer.as_mut(), frame) {
+                    (Some(mixer), ListenFrame::Loopback(chunk)) => {
+                        mixer.push_loopback(&chunk);
+                        mixer.drain_ready()
+                    }
+                    (Some(mixer), ListenFrame::Mic(chunk)) => {
+                        mixer.push_mic(&chunk);
+                        mixer.drain_ready()
+                    }
+                    (None, ListenFrame::Loopback(chunk)) => vec![chunk],
+                    // Mic frames without the mixer can only be a start/stop race —
+                    // drop them rather than interleave unmixed audio.
+                    (None, ListenFrame::Mic(_)) => Vec::new(),
                 }
-                (Some(mixer), ListenFrame::Mic(chunk)) => {
-                    mixer.push_mic(&chunk);
-                    mixer.drain_ready()
-                }
-                (None, ListenFrame::Loopback(chunk)) => vec![chunk],
-                // Mic frames without the mixer can only be a start/stop race —
-                // drop them rather than interleave unmixed audio.
-                (None, ListenFrame::Mic(_)) => Vec::new(),
-            },
+            }
             Err(RecvTimeoutError::Timeout) => {
-                if !audio_level_is_zero {
+                let now = Instant::now();
+                if !audio_level_is_zero
+                    && deadline_reached(now, last_frame_received, LOOPBACK_IDLE_GRACE)
+                {
                     SttEvents::audio_level(&app, 0.0);
                     audio_level_is_zero = true;
                 }
-                if in_speech {
-                    silence_frames = silence_frames
-                        .saturating_add(silence_frames_for_duration(LOOPBACK_RECV_TIMEOUT));
-                    if silence_frames >= silence_frames_to_end {
-                        finish_realtime_segment(
-                            &app,
-                            &transcription,
-                            &mut speech,
-                            &mut realtime,
-                            &mut in_speech,
-                            &mut silence_frames,
-                            &mut diar_span,
-                            &session_lines,
-                        );
-                    }
-                } else if speech.len() >= MIN_SPEECH_SAMPLES
-                    && !realtime.last_raw_text.trim().is_empty()
+                let silence_due = in_speech
+                    && silence_deadline(last_frame_received, silence_frames, silence_frames_to_end)
+                        .is_some_and(|deadline| now >= deadline);
+                let transcript_due = !in_speech
+                    && transcript_pending
+                    && deadline_reached(now, last_frame_received, LOOPBACK_IDLE_GRACE);
+                if silence_due
+                    || (transcript_due
+                        && speech.len() >= MIN_SPEECH_SAMPLES
+                        && !realtime.last_raw_text.trim().is_empty())
                 {
                     finish_realtime_segment(
                         &app,
@@ -827,7 +877,7 @@ fn consumer_loop(
                         &mut diar_span,
                         &session_lines,
                     );
-                } else if !realtime.last_emit_text.is_empty() {
+                } else if transcript_due && !realtime.last_emit_text.is_empty() {
                     commit_last_realtime_text(
                         &app,
                         &mut realtime,
@@ -926,8 +976,63 @@ fn samples_for_millis(ms: usize) -> usize {
     ((ms * WHISPER_SAMPLE_RATE as usize) / 1000).max(1)
 }
 
-fn silence_frames_for_duration(duration: Duration) -> usize {
-    ((duration.as_secs_f64() * 1000.0) / 30.0).ceil() as usize
+fn transcript_finalization_pending(
+    speech_len: usize,
+    in_speech: bool,
+    last_raw_text: &str,
+    last_emit_text: &str,
+) -> bool {
+    !in_speech
+        && ((speech_len >= MIN_SPEECH_SAMPLES && !last_raw_text.trim().is_empty())
+            || !last_emit_text.is_empty())
+}
+
+fn consumer_is_fully_settled(
+    audio_level_is_zero: bool,
+    in_speech: bool,
+    transcript_pending: bool,
+) -> bool {
+    audio_level_is_zero && !in_speech && !transcript_pending
+}
+
+fn silence_deadline(
+    last_frame_received: Instant,
+    silence_frames: usize,
+    silence_frames_to_end: usize,
+) -> Option<Instant> {
+    let remaining_frames = silence_frames_to_end.saturating_sub(silence_frames);
+    last_frame_received.checked_add(VAD_FRAME_DURATION.saturating_mul(remaining_frames as u32))
+}
+
+fn next_consumer_deadline(
+    last_frame_received: Instant,
+    audio_level_is_zero: bool,
+    in_speech: bool,
+    silence_frames: usize,
+    silence_frames_to_end: usize,
+    transcript_pending: bool,
+) -> Option<Instant> {
+    if consumer_is_fully_settled(audio_level_is_zero, in_speech, transcript_pending) {
+        return None;
+    }
+
+    let idle_deadline = (!audio_level_is_zero || transcript_pending)
+        .then(|| last_frame_received.checked_add(LOOPBACK_IDLE_GRACE))
+        .flatten();
+    let pending_silence_deadline = in_speech
+        .then(|| silence_deadline(last_frame_received, silence_frames, silence_frames_to_end))
+        .flatten();
+
+    match (idle_deadline, pending_silence_deadline) {
+        (Some(idle), Some(silence)) => Some(idle.min(silence)),
+        (deadline, None) | (None, deadline) => deadline,
+    }
+}
+
+fn deadline_reached(now: Instant, last_frame_received: Instant, delay: Duration) -> bool {
+    last_frame_received
+        .checked_add(delay)
+        .is_some_and(|deadline| now >= deadline)
 }
 
 fn streaming_latency_ms_from_id(model_id: &str) -> Option<usize> {
@@ -1106,6 +1211,21 @@ fn push_session_line(session_lines: &SessionLines, text: &str, speaker: Option<i
     state.live_preview.clear();
 }
 
+fn emit_listen_session_snapshot(app: &AppHandle, session_lines: &SessionLines, active: bool) {
+    let (lines, live_preview) = {
+        let state = session_lines.lock_recover();
+        (state.lines.clone(), state.live_preview.clone())
+    };
+    let _ = app.emit(
+        names::LISTEN_SESSION_CHANGED,
+        serde_json::json!({
+            "active": active,
+            "lines": lines,
+            "livePreview": live_preview,
+        }),
+    );
+}
+
 fn commit_realtime_segment(
     app: &AppHandle,
     realtime: &mut LoopbackRealtimeState,
@@ -1120,6 +1240,7 @@ fn commit_realtime_segment(
         let speaker = diar_span.take_speaker();
         SttEvents::listen_sentence(app, trimmed, speaker);
         push_session_line(session_lines, trimmed, speaker);
+        emit_listen_session_snapshot(app, session_lines, true);
     }
     realtime.mark_committed(text, total_len);
     realtime.clear_snapshots();
@@ -1154,6 +1275,7 @@ fn split_commit_at_turn(
     if !trimmed.is_empty() {
         SttEvents::listen_sentence(app, &trimmed, speaker);
         push_session_line(session_lines, &trimmed, speaker);
+        emit_listen_session_snapshot(app, session_lines, true);
         realtime.mark_committed(&snap.raw_text, snap.total_len);
         clear_realtime_preview(app);
     }
@@ -1217,6 +1339,7 @@ fn finalize_realtime_segment(
         SttEvents::realtime_text_with_final(app, delta.trim(), true);
         SttEvents::listen_sentence(app, delta.trim(), speaker);
         push_session_line(session_lines, delta.trim(), speaker);
+        emit_listen_session_snapshot(app, session_lines, true);
     }
     realtime.mark_committed(trimmed, 0);
     committed
@@ -1259,9 +1382,10 @@ fn publish_native_realtime_preview_if_due(
                 realtime.last_emit_text = visible_text.clone();
                 SttEvents::realtime_stabilized_with_final(app, &visible_text, update.is_final);
                 SttEvents::realtime_text_with_final(app, &visible_text, update.is_final);
-                // Mirror the in-flight preview for the History tab's live
-                // session card (snapshot over IPC — it has no event feed).
+                // Mirror and push the in-flight preview for the History tab's
+                // live session card.
                 session_lines.lock_recover().live_preview = visible_text.clone();
+                emit_listen_session_snapshot(app, session_lines, true);
             }
             // A diarizer-detected speaker TURN inside the current span REFORMS
             // the live caption immediately: the pre-boundary text commits as its
@@ -1322,8 +1446,66 @@ mod tests {
     }
 
     #[test]
-    fn listen_timeout_counts_as_silence_frames() {
-        assert_eq!(silence_frames_for_duration(LOOPBACK_RECV_TIMEOUT), 7);
+    fn fully_settled_consumer_has_no_deadline() {
+        let now = Instant::now();
+        assert!(consumer_is_fully_settled(true, false, false));
+        assert_eq!(next_consumer_deadline(now, true, false, 0, 67, false), None);
+    }
+
+    #[test]
+    fn each_pending_idle_action_keeps_consumer_unsettled() {
+        assert!(!consumer_is_fully_settled(false, false, false));
+        assert!(!consumer_is_fully_settled(true, true, false));
+        assert!(!consumer_is_fully_settled(true, false, true));
+    }
+
+    #[test]
+    fn consumer_deadline_targets_exact_nearest_pending_action() {
+        let now = Instant::now();
+        assert_eq!(
+            next_consumer_deadline(now, false, false, 0, 67, false),
+            now.checked_add(LOOPBACK_IDLE_GRACE)
+        );
+        assert_eq!(
+            next_consumer_deadline(now, true, false, 0, 67, true),
+            now.checked_add(LOOPBACK_IDLE_GRACE)
+        );
+
+        // Seven 30 ms VAD frames remain: the exact silence deadline is 210 ms,
+        // rather than another periodic 200 ms polling tick.
+        assert_eq!(
+            next_consumer_deadline(now, true, true, 60, 67, false),
+            now.checked_add(Duration::from_millis(210))
+        );
+
+        // The zero-level deadline wins when it precedes the remaining silence.
+        assert_eq!(
+            next_consumer_deadline(now, false, true, 0, 67, false),
+            now.checked_add(LOOPBACK_IDLE_GRACE)
+        );
+    }
+
+    #[test]
+    fn transcript_deadline_exists_only_for_finalizable_idle_text() {
+        assert!(!transcript_finalization_pending(
+            MIN_SPEECH_SAMPLES,
+            true,
+            "pending text",
+            "pending text"
+        ));
+        assert!(transcript_finalization_pending(
+            MIN_SPEECH_SAMPLES,
+            false,
+            "pending text",
+            ""
+        ));
+        assert!(transcript_finalization_pending(
+            0,
+            false,
+            "",
+            "emitted preview"
+        ));
+        assert!(!transcript_finalization_pending(0, false, "", ""));
     }
 
     #[test]

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use tokio::sync::Notify;
+
 #[derive(Default)]
 struct ModelSwapState {
     in_flight: HashMap<String, usize>,
@@ -19,6 +21,9 @@ struct ModelSwapState {
 pub struct ModelSwapCoordinator {
     state: Mutex<ModelSwapState>,
     condvar: Condvar,
+    /// Async twin of `condvar`: wakes `claim_when_idle` waiters when any claim
+    /// releases, so async callers wait on the release event instead of polling.
+    idle_notify: Notify,
 }
 
 impl Default for ModelSwapCoordinator {
@@ -26,6 +31,7 @@ impl Default for ModelSwapCoordinator {
         Self {
             state: Mutex::new(ModelSwapState::default()),
             condvar: Condvar::new(),
+            idle_notify: Notify::new(),
         }
     }
 }
@@ -113,6 +119,31 @@ impl ModelSwapCoordinator {
         })
     }
 
+    /// Async claim: take `key`'s single-flight claim, waiting for the current
+    /// holder to release instead of polling on a timer (every claim drop fires
+    /// `idle_notify`, so waiters wake the instant the holder finishes). Returns
+    /// `None` if the claim is still held at `deadline`.
+    pub async fn claim_when_idle(
+        &self,
+        key: impl Into<String>,
+        deadline: tokio::time::Instant,
+    ) -> Option<ModelSwapClaim<'_>> {
+        let key = key.into();
+        loop {
+            // Register for release notifications BEFORE checking the claim so a
+            // release landing between the check and the await cannot be missed.
+            let mut released = Box::pin(self.idle_notify.notified());
+            released.as_mut().enable();
+            if let Some(claim) = self.try_claim(key.clone()) {
+                return Some(claim);
+            }
+            tokio::select! {
+                () = &mut released => {}
+                () = tokio::time::sleep_until(deadline) => return None,
+            }
+        }
+    }
+
     pub fn wait_for_idle(&self, key: &str) {
         let mut state = match self.state.lock() {
             Ok(state) => state,
@@ -131,6 +162,7 @@ impl ModelSwapCoordinator {
             state.in_flight.remove(key);
             self.condvar.notify_all();
         }
+        self.idle_notify.notify_waiters();
     }
 }
 
@@ -166,6 +198,28 @@ mod tests {
         assert!(coordinator.is_warm_within("llm:qwen", Duration::from_secs(30)));
         coordinator.clear_warm("llm:qwen");
         assert!(!coordinator.is_warm("llm:qwen"));
+    }
+
+    #[tokio::test]
+    async fn claim_when_idle_wakes_on_release() {
+        let coordinator = ModelSwapCoordinator::new();
+        let held = coordinator.try_claim("k").unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        // The waiter must acquire the claim the moment the holder drops it —
+        // well before the 5s deadline (no polling tick involved).
+        let (waiter, ()) = tokio::join!(coordinator.claim_when_idle("k", deadline), async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            drop(held);
+        });
+        assert!(waiter.is_some(), "waiter acquires the claim on release");
+    }
+
+    #[tokio::test]
+    async fn claim_when_idle_times_out_while_held() {
+        let coordinator = ModelSwapCoordinator::new();
+        let _held = coordinator.try_claim("k").unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(20);
+        assert!(coordinator.claim_when_idle("k", deadline).await.is_none());
     }
 
     #[test]

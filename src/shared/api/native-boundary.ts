@@ -5,6 +5,51 @@ import { NATIVE_EVENTS as IPC } from "./native-events";
 
 export const noop = () => undefined;
 
+const pendingNativeListenerRegistrations = new Set<Promise<unknown>>();
+
+function trackNativeListenerRegistration<T>(
+	registration: Promise<T>,
+): Promise<T> {
+	let tracked: Promise<T>;
+	tracked = registration.finally(() => {
+		pendingNativeListenerRegistrations.delete(tracked);
+	});
+	pendingNativeListenerRegistrations.add(tracked);
+	return tracked;
+}
+
+/**
+ * Wait until every listener registration started by the current React effect
+ * flush has settled. The deadline is a crash/bridge fallback: renderer startup
+ * must never remain wedged behind a listener promise that cannot resolve.
+ */
+export async function waitForPendingNativeListeners(
+	timeoutMs = 2000,
+): Promise<boolean> {
+	// Let later effects in the same commit start their registrations first.
+	await Promise.resolve();
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const drained = async () => {
+		while (pendingNativeListenerRegistrations.size > 0) {
+			await Promise.allSettled([...pendingNativeListenerRegistrations]);
+			await Promise.resolve();
+		}
+		return true;
+	};
+	try {
+		return await Promise.race([
+			drained(),
+			new Promise<false>((resolve) => {
+				timeoutId = setTimeout(() => resolve(false), timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timeoutId !== undefined) {
+			clearTimeout(timeoutId);
+		}
+	}
+}
+
 export type FallbackValue<T> = T | (() => T);
 
 function resolveFallback<T>(fallback: FallbackValue<T>): T {
@@ -145,20 +190,50 @@ export function on(
 		return noop;
 	}
 	const eventName = nativeEventName(channel);
-	const pending = tauriListen<unknown>(eventName, (event) => {
-		if (shouldDeliver(channel, event.payload)) {
-			callback(reshapeNativeEvent(channel, event.payload));
-		}
-	});
+	let active = true;
+	const pending = trackNativeListenerRegistration(
+		tauriListen<unknown>(eventName, (event) => {
+			if (active && shouldDeliver(channel, event.payload)) {
+				callback(reshapeNativeEvent(channel, event.payload));
+			}
+		}),
+	);
 	void pending.catch((error) => {
 		console.warn(`[events] failed to listen for "${eventName}":`, error);
 	});
 	return () => {
+		active = false;
 		void pending.then((unlisten) => unlisten()).catch(() => undefined);
 	};
 }
 
 export { on as ipcOn };
+
+/**
+ * Subscribe to a canonical Tauri event and resolve only after the native
+ * listener is installed. Use this for subscribe-before-snapshot handshakes;
+ * `ipcOn` intentionally returns synchronous cleanup and therefore cannot expose
+ * Tauri's asynchronous listener-registration edge.
+ */
+export async function ipcOnReady(
+	channel: string,
+	callback: (...args: unknown[]) => void,
+): Promise<() => void> {
+	if (typeof window !== "undefined" && window.nativeBridge != null) {
+		return window.nativeBridge.on(channel, callback);
+	}
+	if (!hasTauriRuntime()) {
+		return noop;
+	}
+	const eventName = nativeEventName(channel);
+	return trackNativeListenerRegistration(
+		tauriListen<unknown>(eventName, (event) => {
+			if (shouldDeliver(channel, event.payload)) {
+				callback(reshapeNativeEvent(channel, event.payload));
+			}
+		}),
+	);
+}
 
 export function onTyped<T, V>(
 	channel: string,

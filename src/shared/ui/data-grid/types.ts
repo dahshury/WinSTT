@@ -66,6 +66,16 @@ declare module "@tanstack/react-table" {
 	interface TableMeta<TData extends RowData> {
 		dataGridRef?: React.RefObject<HTMLElement | null> | undefined;
 		cellMapRef?: React.RefObject<Map<string, HTMLDivElement>> | undefined;
+		onCellMount?:
+			| ((
+					rowIndex: number,
+					columnId: string,
+					node: HTMLDivElement | null,
+			  ) => void)
+			| undefined;
+		onRowMount?:
+			| ((rowIndex: number, node: HTMLDivElement | null) => void)
+			| undefined;
 		focusedCell?: CellPosition | null | undefined;
 		editingCell?: CellPosition | null | undefined;
 		selectionState?: SelectionState | undefined;

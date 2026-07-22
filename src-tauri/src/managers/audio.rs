@@ -293,6 +293,7 @@ fn create_audio_recorder(
     vad_path: &str,
     app_handle: &tauri::AppHandle,
     speech_seen: Arc<AtomicBool>,
+    speech_active: Arc<AtomicBool>,
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let silero = SileroVad::new(vad_path, VAD_SPEECH_THRESHOLD)
@@ -344,6 +345,22 @@ fn create_audio_recorder(
             move || {
                 crate::winstt::commands::dictation::SttEvents::capture_active(&app_handle);
                 if let Some(rm) = app_handle.try_state::<std::sync::Arc<AudioRecordingManager>>() {
+                    // On-demand streams must be open and producing before the
+                    // system input is muted. This first-frame callback is the
+                    // reliable readiness edge; apply the potentially blocking
+                    // OS mute off the capture callback thread.
+                    if matches!(*rm.mode.lock_recover(), MicrophoneMode::OnDemand) {
+                        let rm_for_mute = std::sync::Arc::clone(&rm);
+                        let generation = rm.recording_generation();
+                        std::thread::spawn(move || {
+                            if rm_for_mute.is_recording()
+                                && rm_for_mute.recording_generation() == generation
+                            {
+                                debug!("Applying input mute after first captured frame");
+                                rm_for_mute.apply_mute();
+                            }
+                        });
+                    }
                     crate::winstt::commands::sound::duck_then_play_recording_chime(
                         &app_handle,
                         rm.recording_generation(),
@@ -372,8 +389,10 @@ fn create_audio_recorder(
             let app_handle = app_handle.clone();
             let speech_generation = Arc::new(AtomicU64::new(0));
             let speech_seen = Arc::clone(&speech_seen);
+            let speech_active = Arc::clone(&speech_active);
             move |speaking: bool| {
                 let speech_token = speech_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                speech_active.store(speaking, Ordering::SeqCst);
                 if speaking {
                     speech_seen.store(true, Ordering::SeqCst);
                     crate::winstt::commands::dictation::SttEvents::vad_start(&app_handle);
@@ -405,12 +424,20 @@ pub struct AudioRecordingManager {
     did_mute: Arc<Mutex<bool>>,
     close_generation: Arc<AtomicU64>,
     speech_seen: Arc<AtomicBool>,
+    /// Current smoothed-VAD state. Unlike `speech_seen`, this returns to false
+    /// on every speech offset and lets a renderer that mounted late recover the
+    /// exact visualizer state after missing a fire-and-forget VAD event.
+    speech_active: Arc<AtomicBool>,
     /// Monotonic counter bumped on every successful `try_start_recording`. The
     /// realtime worker keys its per-recording reset + emit guard on this so a
     /// quick press→release→press (where it never observes the idle gap between
     /// the two recordings) still starts the new utterance with a clean watermark
     /// and never emits the previous one's in-flight realtime text.
     recording_generation: Arc<AtomicU64>,
+    /// Monotonic recording-state transition signal. Consumers that must react to
+    /// recording startup (notably the Windows PTT release safety net) block on
+    /// this condition variable rather than sampling `is_recording()` on a timer.
+    recording_transition_signal: Arc<(Mutex<u64>, Condvar)>,
     /// Recorder progress signal for native realtime streaming. The recorder updates this whenever
     /// the (ungated) live mirror grows or resets, so native streaming can sleep on audio events
     /// instead of polling the mirror.
@@ -428,6 +455,14 @@ fn choose_priority_device_position(names: &[&str], priority: &[String]) -> Optio
             .iter()
             .position(|name| name.trim().to_lowercase() == key)
     })
+}
+
+fn realtime_audio_wait_pending(
+    progress: &RealtimeAudioProgress,
+    offset: usize,
+    observed_version: u64,
+) -> bool {
+    progress.len <= offset && progress.version == observed_version
 }
 
 impl AudioRecordingManager {
@@ -448,7 +483,9 @@ impl AudioRecordingManager {
             did_mute: Arc::new(Mutex::new(false)),
             close_generation: Arc::new(AtomicU64::new(0)),
             speech_seen: Arc::new(AtomicBool::new(false)),
+            speech_active: Arc::new(AtomicBool::new(false)),
             recording_generation: Arc::new(AtomicU64::new(0)),
+            recording_transition_signal: Arc::new((Mutex::new(0), Condvar::new())),
             realtime_audio_signal: Arc::new((
                 Mutex::new(RealtimeAudioProgress::default()),
                 Condvar::new(),
@@ -523,10 +560,8 @@ impl AudioRecordingManager {
                 .or_else(|| (!devices.is_empty()).then_some(0usize))
         }
 
-        // Device selection is canonical in the WinSTT store (`settings.audio.*`),
-        // which holds device INDICES. The legacy `AppSettings` name-based mirror
-        // (`selected_microphone` / `clamshell_microphone`) was removed; `None`
-        // index means "system default".
+        // Device selection is canonical in `settings.audio.*`; `None` means
+        // the system-default input.
         let settings = read_settings_raw(&self.app_handle);
         let use_clamshell_mic = clamshell::is_clamshell().unwrap_or(false)
             && settings.audio.clamshell_microphone.is_some();
@@ -683,6 +718,7 @@ impl AudioRecordingManager {
                 vad_str,
                 &self.app_handle,
                 Arc::clone(&self.speech_seen),
+                Arc::clone(&self.speech_active),
                 Arc::clone(&self.realtime_audio_signal),
             )?);
         }
@@ -854,6 +890,7 @@ impl AudioRecordingManager {
 
             if let Some(rec) = self.recorder.lock_recover().as_ref() {
                 self.speech_seen.store(false, Ordering::SeqCst);
+                self.speech_active.store(false, Ordering::SeqCst);
                 if rec.start().is_ok() {
                     *self.is_recording.lock_recover() = true;
                     // Bump the recording generation so the realtime worker treats
@@ -863,6 +900,12 @@ impl AudioRecordingManager {
                     *state = RecordingState::Recording {
                         binding_id: binding_id.to_string(),
                     };
+                    // The idle watcher checks recording state while holding its
+                    // lifecycle lock. Release the audio-state lock before taking
+                    // that lifecycle lock so the global order cannot invert.
+                    drop(state);
+                    self.notify_transcription_recording_activity();
+                    self.signal_recording_transition();
                     // Arm the no-speech watchdog for Toggle/Wakeword: with no onset ever, the
                     // offset-armed silence auto-stop never arms, so an untouched session would
                     // record forever. Keyed on this generation so it can't kill a newer take.
@@ -917,11 +960,14 @@ impl AudioRecordingManager {
                 };
 
                 *self.is_recording.lock_recover() = false;
+                self.speech_active.store(false, Ordering::SeqCst);
 
                 let should_release_stream =
                     matches!(*self.mode.lock_recover(), MicrophoneMode::OnDemand)
                         && !self.wakeword_mode_active();
                 *self.state.lock_recover() = RecordingState::Idle;
+                self.notify_transcription_recording_activity();
+                self.signal_recording_transition();
 
                 // In on-demand mode, close the mic according to the release policy,
                 // but do it off the stop->transcribe hot path. We already have the
@@ -944,11 +990,37 @@ impl AudioRecordingManager {
         matches!(*self.state.lock_recover(), RecordingState::Recording { .. })
     }
 
+    fn notify_transcription_recording_activity(&self) {
+        if let Some(transcription) = self
+            .app_handle
+            .try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+        {
+            transcription.recording_activity_changed();
+            transcription.notify_realtime_conditions_changed();
+        }
+    }
+
     /// Monotonic recording-start counter (see the field doc). The realtime worker
     /// reads this once per active tick to detect a new utterance and to guard its
     /// emit against a decode that belongs to a recording that has since ended.
     pub fn recording_generation(&self) -> u64 {
         self.recording_generation.load(Ordering::SeqCst)
+    }
+
+    /// Cloneable callback signal for code that needs to await a recording-state
+    /// transition. The counter is changed while holding the mutex before waiters
+    /// are notified, so a transition cannot be lost between a predicate check and
+    /// `Condvar::wait`.
+    pub(crate) fn recording_transition_signal(&self) -> Arc<(Mutex<u64>, Condvar)> {
+        Arc::clone(&self.recording_transition_signal)
+    }
+
+    fn signal_recording_transition(&self) {
+        let (epoch, wake) = &*self.recording_transition_signal;
+        let mut epoch = epoch.lock_recover();
+        *epoch = epoch.wrapping_add(1);
+        drop(epoch);
+        wake.notify_all();
     }
 
     pub fn is_active_recording_generation(&self, generation: u64) -> bool {
@@ -959,6 +1031,10 @@ impl AudioRecordingManager {
 
     pub fn speech_seen_since_recording_start(&self) -> bool {
         self.speech_seen.load(Ordering::SeqCst)
+    }
+
+    pub fn speech_is_active(&self) -> bool {
+        self.speech_active.load(Ordering::SeqCst)
     }
 
     /// Snapshot the in-flight 16 kHz mono recording buffer (a clone of the recorder's live
@@ -984,23 +1060,39 @@ impl AudioRecordingManager {
             .map_or((0, Vec::new()), |rec| rec.snapshot_from(offset))
     }
 
-    /// Block until the realtime mirror grows past `offset`, or until a recording-boundary reset
-    /// wakes the waiter. Returns true only when new audio is available for `snapshot_audio_from`.
-    pub fn wait_for_realtime_audio_after(&self, offset: usize, timeout: Duration) -> bool {
+    /// Observe the recorder progress epoch before evaluating the predicate that may lead to a
+    /// wait. Passing this epoch back to [`Self::wait_for_realtime_audio_after`] makes a callback
+    /// that lands between the predicate check and the wait durable.
+    pub(crate) fn observe_realtime_audio(&self) -> u64 {
+        let (lock, _) = &*self.realtime_audio_signal;
+        lock.lock_recover().version
+    }
+
+    /// Block until the realtime mirror grows past `offset`, or until the recorder/audio epoch
+    /// changes. `observed_version` must be captured before the caller checks its no-audio
+    /// predicate. Returns true only when new audio is available for `snapshot_audio_from`.
+    pub fn wait_for_realtime_audio_after(&self, offset: usize, observed_version: u64) -> bool {
         let (lock, cvar) = &*self.realtime_audio_signal;
         let progress = lock.lock_recover();
-        if progress.len > offset {
-            return true;
+        if !realtime_audio_wait_pending(&progress, offset, observed_version) {
+            return progress.len > offset;
         }
-        let start_version = progress.version;
-        let result = cvar.wait_timeout_while(progress, timeout, |progress| {
-            progress.len <= offset && progress.version == start_version
-        });
-        let (progress, _) = match result {
-            Ok(waited) => waited,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let progress = cvar
+            .wait_while(progress, |progress| {
+                realtime_audio_wait_pending(progress, offset, observed_version)
+            })
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         progress.len > offset
+    }
+
+    /// Interrupt a realtime audio wait when a non-audio predicate changes
+    /// (focus or settings). Bumping the version latches the edge across the
+    /// predicate-check-to-wait race without pretending new samples arrived.
+    pub(crate) fn notify_realtime_audio_waiters(&self) {
+        let (lock, cvar) = &*self.realtime_audio_signal;
+        let mut progress = lock.lock_recover();
+        progress.version = progress.version.wrapping_add(1);
+        cvar.notify_all();
     }
 
     /// Enable/disable the recorder's realtime `live_audio` mirror. When disabled, the recorder
@@ -1021,12 +1113,15 @@ impl AudioRecordingManager {
             RecordingState::Recording { .. } => {
                 *state = RecordingState::Idle;
                 drop(state);
+                self.signal_recording_transition();
 
                 if let Some(rec) = self.recorder.lock_recover().as_ref() {
                     let _ = rec.stop(); // Discard the result
                 }
 
                 *self.is_recording.lock_recover() = false;
+                self.speech_active.store(false, Ordering::SeqCst);
+                self.notify_transcription_recording_activity();
 
                 // In on-demand mode, close the mic (lazily if the setting is enabled)
                 if matches!(*self.mode.lock_recover(), MicrophoneMode::OnDemand)
@@ -1072,6 +1167,18 @@ mod tests {
 
         // "AirPods Pro" is not connected → the next entry wins.
         assert_eq!(choose_priority_device_position(&names, &priority), Some(1));
+    }
+
+    #[test]
+    fn realtime_audio_wait_does_not_park_after_observed_epoch_changes() {
+        let mut progress = RealtimeAudioProgress {
+            len: 10,
+            version: 7,
+        };
+        assert!(realtime_audio_wait_pending(&progress, 10, 7));
+
+        progress.version = 8;
+        assert!(!realtime_audio_wait_pending(&progress, 10, 7));
     }
 
     #[test]

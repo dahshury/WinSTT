@@ -140,7 +140,9 @@ describe("ModelSelectorTrigger", () => {
 		expect(container.textContent).toContain("Loading...");
 		const dot = container.querySelector('[data-slot="pulse-dot"]');
 		expect(dot).not.toBeNull();
-		expect(dot?.getAttribute("style")).toContain("loading-ui-pulse-dot");
+		// The shared loading indicator now renders a thinking orb canvas rather
+		// than an inline-keyframe pulsing dot.
+		expect(dot?.querySelector("canvas")).not.toBeNull();
 		expect(container.querySelector(".animate-spin")).toBeNull();
 	});
 });

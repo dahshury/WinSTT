@@ -5,6 +5,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { type ReactNode, useReducer } from "react";
 import { useTranslations } from "use-intl";
+import { commands } from "@/bindings";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import {
 	removeApplicationData,
@@ -135,15 +136,18 @@ export function ResetSection(): ReactNode {
 			});
 	};
 
-	const handleRemoveApplicationData = () => {
+	const handleRemoveApplicationData = async () => {
 		dispatch({ type: "cleanupErrorChanged", error: "" });
-		removeApplicationData(deleteOllamaModels).catch((err) => {
+		try {
+			await removeApplicationData(deleteOllamaModels);
+			await commands.quitApp();
+		} catch (err) {
 			dispatch({
 				type: "cleanupErrorChanged",
 				error: err instanceof Error ? err.message : String(err),
 			});
 			dispatch({ type: "removeConfirmOpenChanged", open: true });
-		});
+		}
 	};
 
 	return (

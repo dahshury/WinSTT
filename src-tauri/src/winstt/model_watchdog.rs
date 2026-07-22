@@ -151,7 +151,11 @@ mod platform {
     }
 
     fn spawn_watchdog_with_flags(exe: &Path, script_arg: &str, flags: u32) -> io::Result<u32> {
+        use std::os::windows::io::AsRawHandle;
         use std::os::windows::process::CommandExt;
+
+        use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows::Win32::System::Threading::WaitForSingleObject;
 
         let mut child = std::process::Command::new(exe)
             .args([
@@ -167,13 +171,17 @@ mod platform {
             .stderr(std::process::Stdio::null())
             .spawn()?;
 
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        if let Some(status) = child.try_wait()? {
-            return Err(io::Error::other(format!(
-                "watchdog exited immediately with {status}"
-            )));
+        let wait_result = unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), 250) };
+        match wait_result {
+            WAIT_OBJECT_0 => {
+                let status = child.wait()?;
+                Err(io::Error::other(format!(
+                    "watchdog exited immediately with {status}"
+                )))
+            }
+            WAIT_TIMEOUT => Ok(child.id()),
+            _ => Err(io::Error::last_os_error()),
         }
-        Ok(child.id())
     }
 
     fn powershell_exe() -> PathBuf {
@@ -247,9 +255,7 @@ $parentPid = {parent_pid}
 $statePath = '{state_path}'
 $scriptPath = '{script_path}'
 
-while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) {{
-  Start-Sleep -Milliseconds 750
-}}
+Wait-Process -Id $parentPid -ErrorAction SilentlyContinue
 
 Start-Sleep -Milliseconds 400
 

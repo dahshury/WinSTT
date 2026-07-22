@@ -263,15 +263,9 @@ impl ShortcutAction for TranscribeAction {
 
         let recording_error: Option<String> = match mic_thread.join() {
             Ok(Ok(())) => {
-                if !is_always_on {
-                    // Small delay to ensure microphone stream is active before mute.
-                    let rm_clone = Arc::clone(&rm);
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Applying delayed input mute");
-                        rm_clone.apply_mute();
-                    });
-                }
+                // Always-on streams were muted before start above. On-demand
+                // streams mute from the recorder's first-frame callback, the
+                // exact point at which the microphone is confirmed live.
                 None
             }
             Ok(Err(e)) => {

@@ -20,6 +20,7 @@ import {
 	type ReactNode,
 	type RefObject,
 	Suspense,
+	type TransitionEvent,
 	useDeferredValue,
 	useEffect,
 	useEffectEvent,
@@ -433,12 +434,10 @@ function SettingsHydrationPanel({
 
 type SettingsWindowMotionPhase = "closed" | "resetting" | "open" | "closing";
 
-// How long before the fade-out's END the backend hide is requested. By then the
-// close ease (--modal-ease, a strong ease-out) has already dropped the content
-// to near-zero opacity, and the head start absorbs the IPC round-trip + OS hide
-// latency that otherwise held a fully-faded (dark) window on screen for a few
-// frames after the animation finished.
-const CLOSE_HIDE_OVERLAP_MS = 40;
+// `transitionend` is authoritative. This small bounded fallback covers a
+// renderer that drops the event (for example while WebView2 is suspended) so a
+// close can never leave the transparent native window alive indefinitely.
+const CLOSE_TRANSITION_FAILSAFE_BUFFER_MS = 100;
 
 // After a backend "window shown" replay, ignore the window focus/visibility
 // fallbacks for this long — they can fire a few ms later on the same show and
@@ -500,6 +499,7 @@ function useSettingsWindowMotion(
 	contentReady: boolean,
 ): {
 	motionClassName: string;
+	onMotionTransitionEnd: (event: TransitionEvent<HTMLDivElement>) => void;
 	requestClose: () => void;
 	shellRef: RefObject<HTMLDivElement | null>;
 } {
@@ -724,6 +724,28 @@ function useSettingsWindowMotion(
 	// memoization. The ref-clearing / phase-setting logic is inlined here rather
 	// than reusing the effect-event helpers, because effect events can only be
 	// called from Effects (or other effect events) in the same component.
+	const completeClose = () => {
+		if (phaseRef.current !== "closing") {
+			return;
+		}
+		if (closeTimerRef.current !== null) {
+			clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+		phaseRef.current = "closed";
+		setPhase("closed");
+		waitingForReopenRef.current = true;
+		onClosed();
+	};
+
+	const onMotionTransitionEnd = (event: TransitionEvent<HTMLDivElement>) => {
+		// The shell's transform and opacity share one close duration. Either native
+		// transition completion is authoritative; ignore bubbled child transitions.
+		if (event.target === event.currentTarget) {
+			completeClose();
+		}
+	};
+
 	const requestClose = () => {
 		if (phaseRef.current === "closing" || phaseRef.current === "closed") {
 			return;
@@ -739,24 +761,20 @@ function useSettingsWindowMotion(
 		}
 		phaseRef.current = "closing";
 		setPhase("closing");
-		// Request the native hide slightly BEFORE the fade-out completes: the
-		// tail is visually gone already (and the OS window is transparent, so
-		// once opacity hits 0 nothing remains on screen either way), and the
-		// head start absorbs the IPC + OS hide latency.
+		const closeDuration = modalCloseDurationMs();
+		if (closeDuration === 0) {
+			completeClose();
+			return;
+		}
 		closeTimerRef.current = setTimeout(
-			() => {
-				closeTimerRef.current = null;
-				phaseRef.current = "closed";
-				setPhase("closed");
-				waitingForReopenRef.current = true;
-				onClosed();
-			},
-			Math.max(0, modalCloseDurationMs() - CLOSE_HIDE_OVERLAP_MS),
+			completeClose,
+			closeDuration + CLOSE_TRANSITION_FAILSAFE_BUFFER_MS,
 		);
 	};
 
 	return {
 		motionClassName: settingsMotionClassName(phase),
+		onMotionTransitionEnd,
 		requestClose,
 		shellRef,
 	};
@@ -907,10 +925,8 @@ export function SettingsPage() {
 	const markPanelMounted = () => setPanelMounted(true);
 	const contentReady =
 		(canRenderSettings && panelMounted) || hydrationStatus === "error";
-	const { motionClassName, requestClose, shellRef } = useSettingsWindowMotion(
-		windowCloseSelf,
-		contentReady,
-	);
+	const { motionClassName, onMotionTransitionEnd, requestClose, shellRef } =
+		useSettingsWindowMotion(windowCloseSelf, contentReady);
 	const closeActivation = useTouchActivation(requestClose);
 	useEscapeToClose(requestClose);
 
@@ -960,6 +976,7 @@ export function SettingsPage() {
 						"t-modal noise-overlay settings-window-shell relative flex min-w-0 flex-1 overflow-hidden rounded-[1.35rem] shadow-settings-window ring-1 ring-divider-strong",
 						motionClassName,
 					)}
+					onTransitionEnd={onMotionTransitionEnd}
 					ref={shellRef}
 				>
 					{/* Keep the settings shell visible while backend settings hydrate. */}

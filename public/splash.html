@@ -130,5 +130,42 @@
 			</div>
 			<output class="mark__percent" id="progress-text">0%</output>
 		</div>
+		<script>
+			(() => {
+				const mark = document.querySelector(".mark");
+				let acknowledged = false;
+
+				const acknowledgeClose = () => {
+					if (acknowledged) return;
+					const sequence = Number(document.body.dataset.closeSequence);
+					const invoke = window.__TAURI_INTERNALS__?.invoke;
+					if (!Number.isSafeInteger(sequence) || typeof invoke !== "function") return;
+					acknowledged = true;
+					void invoke("splash_close_animation_complete", { sequence }).catch(
+						() => {},
+					);
+				};
+
+				mark?.addEventListener("animationend", (event) => {
+					if (event.animationName === "splash-out") acknowledgeClose();
+				});
+
+				const closeObserver = new MutationObserver(() => {
+					if (!document.body.classList.contains("is-closing") || !mark) return;
+					const style = getComputedStyle(mark);
+					const hasNoMotion =
+						matchMedia("(prefers-reduced-motion: reduce)").matches ||
+						style.animationName === "none" ||
+						style.animationDuration
+							.split(",")
+							.every((duration) => Number.parseFloat(duration) === 0);
+					if (hasNoMotion) acknowledgeClose();
+				});
+				closeObserver.observe(document.body, {
+					attributes: true,
+					attributeFilter: ["class"],
+				});
+			})();
+		</script>
 	</body>
 </html>

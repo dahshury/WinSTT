@@ -1,7 +1,6 @@
 use super::*;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 // --- catalog invariants ---
 
@@ -327,13 +326,13 @@ impl TtsEngine for FakeEngine {
 
 struct CollectSink {
     chunks: StdMutex<Vec<SynthesisChunk>>,
-    cancel: AtomicBool,
+    cancel: tokio_util::sync::CancellationToken,
 }
 impl CollectSink {
     fn new() -> Self {
         Self {
             chunks: StdMutex::new(Vec::new()),
-            cancel: AtomicBool::new(false),
+            cancel: tokio_util::sync::CancellationToken::new(),
         }
     }
 }
@@ -343,7 +342,10 @@ impl ChunkSink for CollectSink {
         true
     }
     fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Acquire)
+        self.cancel.is_cancelled()
+    }
+    fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
+        self.cancel.clone()
     }
 }
 
@@ -400,7 +402,7 @@ fn read_aloud_cancel_between_sentences_returns_cancelled() {
 fn read_aloud_sink_cancel_stops_production() {
     let mgr = TtsManager::new(TtsSource::Local, Arc::new(FakeEngine::new()));
     let sink = CollectSink::new();
-    sink.cancel.store(true, Ordering::Release);
+    sink.cancel.cancel();
     let res = mgr.read_aloud("rq", "One. Two.", "af_heart", "en-us", || 1.0, &sink);
     assert!(matches!(res, Err(TtsError::Cancelled)));
 }

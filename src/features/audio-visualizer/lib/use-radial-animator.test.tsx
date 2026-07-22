@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import {
 	__test_findGcdLessThan,
 	__test_gcd,
@@ -145,32 +145,27 @@ describe("useRadialAnimator", () => {
 		expect(result.current).toEqual(before);
 	});
 
-	test("non-finite interval short-circuits the rAF loop", () => {
+	test("non-finite interval short-circuits transition scheduling", () => {
 		const { result } = renderHook(() =>
 			useRadialAnimator("connecting", 5, Number.POSITIVE_INFINITY),
 		);
 		expect(result.current).toHaveLength(2);
 	});
 
-	test("schedules a rAF tick when the sequence is non-trivial", async () => {
-		// happy-dom exposes requestAnimationFrame as a setTimeout shim. With
-		// interval=0 every scheduled frame bumps the index. We unmount before
-		// returning so the self-rescheduling rAF loop stops cleanly and the
-		// cleanup branch (cancelAnimationFrame) runs.
+	test("schedules a transition when the sequence is non-trivial", async () => {
+		// The sequence animator keeps only the next transition scheduled. Unmount
+		// before returning so its self-rescheduling timeout stops cleanly.
 		const { result, unmount } = renderHook(() =>
-			useRadialAnimator("connecting", 4, 0),
+			useRadialAnimator("connecting", 4, 20),
 		);
 		expect(result.current).toHaveLength(2);
-		// Yield to a macrotask so the rAF shim fires `animate` at least once
-		// and exercises the `time - startTimeRef.current >= interval` branch
-		// plus the setIndex updater closure.
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await act(() => new Promise((resolve) => window.setTimeout(resolve, 35)));
 		unmount();
 		expect(result.current).toHaveLength(2);
 	});
 
 	test("unmount runs the effect cleanup without throwing", () => {
-		// Exercises the cancelAnimationFrame path on the cleanup callback.
+		// Exercises the clearTimeout path on the cleanup callback.
 		const { unmount } = renderHook(() =>
 			useRadialAnimator("connecting", 4, 16),
 		);

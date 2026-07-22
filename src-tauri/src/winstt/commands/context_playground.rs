@@ -67,9 +67,64 @@ static ARMED_DEEP: AtomicBool = AtomicBool::new(false);
 static CAPTURING: AtomicBool = AtomicBool::new(false);
 /// Generation token — bumped on every (re)start so a stale loop exits.
 static LOOP_GEN: AtomicU64 = AtomicU64::new(0);
+/// Callback-backed wake for state changes that should interrupt a parked loop.
+/// The generation makes notifications latch across the check-to-wait race.
+static LOOP_WAKE: Lazy<LoopWake> = Lazy::new(LoopWake::default);
 /// Last "waiting" reason pushed (dedupe the 750ms heartbeat). Reset after a real
 /// report so the next wait re-pushes. Mirrors `lastWaitReason`.
 static LAST_WAIT: Lazy<Mutex<Option<&'static str>>> = Lazy::new(|| Mutex::new(None));
+
+#[derive(Default)]
+struct LoopWake {
+    generation: AtomicU64,
+    notify: tokio::sync::Notify,
+}
+
+impl LoopWake {
+    fn snapshot(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    fn signal(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait_since(&self, observed_generation: u64) {
+        if self.snapshot() != observed_generation {
+            return;
+        }
+
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        if self.snapshot() == observed_generation {
+            notified.await;
+        }
+    }
+}
+
+struct CaptureGuard<'a> {
+    capturing: &'a AtomicBool,
+    wake: &'a LoopWake,
+}
+
+impl<'a> CaptureGuard<'a> {
+    fn try_begin(capturing: &'a AtomicBool, wake: &'a LoopWake) -> Option<Self> {
+        capturing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| Self { capturing, wake })
+    }
+}
+
+impl Drop for CaptureGuard<'_> {
+    fn drop(&mut self) {
+        self.capturing.store(false, Ordering::SeqCst);
+        self.wake.signal();
+    }
+}
 
 // ── renderer-shape payloads (camelCase, byte-identical to context-debug-types.ts) ─
 
@@ -331,6 +386,13 @@ fn own_window_focused(app: &AppHandle) -> bool {
         .any(|w| w.is_focused().unwrap_or(false))
 }
 
+/// Wake the context playground after Tauri reports a webview focus transition.
+/// The global window-event callback calls this for both focus and blur edges so
+/// a loop parked on its own UI immediately re-evaluates the foreground owner.
+pub(crate) fn notify_context_playground_focus_changed() {
+    LOOP_WAKE.signal();
+}
+
 fn push(app: &AppHandle, payload: ContextPlaygroundPush) {
     let _ = app.emit(EVT_REPORT, payload);
 }
@@ -416,7 +478,17 @@ fn parse_hwnd_arg(hwnd: &str) -> Option<u64> {
 
 /// Run a live (tree-only) or deep (all-four-modes) capture and push the report.
 fn run_capture(app: &AppHandle, context: &ContextManager, deep: bool) {
-    CAPTURING.store(true, Ordering::SeqCst);
+    // The guard clears the busy predicate and wakes any parked loop during both
+    // normal return and unwinding. The compare-exchange also closes the race
+    // between two loops deciding that capture is idle at the same time.
+    let Some(_capture_guard) = CaptureGuard::try_begin(&CAPTURING, &LOOP_WAKE) else {
+        return;
+    };
+    if deep {
+        // Disarm only after this loop owns the capture lease. A deep request
+        // arriving during this capture remains armed for the next wake.
+        ARMED_DEEP.store(false, Ordering::SeqCst);
+    }
     let settings = read_settings(app);
     let context_awareness_enabled = settings.general.context_awareness;
     let deny_list = settings.general.context_deny_list;
@@ -446,10 +518,9 @@ fn run_capture(app: &AppHandle, context: &ContextManager, deep: bool) {
         modes,
     );
     push_report(app, report);
-    CAPTURING.store(false, Ordering::SeqCst);
 }
 
-// ── poll loop (mirrors decideTick + runPollTick) ───────────────────────────────
+// ── callback-driven watch loop (mirrors decideTick + runPollTick) ──────────────
 
 #[derive(Debug, PartialEq, Eq)]
 enum TickDecision {
@@ -482,10 +553,11 @@ fn decide_tick(
     }
 }
 
-/// (Re)start the poll loop. Bumps the generation token so any prior loop exits.
+/// (Re)start the watch loop. Bumps the generation token so any prior loop exits.
 /// Each open / set-live(true) / arm-deep call re-primes it with an immediate tick.
 fn start_polling(app: AppHandle) {
     let generation = LOOP_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    LOOP_WAKE.signal();
     if let Ok(mut last) = LAST_WAIT.lock() {
         *last = None;
     }
@@ -504,6 +576,7 @@ fn start_polling(app: AppHandle) {
             else {
                 return; // manager not registered yet — nothing to capture.
             };
+            let observed_wake = LOOP_WAKE.snapshot();
             let decision = decide_tick(
                 ARMED_DEEP.load(Ordering::SeqCst),
                 CAPTURING.load(Ordering::SeqCst),
@@ -511,19 +584,30 @@ fn start_polling(app: AppHandle) {
                 own_window_focused(&app),
             );
             match decision {
-                TickDecision::SkipCapturing => {}
+                TickDecision::SkipCapturing => {
+                    LOOP_WAKE.wait_since(observed_wake).await;
+                    continue;
+                }
                 TickDecision::WaitOff => {
                     push_waiting(&app, "live-off");
                     return;
                 }
-                TickDecision::WaitOwn => push_waiting(&app, "own-window-focused"),
-                TickDecision::CaptureLive => run_capture(&app, context.as_ref(), false),
-                TickDecision::CaptureDeep => {
-                    ARMED_DEEP.store(false, Ordering::SeqCst);
-                    run_capture(&app, context.as_ref(), true);
+                TickDecision::WaitOwn => {
+                    push_waiting(&app, "own-window-focused");
+                    LOOP_WAKE.wait_since(observed_wake).await;
+                    continue;
                 }
+                TickDecision::CaptureLive => run_capture(&app, context.as_ref(), false),
+                TickDecision::CaptureDeep => run_capture(&app, context.as_ref(), true),
             }
-            tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+            // External content has no change callback, so retain the bounded
+            // sampling cadence only in this capture-active state. A window-focus
+            // callback or loop restart interrupts the delay immediately.
+            let observed_wake = LOOP_WAKE.snapshot();
+            tokio::select! {
+                () = LOOP_WAKE.wait_since(observed_wake) => {}
+                () = tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)) => {}
+            }
         }
     });
 }
@@ -532,6 +616,7 @@ pub(crate) fn stop_context_playground_polling() {
     LIVE_ENABLED.store(false, Ordering::SeqCst);
     ARMED_DEEP.store(false, Ordering::SeqCst);
     LOOP_GEN.fetch_add(1, Ordering::SeqCst);
+    LOOP_WAKE.signal();
 }
 
 // ── commands ───────────────────────────────────────────────────────────────────
@@ -704,6 +789,49 @@ mod tests {
             decide_tick(true, false, true, false),
             TickDecision::CaptureDeep
         );
+    }
+
+    #[tokio::test]
+    async fn loop_wake_latches_a_signal_before_wait_registration() {
+        let wake = LoopWake::default();
+        let observed = wake.snapshot();
+        wake.signal();
+
+        tokio::time::timeout(Duration::from_millis(50), wake.wait_since(observed))
+            .await
+            .expect("a latched wake must not park");
+    }
+
+    #[tokio::test]
+    async fn loop_wake_releases_an_already_parked_waiter() {
+        let wake = LoopWake::default();
+        let observed = wake.snapshot();
+
+        tokio::time::timeout(Duration::from_millis(50), async {
+            tokio::join!(wake.wait_since(observed), async {
+                tokio::task::yield_now().await;
+                wake.signal();
+            });
+        })
+        .await
+        .expect("focus callback must wake a parked loop");
+    }
+
+    #[test]
+    fn capture_guard_resets_and_wakes_during_unwind() {
+        let capturing = AtomicBool::new(false);
+        let wake = LoopWake::default();
+        let observed = wake.snapshot();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = CaptureGuard::try_begin(&capturing, &wake).expect("capture is idle");
+            assert!(capturing.load(Ordering::SeqCst));
+            panic!("simulate a capture panic");
+        }));
+
+        assert!(result.is_err());
+        assert!(!capturing.load(Ordering::SeqCst));
+        assert_ne!(wake.snapshot(), observed);
     }
 
     #[test]

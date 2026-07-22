@@ -255,18 +255,18 @@ pub trait TtsEventEmitter: Send + Sync {
 }
 
 /// A `ChunkSink` that forwards chunks to a `TtsEventEmitter` as `tts:chunk`
-/// events and polls a shared cancel flag (set by `TtsManager::cancel*`). The
-/// manager's own per-request cancel map is the authority; this flag mirrors a
-/// renderer-side "discard" that arrived after the sink was created.
+/// events and carries the request's cancel token (fired by `TtsManager::cancel*`),
+/// so cloud engines can abort an in-flight HTTP request the instant cancel fires
+/// (not just at the next between-sentences check).
 struct EmitSink<'a> {
     request_id: String,
     emitter: &'a dyn TtsEventEmitter,
-    cancel: &'a std::sync::atomic::AtomicBool,
+    cancel: tokio_util::sync::CancellationToken,
 }
 
 impl ChunkSink for EmitSink<'_> {
     fn push(&self, chunk: SynthesisChunk) -> bool {
-        if self.cancel.load(Ordering::Acquire) {
+        if self.cancel.is_cancelled() {
             return false;
         }
         let payload = TtsChunkPayload::from_chunk(&self.request_id, &chunk);
@@ -275,7 +275,11 @@ impl ChunkSink for EmitSink<'_> {
     }
 
     fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Acquire)
+        self.cancel.is_cancelled()
+    }
+
+    fn cancel_token(&self) -> tokio_util::sync::CancellationToken {
+        self.cancel.clone()
     }
 }
 
@@ -299,11 +303,10 @@ impl TtsManager {
             "tts://started",
             serde_json::json!({ "request_id": request_id }),
         );
-        let cancel = std::sync::atomic::AtomicBool::new(false);
         let sink = EmitSink {
             request_id: request_id.to_string(),
             emitter,
-            cancel: &cancel,
+            cancel: self.cancelled.cancel_token(request_id),
         };
         let result = self.read_aloud(request_id, text, voice, lang, get_speed, &sink);
         let elapsed_ms = started.elapsed().as_millis() as u64;

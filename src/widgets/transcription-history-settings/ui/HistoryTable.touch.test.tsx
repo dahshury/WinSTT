@@ -294,13 +294,14 @@ describe("HistoryTable LLM variant toggle", () => {
 	});
 
 	test("switches to the original transcript before playing saved speech", async () => {
-		class MockAudio {
+		class MockAudio extends EventTarget {
 			currentTime = 0;
-			onended: (() => void) | null = null;
 			pause = mock(() => undefined);
 			play = mock<() => Promise<void>>(() => Promise.resolve());
 
-			constructor(readonly src: string) {}
+			constructor(readonly src: string) {
+				super();
+			}
 		}
 		Object.defineProperty(globalThis, "Audio", {
 			configurable: true,
@@ -471,13 +472,14 @@ describe("HistoryTable cloud costs", () => {
 	});
 
 	test("TTS rows with saved audio play through tts-history:load-audio", async () => {
-		class MockAudio {
+		class MockAudio extends EventTarget {
 			currentTime = 0;
-			onended: (() => void) | null = null;
 			pause = mock(() => undefined);
 			play = mock<() => Promise<void>>(() => Promise.resolve());
 
-			constructor(readonly src: string) {}
+			constructor(readonly src: string) {
+				super();
+			}
 		}
 		Object.defineProperty(globalThis, "Audio", {
 			configurable: true,

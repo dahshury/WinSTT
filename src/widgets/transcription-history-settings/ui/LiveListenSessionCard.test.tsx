@@ -1,6 +1,21 @@
-import { describe, expect, mock, test } from "bun:test";
-import { render } from "@testing-library/react";
-import { LiveListenSessionCardView } from "./LiveListenSessionCard";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { IntlProvider } from "@/app/providers/IntlProvider";
+import { useSettingsStore } from "@/entities/setting";
+import { IPC } from "@test/mocks/legacy-ipc";
+import {
+	LiveListenSessionCard,
+	LiveListenSessionCardView,
+} from "./LiveListenSessionCard";
+
+const originalApi = window.nativeBridge;
+const initialSettings = useSettingsStore.getState().settings;
+
+afterEach(() => {
+	cleanup();
+	window.nativeBridge = originalApi;
+	useSettingsStore.setState({ settings: initialSettings });
+});
 
 const baseProps = {
 	canFinalize: true,
@@ -58,5 +73,53 @@ describe("LiveListenSessionCardView", () => {
 		expect(button?.disabled).toBe(true);
 		button?.click();
 		expect(onFinalize).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("LiveListenSessionCard", () => {
+	test("renders pushed snapshots and unsubscribes outside Listen mode", async () => {
+		const listeners = new Map<string, (...args: unknown[]) => void>();
+		window.nativeBridge = {
+			...originalApi,
+			on: (channel, callback) => {
+				listeners.set(channel, callback);
+				return () => listeners.delete(channel);
+			},
+		};
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: { ...initialSettings.general, recordingMode: "listen" },
+			},
+		});
+
+		render(
+			<IntlProvider>
+				<LiveListenSessionCard />
+			</IntlProvider>,
+		);
+		expect(listeners.has(IPC.LISTEN_SESSION_CHANGED)).toBe(true);
+
+		act(() => {
+			listeners.get(IPC.LISTEN_SESSION_CHANGED)?.({
+				active: true,
+				lines: ["Speaker 1: pushed line"],
+				livePreview: "still speaking",
+			});
+		});
+		expect(screen.getByText("Speaker 1: pushed line")).toBeTruthy();
+		expect(screen.getByText("still speaking")).toBeTruthy();
+
+		await act(async () => {
+			useSettingsStore.setState({
+				settings: {
+					...initialSettings,
+					general: { ...initialSettings.general, recordingMode: "ptt" },
+				},
+			});
+			await Promise.resolve();
+		});
+		expect(listeners.has(IPC.LISTEN_SESSION_CHANGED)).toBe(false);
+		expect(screen.queryByText("Speaker 1: pushed line")).toBeNull();
 	});
 });

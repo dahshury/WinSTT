@@ -67,6 +67,15 @@ enum AudioChunk {
     EndOfStream,
 }
 
+/// The recorder worker has two producers: CPAL's input callback and the public
+/// start/stop API. Keeping both on one queue lets the worker block until real
+/// work arrives instead of waking every few milliseconds to sample a second
+/// receiver.
+enum WorkerMsg {
+    Audio(AudioChunk),
+    Command(Cmd),
+}
+
 /// Upper bound on how long `Cmd::Stop` blocks draining the input channel for the callback's
 /// final `EndOfStream` after signaling the stream to flush. Comfortably covers one WASAPI
 /// shared-mode buffer period (~10-30 ms) plus scheduling slack, while capping the wait so a
@@ -80,7 +89,8 @@ enum AudioChunk {
 /// whatever arrived; it must exceed the worst realistic device lag or the tail is lost again.
 const STOP_DRAIN_BUDGET: Duration = Duration::from_millis(1500);
 
-/// Drain `sample_rx` until the input callback's `EndOfStream` sentinel arrives or `budget`
+/// Drain audio messages from `worker_rx` until the input callback's `EndOfStream` sentinel arrives
+/// or `budget`
 /// elapses, invoking `on_samples` for each captured chunk. Returns `true` when the sentinel
 /// was observed (clean flush), `false` on timeout/disconnect (caller proceeds with what
 /// arrived). This is how `Cmd::Stop` recovers audio physically captured DURING the press that
@@ -91,8 +101,10 @@ const STOP_DRAIN_BUDGET: Duration = Duration::from_millis(1500);
 /// capture timestamps it degrades to one final buffer + sentinel. Split out of the handler so
 /// the drain-to-EOS contract is unit-testable with a scripted channel (no cpal).
 fn drain_to_end_of_stream(
-    sample_rx: &mpsc::Receiver<AudioChunk>,
+    worker_rx: &mpsc::Receiver<WorkerMsg>,
     budget: Duration,
+    pending_commands: &mut VecDeque<Cmd>,
+    coalesced_stop_replies: &mut Vec<mpsc::Sender<CapturedAudio>>,
     mut on_samples: impl FnMut(Vec<f32>),
 ) -> bool {
     let deadline = Instant::now() + budget;
@@ -101,14 +113,38 @@ fn drain_to_end_of_stream(
         if remaining.is_zero() {
             return false;
         }
-        match sample_rx.recv_timeout(remaining) {
-            Ok(AudioChunk::Samples(chunk)) => on_samples(chunk),
-            Ok(AudioChunk::EndOfStream) => return true,
+        match worker_rx.recv_timeout(remaining) {
+            Ok(WorkerMsg::Audio(AudioChunk::Samples(chunk))) => on_samples(chunk),
+            Ok(WorkerMsg::Audio(AudioChunk::EndOfStream)) => return true,
+            // Consecutive Stop requests belong to the same in-flight stop. Coalesce
+            // only the leading run: once another command is observed, every later
+            // command stays deferred in FIFO order (for example Start then Stop is a
+            // genuine new recording lifecycle). Replaying a duplicate Stop would ask
+            // the callback for a second EOS while its `eos_sent` latch is still set,
+            // needlessly consuming the full drain budget.
+            Ok(WorkerMsg::Command(Cmd::Stop(reply_tx))) if pending_commands.is_empty() => {
+                coalesced_stop_replies.push(reply_tx);
+            }
+            // Commands used to accumulate on their separate receiver while the
+            // bounded EOS drain ran. Preserve that ordering by deferring them
+            // until the current stop has finalized.
+            Ok(WorkerMsg::Command(command)) => pending_commands.push_back(command),
             Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
                 return false;
             }
         }
     }
+}
+
+fn reply_to_stop_requests(
+    primary_reply: mpsc::Sender<CapturedAudio>,
+    coalesced_replies: Vec<mpsc::Sender<CapturedAudio>>,
+    captured: CapturedAudio,
+) {
+    for reply_tx in coalesced_replies {
+        let _ = reply_tx.send(captured.clone());
+    }
+    let _ = primary_reply.send(captured);
 }
 
 /// How one input callback that fires while a stop is pending disposes of its chunk:
@@ -185,7 +221,7 @@ fn plan_stop_chunk(
 }
 
 fn send_input_callback_chunk(
-    sample_tx: &mpsc::Sender<AudioChunk>,
+    worker_tx: &mpsc::Sender<WorkerMsg>,
     samples: &mut Vec<f32>,
     recycle_rx: &mpsc::Receiver<Vec<f32>>,
     stop_requested: bool,
@@ -199,7 +235,7 @@ fn send_input_callback_chunk(
     if !samples.is_empty() {
         let next_capacity = samples.capacity().max(samples.len());
         let chunk = std::mem::take(samples);
-        match sample_tx.send(AudioChunk::Samples(chunk)) {
+        match worker_tx.send(WorkerMsg::Audio(AudioChunk::Samples(chunk))) {
             Ok(()) => {
                 *samples = match recycle_rx.try_recv() {
                     Ok(mut recycled) => {
@@ -215,18 +251,18 @@ fn send_input_callback_chunk(
             Err(err) => {
                 log::error!("Failed to send samples");
                 match err.0 {
-                    AudioChunk::Samples(mut returned) => {
+                    WorkerMsg::Audio(AudioChunk::Samples(mut returned)) => {
                         returned.clear();
                         *samples = returned;
                     }
-                    AudioChunk::EndOfStream => {}
+                    WorkerMsg::Audio(AudioChunk::EndOfStream) | WorkerMsg::Command(_) => {}
                 }
             }
         }
     }
 
     if send_eos {
-        let _ = sample_tx.send(AudioChunk::EndOfStream);
+        let _ = worker_tx.send(WorkerMsg::Audio(AudioChunk::EndOfStream));
         *eos_sent = true;
     } else if !stop_requested {
         *eos_sent = false;
@@ -241,7 +277,7 @@ pub struct RealtimeAudioProgress {
 
 pub struct AudioRecorder {
     device: Option<Device>,
-    cmd_tx: Option<mpsc::Sender<Cmd>>,
+    worker_tx: Option<mpsc::Sender<WorkerMsg>>,
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
@@ -285,7 +321,7 @@ impl AudioRecorder {
     pub fn new() -> Self {
         AudioRecorder {
             device: None,
-            cmd_tx: None,
+            worker_tx: None,
             worker_handle: None,
             vad: None,
             level_cb: None,
@@ -365,9 +401,9 @@ impl AudioRecorder {
             return Ok(()); // already open
         }
 
-        let (sample_tx, sample_rx) = mpsc::channel::<AudioChunk>();
+        let (worker_tx, worker_rx) = mpsc::channel::<WorkerMsg>();
+        let public_worker_tx = worker_tx.clone();
         let (recycle_tx, recycle_rx) = mpsc::channel::<Vec<f32>>();
-        let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
         let (init_tx, init_rx) = mpsc::sync_channel::<Result<(), String>>(1);
 
         let host = crate::audio_toolkit::get_cpal_host();
@@ -420,7 +456,7 @@ impl AudioRecorder {
                     cpal::SampleFormat::U8 => AudioRecorder::build_stream::<u8>(
                         &thread_device,
                         &config,
-                        sample_tx,
+                        worker_tx,
                         recycle_rx,
                         channels,
                         sample_rate,
@@ -432,7 +468,7 @@ impl AudioRecorder {
                     cpal::SampleFormat::I8 => AudioRecorder::build_stream::<i8>(
                         &thread_device,
                         &config,
-                        sample_tx,
+                        worker_tx,
                         recycle_rx,
                         channels,
                         sample_rate,
@@ -444,7 +480,7 @@ impl AudioRecorder {
                     cpal::SampleFormat::I16 => AudioRecorder::build_stream::<i16>(
                         &thread_device,
                         &config,
-                        sample_tx,
+                        worker_tx,
                         recycle_rx,
                         channels,
                         sample_rate,
@@ -456,7 +492,7 @@ impl AudioRecorder {
                     cpal::SampleFormat::I32 => AudioRecorder::build_stream::<i32>(
                         &thread_device,
                         &config,
-                        sample_tx,
+                        worker_tx,
                         recycle_rx,
                         channels,
                         sample_rate,
@@ -468,7 +504,7 @@ impl AudioRecorder {
                     cpal::SampleFormat::F32 => AudioRecorder::build_stream::<f32>(
                         &thread_device,
                         &config,
-                        sample_tx,
+                        worker_tx,
                         recycle_rx,
                         channels,
                         sample_rate,
@@ -496,9 +532,8 @@ impl AudioRecorder {
                     run_consumer(
                         sample_rate,
                         vad,
-                        sample_rx,
+                        worker_rx,
                         recycle_tx,
-                        cmd_rx,
                         level_cb,
                         capture_live_cb,
                         chunk_cb,
@@ -522,7 +557,7 @@ impl AudioRecorder {
         match init_rx.recv() {
             Ok(Ok(())) => {
                 self.device = Some(device);
-                self.cmd_tx = Some(cmd_tx);
+                self.worker_tx = Some(public_worker_tx);
                 self.worker_handle = Some(worker);
                 Ok(())
             }
@@ -540,8 +575,8 @@ impl AudioRecorder {
     }
 
     pub fn start(&self) -> Result<(), AudioRecorderError> {
-        if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start)
+        if let Some(tx) = &self.worker_tx {
+            tx.send(WorkerMsg::Command(Cmd::Start))
                 .map_err(|err| AudioRecorderError::CommandChannel(err.to_string()))?;
         }
         Ok(())
@@ -552,8 +587,8 @@ impl AudioRecorder {
     /// downstream via the mask. Returns an empty capture if the worker was never opened.
     pub fn stop_captured(&self) -> Result<CapturedAudio, AudioRecorderError> {
         let (resp_tx, resp_rx) = mpsc::channel();
-        if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Stop(resp_tx))
+        if let Some(tx) = &self.worker_tx {
+            tx.send(WorkerMsg::Command(Cmd::Stop(resp_tx)))
                 .map_err(|err| AudioRecorderError::CommandChannel(err.to_string()))?;
         } else {
             return Ok(CapturedAudio::default());
@@ -571,8 +606,8 @@ impl AudioRecorder {
     }
 
     pub fn close(&mut self) -> Result<(), AudioRecorderError> {
-        if let Some(tx) = self.cmd_tx.take() {
-            let _ = tx.send(Cmd::Shutdown);
+        if let Some(tx) = self.worker_tx.take() {
+            let _ = tx.send(WorkerMsg::Command(Cmd::Shutdown));
         }
         if let Some(h) = self.worker_handle.take() {
             let _ = h.join();
@@ -613,7 +648,7 @@ impl AudioRecorder {
     fn build_stream<T>(
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
-        sample_tx: mpsc::Sender<AudioChunk>,
+        worker_tx: mpsc::Sender<WorkerMsg>,
         recycle_rx: mpsc::Receiver<Vec<f32>>,
         channels: usize,
         sample_rate: u32,
@@ -718,7 +753,7 @@ impl AudioRecorder {
             }
 
             send_input_callback_chunk(
-                &sample_tx,
+                &worker_tx,
                 &mut output_buffer,
                 &recycle_rx,
                 stop_requested,
@@ -933,8 +968,9 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use super::{
-        AudioChunk, AudioDeviceError, drain_to_end_of_stream, is_microphone_access_denied,
-        is_no_input_device_error, plan_stop_chunk, send_input_callback_chunk,
+        AudioChunk, AudioDeviceError, Cmd, WorkerMsg, drain_to_end_of_stream,
+        is_microphone_access_denied, is_no_input_device_error, plan_stop_chunk,
+        send_input_callback_chunk,
     };
 
     #[test]
@@ -1009,10 +1045,17 @@ mod tests {
         send_input_callback_chunk(&tx, &mut samples, &recycle_rx, true, true, &mut eos_sent);
 
         match rx.recv().unwrap() {
-            AudioChunk::Samples(samples) => assert_eq!(samples, vec![0.25, -0.5, 0.75]),
-            AudioChunk::EndOfStream => panic!("expected samples before end-of-stream"),
+            WorkerMsg::Audio(AudioChunk::Samples(samples)) => {
+                assert_eq!(samples, vec![0.25, -0.5, 0.75]);
+            }
+            WorkerMsg::Audio(AudioChunk::EndOfStream) | WorkerMsg::Command(_) => {
+                panic!("expected samples before end-of-stream");
+            }
         }
-        assert!(matches!(rx.recv().unwrap(), AudioChunk::EndOfStream));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            WorkerMsg::Audio(AudioChunk::EndOfStream)
+        ));
         assert!(eos_sent);
     }
 
@@ -1132,13 +1175,25 @@ mod tests {
         // stop at the sentinel, and never pull the post-sentinel sample (which would be audio
         // captured after the flush boundary).
         let (tx, rx) = mpsc::channel();
-        tx.send(AudioChunk::Samples(vec![1.0, 2.0])).unwrap();
-        tx.send(AudioChunk::Samples(vec![3.0])).unwrap();
-        tx.send(AudioChunk::EndOfStream).unwrap();
-        tx.send(AudioChunk::Samples(vec![9.0])).unwrap();
+        tx.send(WorkerMsg::Audio(AudioChunk::Samples(vec![1.0, 2.0])))
+            .unwrap();
+        tx.send(WorkerMsg::Command(Cmd::Start)).unwrap();
+        tx.send(WorkerMsg::Audio(AudioChunk::Samples(vec![3.0])))
+            .unwrap();
+        tx.send(WorkerMsg::Audio(AudioChunk::EndOfStream)).unwrap();
+        tx.send(WorkerMsg::Audio(AudioChunk::Samples(vec![9.0])))
+            .unwrap();
 
         let mut got: Vec<f32> = Vec::new();
-        let saw_eos = drain_to_end_of_stream(&rx, Duration::from_millis(250), |c| got.extend(c));
+        let mut pending_commands = VecDeque::new();
+        let mut coalesced_stop_replies = Vec::new();
+        let saw_eos = drain_to_end_of_stream(
+            &rx,
+            Duration::from_millis(250),
+            &mut pending_commands,
+            &mut coalesced_stop_replies,
+            |c| got.extend(c),
+        );
 
         assert!(saw_eos, "sentinel observed -> clean flush");
         assert_eq!(
@@ -1146,6 +1201,8 @@ mod tests {
             vec![1.0, 2.0, 3.0],
             "all pre-sentinel samples recovered, nothing after"
         );
+        assert!(matches!(pending_commands.pop_front(), Some(Cmd::Start)));
+        assert!(coalesced_stop_replies.is_empty());
     }
 
     #[test]
@@ -1154,14 +1211,65 @@ mod tests {
         // budget rather than block forever, keeping whatever arrived. tx stays alive so the
         // channel is Timeout (not Disconnected).
         let (tx, rx) = mpsc::channel();
-        tx.send(AudioChunk::Samples(vec![1.0])).unwrap();
+        tx.send(WorkerMsg::Audio(AudioChunk::Samples(vec![1.0])))
+            .unwrap();
 
         let mut got: Vec<f32> = Vec::new();
-        let saw_eos = drain_to_end_of_stream(&rx, Duration::from_millis(30), |c| got.extend(c));
+        let mut pending_commands = VecDeque::new();
+        let mut coalesced_stop_replies = Vec::new();
+        let saw_eos = drain_to_end_of_stream(
+            &rx,
+            Duration::from_millis(30),
+            &mut pending_commands,
+            &mut coalesced_stop_replies,
+            |c| got.extend(c),
+        );
 
         assert!(!saw_eos, "no sentinel -> timeout path");
         assert_eq!(got, vec![1.0], "the in-flight chunk is still recovered");
         drop(tx);
+    }
+
+    #[test]
+    fn drain_coalesces_only_consecutive_stop_requests() {
+        let (worker_tx, worker_rx) = mpsc::channel();
+        let (primary_tx, primary_rx) = mpsc::channel();
+        let (duplicate_tx, duplicate_rx) = mpsc::channel();
+        let (later_tx, later_rx) = mpsc::channel();
+
+        worker_tx
+            .send(WorkerMsg::Command(Cmd::Stop(duplicate_tx)))
+            .unwrap();
+        worker_tx.send(WorkerMsg::Command(Cmd::Start)).unwrap();
+        worker_tx
+            .send(WorkerMsg::Command(Cmd::Stop(later_tx)))
+            .unwrap();
+        worker_tx
+            .send(WorkerMsg::Audio(AudioChunk::EndOfStream))
+            .unwrap();
+
+        let mut pending_commands = VecDeque::new();
+        let mut coalesced_stop_replies = Vec::new();
+        assert!(drain_to_end_of_stream(
+            &worker_rx,
+            Duration::from_secs(1),
+            &mut pending_commands,
+            &mut coalesced_stop_replies,
+            |_| {},
+        ));
+
+        let captured = CapturedAudio {
+            samples: vec![0.25, -0.5],
+            speech_mask: vec![true],
+        };
+        reply_to_stop_requests(primary_tx, coalesced_stop_replies, captured.clone());
+
+        assert_eq!(primary_rx.try_recv().unwrap().samples, captured.samples);
+        assert_eq!(duplicate_rx.try_recv().unwrap().samples, captured.samples);
+        assert!(later_rx.try_recv().is_err());
+        assert!(matches!(pending_commands.pop_front(), Some(Cmd::Start)));
+        assert!(matches!(pending_commands.pop_front(), Some(Cmd::Stop(_))));
+        assert!(pending_commands.is_empty());
     }
 
     #[test]
@@ -1175,7 +1283,10 @@ mod tests {
 
         send_input_callback_chunk(&tx, &mut samples, &recycle_rx, false, false, &mut eos_sent);
 
-        assert!(matches!(rx.recv().unwrap(), AudioChunk::Samples(_)));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            WorkerMsg::Audio(AudioChunk::Samples(_))
+        ));
         assert!(samples.is_empty());
         assert!(samples.capacity() >= 64);
         assert!(!eos_sent);
@@ -1192,7 +1303,8 @@ mod tests {
 
     use super::{
         CapturedAudio, DownmixMode, PREROLL_RING_FRAMES, decide_downmix_mode, handle_frame,
-        push_preroll_frame, push_speech_mask, seed_preroll, seeded_onset_should_signal,
+        push_preroll_frame, push_speech_mask, reply_to_stop_requests, seed_preroll,
+        seeded_onset_should_signal,
     };
     use crate::audio_toolkit::vad::{self, SpeechLabel, VadFrame, VoiceActivityDetector};
 
@@ -1478,9 +1590,8 @@ fn publish_realtime_audio_progress(
 fn run_consumer(
     in_sample_rate: u32,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
-    sample_rx: mpsc::Receiver<AudioChunk>,
+    worker_rx: mpsc::Receiver<WorkerMsg>,
     recycle_tx: mpsc::Sender<Vec<f32>>,
-    cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
     // Fired once per recording on the first captured frame after Cmd::Start (mic confirmed live).
     capture_live_cb: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
@@ -1539,108 +1650,110 @@ fn run_consumer(
         4000.0, // vocal_max_hz
     );
 
+    let mut pending_commands = VecDeque::new();
     loop {
-        let maybe_raw = match sample_rx.recv_timeout(Duration::from_millis(5)) {
-            Ok(AudioChunk::Samples(s)) => Some(s),
-            Ok(AudioChunk::EndOfStream) | Err(mpsc::RecvTimeoutError::Timeout) => None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        let message = match pending_commands.pop_front() {
+            Some(command) => WorkerMsg::Command(command),
+            None => match worker_rx.recv() {
+                Ok(message) => message,
+                Err(_) => break,
+            },
         };
 
-        if let Some(raw) = maybe_raw {
-            // ---------- mic-is-live signal ----------------------------------- //
-            // A raw chunk arriving while `recording` is set means the OS finished opening
-            // the device and it is actually delivering audio (vs. `stream.play()` merely
-            // having returned). Fire once per recording so the UI can switch from
-            // "opening mic…" to a real recording state. See managers::audio.
-            if recording && awaiting_first_capture {
-                awaiting_first_capture = false;
-                if let Some(cb) = &capture_live_cb {
-                    cb();
-                }
-            }
-
-            // ---------- spectrum processing ---------------------------------- //
-            if let Some(level) = visualizer.feed(&raw)
-                && let Some(cb) = &level_cb
-            {
-                cb(level);
-            }
-
-            // ---------- existing pipeline ------------------------------------ //
-            frame_resampler.push(&raw, &mut |frame: &[f32]| {
-                // Wakeword tap: fire on EVERY 16k frame regardless of `recording` so the detector
-                // listens while idle. No-op (free) unless a wakeword is armed.
-                if let Some(cb) = &chunk_cb {
-                    cb(frame);
-                }
-
-                if !recording {
-                    // Idle: keep the frame in the warm pre-roll ring (bounded) so a
-                    // subsequent Cmd::Start can recover speech begun before the hotkey.
-                    // The VAD is NOT consulted while idle (its state is reset at Start).
-                    push_preroll_frame(&mut preroll_ring, frame);
-                    return;
-                }
-
-                // Recording: keep EVERY frame (ungated) and label it in the mask; VAD noise
-                // is no longer dropped from the buffer.
-                let is_speech =
-                    handle_frame(frame, true, &vad, &mut processed_samples, &mut speech_mask);
-                // Surface SMOOTHED-VAD speech boundaries (real Silero state, ~one onset
-                // window after the user starts/stops talking) so the renderer's
-                // `isSpeaking` reflects ACTUAL speech — driving the overlay-pill reveal
-                // and the breathing glow. Fire only on transitions, only while recording.
-                //
-                // ENERGY BACKSTOP for the SIGNAL (not the recording): Silero at threshold 0.3
-                // reports "speech" even on near-silent frames on some mics, which flashed the
-                // pill on silence. Require real frame energy to BEGIN signaling speech; once
-                // signaling, follow the VAD's hangover so a brief quiet dip mid-word doesn't
-                // toggle it off and re-fire on the next loud frame.
-                let new_speaking = if vad_speaking {
-                    is_speech
-                } else {
-                    is_speech && frame_ac_energy(frame) >= SPEECH_SIGNAL_AC_FLOOR
-                };
-                if new_speaking != vad_speaking {
-                    vad_speaking = new_speaking;
-                    if let Some(cb) = &speech_cb {
-                        cb(vad_speaking);
+        match message {
+            WorkerMsg::Audio(AudioChunk::Samples(raw)) => {
+                // ---------- mic-is-live signal ----------------------------------- //
+                // A raw chunk arriving while `recording` is set means the OS finished opening
+                // the device and it is actually delivering audio (vs. `stream.play()` merely
+                // having returned). Fire once per recording so the UI can switch from
+                // "opening mic…" to a real recording state. See managers::audio.
+                if recording && awaiting_first_capture {
+                    awaiting_first_capture = false;
+                    if let Some(cb) = &capture_live_cb {
+                        cb();
                     }
                 }
-            });
 
-            let _ = recycle_tx.send(raw);
+                // ---------- spectrum processing ---------------------------------- //
+                if let Some(level) = visualizer.feed(&raw)
+                    && let Some(cb) = &level_cb
+                {
+                    cb(level);
+                }
 
-            // ---------- realtime live-audio mirror (tail-sync) --------------- //
-            // Mirror only the NEW tail of `processed_samples` into the shared buffer so the realtime
-            // worker can read a growing window of the active recording. O(new samples), NOT a full
-            // clone per chunk. Gated on `recording` so the idle wakeword path never grows it, AND on
-            // `realtime_enabled` so we skip the second copy entirely when the live preview is off
-            // (the common dictation case). The batch path still mem::take's `processed_samples`;
-            // this only reads it.
-            if recording
-                && realtime_enabled.load(Ordering::Relaxed)
-                && let Some(mirror) = &live_audio
-            {
-                let new_len = {
-                    let mut m = mirror.lock_recover();
-                    let mirrored = m.len();
-                    if processed_samples.len() > mirrored {
-                        m.extend_from_slice(&processed_samples[mirrored..]);
-                        Some(m.len())
+                // ---------- existing pipeline ------------------------------------ //
+                frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                    // Wakeword tap: fire on EVERY 16k frame regardless of `recording` so the detector
+                    // listens while idle. No-op (free) unless a wakeword is armed.
+                    if let Some(cb) = &chunk_cb {
+                        cb(frame);
+                    }
+
+                    if !recording {
+                        // Idle: keep the frame in the warm pre-roll ring (bounded) so a
+                        // subsequent Cmd::Start can recover speech begun before the hotkey.
+                        // The VAD is NOT consulted while idle (its state is reset at Start).
+                        push_preroll_frame(&mut preroll_ring, frame);
+                        return;
+                    }
+
+                    // Recording: keep EVERY frame (ungated) and label it in the mask; VAD noise
+                    // is no longer dropped from the buffer.
+                    let is_speech =
+                        handle_frame(frame, true, &vad, &mut processed_samples, &mut speech_mask);
+                    // Surface SMOOTHED-VAD speech boundaries (real Silero state, ~one onset
+                    // window after the user starts/stops talking) so the renderer's
+                    // `isSpeaking` reflects ACTUAL speech — driving the overlay-pill reveal
+                    // and the breathing glow. Fire only on transitions, only while recording.
+                    //
+                    // ENERGY BACKSTOP for the SIGNAL (not the recording): Silero at threshold 0.3
+                    // reports "speech" even on near-silent frames on some mics, which flashed the
+                    // pill on silence. Require real frame energy to BEGIN signaling speech; once
+                    // signaling, follow the VAD's hangover so a brief quiet dip mid-word doesn't
+                    // toggle it off and re-fire on the next loud frame.
+                    let new_speaking = if vad_speaking {
+                        is_speech
                     } else {
-                        None
+                        is_speech && frame_ac_energy(frame) >= SPEECH_SIGNAL_AC_FLOOR
+                    };
+                    if new_speaking != vad_speaking {
+                        vad_speaking = new_speaking;
+                        if let Some(cb) = &speech_cb {
+                            cb(vad_speaking);
+                        }
                     }
-                };
-                if let Some(new_len) = new_len {
-                    publish_realtime_audio_progress(&realtime_audio_signal, new_len);
+                });
+
+                let _ = recycle_tx.send(raw);
+
+                // ---------- realtime live-audio mirror (tail-sync) --------------- //
+                // Mirror only the NEW tail of `processed_samples` into the shared buffer so the realtime
+                // worker can read a growing window of the active recording. O(new samples), NOT a full
+                // clone per chunk. Gated on `recording` so the idle wakeword path never grows it, AND on
+                // `realtime_enabled` so we skip the second copy entirely when the live preview is off
+                // (the common dictation case). The batch path still mem::take's `processed_samples`;
+                // this only reads it.
+                if recording
+                    && realtime_enabled.load(Ordering::Relaxed)
+                    && let Some(mirror) = &live_audio
+                {
+                    let new_len = {
+                        let mut m = mirror.lock_recover();
+                        let mirrored = m.len();
+                        if processed_samples.len() > mirrored {
+                            m.extend_from_slice(&processed_samples[mirrored..]);
+                            Some(m.len())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(new_len) = new_len {
+                        publish_realtime_audio_progress(&realtime_audio_signal, new_len);
+                    }
                 }
             }
-        }
-
-        // non-blocking check for a command
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
+            WorkerMsg::Audio(AudioChunk::EndOfStream) => {}
+            WorkerMsg::Command(cmd) => match cmd {
                 Cmd::Start => {
                     stop_deadline.store(0, Ordering::Release);
                     stop_flag.store(false, Ordering::Release);
@@ -1708,18 +1821,25 @@ fn run_consumer(
                         Ordering::Release,
                     );
                     stop_flag.store(true, Ordering::Release);
-                    drain_to_end_of_stream(&sample_rx, STOP_DRAIN_BUDGET, |chunk| {
-                        frame_resampler.push(&chunk, &mut |frame: &[f32]| {
-                            let _ = handle_frame(
-                                frame,
-                                true,
-                                &vad,
-                                &mut processed_samples,
-                                &mut speech_mask,
-                            );
-                        });
-                        let _ = recycle_tx.send(chunk);
-                    });
+                    let mut coalesced_stop_replies = Vec::new();
+                    drain_to_end_of_stream(
+                        &worker_rx,
+                        STOP_DRAIN_BUDGET,
+                        &mut pending_commands,
+                        &mut coalesced_stop_replies,
+                        |chunk| {
+                            frame_resampler.push(&chunk, &mut |frame: &[f32]| {
+                                let _ = handle_frame(
+                                    frame,
+                                    true,
+                                    &vad,
+                                    &mut processed_samples,
+                                    &mut speech_mask,
+                                );
+                            });
+                            let _ = recycle_tx.send(chunk);
+                        },
+                    );
                     recording = false;
                     // Surface a final speech-off if we ended mid-utterance so any consumer's
                     // `isSpeaking` clears even when the user released PTT while still talking.
@@ -1746,10 +1866,14 @@ fn run_consumer(
                     processed_samples.truncate(keep);
                     speech_mask.truncate(processed_samples.len() / vad::VAD_FRAME_SAMPLES);
 
-                    let _ = reply_tx.send(CapturedAudio {
-                        samples: std::mem::take(&mut processed_samples),
-                        speech_mask: std::mem::take(&mut speech_mask),
-                    });
+                    reply_to_stop_requests(
+                        reply_tx,
+                        coalesced_stop_replies,
+                        CapturedAudio {
+                            samples: std::mem::take(&mut processed_samples),
+                            speech_mask: std::mem::take(&mut speech_mask),
+                        },
+                    );
 
                     // Drop the realtime mirror now that the take is finalized — it must not
                     // retain a finished recording's audio (a realtime-worker snapshot landing
@@ -1782,7 +1906,7 @@ fn run_consumer(
                     publish_realtime_audio_progress(&realtime_audio_signal, 0);
                     return;
                 }
-            }
+            },
         }
     }
 }

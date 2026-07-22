@@ -677,11 +677,15 @@ function IndependentPresetList({
 						key === "concise" ? disabledLevelOpts : disabledStandardLevelOpts;
 					trailing = (
 						<Switcher
-							className={key === "concise" ? "w-64" : "w-52"}
+							className={key === "concise" ? "w-[21rem]" : "w-52"}
 							fullWidth
 							onChange={(v) => handleLevel(v as PresetLevel)}
 							options={checked ? rowLevelOpts : rowDisabledLevelOpts}
-							size={key === "concise" ? "xs" : "sm"}
+							// Concise carries a 4th level ("Caveman") so its switcher is
+							// wider (w-[21rem] above), but every leveled row keeps the SAME
+							// segment size — "xs" here made Concise's Low/Medium/High labels
+							// visibly smaller than Summarize's. `size="sm"` unifies them.
+							size="sm"
 							value={displayedLevel}
 						/>
 					);

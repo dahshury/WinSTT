@@ -26,7 +26,7 @@
 // Do not wire a second engine.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
@@ -43,11 +43,13 @@ use crate::winstt::stt::backend::fixed_realtime_language_from_model;
 /// realtime snapshot is in this domain, so frames == samples and fps == 16000.
 const REALTIME_FPS: f32 = 16_000.0;
 const NATIVE_STREAM_BACKLOG_WARN_AFTER: Duration = Duration::from_millis(750);
-const NATIVE_STREAM_WAKE_TIMEOUT: Duration = Duration::from_millis(250);
-const ENGINE_READY_PROBE_INTERVAL: Duration = Duration::from_millis(10);
 
 fn realtime_redecode_pause(configured: f64) -> Duration {
     Duration::from_secs_f64(configured.max(0.0))
+}
+
+fn remaining_delay(elapsed: Duration, delay: Duration) -> Option<Duration> {
+    (elapsed < delay).then(|| delay - elapsed)
 }
 
 /// True when one of OUR webview windows currently holds OS focus. The in-app live-
@@ -215,22 +217,29 @@ impl RealtimeLoopState {
     }
 }
 
-/// How `run_loop` should advance after a `process_tick` (the original `continue` /
-/// `sleep; continue` control flow, made explicit).
-enum TickAction {
-    /// Proceed to the next loop iteration immediately.
+/// Callback/deadline that must occur before the realtime worker can make useful progress.
+enum WorkerWait {
     Continue,
-    /// Sleep for the given duration, then proceed to the next iteration.
-    Sleep(Duration),
+    Conditions {
+        observed: u64,
+        timeout: Option<Duration>,
+    },
+    RealtimeAudio {
+        offset: usize,
+        observed: u64,
+    },
 }
 
-/// The realtime live-preview daemon. Holds Arc handles to the managers + app; `start()`
-/// spawns ONE background thread that runs the decode loop for the app's lifetime.
+/// The realtime live-preview daemon. `start()` spawns one background thread and
+/// [`shutdown`](Self::shutdown) wakes and joins it during graceful exit.
 pub struct RealtimeManager {
     app: AppHandle,
     transcription: Arc<TranscriptionManager>,
     audio: Arc<AudioRecordingManager>,
     started: AtomicBool,
+    shutdown: AtomicBool,
+    lifecycle: Mutex<()>,
+    worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     word_by_word_paste: Mutex<WordByWordPasteState>,
 }
 
@@ -245,8 +254,20 @@ impl RealtimeManager {
             transcription,
             audio,
             started: AtomicBool::new(false),
+            shutdown: AtomicBool::new(false),
+            lifecycle: Mutex::new(()),
+            worker: Mutex::new(None),
             word_by_word_paste: Mutex::new(WordByWordPasteState::default()),
         }
+    }
+
+    /// Wake the worker after a callback changes a predicate outside the STT
+    /// engine itself (window focus, persisted settings, or recording state).
+    /// The transcription lifecycle signal is generation-counted, so this is
+    /// safe both before and after the worker starts waiting.
+    pub fn notify_external_conditions_changed(&self) {
+        self.transcription.notify_realtime_conditions_changed();
+        self.audio.notify_realtime_audio_waiters();
     }
 
     fn maybe_word_by_word_paste(
@@ -321,36 +342,114 @@ impl RealtimeManager {
     /// Launch the daemon thread ONCE (idempotent — repeated calls are no-ops). Called from
     /// lib.rs `initialize_core_logic` after the managers exist, like the idle-unload watcher.
     pub fn start(self: &Arc<Self>) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.started.swap(true, Ordering::SeqCst) {
             return; // already running
         }
-        let me = Arc::clone(self);
-        std::thread::spawn(move || me.run_loop());
+        self.shutdown.store(false, Ordering::Release);
+        let manager = Arc::downgrade(self);
+        match std::thread::Builder::new()
+            .name("realtime-worker".into())
+            .spawn(move || Self::run_loop(manager))
+        {
+            Ok(handle) => {
+                *self
+                    .worker
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
+            }
+            Err(err) => {
+                self.started.store(false, Ordering::Release);
+                log::error!("[realtime] failed to spawn worker: {err}");
+            }
+        }
+    }
+
+    /// Stop the worker, wake whichever callback wait currently owns it, and
+    /// join the thread. Idempotent so graceful cleanup may call it repeatedly.
+    pub fn shutdown(&self) {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.shutdown.store(true, Ordering::Release);
+        self.notify_external_conditions_changed();
+
+        let handle = self
+            .worker
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(handle) = handle {
+            if handle.thread().id() == std::thread::current().id() {
+                // The flag is already latched; dropping the handle detaches this
+                // final pass and the loop returns without attempting self-join.
+                return;
+            }
+            let _ = handle.join();
+        }
+        self.started.store(false, Ordering::Release);
     }
 
     /// The realtime worker loop (port of `_realtime_worker` → `_realtime_step`). One owned
     /// `RealtimeAccumulator` per worker lifetime; reset on each recording's rising edge.
     ///
     /// Orchestrates: `RealtimeLoopState` (the loop-carried `_RealtimeLoopState` mirror) + a
-    /// per-tick `process_tick` that returns a `TickAction` (continue immediately or sleep then
-    /// continue). All decode/emit logic lives in `process_tick` and its named sub-steps.
-    fn run_loop(&self) {
+    /// per-pass `process_tick` that returns the callback/deadline needed before another pass can
+    /// make progress. All decode/emit logic lives in `process_tick` and its named sub-steps.
+    fn run_loop(manager: Weak<Self>) {
         log::debug!("[realtime] worker started");
         let mut state = RealtimeLoopState::new();
         loop {
-            match self.process_tick(&mut state) {
-                TickAction::Continue => {}
-                TickAction::Sleep(dur) => std::thread::sleep(dur),
+            let Some(manager) = manager.upgrade() else {
+                break;
+            };
+            if manager.shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            // Observe before evaluating every predicate. Focus, settings, recording, and engine
+            // lifecycle callbacks all advance this generation, so an edge that lands during the
+            // pass remains durable when the worker enters its wait.
+            let observed_conditions = manager.transcription.observe_engine_lifecycle();
+            // The audio epoch is observed before the no-new-audio predicates for the same reason:
+            // a recorder reset/append between the snapshot and wait must not be lost.
+            let observed_audio = manager.audio.observe_realtime_audio();
+            let wait = manager.process_tick(&mut state, observed_conditions, observed_audio);
+            let transcription = Arc::clone(&manager.transcription);
+            let audio = Arc::clone(&manager.audio);
+            let shutdown = manager.shutdown.load(Ordering::Acquire);
+            drop(manager);
+            if shutdown {
+                break;
+            }
+            match wait {
+                WorkerWait::Continue => {}
+                WorkerWait::Conditions { observed, timeout } => {
+                    transcription.wait_for_realtime_conditions_change(observed, timeout);
+                }
+                WorkerWait::RealtimeAudio { offset, observed } => {
+                    audio.wait_for_realtime_audio_after(offset, observed);
+                }
             }
         }
+        log::debug!("[realtime] worker stopped");
     }
 
     /// One iteration of the realtime worker (port of `_realtime_step`). Runs the idle/gate/edge
     /// guards, then dispatches to the native-streaming fast path or the window-redecode path.
-    /// Returns a `TickAction` describing how the loop should advance (the original `continue` /
-    /// `sleep; continue` control flow, made explicit so the body reads as a sequence of guards).
-    fn process_tick(&self, state: &mut RealtimeLoopState) -> TickAction {
-        // ── not recording: reset accumulator (keep last text), idle-sleep ──
+    /// Returns the callback/deadline that should wake the next pass. There is no unconditional
+    /// outer sleep: every parked state is tied to a reliable recorder/audio/engine edge, with a
+    /// bounded timeout only where a semantic deadline is due.
+    fn process_tick(
+        &self,
+        state: &mut RealtimeLoopState,
+        observed_conditions: u64,
+        observed_audio: u64,
+    ) -> WorkerWait {
+        // ── not recording: reset accumulator (keep last text), await the next recorder edge ──
         // Mirrors _realtime_idle_reset: reset(clear_last=False), clear per-loop markers.
         if !self.audio.is_recording() {
             state.acc.reset(false);
@@ -359,7 +458,10 @@ impl RealtimeManager {
             // Stop the recorder's live-audio mirror from growing while idle (no second copy
             // when nothing is being previewed).
             self.audio.set_realtime_enabled(false);
-            return TickAction::Sleep(Duration::from_millis(10));
+            return WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: None,
+            };
         }
 
         // Use the secret-agnostic `read_settings_raw` here (NOT `read_settings`): this is
@@ -375,7 +477,10 @@ impl RealtimeManager {
         let generation = self.audio.recording_generation();
         self.handle_recording_edge(state, generation);
         let Some(seen_at) = state.recording_seen_at else {
-            return TickAction::Sleep(Duration::from_millis(10));
+            return WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: None,
+            };
         };
 
         // ── NATIVE-STREAMING resolution (T-One / sherpa Zipformer+NeMo) ──
@@ -403,7 +508,13 @@ impl RealtimeManager {
         if state.native_decided != Some(true) && !preview_shown {
             // Realtime is off this tick → keep the recorder mirror disabled (free) and idle.
             self.audio.set_realtime_enabled(false);
-            return TickAction::Sleep(Duration::from_millis(10));
+            // Engine lifecycle, window-focus, settings, and recording callbacks all publish to
+            // the same generation-counted condition signal. Park until one of those predicates
+            // actually changes instead of sampling the hidden state on a timer.
+            return WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: None,
+            };
         }
 
         // The preview is shown OR a native stream is being fed → ensure the recorder is
@@ -415,21 +526,40 @@ impl RealtimeManager {
         // ── readiness gate (port of _realtime_ready) ──
         let init_after =
             Duration::from_secs_f64(settings.quality.init_realtime_after_seconds.max(0.0));
-        if seen_at.elapsed() < init_after {
-            return TickAction::Sleep(Duration::from_millis(1));
+        if let Some(remaining) = remaining_delay(seen_at.elapsed(), init_after) {
+            return WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: Some(remaining),
+            };
         }
 
         // Engine still loading/contended → idle briefly instead of starting speculative
         // window re-decodes.
         if state.native_decided.is_none() {
-            return TickAction::Sleep(ENGINE_READY_PROBE_INTERVAL);
+            return WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: None,
+            };
         }
 
         if state.native_decided == Some(true) {
-            return self.process_native_stream_tick(state, &settings, generation, preview_shown);
+            return self.process_native_stream_tick(
+                state,
+                &settings,
+                generation,
+                preview_shown,
+                observed_conditions,
+                observed_audio,
+            );
         }
 
-        self.process_window_redecode_tick(state, &settings, generation)
+        self.process_window_redecode_tick(
+            state,
+            &settings,
+            generation,
+            observed_conditions,
+            observed_audio,
+        )
     }
 
     /// New-recording edge (port of `_realtime_mark_recording_start`). Stamps the start time +
@@ -460,8 +590,8 @@ impl RealtimeManager {
     }
 
     /// Native-streaming fast path (T-One / sherpa Zipformer+NeMo). Feeds only the new samples past
-    /// `fed_len` to the engine's cache and emits the incremental update. Returns the `TickAction`
-    /// for the loop (continue, or a short back-off sleep while a batch decode holds the engine).
+    /// `fed_len` to the engine's cache and emits the incremental update. Returns the callback or
+    /// deadline that makes another pass useful.
     ///
     /// Runs even when the live preview is hidden (`emit_preview == false`): the feed itself is the
     /// main transcription for streaming engines (final paste drains the stream tail), so only the
@@ -472,19 +602,21 @@ impl RealtimeManager {
         settings: &crate::winstt::settings_schema::WinsttSettings,
         generation: u64,
         emit_preview: bool,
-    ) -> TickAction {
-        if !self
-            .audio
-            .wait_for_realtime_audio_after(state.fed_len, NATIVE_STREAM_WAKE_TIMEOUT)
-        {
-            return TickAction::Continue;
-        }
+        observed_conditions: u64,
+        observed_audio: u64,
+    ) -> WorkerWait {
         let (total_len, new_tail) = self.audio.snapshot_audio_from(state.fed_len);
         if total_len as i64 == state.last_processed_len {
-            return TickAction::Continue;
+            return WorkerWait::RealtimeAudio {
+                offset: state.fed_len,
+                observed: observed_audio,
+            };
         }
         if new_tail.is_empty() {
-            return TickAction::Continue;
+            return WorkerWait::RealtimeAudio {
+                offset: state.fed_len,
+                observed: observed_audio,
+            };
         }
         let pending_audio = Duration::from_secs_f32(new_tail.len() as f32 / REALTIME_FPS);
         let decode_started = Instant::now();
@@ -510,7 +642,7 @@ impl RealtimeManager {
                 // Late bail: PTT released / generation changed mid-decode (don't flash a stale
                 // tick over the final paste or into the next session).
                 if !self.audio.is_recording() || self.audio.recording_generation() != generation {
-                    return TickAction::Continue;
+                    return WorkerWait::Continue;
                 }
                 self.maybe_word_by_word_paste(generation, settings, &text, is_final);
                 if emit_preview && (is_final || text != state.last_native_emit_text) {
@@ -518,15 +650,18 @@ impl RealtimeManager {
                     SttEvents::realtime_stabilized_with_final(&self.app, &text, is_final);
                     SttEvents::realtime_text_with_final(&self.app, &text, is_final);
                 }
-                TickAction::Continue
+                WorkerWait::Continue
             }
             // Batch decode holds the engine — retry the SAME samples next tick (don't advance
             // `fed_len`/`last_processed_len`).
-            RealtimeStreamOutcome::Skipped => TickAction::Sleep(Duration::from_millis(5)),
+            RealtimeStreamOutcome::Skipped => WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: None,
+            },
             // Engine swapped to a non-streaming kind under us → window path from now on.
             RealtimeStreamOutcome::NotStreaming => {
                 state.native_decided = Some(false);
-                TickAction::Continue
+                WorkerWait::Continue
             }
         }
     }
@@ -539,10 +674,17 @@ impl RealtimeManager {
         state: &mut RealtimeLoopState,
         settings: &crate::winstt::settings_schema::WinsttSettings,
         generation: u64,
-    ) -> TickAction {
+        observed_conditions: u64,
+        observed_audio: u64,
+    ) -> WorkerWait {
         let processing_pause = realtime_redecode_pause(settings.quality.realtime_processing_pause);
-        if state.last_transcription.elapsed() < processing_pause {
-            return TickAction::Sleep(Duration::from_millis(1));
+        if let Some(remaining) =
+            remaining_delay(state.last_transcription.elapsed(), processing_pause)
+        {
+            return WorkerWait::Conditions {
+                observed: observed_conditions,
+                timeout: Some(remaining),
+            };
         }
 
         // ── stale-audio guard (port of _realtime_run_if_fresh) ──
@@ -561,14 +703,17 @@ impl RealtimeManager {
         let (total_len, tail) = self.audio.snapshot_audio_from(base);
         let total_frames = total_len as u64;
         if total_len as i64 == state.last_processed_len {
-            return TickAction::Sleep(Duration::from_millis(50));
+            return WorkerWait::RealtimeAudio {
+                offset: total_len,
+                observed: observed_audio,
+            };
         }
         state.last_processed_len = total_len as i64;
         state.last_transcription = Instant::now();
 
         // Nothing past the watermark yet → skip (port of _realtime_process_once guard).
         if total_frames <= state.acc.committed_frames() {
-            return TickAction::Continue;
+            return WorkerWait::Continue;
         }
 
         // ── commit the older portion once the fresh window exceeds the threshold ──
@@ -627,7 +772,7 @@ impl RealtimeManager {
         // re-press): this decode belongs to the PREVIOUS utterance, so emitting it would
         // repaint the next session's freshly-cleared pill with the old transcription.
         if !self.audio.is_recording() || self.audio.recording_generation() != generation {
-            return TickAction::Continue;
+            return WorkerWait::Continue;
         }
 
         // ── emit STABILIZED first, then UPDATE (RealtimeSTT ordering) ──
@@ -637,7 +782,7 @@ impl RealtimeManager {
         // port surfaces the stabilized text on both events per the spec).
         SttEvents::realtime_stabilized_with_final(&self.app, &publish.stabilized, false);
         SttEvents::realtime_text_with_final(&self.app, &publish.stabilized, false);
-        TickAction::Continue
+        WorkerWait::Continue
     }
 }
 
@@ -648,6 +793,18 @@ mod tests {
     #[test]
     fn non_streaming_uses_configured_redecode_interval() {
         assert_eq!(realtime_redecode_pause(0.25), Duration::from_millis(250));
+    }
+
+    #[test]
+    fn remaining_delay_preserves_exact_deadline() {
+        assert_eq!(
+            remaining_delay(Duration::from_millis(40), Duration::from_millis(250)),
+            Some(Duration::from_millis(210))
+        );
+        assert_eq!(
+            remaining_delay(Duration::from_millis(250), Duration::from_millis(250)),
+            None
+        );
     }
 
     #[test]

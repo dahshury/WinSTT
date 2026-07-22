@@ -1,8 +1,8 @@
 use crate::winstt::commands::settings;
 use crate::winstt::settings_schema::{GeneralSettings, VisualizerAuraShape, VisualizerType};
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::image::Image;
@@ -17,7 +17,7 @@ const BAR_COUNT: usize = 5;
 const BAR_WIDTH: f64 = 7.0;
 const BAR_GAP: f64 = 3.0;
 const VERTICAL_MARGIN: f64 = 2.0;
-const BAR_TICK_MS: u64 = 50;
+const RECORDING_FRAME_INTERVAL_MS: u64 = 50;
 const THINK_TICK_MS: u64 = 33;
 
 const PEAK_FLOOR: f64 = 0.1;
@@ -122,6 +122,7 @@ struct IndicatorState {
     session_start: Instant,
     thinking_start: Instant,
     config: VisualizerConfig,
+    recording_frame_pending: bool,
 }
 
 impl Default for IndicatorState {
@@ -137,18 +138,65 @@ impl Default for IndicatorState {
             session_start: now,
             thinking_start: now,
             config: VisualizerConfig::default(),
+            recording_frame_pending: false,
         }
     }
 }
 
 struct TrayIndicator {
     state: Mutex<IndicatorState>,
+    recording_frame_ready: Condvar,
+    paint_gate: PaintGate,
+}
+
+struct PaintGate {
     generation: AtomicU64,
+    native_paint: Mutex<()>,
+}
+
+impl PaintGate {
+    fn new() -> Self {
+        Self {
+            generation: AtomicU64::new(0),
+            native_paint: Mutex::new(()),
+        }
+    }
+
+    fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    fn advance_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn advance_and_paint(&self, paint: impl FnOnce()) -> u64 {
+        let _paint_guard = self
+            .native_paint
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let generation = self.advance_generation();
+        paint();
+        generation
+    }
+
+    fn paint_if_current(&self, generation: u64, paint: impl FnOnce()) -> bool {
+        let _paint_guard = self
+            .native_paint
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.current_generation() != generation {
+            return false;
+        }
+        paint();
+        true
+    }
 }
 
 static TRAY_INDICATOR: Lazy<TrayIndicator> = Lazy::new(|| TrayIndicator {
     state: Mutex::new(IndicatorState::default()),
-    generation: AtomicU64::new(0),
+    recording_frame_ready: Condvar::new(),
+    paint_gate: PaintGate::new(),
 });
 
 pub(crate) fn set_visualizer_style_from_general(general: &GeneralSettings) {
@@ -169,6 +217,7 @@ pub(crate) fn on_recording_start(app: &AppHandle) {
         state.raw_level = 0.0;
         state.peak = PEAK_FLOOR;
         state.session_start = Instant::now();
+        state.recording_frame_pending = false;
     }
     reconcile_view(app);
 }
@@ -181,6 +230,7 @@ pub(crate) fn on_recording_stop(app: &AppHandle) {
         state.is_recording = false;
         state.raw_level = 0.0;
         state.peak = PEAK_FLOOR;
+        state.recording_frame_pending = false;
     }
     reconcile_view(app);
 }
@@ -190,6 +240,11 @@ pub(crate) fn on_audio_level(level: f32) {
         && state.is_recording
     {
         state.raw_level = (level as f64).clamp(0.0, 1.0);
+        state.recording_frame_pending = true;
+        // The recorder callback only updates shared state and wakes the coalescing
+        // renderer. Pixel generation and native tray calls remain off the audio
+        // thread.
+        TRAY_INDICATOR.recording_frame_ready.notify_one();
     }
 }
 
@@ -246,10 +301,13 @@ pub(crate) fn on_idle(app: &AppHandle) {
         state.is_llm_thinking = false;
         state.raw_level = 0.0;
         state.peak = PEAK_FLOOR;
+        state.recording_frame_pending = false;
         state.current_view = IndicatorView::Idle;
     }
-    TRAY_INDICATOR.generation.fetch_add(1, Ordering::SeqCst);
-    crate::tray::paint_static_tray_icon(app, crate::tray::TrayIconState::Idle);
+    TRAY_INDICATOR.paint_gate.advance_and_paint(|| {
+        crate::tray::paint_static_tray_icon(app, crate::tray::TrayIconState::Idle);
+    });
+    TRAY_INDICATOR.recording_frame_ready.notify_all();
 }
 
 fn derive_view(state: &IndicatorState) -> IndicatorView {
@@ -277,41 +335,122 @@ fn reconcile_view(app: &AppHandle) {
         return;
     }
 
-    let generation = TRAY_INDICATOR.generation.fetch_add(1, Ordering::SeqCst) + 1;
     match next {
         IndicatorView::Idle => {
-            crate::tray::paint_static_tray_icon(app, crate::tray::TrayIconState::Idle);
+            TRAY_INDICATOR.paint_gate.advance_and_paint(|| {
+                crate::tray::paint_static_tray_icon(app, crate::tray::TrayIconState::Idle);
+            });
         }
-        IndicatorView::Recording | IndicatorView::Thinking => {
-            let interval = if next == IndicatorView::Thinking {
-                THINK_TICK_MS
-            } else {
-                BAR_TICK_MS
-            };
+        IndicatorView::Recording => {
+            let generation = TRAY_INDICATOR.paint_gate.advance_generation();
             render_frame_for_generation(app, generation);
-            spawn_tick(app.clone(), generation, Duration::from_millis(interval));
+            spawn_recording_renderer(app.clone(), generation);
+        }
+        IndicatorView::Thinking => {
+            let generation = TRAY_INDICATOR.paint_gate.advance_generation();
+            render_frame_for_generation(app, generation);
+            spawn_thinking_animation(app.clone(), generation);
         }
     }
+    // A recording renderer may be blocked waiting for its next level callback.
+    // Wake it so generation changes stop it immediately.
+    TRAY_INDICATOR.recording_frame_ready.notify_all();
 }
 
-fn spawn_tick(app: AppHandle, generation: u64, interval: Duration) {
+/// Paint recording frames only in response to recorder level callbacks.
+///
+/// The condition variable eliminates the former fixed-rate polling loop. A
+/// deadline merely rate-limits bursts to the previous 20 FPS cadence; callbacks
+/// received before the deadline are coalesced into the latest level.
+fn spawn_recording_renderer(app: AppHandle, generation: u64) {
     thread::spawn(move || {
+        let frame_interval = Duration::from_millis(RECORDING_FRAME_INTERVAL_MS);
+        let mut next_frame_at = Instant::now() + frame_interval;
+
         loop {
-            thread::sleep(interval);
-            if TRAY_INDICATOR.generation.load(Ordering::SeqCst) != generation {
-                break;
+            let mut state = match TRAY_INDICATOR.state.lock() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            while !state.recording_frame_pending
+                && TRAY_INDICATOR.paint_gate.current_generation() == generation
+            {
+                state = match TRAY_INDICATOR.recording_frame_ready.wait(state) {
+                    Ok(state) => state,
+                    Err(_) => return,
+                };
             }
+            if TRAY_INDICATOR.paint_gate.current_generation() != generation {
+                return;
+            }
+
+            while let Some(remaining) = next_frame_at.checked_duration_since(Instant::now()) {
+                state = match TRAY_INDICATOR
+                    .recording_frame_ready
+                    .wait_timeout(state, remaining)
+                {
+                    Ok((state, _)) => state,
+                    Err(_) => return,
+                };
+                if TRAY_INDICATOR.paint_gate.current_generation() != generation {
+                    return;
+                }
+            }
+
+            state.recording_frame_pending = false;
+            drop(state);
+            render_frame_for_generation(&app, generation);
+            next_frame_at = Instant::now() + frame_interval;
+        }
+    });
+}
+
+fn spawn_thinking_animation(app: AppHandle, generation: u64) {
+    thread::spawn(move || {
+        let frame_interval = Duration::from_millis(THINK_TICK_MS);
+        loop {
+            let deadline = Instant::now() + frame_interval;
+            let mut state = match TRAY_INDICATOR.state.lock() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            while TRAY_INDICATOR.paint_gate.current_generation() == generation {
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    break;
+                };
+                state = match TRAY_INDICATOR
+                    .recording_frame_ready
+                    .wait_timeout(state, remaining)
+                {
+                    Ok((state, _)) => state,
+                    Err(_) => return,
+                };
+            }
+            if TRAY_INDICATOR.paint_gate.current_generation() != generation {
+                return;
+            }
+            drop(state);
             render_frame_for_generation(&app, generation);
         }
     });
 }
 
 fn render_frame_for_generation(app: &AppHandle, generation: u64) {
-    if TRAY_INDICATOR.generation.load(Ordering::SeqCst) != generation {
+    if TRAY_INDICATOR.paint_gate.current_generation() != generation {
         return;
     }
 
-    let rgba = {
+    enum Frame {
+        Recording {
+            config: VisualizerConfig,
+            amplified: f64,
+            raw_level: f64,
+            time: f64,
+        },
+        Thinking(ParsedPath),
+    }
+
+    let frame = {
         let mut state = match TRAY_INDICATOR.state.lock() {
             Ok(state) => state,
             Err(_) => return,
@@ -322,22 +461,40 @@ fn render_frame_for_generation(app: &AppHandle, generation: u64) {
                 let next = compute_amplified(raw_level, state.peak);
                 state.peak = next.peak;
                 let time = state.session_start.elapsed().as_secs_f64();
-                render_visualizer_frame(state.config, next.amplified, raw_level, time)
+                Frame::Recording {
+                    config: state.config,
+                    amplified: next.amplified,
+                    raw_level,
+                    time,
+                }
             }
             IndicatorView::Thinking => {
                 let elapsed = state.thinking_start.elapsed().as_millis() % TOPOLOGY_DURATION_MS;
                 let t_raw = elapsed as f64 / TOPOLOGY_DURATION_MS as f64;
-                let path = interpolate_topology(t_raw);
-                render_topology_icon(path, TRAY_INK)
+                Frame::Thinking(interpolate_topology(t_raw))
             }
             IndicatorView::Idle => return,
         }
     };
 
-    if TRAY_INDICATOR.generation.load(Ordering::SeqCst) != generation {
-        return;
-    }
-    set_icon_on_tray(app, rgba);
+    // Rendering is deliberately outside the state mutex so the real-time audio
+    // callback never waits behind bitmap work.
+    let rgba = match frame {
+        Frame::Recording {
+            config,
+            amplified,
+            raw_level,
+            time,
+        } => render_visualizer_frame(config, amplified, raw_level, time),
+        Frame::Thinking(path) => render_topology_icon(path, TRAY_INK),
+    };
+
+    // Keep the final generation check and native call in one critical section.
+    // Static paints use the same gate, so an old animation can never paint after
+    // a newer idle icon has completed.
+    TRAY_INDICATOR
+        .paint_gate
+        .paint_if_current(generation, || set_icon_on_tray(app, rgba));
 }
 
 fn set_icon_on_tray(app: &AppHandle, rgba: Vec<u8>) {
@@ -920,5 +1077,34 @@ fn stamp_disc(data: &mut [u8], cx: f64, cy: f64, radius: f64, tint: Rgb) {
                 blit_pixel(data, px, py, tint, alpha);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::PaintGate;
+    use std::sync::Mutex;
+
+    #[test]
+    fn stale_animation_cannot_paint_after_new_static_generation() {
+        let gate = PaintGate::new();
+        let painted = Mutex::new(Vec::new());
+        let animation_generation = gate.advance_generation();
+
+        let static_generation = gate.advance_and_paint(|| {
+            painted.lock().expect("paint log should lock").push("idle");
+        });
+
+        assert!(!gate.paint_if_current(animation_generation, || {
+            painted
+                .lock()
+                .expect("paint log should lock")
+                .push("stale animation");
+        }));
+        assert_eq!(gate.current_generation(), static_generation);
+        assert_eq!(
+            *painted.lock().expect("paint log should lock"),
+            vec!["idle"]
+        );
     }
 }

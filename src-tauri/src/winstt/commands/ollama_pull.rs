@@ -9,10 +9,12 @@
 //   - llm_retry_warmup      → re-runs a warmup pass, then returns the snapshot
 //
 // CANCEL CONTRACT: `ollama_pull` (in llm.rs, wired against `LlmManager::ollama_pull_stream`'s
-// streaming `POST /api/pull` drain) calls `is_pull_cancelled(&model)` between NDJSON chunks and aborts
-// the stream when it returns true, then `clear_pull_cancel(&model)`. The pull-progress event it emits is
-// the plain `llm:pull-progress` channel carrying an `OllamaPullProgress` payload (shape below mirrors
-// spec/openapi.yaml so the reused renderer's `onOllamaPullProgress` listener parses it unchanged).
+// streaming `POST /api/pull` drain) holds the model's awaitable `pull_cancel_token(&model)`; the
+// drain `select!`s on it, so `ollama_cancel_pull` aborts the stream the instant it fires. The
+// command clears the flag with `clear_pull_cancel(&model)` on teardown. The pull-progress event it
+// emits is the plain `llm:pull-progress` channel carrying an `OllamaPullProgress` payload (shape
+// below mirrors spec/openapi.yaml so the reused renderer's `onOllamaPullProgress` listener parses
+// it unchanged).
 //
 // WARMUP CONTRACT: `llm_manager::warmup` publishes a snapshot via `set_warmup_status` / clears it via
 // `clear_warmup_status` (and emits `llm:warmup-status`). `llm_warmup_status` returns the last
@@ -30,14 +32,14 @@ use crate::winstt::managers::{LlmManager, OllamaManager};
 use super::llm::authorize_ollama_model_management_label;
 
 // ── Pull-cancel registry (state lives on `OllamaManager`; the streaming pull drain
-// polls it). The free functions below delegate to the process-global manager so the
-// context-free callers in `llm.rs::ollama_pull` and `llm_manager::warmup` keep their
-// signatures. The B4 `lock_recover` poison policy is preserved inside the manager.
+// `select!`s on the model's awaitable token). The free functions below delegate to the
+// process-global manager so the context-free callers in `llm.rs::ollama_pull` and
+// `llm_manager::warmup` keep their signatures.
 
-/// True if the given model's pull has been cancelled. The streaming pull loop in `ollama_pull`
-/// checks this between NDJSON chunks.
-pub fn is_pull_cancelled(model: &str) -> bool {
-    ollama_manager().is_pull_cancelled(model)
+/// Awaitable cancel handle for `model`'s in-flight pull — the streaming pull drain
+/// in `ollama_pull` `select!`s on it.
+pub fn pull_cancel_token(model: &str) -> tokio_util::sync::CancellationToken {
+    ollama_manager().pull_cancel_token(model)
 }
 
 /// Clear a model's cancel flag once the pull loop has torn down (or completed).

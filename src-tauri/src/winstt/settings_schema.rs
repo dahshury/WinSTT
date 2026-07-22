@@ -1723,10 +1723,11 @@ pub struct WinsttSettings {
     #[serde(default)]
     pub integrations: IntegrationsSettings,
     /// Backend-only fields that have no renderer-facing settings section: the hotkey
-    /// `bindings` map, audio-feedback and paste/clipboard settings, the keyboard
+    /// `bindings` map, native audio/output and paste/clipboard settings, keyboard
     /// implementation, accelerators, and tray/debug/update-check toggles.
     /// The renderer never reads or writes `core`.
     #[serde(default = "crate::settings::get_default_settings")]
+    #[specta(skip)]
     pub core: crate::settings::AppSettings,
 }
 

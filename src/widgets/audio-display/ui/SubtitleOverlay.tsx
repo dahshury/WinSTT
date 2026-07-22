@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	type TranscriptionItem,
@@ -70,6 +70,177 @@ const SUBTITLE_TEXT_SHADOW = "0 1px 4px var(--color-overlay-text-shadow)";
 const EPHEMERAL_FADE_AFTER_MS = 2000;
 const EPHEMERAL_GONE_AFTER_MS = 3000;
 
+type OpacityFadeSource = readonly [
+	timestamp: number,
+	fadeAfter: number,
+	goneAfter: number,
+	maximumOpacity: number,
+];
+
+function sourceOpacity(source: OpacityFadeSource, now: number): number {
+	const [timestamp, fadeAfter, goneAfter, maximumOpacity] = source;
+	return Math.min(
+		maximumOpacity,
+		fadeBetween(timestamp, now, fadeAfter, goneAfter),
+	);
+}
+
+/**
+ * Build the exact piecewise-linear envelope produced by max(source opacities).
+ * WAAPI can then run the fade on the compositor instead of waking React at 4Hz.
+ */
+function opacityEnvelopeKeyframes(
+	sources: OpacityFadeSource[],
+	start: number,
+): { duration: number; keyframes: Keyframe[] } | null {
+	const end = Math.max(
+		start,
+		...sources.map(([timestamp, , goneAfter]) => timestamp + goneAfter),
+	);
+	if (end <= start) {
+		return null;
+	}
+
+	const boundaries = new Set<number>([start, end]);
+	for (const [timestamp, fadeAfter, goneAfter, maximumOpacity] of sources) {
+		const fadeDuration = goneAfter - fadeAfter;
+		const plateauEnd =
+			timestamp + fadeAfter + (1 - maximumOpacity) * fadeDuration;
+		if (plateauEnd > start && plateauEnd < end) {
+			boundaries.add(plateauEnd);
+		}
+		const goneAt = timestamp + goneAfter;
+		if (goneAt > start && goneAt < end) {
+			boundaries.add(goneAt);
+		}
+	}
+
+	// Between boundaries every source is linear. Add any pairwise crossing so
+	// the max envelope remains exact when its leading source changes.
+	const baseBoundaries = [...boundaries].sort((a, b) => a - b);
+	for (let index = 0; index < baseBoundaries.length - 1; index += 1) {
+		const left = baseBoundaries[index];
+		const right = baseBoundaries[index + 1];
+		if (left == null || right == null) {
+			continue;
+		}
+		for (let a = 0; a < sources.length; a += 1) {
+			for (let b = a + 1; b < sources.length; b += 1) {
+				const sourceA = sources[a];
+				const sourceB = sources[b];
+				if (!(sourceA && sourceB)) {
+					continue;
+				}
+				const leftDifference =
+					sourceOpacity(sourceA, left) - sourceOpacity(sourceB, left);
+				const rightDifference =
+					sourceOpacity(sourceA, right) - sourceOpacity(sourceB, right);
+				if (leftDifference * rightDifference < 0) {
+					boundaries.add(
+						left +
+							(-leftDifference * (right - left)) /
+								(rightDifference - leftDifference),
+					);
+				}
+			}
+		}
+	}
+
+	const duration = end - start;
+	return {
+		duration,
+		keyframes: [...boundaries]
+			.sort((a, b) => a - b)
+			.map((time) => ({
+				offset: (time - start) / duration,
+				opacity: Math.max(
+					0,
+					...sources.map((source) => sourceOpacity(source, time)),
+				),
+			})),
+	};
+}
+
+function useOpacityEnvelopeAnimation(sourceKey: string) {
+	const elementRef = useRef<HTMLElement>(null);
+	useEffect(() => {
+		const element = elementRef.current;
+		const sources = JSON.parse(sourceKey) as OpacityFadeSource[];
+		if (!(element && sources.length > 0)) {
+			return;
+		}
+		const envelope = opacityEnvelopeKeyframes(sources, Date.now());
+		if (!(envelope && typeof element.animate === "function")) {
+			return;
+		}
+		const animation = element.animate(envelope.keyframes, {
+			duration: envelope.duration,
+			easing: "linear",
+			fill: "forwards",
+		});
+		return () => animation.cancel();
+	}, [sourceKey]);
+	return elementRef;
+}
+
+function TimedSubtitleLine({
+	item,
+	opacity,
+	maximumOpacity,
+}: {
+	item: TranscriptionItem;
+	opacity: number;
+	maximumOpacity: number;
+}) {
+	const sourceKey = JSON.stringify([
+		[item.timestamp, FADE_AFTER_MS, GONE_AFTER_MS, maximumOpacity],
+	]);
+	const ref = useOpacityEnvelopeAnimation(sourceKey);
+	return (
+		<p
+			className="relative max-w-full text-center font-sans text-body text-foreground leading-snug"
+			data-subtitle-line="true"
+			dir="auto"
+			ref={ref as Ref<HTMLParagraphElement>}
+			style={{ opacity, transition: SUBTITLE_EXIT_TRANSITION }}
+		>
+			{item.text}
+		</p>
+	);
+}
+
+function TimedOpacityElement({
+	as: Element,
+	children,
+	className,
+	dataAttribute,
+	dir,
+	opacity,
+	sources,
+}: {
+	as: "div" | "p";
+	children?: ReactNode;
+	className: string;
+	dataAttribute: Record<string, string>;
+	dir?: "auto";
+	opacity: number;
+	sources: OpacityFadeSource[];
+}) {
+	const ref = useOpacityEnvelopeAnimation(JSON.stringify(sources));
+	return (
+		<Element
+			{...dataAttribute}
+			aria-hidden={Element === "div" ? true : undefined}
+			className={className}
+			dir={dir}
+			ref={ref as Ref<HTMLDivElement & HTMLParagraphElement>}
+			style={{ opacity, transition: SUBTITLE_EXIT_TRANSITION }}
+		>
+			{children}
+		</Element>
+	);
+}
+
 function fadeBetween(
 	timestamp: number,
 	now: number,
@@ -105,66 +276,69 @@ export function SubtitleOverlay() {
 	const liveText = showInApp ? currentRealtime : "";
 	const scrollRef = useRef<HTMLDivElement>(null);
 
-	// Time-based fading depends on a re-render trigger. `now` is stored in
-	// state and refreshed by the same effects that schedule the re-render,
-	// keeping the render pure (no `Date.now()` read during render).
-	//
-	// Two trigger sources:
-	//   1. A 250ms interval while there is content to fade (normal-mode items /
-	//      ephemeral). No interval when there's nothing on screen — saves a 4Hz wakeup.
-	//      The interval ALSO double-duties as the fully-faded-ephemeral
-	//      eviction trigger: when it ticks, it recomputes ephemeral opacity
-	//      inline and calls `clearEphemeral()` if the entry has fully faded,
-	//      so there's no separate "watcher" effect that mirrors derived state.
-	//   2. `visibilitychange` -> visible. Chromium throttles setInterval to
-	//      ~1/minute when the renderer is backgrounded, so a window that's
-	//      been hidden a while paints the previous `now` from when the timer
-	//      was last allowed to run — making items appear "young" and showing
-	//      the previous transcription's text for ~250ms after re-show. The
-	//      visibility-driven force-tick runs before the first post-show
-	//      paint, so items past their fade window collapse to opacity 0
-	//      immediately and there is no stale flash.
+	// WAAPI owns the continuous, piecewise-linear opacity curve. React only
+	// wakes at a real expiry boundary so it can remove a finished subtitle (and
+	// evict an ephemeral entry), rather than polling the clock four times a second.
 	const [now, setNow] = useState(() => Date.now());
-	const hasTimedSubtitleContent =
-		!isListenMode &&
-		items
-			.slice(-VISIBLE_COUNT)
-			.some((item) => timeFade(item.timestamp, now) > 0);
-	const hasFadingContent = hasTimedSubtitleContent || ephemeral !== null;
+	const expiryScheduleKey = JSON.stringify({
+		normal: isListenMode
+			? []
+			: items
+					.slice(-VISIBLE_COUNT)
+					.map((item) => item.timestamp + GONE_AFTER_MS),
+		ephemeral: ephemeral
+			? [ephemeral.timestamp, ephemeral.timestamp + EPHEMERAL_GONE_AFTER_MS]
+			: null,
+	});
 	useEffect(() => {
-		if (!hasFadingContent) {
+		const schedule = JSON.parse(expiryScheduleKey) as {
+			normal: number[];
+			ephemeral: [timestamp: number, deadline: number] | null;
+		};
+		const nextNormalExpiry = Math.min(
+			...schedule.normal.filter((deadline) => deadline > now),
+		);
+		const nextExpiry = Math.min(
+			nextNormalExpiry,
+			schedule.ephemeral?.[1] ?? Number.POSITIVE_INFINITY,
+		);
+		if (!Number.isFinite(nextExpiry)) {
 			return;
 		}
-		const id = setInterval(() => {
-			const tickNow = Date.now();
-			setNow(tickNow);
-			// Read the live ephemeral straight from the store so the eviction
-			// decision uses the latest value — closing over the render-time
-			// `ephemeral` would lag a tick behind cross-window updates.
-			const liveEphemeral = useTranscriptionStore.getState().ephemeral;
-			if (liveEphemeral) {
-				const op = fadeBetween(
-					liveEphemeral.timestamp,
-					tickNow,
-					EPHEMERAL_FADE_AFTER_MS,
-					EPHEMERAL_GONE_AFTER_MS,
-				);
-				if (op <= 0) {
+		const id = window.setTimeout(
+			() => {
+				const tickNow = Date.now();
+				setNow(tickNow);
+				const liveEphemeral = useTranscriptionStore.getState().ephemeral;
+				if (
+					schedule.ephemeral &&
+					liveEphemeral?.timestamp === schedule.ephemeral[0] &&
+					tickNow >= schedule.ephemeral[1]
+				) {
 					clearEphemeral();
 				}
-			}
-		}, 250);
-		return () => clearInterval(id);
-	}, [hasFadingContent, clearEphemeral]);
+			},
+			Math.max(0, Math.ceil(nextExpiry - Date.now())),
+		);
+		return () => window.clearTimeout(id);
+	}, [clearEphemeral, expiryScheduleKey, now]);
 	useEffect(() => {
 		const onVisible = () => {
 			if (document.visibilityState === "visible") {
-				setNow(Date.now());
+				const visibleNow = Date.now();
+				setNow(visibleNow);
+				const liveEphemeral = useTranscriptionStore.getState().ephemeral;
+				if (
+					liveEphemeral &&
+					visibleNow >= liveEphemeral.timestamp + EPHEMERAL_GONE_AFTER_MS
+				) {
+					clearEphemeral();
+				}
 			}
 		};
 		document.addEventListener("visibilitychange", onVisible);
 		return () => document.removeEventListener("visibilitychange", onVisible);
-	}, []);
+	}, [clearEphemeral]);
 
 	const ephemeralOpacity = ephemeral
 		? fadeBetween(
@@ -366,14 +540,23 @@ export function SubtitleOverlay() {
 						</p>
 					) : null}
 					{showEphemeral && ephemeral ? (
-						<p
+						<TimedOpacityElement
+							as="p"
 							className="font-sans text-body text-foreground/70 italic leading-snug"
-							data-subtitle-line="ephemeral"
+							dataAttribute={{ "data-subtitle-line": "ephemeral" }}
 							dir="auto"
-							style={{ opacity: ephemeralOpacity }}
+							opacity={ephemeralOpacity}
+							sources={[
+								[
+									ephemeral.timestamp,
+									EPHEMERAL_FADE_AFTER_MS,
+									EPHEMERAL_GONE_AFTER_MS,
+									1,
+								],
+							]}
 						>
 							{ephemeral.text}
-						</p>
+						</TimedOpacityElement>
 					) : null}
 				</div>
 			</ScrollArea>
@@ -382,15 +565,22 @@ export function SubtitleOverlay() {
 
 	// Normal mode — show last 3 items with discrete opacity + time-based fade
 	const visibleItems = items.slice(-VISIBLE_COUNT);
-	const visibleSubtitleItems: { item: TranscriptionItem; opacity: number }[] =
-		[];
+	const visibleSubtitleItems: {
+		item: TranscriptionItem;
+		opacity: number;
+		maximumOpacity: number;
+	}[] = [];
 	for (const [index, item] of visibleItems.entries()) {
 		const age = visibleItems.length - 1 - index;
 		const positionOpacity = FADE_OPACITIES[age] ?? 0.1;
 		const tf = timeFade(item.timestamp, now);
 		const opacity = Math.min(positionOpacity, tf);
 		if (opacity > 0) {
-			visibleSubtitleItems.push({ item, opacity });
+			visibleSubtitleItems.push({
+				item,
+				opacity,
+				maximumOpacity: positionOpacity,
+			});
 		}
 	}
 	const hasContent =
@@ -409,25 +599,46 @@ export function SubtitleOverlay() {
 				...visibleSubtitleItems.map(({ opacity }) => opacity),
 				showEphemeral ? ephemeralOpacity : 0,
 			);
+	const scrimSources: OpacityFadeSource[] = liveText
+		? []
+		: [
+				...visibleSubtitleItems.map(
+					({ item, maximumOpacity }) =>
+						[
+							item.timestamp,
+							FADE_AFTER_MS,
+							GONE_AFTER_MS,
+							maximumOpacity,
+						] as const,
+				),
+				...(showEphemeral && ephemeral
+					? [
+							[
+								ephemeral.timestamp,
+								EPHEMERAL_FADE_AFTER_MS,
+								EPHEMERAL_GONE_AFTER_MS,
+								1,
+							] as const,
+						]
+					: []),
+			];
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center justify-end gap-0.5 px-5 pt-10 pb-2">
-			<div
-				aria-hidden
+			<TimedOpacityElement
+				as="div"
 				className="subtitle-scrim-bloom absolute inset-0"
-				data-subtitle-scrim="true"
-				style={{ opacity: scrimOpacity, transition: SUBTITLE_EXIT_TRANSITION }}
+				dataAttribute={{ "data-subtitle-scrim": "true" }}
+				opacity={scrimOpacity}
+				sources={scrimSources}
 			/>
-			{visibleSubtitleItems.map(({ item, opacity }) => (
-				<p
-					className="relative max-w-full text-center font-sans text-body text-foreground leading-snug"
-					data-subtitle-line="true"
-					dir="auto"
+			{visibleSubtitleItems.map(({ item, opacity, maximumOpacity }) => (
+				<TimedSubtitleLine
+					item={item}
 					key={item.id}
-					style={{ opacity, transition: SUBTITLE_EXIT_TRANSITION }}
-				>
-					{item.text}
-				</p>
+					maximumOpacity={maximumOpacity}
+					opacity={opacity}
+				/>
 			))}
 			{liveText ? (
 				<p
@@ -439,14 +650,23 @@ export function SubtitleOverlay() {
 				</p>
 			) : null}
 			{showEphemeral && ephemeral ? (
-				<p
+				<TimedOpacityElement
+					as="p"
 					className="relative max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
-					data-subtitle-line="ephemeral"
+					dataAttribute={{ "data-subtitle-line": "ephemeral" }}
 					dir="auto"
-					style={{ opacity: ephemeralOpacity }}
+					opacity={ephemeralOpacity}
+					sources={[
+						[
+							ephemeral.timestamp,
+							EPHEMERAL_FADE_AFTER_MS,
+							EPHEMERAL_GONE_AFTER_MS,
+							1,
+						],
+					]}
 				>
 					{ephemeral.text}
-				</p>
+				</TimedOpacityElement>
 			) : null}
 		</div>
 	);

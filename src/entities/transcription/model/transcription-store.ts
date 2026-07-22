@@ -41,12 +41,15 @@ interface TranscriptionState {
 	currentRealtime: string;
 	ephemeral: EphemeralMessage | null;
 	isRecordingActive: boolean;
+	/** The current take has crossed a real VAD speech onset at least once. */
+	hasDetectedSpeech: boolean;
 	isTranscribing: boolean;
 	items: TranscriptionItem[];
 	processingPhase: TranscriptionProcessingPhase | null;
 	recordingSessionId: number;
 	setRealtimeText: (text: string) => void;
 	setRecordingActive: (active: boolean) => void;
+	setSpeechDetected: (detected: boolean) => void;
 	setTranscribing: (
 		active: boolean,
 		phase?: TranscriptionProcessingPhase,
@@ -69,6 +72,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	// realtime/ephemeral text in the brief window between `showOverlay()` in
 	// the main process and the renderer processing STT_RECORDING_START.
 	isRecordingActive: false,
+	hasDetectedSpeech: false,
 	isTranscribing: false,
 	processingPhase: null,
 	recordingSessionId: 0,
@@ -80,6 +84,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			currentRealtime: "",
 			ephemeral: null,
 			isRecordingActive: true,
+			hasDetectedSpeech: false,
 			isTranscribing: false,
 			processingPhase: null,
 			recordingSessionId: state.recordingSessionId + 1,
@@ -109,6 +114,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	},
 	setRealtimeText: (text) => set({ currentRealtime: text }),
 	setRecordingActive: (active) => set({ isRecordingActive: active }),
+	setSpeechDetected: (detected) => set({ hasDetectedSpeech: detected }),
 	setTranscribing: (active, phase = "transcribing") =>
 		set((state) => {
 			if (active) {
@@ -151,6 +157,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			currentRealtime: "",
 			ephemeral: null,
 			isRecordingActive: false,
+			hasDetectedSpeech: false,
 			isTranscribing: false,
 			processingPhase: null,
 			recordingSessionId: 0,

@@ -109,6 +109,7 @@ export function OverlayPage() {
 	const realtime = useTranscriptionStore((s) => s.currentRealtime);
 	const ephemeral = useTranscriptionStore((s) => s.ephemeral);
 	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
+	const hasDetectedSpeech = useTranscriptionStore((s) => s.hasDetectedSpeech);
 	const recordingSessionId = useTranscriptionStore((s) => s.recordingSessionId);
 	const isTranscribing = useTranscriptionStore((s) => s.isTranscribing);
 	const processingPhase = useTranscriptionStore((s) => s.processingPhase);
@@ -174,7 +175,9 @@ export function OverlayPage() {
 		!isListenMode &&
 		(computePillReveal({
 			isRecordingActive,
-			isSpeaking,
+			// Unlike the instantaneous visualizer flag, this survives a missed VAD
+			// edge and inter-word pauses for the duration of the recording session.
+			isSpeaking: isSpeaking || hasDetectedSpeech,
 		}) ||
 			isPreviewActive ||
 			// The offline error notice must reveal the pill with no recording behind

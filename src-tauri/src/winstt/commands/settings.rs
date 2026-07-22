@@ -34,9 +34,9 @@
 //   * `learning`       — auto-apply dictation learning appenders.
 //   * `runtime`        — on-save runtime side-effects (model/tts/llm/history/audio/autostart).
 //   * `wakeword`       — wakeword runtime state machine.
-//   * `recording_mode` — recording-mode LEAVE transitions (stop loopback / cancel an
-//     in-flight dictation session) when `general.recordingMode` hot-swaps away from
-//     whichever mode owned that runtime state.
+//   * `recording_mode` — recording-mode boundaries (finalize loopback and mic
+//     captures through their normal output paths) whenever
+//     `general.recordingMode` changes.
 
 mod learning;
 mod recording_mode;
@@ -45,7 +45,8 @@ mod wakeword;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Emitter};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::winstt::settings_schema::{
     AudioSettings, CustomModifier, DictionaryEntry, GeneralSettings, GlobalSettings,
@@ -101,6 +102,31 @@ pub(crate) const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
 /// (the renderer's save path is fire-and-forget, so it can't see the `Result`).
 /// Shape `{ error }` matches `onSettingsSaveError` in ipc-client.ts.
 const SETTINGS_SAVE_ERROR_EVENT: &str = "settings:save-error";
+
+/// Number of recording-mode saves that have persisted their new value but have
+/// not yet completed the old mode's runtime teardown. The renderer updates mode
+/// controls optimistically, so `start_listen` uses this boundary to avoid opening
+/// loopback in the narrow window before the settings command finishes cleanup.
+static RECORDING_MODE_TRANSITIONS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+struct RecordingModeTransitionGuard;
+
+impl RecordingModeTransitionGuard {
+    fn begin() -> Self {
+        RECORDING_MODE_TRANSITIONS_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for RecordingModeTransitionGuard {
+    fn drop(&mut self) {
+        RECORDING_MODE_TRANSITIONS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn recording_mode_transition_in_progress() -> bool {
+    RECORDING_MODE_TRANSITIONS_IN_FLIGHT.load(Ordering::SeqCst) != 0
+}
 
 /// One authoritative, renderer-safe settings snapshot and its monotonic process
 /// revision. The revision prevents two windows from silently overwriting each
@@ -309,52 +335,62 @@ fn apply_settings_patch_inner(
     // renderer broadcast run AFTER the lock is released — they call back into
     // `get_settings` / `read_settings`, so keeping them outside the guard avoids any
     // nested settings-lock acquisition (the lock is non-reentrant).
-    let (previous, next, changed, revision) = with_settings_write_lock(|| {
-        let actual_revision = settings_revision();
-        if let Some(expected) = expected_revision
-            && expected != actual_revision
-        {
-            return Err(ApplyPatchError::Conflict {
-                expected,
-                actual: actual_revision,
-            });
-        }
-        // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch
-        // is plaintext too, so the merge + diff operate entirely in plaintext — like
-        // the reference's `snapshotSettings`, which decrypts before diffing.
-        let previous = try_read_settings(app).map_err(ApplyPatchError::Other)?;
+    let (previous, next, changed, revision, _recording_mode_guard) =
+        with_settings_write_lock(|| {
+            let actual_revision = settings_revision();
+            if let Some(expected) = expected_revision
+                && expected != actual_revision
+            {
+                return Err(ApplyPatchError::Conflict {
+                    expected,
+                    actual: actual_revision,
+                });
+            }
+            // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch
+            // is plaintext too, so the merge + diff operate entirely in plaintext — like
+            // the reference's `snapshotSettings`, which decrypts before diffing.
+            let previous = try_read_settings(app).map_err(ApplyPatchError::Other)?;
 
-        // Merge the partial patch over the persisted full snapshot, section by section
-        // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
-        // overwrites its counterpart wholesale; absent sections keep the persisted
-        // value; `general` preserves the main-owned `onboarded*` fields.
-        let mut next = merge_patch_over(&previous, patch);
-        preserve_masked_secrets(&previous, &mut next);
+            // Merge the partial patch over the persisted full snapshot, section by section
+            // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
+            // overwrites its counterpart wholesale; absent sections keep the persisted
+            // value; `general` preserves the main-owned `onboarded*` fields.
+            let mut next = merge_patch_over(&previous, patch);
+            preserve_masked_secrets(&previous, &mut next);
 
-        // (a) cross-field validation (the Zod `.refine` equivalents) — scoped to
-        //     the sections this patch posts, so a bad value already persisted in
-        //     an UNTOUCHED section can't reject unrelated saves forever. A section
-        //     that fails is SALVAGED field-by-field (validation rules drift across
-        //     app versions — catalogs, allowlists, numeric ranges — and a save must
-        //     never be permanently wedged by state an older version wrote); only a
-        //     section that is still invalid after salvage rejects the patch.
-        salvage_invalid_sections(&mut next, &previous, &section_names)
-            .map_err(ApplyPatchError::Other)?;
+            // (a) cross-field validation (the Zod `.refine` equivalents) — scoped to
+            //     the sections this patch posts, so a bad value already persisted in
+            //     an UNTOUCHED section can't reject unrelated saves forever. A section
+            //     that fails is SALVAGED field-by-field (validation rules drift across
+            //     app versions — catalogs, allowlists, numeric ranges — and a save must
+            //     never be permanently wedged by state an older version wrote); only a
+            //     section that is still invalid after salvage rejects the patch.
+            salvage_invalid_sections(&mut next, &previous, &section_names)
+                .map_err(ApplyPatchError::Other)?;
 
-        if next == previous {
-            return Ok((previous, next, false, actual_revision));
-        }
+            if next == previous {
+                return Ok((previous, next, false, actual_revision, None));
+            }
 
-        // (c) seal the secret fields at rest, then persist. Clone so runtime
-        //     side-effects keep the plaintext `next`; only the on-disk copy is
-        //     sealed and the renderer broadcast is masked below.
-        let mut to_persist = next.clone();
-        try_seal_secrets(&mut to_persist).map_err(ApplyPatchError::Other)?;
-        debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
-        write_settings_value(app, &to_persist).map_err(ApplyPatchError::Other)?;
+            // (c) seal the secret fields at rest, then persist. Clone so runtime
+            //     side-effects keep the plaintext `next`; only the on-disk copy is
+            //     sealed and the renderer broadcast is masked below.
+            let mut to_persist = next.clone();
+            try_seal_secrets(&mut to_persist).map_err(ApplyPatchError::Other)?;
+            debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
+            let recording_mode_guard = (previous.general.recording_mode
+                != next.general.recording_mode)
+                .then(RecordingModeTransitionGuard::begin);
+            write_settings_value(app, &to_persist).map_err(ApplyPatchError::Other)?;
 
-        Ok((previous, next, true, settings_revision()))
-    })?;
+            Ok((
+                previous,
+                next,
+                true,
+                settings_revision(),
+                recording_mode_guard,
+            ))
+        })?;
     if !changed {
         let mut snapshot = next;
         sanitize_settings_for_renderer(&mut snapshot);
@@ -397,6 +433,11 @@ fn apply_settings_patch_inner(
     apply_audio_runtime_settings(app, &previous, &next);
     apply_autostart_setting(app, &previous, &next);
     crate::tray::set_tray_visualizer_style_from_general(&next.general);
+    if let Some(realtime) =
+        app.try_state::<std::sync::Arc<crate::winstt::managers::RealtimeManager>>()
+    {
+        realtime.notify_external_conditions_changed();
+    }
 
     // (d) broadcast the post-save full snapshot (not the raw partial) so every
     //     other window re-hydrates the same canonical view. Secret fields are

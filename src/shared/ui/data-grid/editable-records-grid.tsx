@@ -53,6 +53,11 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 	const dataRef = useRef(data);
 	const tableRef = useRef<Table<TData> | null>(null);
 	const paginationOptions = useGridPaginationOptions();
+	const { wrapperRef, onBlur } = usePruneEmptyRows<TData>({
+		dataRef,
+		isEmpty: isEmptyRow,
+		onChange,
+	});
 	const { trackCellsUpdate, trackRowsAdd, trackRowsDelete } =
 		useDataGridUndoRedo<TData>({
 			data,
@@ -114,6 +119,7 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 		enablePaste: true,
 		enableSearch: true,
 		getRowId: (row) => row.id,
+		interactionBoundaryRef: wrapperRef,
 		onDataChange,
 		...(canAdd && !readOnly ? { onRowAdd, onRowsAdd } : {}),
 		...(readOnly ? {} : { onRowsDelete }),
@@ -129,11 +135,6 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 		tableRef.current = table;
 	});
 	useGridPageClamp(table);
-	const { wrapperRef, onBlur } = usePruneEmptyRows<TData>({
-		dataRef,
-		isEmpty: isEmptyRow,
-		onChange,
-	});
 
 	return (
 		<div className="flex flex-col gap-3" onBlur={onBlur} ref={wrapperRef}>

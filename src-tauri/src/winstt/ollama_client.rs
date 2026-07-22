@@ -3,16 +3,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::winstt::llm::{
     OLLAMA_NUM_CTX, OllamaStreamState, build_loopback_ollama_api_url, parse_chat_stream_line,
     validate_loopback_ollama_endpoint,
 };
 
-/// How often the chat-stream loop wakes to poll cancellation when no token has
-/// arrived — so the user's Esc / Stop aborts a STALLED generation within a
-/// couple seconds instead of only when the next token streams in.
-const CHAT_STREAM_CANCEL_POLL: Duration = Duration::from_secs(2);
 /// Once streaming has started, abort if the response goes silent for this long.
 /// A mid-generation pause this large normally means the runner is wedged.
 const CHAT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -36,20 +33,21 @@ const CHAT_STREAM_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
 /// still cuts healthy-but-slow generations first.
 const CHAT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Abort the chat stream when it has been silent too long (`idle_for`, no token)
-/// OR has run past the hard ceiling (`running_for`). Pure so the threshold logic
-/// is unit-testable without standing up a stalling HTTP stream.
-fn chat_stream_should_abort(
-    idle_for: Duration,
-    running_for: Duration,
+/// The instant at which a silent chat stream must be aborted: the earlier of
+/// the idle ceiling (measured from the last streamed frame; the first frame
+/// gets the longer prefill window) and the hard total ceiling. Pure so the
+/// threshold logic is unit-testable without standing up a stalling HTTP stream.
+fn chat_stream_abort_deadline(
+    last_token: tokio::time::Instant,
+    started: tokio::time::Instant,
     received_frame: bool,
-) -> bool {
+) -> tokio::time::Instant {
     let idle_timeout = if received_frame {
         CHAT_STREAM_IDLE_TIMEOUT
     } else {
         CHAT_STREAM_FIRST_FRAME_TIMEOUT
     };
-    idle_for >= idle_timeout || running_for >= CHAT_STREAM_TOTAL_TIMEOUT
+    (last_token + idle_timeout).min(started + CHAT_STREAM_TOTAL_TIMEOUT)
 }
 
 /// Direct Ollama HTTP client for WinSTT's app-specific API contract.
@@ -206,10 +204,15 @@ impl OllamaClient {
         }
 
         let url = build_loopback_ollama_api_url(endpoint, "/api/show")?;
+        // Metadata-only endpoint, normally instant. Bound it: a wedged/overloaded
+        // Ollama used to hold this open indefinitely, and this probe runs at the
+        // START of every dictation cleanup — before any cancellation-aware code —
+        // so it froze the island with Alt+S/Esc unanswered.
         let resp = self
             .http
             .post(url)
             .json(&serde_json::json!({ "model": model }))
+            .timeout(Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| format!("Ollama /api/show failed: {e}"))?;
@@ -251,42 +254,52 @@ impl OllamaClient {
     }
 
     /// POST `/api/chat`, drain the NDJSON stream, and fold chunks into state.
-    pub async fn stream_chat<F, D>(
+    /// `cancel` aborts the request the instant it fires — a `select!` branch,
+    /// not a poll — by dropping the in-flight future/stream, which closes the
+    /// connection and makes Ollama stop the generation.
+    pub async fn stream_chat<D>(
         &self,
         endpoint: &str,
         body: serde_json::Value,
-        is_cancelled: F,
+        cancel: &CancellationToken,
         mut on_thinking_delta: D,
     ) -> Result<OllamaStreamState, String>
     where
-        F: Fn() -> bool + Send,
         D: FnMut(&str) + Send,
     {
         let url = build_loopback_ollama_api_url(endpoint, "/api/chat")?;
-        let resp = self
+        let send = self
             .http
             .post(url)
             .json(&body)
             .timeout(CHAT_REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    // Distinct marker: a request-ceiling timeout means the model
-                    // is prefilling too slowly for this hardware (measured: a
-                    // ≥2048-token dictation prompt at ~10-25 tok/s on a
-                    // CPU-offloaded 14 GB model). The caller's load-crash
-                    // classifier matches "timed out" and backs the model off so
-                    // the NEXT dictation fails soft instantly instead of paying
-                    // this ceiling again.
-                    format!(
-                        "Ollama chat request timed out after {}s (model too slow on this hardware)",
-                        CHAT_REQUEST_TIMEOUT.as_secs()
-                    )
-                } else {
-                    format!("Ollama POST failed: {e}")
-                }
-            })?;
+            .send();
+        // Ollama does not send response headers until the model is loaded and the
+        // prompt is prefilling, so this await can run for most of the 120s request
+        // ceiling. Race it against cancellation so Esc / Alt+S aborts the request
+        // instantly instead of sitting unanswered until headers finally arrive.
+        let sent = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err("Ollama chat cancelled".to_string()),
+            sent = send => sent,
+        };
+        let resp = sent.map_err(|e| {
+            if e.is_timeout() {
+                // Distinct marker: a request-ceiling timeout means the model
+                // is prefilling too slowly for this hardware (measured: a
+                // ≥2048-token dictation prompt at ~10-25 tok/s on a
+                // CPU-offloaded 14 GB model). The caller's load-crash
+                // classifier matches "timed out" and backs the model off so
+                // the NEXT dictation fails soft instantly instead of paying
+                // this ceiling again.
+                format!(
+                    "Ollama chat request timed out after {}s (model too slow on this hardware)",
+                    CHAT_REQUEST_TIMEOUT.as_secs()
+                )
+            } else {
+                format!("Ollama POST failed: {e}")
+            }
+        })?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let t = resp.text().await.unwrap_or_default();
@@ -302,21 +315,29 @@ impl OllamaClient {
         // cancellation when a token arrived. If the model produced NOTHING (GPU
         // starved / runner wedged), post-processing hung indefinitely and the
         // user's only escape was a manual cancel — meanwhile Ollama kept the
-        // generation alive on the GPU. Bound it: poll on a short tick so cancel
-        // is responsive even with no tokens, abort after an idle gap (no token)
-        // or a hard total ceiling. On any of these we drop the stream (closing
-        // the connection so Ollama stops generating) and fail soft to the
-        // original transcription.
+        // generation alive on the GPU. Bound it: abort after an idle gap (no
+        // token) or a hard total ceiling — those deadlines are inherently
+        // time-based (they measure silence) — while cancellation is a `select!`
+        // branch that fires the instant Esc / Alt+S lands, with no polling tick.
+        // On any of these we drop the stream (closing the connection so Ollama
+        // stops generating) and fail soft to the original transcription.
         let started = tokio::time::Instant::now();
         let mut last_token = started;
         let mut received_frame = false;
         loop {
-            match tokio::time::timeout(CHAT_STREAM_CANCEL_POLL, stream.next()).await {
+            let next = tokio::select! {
+                biased;
+                () = cancel.cancelled() => {
+                    cancelled = true;
+                    break;
+                }
+                next = tokio::time::timeout_at(
+                    chat_stream_abort_deadline(last_token, started, received_frame),
+                    stream.next(),
+                ) => next,
+            };
+            match next {
                 Ok(Some(chunk)) => {
-                    if is_cancelled() {
-                        cancelled = true;
-                        break;
-                    }
                     last_token = tokio::time::Instant::now();
                     received_frame = true;
                     let bytes = chunk.map_err(|e| e.to_string())?;
@@ -344,21 +365,10 @@ impl OllamaClient {
                 }
                 Ok(None) => break,
                 Err(_) => {
-                    // Poll tick elapsed with no token — check cancellation.
-                    if is_cancelled() {
-                        cancelled = true;
-                        break;
-                    }
+                    // The idle/total abort deadline elapsed with no frame.
+                    stalled = true;
+                    break;
                 }
-            }
-            let now = tokio::time::Instant::now();
-            if chat_stream_should_abort(
-                now.duration_since(last_token),
-                now.duration_since(started),
-                received_frame,
-            ) {
-                stalled = true;
-                break;
             }
         }
         // A cancelled stream holds only a partial response — for a structured
@@ -464,15 +474,17 @@ impl OllamaClient {
     }
 
     /// Stream a model pull, coalescing per-layer Ollama progress into one bar.
-    pub async fn pull_stream<F, E>(
+    /// `cancel` aborts the pull the instant it fires (a `select!` branch — the
+    /// dropped stream closes the connection and Ollama stops the pull), even
+    /// while the stream is silent between NDJSON frames.
+    pub async fn pull_stream<E>(
         &self,
         endpoint: &str,
         model: &str,
-        is_cancelled: F,
+        cancel: &CancellationToken,
         mut emit: E,
     ) -> PullOutcome
     where
-        F: Fn() -> bool + Send,
         E: FnMut(serde_json::Value) + Send,
     {
         let url = match build_loopback_ollama_api_url(endpoint, "/api/pull") {
@@ -490,13 +502,17 @@ impl OllamaClient {
                 return PullOutcome::Error(err);
             }
         };
-        let resp = match self
+        let send = self
             .http
             .post(url)
             .json(&serde_json::json!({ "model": model, "stream": true, "insecure": false }))
-            .send()
-            .await
-        {
+            .send();
+        let sent = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return PullOutcome::Cancelled,
+            sent = send => sent,
+        };
+        let resp = match sent {
             Ok(r) => r,
             Err(e) => {
                 let msg = format!("Ollama /api/pull failed: {e}");
@@ -535,10 +551,12 @@ impl OllamaClient {
         let mut layers = PullLayers::default();
 
         loop {
-            if is_cancelled() {
-                return PullOutcome::Cancelled;
-            }
-            let Some(chunk) = stream.next().await else {
+            let next = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return PullOutcome::Cancelled,
+                next = stream.next() => next,
+            };
+            let Some(chunk) = next else {
                 break;
             };
             let bytes = match chunk {
@@ -577,9 +595,6 @@ impl OllamaClient {
                     }
                     emit(payload);
                 }
-            }
-            if is_cancelled() {
-                return PullOutcome::Cancelled;
             }
         }
 
@@ -992,6 +1007,19 @@ mod tests {
         let success = serde_json::json!({ "status": "success" }).to_string();
         let (_, payload) = parse_pull_line("m", &success, &mut layers).unwrap();
         assert_eq!(payload.get("percent").and_then(|p| p.as_f64()), Some(100.0));
+    }
+
+    /// Would a stream that has been idle `idle_for` and running `running_for`
+    /// be past its abort deadline right now?
+    fn chat_stream_should_abort(
+        idle_for: Duration,
+        running_for: Duration,
+        received_frame: bool,
+    ) -> bool {
+        // Anchor "now" well ahead of the real clock so subtracting the largest
+        // test durations can never underflow the platform Instant.
+        let now = tokio::time::Instant::now() + Duration::from_secs(3600);
+        chat_stream_abort_deadline(now - idle_for, now - running_for, received_frame) <= now
     }
 
     #[test]

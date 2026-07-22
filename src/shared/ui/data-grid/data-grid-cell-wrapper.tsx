@@ -42,6 +42,7 @@ export function DataGridCellWrapper<TData>({
 		} else {
 			cellMapRef.current.delete(cellKey);
 		}
+		tableMeta?.onCellMount?.(rowIndex, columnId, node);
 	};
 
 	const composedRef = useComposedRefs(ref, onCellChange);

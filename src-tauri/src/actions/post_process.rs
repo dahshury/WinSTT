@@ -18,7 +18,37 @@ use tauri::Manager;
 static ACTIVE_POST_PROCESSING_SESSION: AtomicU64 = AtomicU64::new(0);
 static SKIP_POST_PROCESSING_SESSION: AtomicU64 = AtomicU64::new(0);
 
+/// Wakes the dictation post-processing watcher the instant an escape hatch
+/// fires (Alt+S skip, Esc/X session cancel) — a callback, not a poll. The
+/// atomics above stay the source of truth; this only says "re-check them now".
+/// `notify_one` stores a permit when no watcher is registered yet, so a wake
+/// that lands before (or between) the watcher's awaits is never lost — a stale
+/// permit from a prior session costs one spurious flag re-check, nothing more.
+static POST_PROCESSING_ESCAPE: std::sync::LazyLock<tokio::sync::Notify> =
+    std::sync::LazyLock::new(tokio::sync::Notify::new);
+
+/// Foreground-restoration completion for the overlay-click skip path. Alt+S
+/// never populates this slot because it does not move focus. The session id
+/// prevents a late window callback from delaying a later dictation.
+static POST_PROCESSING_FOCUS_RESTORE: std::sync::LazyLock<
+    std::sync::Mutex<
+        Option<(
+            u64,
+            crate::winstt::commands::preview::ForegroundRestoreCompletion,
+        )>,
+    >,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+/// Wake the post-processing watcher to re-check its escape flags. Called by
+/// every path that can make them true while an LLM cleanup is in flight.
+pub(crate) fn notify_post_processing_escape() {
+    POST_PROCESSING_ESCAPE.notify_one();
+}
+
 fn begin_post_processing_skip_window(session_id: u64) {
+    *POST_PROCESSING_FOCUS_RESTORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     SKIP_POST_PROCESSING_SESSION.store(0, Ordering::Release);
     ACTIVE_POST_PROCESSING_SESSION.store(session_id, Ordering::Release);
 }
@@ -36,6 +66,15 @@ fn finish_post_processing_skip_window(session_id: u64) {
         Ordering::AcqRel,
         Ordering::Acquire,
     );
+    let mut restore = POST_PROCESSING_FOCUS_RESTORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if restore
+        .as_ref()
+        .is_some_and(|(owner, _)| *owner == session_id)
+    {
+        restore.take();
+    }
 }
 
 fn post_processing_skip_requested(session_id: u64) -> bool {
@@ -52,11 +91,14 @@ pub(crate) fn request_post_processing_skip(app: &AppHandle, restore_focus: bool)
         return false;
     }
     SKIP_POST_PROCESSING_SESSION.store(session_id, Ordering::Release);
+    if restore_focus && let Some(completion) = super::pinned_foreground::restore_focus() {
+        *POST_PROCESSING_FOCUS_RESTORE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((session_id, completion));
+    }
+    notify_post_processing_escape();
     if let Some(llm) = app.try_state::<Arc<LlmManager>>() {
         llm.cancel_all();
-    }
-    if restore_focus {
-        super::pinned_foreground::restore_focus();
     }
     debug!("Skipping post-processing for dictation session {session_id}");
     true
@@ -530,12 +572,68 @@ fn raw_transcription_output(transcription: &str) -> ProcessedTranscription {
     }
 }
 
-async fn skipped_transcription_output(transcription: &str) -> ProcessedTranscription {
-    // A mouse click activates WebView2 before its handler runs. Give the command
-    // path's pinned-window restore one compositor beat to settle before the
-    // existing paste worker synthesizes Ctrl+V. Alt+S pays the same tiny delay.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+async fn skipped_transcription_output(
+    transcription: &str,
+    session_id: u64,
+) -> ProcessedTranscription {
+    let completion = {
+        let mut restore = POST_PROCESSING_FOCUS_RESTORE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match restore.as_ref() {
+            Some((owner, _)) if *owner == session_id => restore.take().map(|(_, value)| value),
+            _ => None,
+        }
+    };
+    if let Some(completion) = completion {
+        completion.wait().await;
+    }
     raw_transcription_output(transcription)
+}
+
+/// Outcome of racing the LLM cleanup against the user's escape hatches.
+enum LlmAwaitOutcome<T> {
+    Finished(T),
+    Interrupted,
+}
+
+/// Await the LLM cleanup while watching the Alt+S skip flag and the session
+/// cancel marker (Esc / overlay X). `LlmManager::cancel_all` is only observed
+/// by the chat STREAM loop's cancellation ticks — the cleanup also passes
+/// through phases that cannot see it at all: the `/api/show` capability probe
+/// and the chat POST's header wait (Ollama holds the response headers while it
+/// loads and prefills the model, up to the 120s request ceiling). A skip
+/// pressed there used to sit unanswered while the island kept counting.
+///
+/// Racing the whole future against the [`POST_PROCESSING_ESCAPE`] notifier
+/// answers the user immediately in EVERY phase — event-driven, no polling:
+/// dropping the future closes the in-flight HTTP request (so Ollama aborts the
+/// generation and frees the GPU) and the pipeline finishes with the raw
+/// transcript.
+async fn await_llm_watching_escape_hatches<F, T>(llm: F, session_id: u64) -> LlmAwaitOutcome<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    tokio::pin!(llm);
+    let escape_requested = || {
+        post_processing_skip_requested(session_id)
+            || crate::transcription_coordinator::is_dictation_session_cancelled(session_id)
+    };
+    loop {
+        // Create the wake future BEFORE reading the flags: a notify landing
+        // between the check and the select either stores a permit (no waiter
+        // registered yet) or wakes this future, so it cannot be lost.
+        let escape = POST_PROCESSING_ESCAPE.notified();
+        if escape_requested() {
+            return LlmAwaitOutcome::Interrupted;
+        }
+        tokio::select! {
+            result = &mut llm => return LlmAwaitOutcome::Finished(result),
+            // A wake — or a stale permit from a prior session — loops back to
+            // re-check the flags, which stay the source of truth.
+            () = escape => {}
+        }
+    }
 }
 
 pub(crate) async fn process_transcription_output(
@@ -547,7 +645,7 @@ pub(crate) async fn process_transcription_output(
         return raw_transcription_output("");
     }
     if post_processing_skip_requested(session_id) {
-        return skipped_transcription_output(transcription).await;
+        return skipped_transcription_output(transcription, session_id).await;
     }
 
     let mut winstt_settings = crate::winstt::commands::settings::read_settings(app);
@@ -610,15 +708,31 @@ pub(crate) async fn process_transcription_output(
         .map(format_captured_context)
         .unwrap_or_default();
     let llm_result = if winstt_dictation_llm {
-        process_winstt_dictation_llm(app, &winstt_settings, &final_text, llm_context_fragment).await
+        match await_llm_watching_escape_hatches(
+            process_winstt_dictation_llm(app, &winstt_settings, &final_text, llm_context_fragment),
+            session_id,
+        )
+        .await
+        {
+            LlmAwaitOutcome::Finished(result) => result,
+            // Alt+S (paste raw now) or a session cancel landed while the LLM was
+            // still running. Return the untouched engine transcript immediately —
+            // the caller's `cancelled_session_cleanup` re-check suppresses the
+            // paste for the cancel case, so this output only reaches the paste
+            // worker on the Alt+S path.
+            LlmAwaitOutcome::Interrupted => {
+                return skipped_transcription_output(transcription, session_id).await;
+            }
+        }
     } else {
         None
     };
 
-    // Alt+S may have cancelled the await above. Return the untouched engine
-    // transcript before any replacement, vocabulary, snippet, or caret passes.
+    // Alt+S may have landed in the same instant the LLM finished. Return the
+    // untouched engine transcript before any replacement, vocabulary, snippet,
+    // or caret passes.
     if post_processing_skip_requested(session_id) {
-        return skipped_transcription_output(transcription).await;
+        return skipped_transcription_output(transcription, session_id).await;
     }
 
     let mut llm_cleanup_succeeded = false;
@@ -803,6 +917,67 @@ mod tests {
         assert!(output.post_processed_text.is_none());
         assert!(!output.post_process_requested);
         assert!(output.llm_meta.is_none());
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::await_holding_lock,
+        reason = "test-only serialization of the global skip-window statics; single-task runtime"
+    )]
+    async fn skip_flag_interrupts_a_pending_llm_await() {
+        let _guard = SKIP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        begin_post_processing_skip_window(77);
+        SKIP_POST_PROCESSING_SESSION.store(77, Ordering::Release);
+
+        // The LLM future never resolves (models a header wait / wedged probe);
+        // the pre-armed skip flag alone must break the await.
+        let outcome = await_llm_watching_escape_hatches(std::future::pending::<()>(), 77).await;
+        assert!(matches!(outcome, LlmAwaitOutcome::Interrupted));
+
+        finish_post_processing_skip_window(77);
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::await_holding_lock,
+        reason = "test-only serialization of the global skip-window statics; single-task runtime"
+    )]
+    async fn escape_notify_interrupts_a_running_await_without_polling() {
+        let _guard = SKIP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        begin_post_processing_skip_window(88);
+
+        // Alt+S lands only AFTER the watcher is already parked on the pending
+        // LLM future — the notify wake (not a poll tick, no timers here) must
+        // trigger the flag re-check.
+        let watcher = await_llm_watching_escape_hatches(std::future::pending::<()>(), 88);
+        let alt_s = async {
+            tokio::task::yield_now().await;
+            SKIP_POST_PROCESSING_SESSION.store(88, Ordering::Release);
+            notify_post_processing_escape();
+        };
+        let (outcome, ()) = tokio::join!(watcher, alt_s);
+        assert!(matches!(outcome, LlmAwaitOutcome::Interrupted));
+
+        finish_post_processing_skip_window(88);
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::await_holding_lock,
+        reason = "test-only serialization of the global skip-window statics; single-task runtime"
+    )]
+    async fn finished_llm_await_passes_the_result_through() {
+        let _guard = SKIP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // No skip window armed and a session id no test cancels: the completed
+        // future's value must come back untouched.
+        let outcome = await_llm_watching_escape_hatches(async { 42 }, u64::MAX).await;
+        assert!(matches!(outcome, LlmAwaitOutcome::Finished(42)));
     }
 
     fn settings_with_dictation_model(enabled: bool) -> WinsttSettings {

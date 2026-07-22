@@ -139,6 +139,43 @@ describe("SettingsSidebar", () => {
 		expect(screen.getByRole("textbox")).toBeDefined();
 	});
 
+	test("keeps search open while focus moves within its field group", () => {
+		renderSidebar();
+		const search = openSearch();
+		fireEvent.change(search, { target: { value: "audio" } });
+		const clear = screen.getByRole("button", { name: /clear/i });
+
+		fireEvent.blur(search, { relatedTarget: clear });
+
+		expect(screen.getByRole("textbox")).toBeDefined();
+		expect(screen.getAllByRole("tab")).toHaveLength(1);
+	});
+
+	test("closes search immediately when focus leaves its field group", () => {
+		renderSidebar();
+		const search = openSearch();
+		fireEvent.change(search, { target: { value: "audio" } });
+		const collapse = screen.getByRole("button", {
+			name: /collapse sidebar/i,
+		});
+
+		fireEvent.blur(search, { relatedTarget: collapse });
+
+		expect(screen.queryByRole("textbox")).toBeNull();
+		expect(screen.getAllByRole("tab")).toHaveLength(links.length);
+	});
+
+	test("closes search immediately on an outside pointer press", () => {
+		renderSidebar();
+		const search = openSearch();
+		fireEvent.change(search, { target: { value: "audio" } });
+
+		fireEvent.pointerDown(document.body);
+
+		expect(screen.queryByRole("textbox")).toBeNull();
+		expect(screen.getAllByRole("tab")).toHaveLength(links.length);
+	});
+
 	test("filters the tab list by label as you type", () => {
 		renderSidebar();
 		const search = openSearch();

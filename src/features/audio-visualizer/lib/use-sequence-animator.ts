@@ -19,29 +19,51 @@ export function useSequenceAnimator(
 
 	const frameCount = sequence.length;
 	useEffect(() => {
-		// Sequence length <= 1 means cycling the index changes nothing. Skip rAF
-		// entirely so idle visualizers do not burn a 60 fps loop per BrowserWindow.
+		// Sequence length <= 1 means cycling the index changes nothing. Skip the
+		// timer entirely so idle visualizers do no background work.
 		if (frameCount <= 1 || !Number.isFinite(interval)) {
 			return;
 		}
 
-		let animationFrameId: number | null = null;
-		let startTime = performance.now();
-		const animate = (time: DOMHighResTimeStamp) => {
-			if (time - startTime >= interval) {
-				setIndex((prev) => prev + 1);
-				startTime = time;
+		let timeoutId: number | null = null;
+		let nextTransitionAt = performance.now() + interval;
+
+		const clearScheduledTransition = () => {
+			if (timeoutId !== null) {
+				window.clearTimeout(timeoutId);
+				timeoutId = null;
 			}
-			animationFrameId = requestAnimationFrame(animate);
 		};
 
-		animationFrameId = requestAnimationFrame(animate);
-		return () => {
-			if (animationFrameId !== null) {
-				cancelAnimationFrame(animationFrameId);
+		const scheduleNextTransition = () => {
+			if (document.hidden || timeoutId !== null) {
+				return;
 			}
+
+			timeoutId = window.setTimeout(
+				() => {
+					timeoutId = null;
+					setIndex((prev) => prev + 1);
+					nextTransitionAt = performance.now() + interval;
+					scheduleNextTransition();
+				},
+				Math.max(0, nextTransitionAt - performance.now()),
+			);
 		};
-		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- inputsKey is an intentional dependency (not read in the body): it restarts the rAF timer in lockstep with the render-phase index reset so each new input sequence shows frame 0 for a full interval.
+
+		const handleVisibilityChange = () => {
+			clearScheduledTransition();
+			scheduleNextTransition();
+		};
+
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		scheduleNextTransition();
+
+		return () => {
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			clearScheduledTransition();
+		};
+		// react-doctor-disable-next-line react-doctor/exhaustive-deps -- inputsKey is an intentional dependency (not read in the body): it restarts the transition deadline in lockstep with the render-phase index reset so each new input sequence shows frame 0 for a full interval.
 	}, [frameCount, inputsKey, interval]);
 
 	return pickFrame(sequence, inputsAreCurrent ? index : 0);

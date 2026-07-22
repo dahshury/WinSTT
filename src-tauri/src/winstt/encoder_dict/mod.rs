@@ -23,9 +23,10 @@ pub mod index;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex as StdMutex, OnceLock};
+use std::time::{Duration, Instant};
 
+use parking_lot::{Mutex, MutexGuard};
 use tauri::AppHandle;
 
 pub use engine::DEFAULT_RANK_K;
@@ -48,37 +49,28 @@ const ENGINE_LOCK_TIMEOUT_MS: u64 = 500;
 /// Loaded engine, created once after the model is present. `None` until then.
 static ENGINE: OnceLock<Mutex<Option<EncoderDict>>> = OnceLock::new();
 
+/// Timed engine-lock acquisition. `parking_lot` parks this thread until the
+/// current guard releases the mutex (or the exact deadline expires), avoiding
+/// the previous 10 ms retry-sleep polling loop.
 fn lock_engine<'a>(
     cell: &'a Mutex<Option<EncoderDict>>,
     context: &str,
 ) -> Option<MutexGuard<'a, Option<EncoderDict>>> {
     let started = Instant::now();
     log::debug!("[encoder-dict] lock_start context={context}");
-    loop {
-        match cell.try_lock() {
-            Ok(guard) => {
-                log::debug!(
-                    "[encoder-dict] lock_complete context={context} duration_ms={}",
-                    started.elapsed().as_millis()
-                );
-                return Some(guard);
-            }
-            Err(TryLockError::Poisoned(poisoned)) => {
-                log::warn!("[encoder-dict] lock poisoned in {context}; recovering");
-                return Some(poisoned.into_inner());
-            }
-            Err(TryLockError::WouldBlock) => {
-                if started.elapsed() >= Duration::from_millis(ENGINE_LOCK_TIMEOUT_MS) {
-                    log::warn!(
-                        "[encoder-dict] lock_timeout context={context} duration_ms={}",
-                        started.elapsed().as_millis()
-                    );
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
+    let guard = cell.try_lock_for(Duration::from_millis(ENGINE_LOCK_TIMEOUT_MS));
+    if guard.is_some() {
+        log::debug!(
+            "[encoder-dict] lock_complete context={context} duration_ms={}",
+            started.elapsed().as_millis()
+        );
+    } else {
+        log::warn!(
+            "[encoder-dict] lock_timeout context={context} duration_ms={}",
+            started.elapsed().as_millis()
+        );
     }
+    guard
 }
 
 /// Directory the encoder model + tokenizer live in.
@@ -100,8 +92,9 @@ pub fn is_model_present(app: &AppHandle) -> bool {
 /// reloads fresh instead of serving the stale in-memory session.
 pub fn clear_loaded() {
     if let Some(cell) = ENGINE.get() {
-        *cell.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *cell.lock() = None;
     }
+    idle_signal().notify();
 }
 
 // ── Idle-unload lifecycle ───────────────────────────────────────────────────
@@ -115,21 +108,93 @@ const ENCODER_IDLE_NEVER_SECS: u64 = u64::MAX;
 static ENCODER_IDLE_SECS: AtomicU64 = AtomicU64::new(ENCODER_IDLE_NEVER_SECS);
 static ENCODER_LAST_USED_MS: AtomicU64 = AtomicU64::new(0);
 static ENCODER_WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
+static ENCODER_CLOCK_EPOCH: OnceLock<Instant> = OnceLock::new();
+static ENCODER_IDLE_SIGNAL: OnceLock<IdleSignal> = OnceLock::new();
+
+/// Generation-based wakeup used by the idle watcher. Capturing the generation
+/// before inspecting encoder state prevents a use or policy change from being
+/// lost between the state check and the condvar wait.
+struct IdleSignal {
+    generation: StdMutex<u64>,
+    changed: Condvar,
+}
+
+impl IdleSignal {
+    fn new() -> Self {
+        Self {
+            generation: StdMutex::new(0),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        *self
+            .generation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn notify(&self) {
+        let mut generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *generation = generation.wrapping_add(1);
+        self.changed.notify_all();
+    }
+
+    fn wait_for_change(&self, observed: u64, timeout: Option<Duration>) -> u64 {
+        let generation = self
+            .generation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *generation != observed {
+            return *generation;
+        }
+
+        let generation = match timeout {
+            Some(timeout) => {
+                self.changed
+                    .wait_timeout_while(generation, timeout, |current| *current == observed)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .0
+            }
+            None => self
+                .changed
+                .wait_while(generation, |current| *current == observed)
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        };
+        *generation
+    }
+}
+
+fn idle_signal() -> &'static IdleSignal {
+    ENCODER_IDLE_SIGNAL.get_or_init(IdleSignal::new)
+}
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as u64)
+    ENCODER_CLOCK_EPOCH
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn touch_encoder_used() {
     ENCODER_LAST_USED_MS.store(now_ms(), Ordering::Release);
+    idle_signal().notify();
+}
+
+fn finish_encoder_use() {
+    touch_encoder_used();
+    if encoder_idle_is_immediate() {
+        clear_loaded();
+    }
 }
 
 fn encoder_is_loaded() -> bool {
-    ENGINE
-        .get()
-        .is_some_and(|cell| cell.lock().is_ok_and(|g| g.is_some()))
+    ENGINE.get().is_some_and(|cell| cell.lock().is_some())
 }
 
 /// True iff the configured policy is `Immediately` (drop the session right after
@@ -156,6 +221,8 @@ pub fn update_idle_unload_timeout(timeout: crate::settings::ModelUnloadTimeout) 
     if secs == 0 {
         clear_loaded();
         log::debug!("[encoder-dict] session dropped (immediate unload policy)");
+    } else {
+        idle_signal().notify();
     }
 }
 
@@ -168,19 +235,25 @@ pub fn start_idle_watcher() {
         return;
     }
     std::thread::spawn(|| {
+        let signal = idle_signal();
+        let mut observed = signal.generation();
         loop {
-            std::thread::sleep(Duration::from_secs(5));
             let secs = ENCODER_IDLE_SECS.load(Ordering::Acquire);
-            // Nothing loaded → nothing to drop (also covers Never/Immediately, which
-            // never leave a finite-idle session for the watcher to reap).
-            if !encoder_is_loaded() {
-                continue;
-            }
-            let idle_ms = now_ms().saturating_sub(ENCODER_LAST_USED_MS.load(Ordering::Acquire));
-            if idle_unload_due(secs, idle_ms) {
-                clear_loaded();
-                log::debug!("[encoder-dict] session dropped (idle timeout {secs}s)");
-            }
+            let wait = if !encoder_is_loaded() || secs == ENCODER_IDLE_NEVER_SECS || secs == 0 {
+                // No deadline exists until a load/use or policy change wakes us.
+                None
+            } else {
+                let idle_ms = now_ms().saturating_sub(ENCODER_LAST_USED_MS.load(Ordering::Acquire));
+                if idle_unload_due(secs, idle_ms) {
+                    clear_loaded();
+                    log::debug!("[encoder-dict] session dropped (idle timeout {secs}s)");
+                    None
+                } else {
+                    let limit_ms = secs.saturating_mul(1000);
+                    Some(Duration::from_millis(limit_ms.saturating_sub(idle_ms)))
+                }
+            };
+            observed = signal.wait_for_change(observed, wait);
         }
     });
 }
@@ -198,7 +271,7 @@ pub fn preload_blocking(app: &AppHandle) {
     let model_path = dir.join(MODEL_FILENAME);
     let tok_path = dir.join(TOKENIZER_FILENAME);
     let cell = ENGINE.get_or_init(|| Mutex::new(None));
-    let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = cell.lock();
     if guard.is_none() {
         match EncoderDict::load(&model_path, &tok_path) {
             Ok(mut e) => {
@@ -213,7 +286,8 @@ pub fn preload_blocking(app: &AppHandle) {
     }
     // Count the load/warm as a "use" so the idle watcher starts its countdown
     // from NOW — otherwise `last_used` stays 0 (epoch) and the freshly preloaded
-    // model looks infinitely idle and is dropped on the watcher's first poll.
+    // model looks infinitely idle and is dropped on the watcher's next wake.
+    drop(guard);
     touch_encoder_used();
 }
 
@@ -258,12 +332,20 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
     let text_owned = text.to_string();
     let fallback = text.to_string();
     let correction_started = Instant::now();
-    let task = tokio::task::spawn_blocking(move || {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_cancelled = Arc::clone(&cancelled);
+    let mut task = tokio::task::spawn_blocking(move || {
         let blocking_started = Instant::now();
+        if worker_cancelled.load(Ordering::Acquire) {
+            return text_owned;
+        }
         let cell = ENGINE.get_or_init(|| Mutex::new(None));
         let Some(mut guard) = lock_engine(cell, "correction") else {
             return text_owned;
         };
+        if worker_cancelled.load(Ordering::Acquire) {
+            return text_owned;
+        }
         if guard.is_none() {
             let load_started = Instant::now();
             log::debug!("[encoder-dict] load_start");
@@ -280,6 +362,9 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
                     return text_owned;
                 }
             }
+        }
+        if worker_cancelled.load(Ordering::Acquire) {
+            return text_owned;
         }
         match guard.as_mut() {
             Some(e) => {
@@ -298,40 +383,92 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
         }
     });
 
-    let result =
-        match tokio::time::timeout(Duration::from_millis(CORRECTION_TIMEOUT_MS), task).await {
+    let completed =
+        match tokio::time::timeout(Duration::from_millis(CORRECTION_TIMEOUT_MS), &mut task).await {
             Ok(Ok(corrected)) => {
                 log::debug!(
                     "[encoder-dict] correction_complete duration_ms={} changed={}",
                     correction_started.elapsed().as_millis(),
                     corrected != fallback
                 );
-                corrected
+                Some(corrected)
             }
             Ok(Err(err)) => {
                 log::warn!("[encoder-dict] correction task failed, skipping: {err}");
-                fallback
+                Some(fallback.clone())
             }
             Err(_) => {
+                cancelled.store(true, Ordering::Release);
                 log::warn!(
                     "[encoder-dict] correction_timeout duration_ms={} returning_original=true",
                     correction_started.elapsed().as_millis()
                 );
-                fallback
+                // `spawn_blocking` cannot be force-aborted once inference has
+                // begun. Keep its handle, request cancellation between phases,
+                // and defer the eventual bookkeeping/unload to blocking-pool
+                // cleanup after it actually releases the engine mutex. This
+                // keeps the async runtime thread from synchronously waiting on
+                // the timed-out inference through `clear_loaded()`.
+                tokio::spawn(async move {
+                    let _ = task.await;
+                    if let Err(err) = tokio::task::spawn_blocking(finish_encoder_use).await {
+                        log::warn!("[encoder-dict] timed-out cleanup task failed: {err}");
+                    }
+                });
+                None
             }
         };
-    // `Immediately` policy: drop the ~310 MB session right after the correction
-    // (it reloads on the next use), mirroring STT/TTS immediate unload.
-    if encoder_idle_is_immediate() {
-        clear_loaded();
+    if let Some(result) = completed {
+        // Wake a watcher that may have observed `ENGINE` before the blocking
+        // task loaded it, and measure idleness from completed use rather than
+        // inference start. The initial touch still protects a queued use.
+        finish_encoder_use();
+        result
+    } else {
+        fallback
     }
-    result
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, mpsc};
+
     use super::*;
     use crate::settings::ModelUnloadTimeout;
+
+    #[test]
+    fn idle_signal_wakes_waiter_on_notification() {
+        let signal = Arc::new(IdleSignal::new());
+        let observed = signal.generation();
+        let waiter_signal = Arc::clone(&signal);
+        let (started_tx, started_rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            waiter_signal.wait_for_change(observed, Some(Duration::from_secs(1)))
+        });
+
+        started_rx.recv().unwrap();
+        signal.notify();
+
+        assert_ne!(waiter.join().unwrap(), observed);
+    }
+
+    #[test]
+    fn timed_engine_lock_wakes_when_guard_releases() {
+        let cell: Arc<Mutex<Option<EncoderDict>>> = Arc::new(Mutex::new(None));
+        let held = cell.lock();
+        let waiter_cell = Arc::clone(&cell);
+        let (started_tx, started_rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            lock_engine(&waiter_cell, "test").is_some()
+        });
+
+        started_rx.recv().unwrap();
+        drop(held);
+
+        assert!(waiter.join().unwrap());
+    }
 
     #[test]
     fn never_and_immediately_are_not_watcher_unloads() {

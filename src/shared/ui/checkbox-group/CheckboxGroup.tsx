@@ -587,18 +587,26 @@ export function CheckboxItem({
 			})()}
 
 			{trailing ? (
-				// Stop click/keydown from bubbling to the row so the inner
-				// control (e.g. the level switcher) owns its own interaction
-				// without re-triggering onToggle. Must use React's synthetic
-				// handlers, NOT native addEventListener: React 19 delegates
-				// events to the root, so a native stopPropagation here would
-				// fire before the root and swallow the inner control's own
-				// React onClick entirely (the switcher would never change).
-				// Synthetic bubbling runs the inner handler first, then this.
+				// Stop click/keydown AND pointer events from bubbling to the row
+				// so the inner control (e.g. the level switcher) owns its own
+				// interaction without re-triggering onToggle. `onPointerUp` is
+				// essential: the row commits its toggle on pointerup (see
+				// `handleRowPointerUp`), not click, so stopping only click let a
+				// trailing pointerup still bubble up and flip the row's checked
+				// state — clicking a modifier's Low/Medium/High/Caveman segment
+				// would toggle the whole modifier off instead of changing its
+				// level. Must use React's synthetic handlers, NOT native
+				// addEventListener: React 19 delegates events to the root, so a
+				// native stopPropagation here would fire before the root and
+				// swallow the inner control's own React handler entirely (the
+				// switcher would never change). Synthetic bubbling runs the inner
+				// handler first, then this.
 				<span
 					className="shrink-0"
 					onClick={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
+					onPointerDown={(e) => e.stopPropagation()}
+					onPointerUp={(e) => e.stopPropagation()}
 				>
 					{trailing}
 				</span>

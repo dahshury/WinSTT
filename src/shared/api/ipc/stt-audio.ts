@@ -180,8 +180,6 @@ export const onAudioOutputDevicesChanged = (
 		(payload) => payload.devices,
 		cb,
 	);
-export const audioSetSelectedMicrophone = (deviceName: string) =>
-	commands.setSelectedMicrophone(deviceName).then(unwrapResult);
 export const startMicrophoneLevelMonitor = (
 	targets: MicrophoneLevelMonitorTarget[],
 ) =>

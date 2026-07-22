@@ -16,6 +16,7 @@
 //   `stt:loopback-stopped` ()               (plain `on`)
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use specta::Type;
@@ -29,6 +30,9 @@ use crate::winstt::commands::runtime::{probe_cache_states, system_info_snapshot}
 use crate::winstt::commands::stt::picker_accelerator;
 use crate::winstt::managers::{DownloadManager, LoopbackManager};
 use crate::winstt::stt::cache_probe::engine_kind_for;
+
+const MODE_TRANSITION_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+const MODE_TRANSITION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// `start_listen` — begin loopback capture on `device_index` (the positional
 /// ordinal from `loopback_list_devices`).
@@ -49,6 +53,15 @@ pub async fn start_listen(
 ) -> Result<(), String> {
     if crate::winstt::commands::onboarding::is_onboarding_active() {
         return Err("Onboarding is active; listen mode is disabled".to_string());
+    }
+
+    wait_for_listen_mode_boundary(&app).await?;
+
+    // Recording-mode controls update optimistically in the renderer. If Listen's
+    // start races ahead of the settings-save command, enforce the same hard mode
+    // boundary here so loopback can never overlap an old PTT/toggle capture.
+    if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
+        coordinator.finalize_recording_mode_change();
     }
 
     let model_id =
@@ -83,6 +96,29 @@ pub async fn start_listen(
         serde_json::json!({ "deviceName": device_name }),
     );
     Ok(())
+}
+
+/// Wait for an optimistic renderer selection to be persisted and for the
+/// settings command's old-mode cleanup to finish. This closes both orderings of
+/// the race: `start_listen` arriving just before the save, and arriving after the
+/// new value is visible but while its runtime boundary is still in progress.
+async fn wait_for_listen_mode_boundary(app: &AppHandle) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        let listen_selected = crate::winstt::commands::settings::recording_mode(app)
+            == crate::winstt::settings_schema::RecordingMode::Listen;
+        let transition_in_progress =
+            crate::winstt::commands::settings::recording_mode_transition_in_progress();
+        if listen_selected && !transition_in_progress {
+            return Ok(());
+        }
+        if started.elapsed() >= MODE_TRANSITION_WAIT_TIMEOUT {
+            return Err(
+                "Listen mode start was not confirmed by the recording-mode transition".into(),
+            );
+        }
+        tokio::time::sleep(MODE_TRANSITION_POLL_INTERVAL).await;
+    }
 }
 
 fn set_main_window_listen_mode(app: &AppHandle, enabled: bool) {
@@ -161,8 +197,8 @@ pub struct ListenSessionSnapshot {
     pub live_preview: String,
 }
 
-/// `listen_session_snapshot` — poll surface for the History tab's live
-/// session card (small clone; no events to subscribe to cross-window).
+/// `listen_session_snapshot` — initial snapshot for the History tab's live
+/// session card. Subsequent changes arrive through `listen:session-changed`.
 #[tauri::command]
 #[specta::specta]
 pub fn listen_session_snapshot(loopback: State<'_, Arc<LoopbackManager>>) -> ListenSessionSnapshot {

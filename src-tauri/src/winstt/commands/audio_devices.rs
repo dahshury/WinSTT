@@ -26,10 +26,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Condvar, Mutex},
     thread,
     time::Duration,
 };
@@ -85,7 +82,40 @@ const AUDIO_DEVICECHANGE_DETECTED_EVENT: &str = "audio:devicechange-detected";
 const AUDIO_OUTPUT_DEVICES_CHANGED_EVENT: &str = "audio:output-devices-changed";
 const MICROPHONE_LEVELS_EVENT: &str = "audio:microphone-levels";
 const MICROPHONE_LEVEL_EMIT_INTERVAL: Duration = Duration::from_millis(80);
-static MICROPHONE_LEVEL_MONITOR_STOP: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+static MICROPHONE_LEVEL_MONITOR_STOP: Mutex<Option<Arc<MicrophoneLevelMonitorStop>>> =
+    Mutex::new(None);
+
+struct MicrophoneLevelMonitorStop {
+    stopped: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl MicrophoneLevelMonitorStop {
+    fn new() -> Self {
+        Self {
+            stopped: Mutex::new(false),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn stop(&self) {
+        let mut stopped = self.stopped.lock().unwrap_or_else(|p| p.into_inner());
+        *stopped = true;
+        self.changed.notify_all();
+    }
+
+    fn wait_timeout(&self, timeout: Duration) -> bool {
+        let stopped = self.stopped.lock().unwrap_or_else(|p| p.into_inner());
+        if *stopped {
+            return true;
+        }
+        let (stopped, _) = self
+            .changed
+            .wait_timeout_while(stopped, timeout, |stopped| !*stopped)
+            .unwrap_or_else(|p| p.into_inner());
+        *stopped
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -365,7 +395,7 @@ fn stop_existing_microphone_level_monitor() {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     if let Some(stop) = current.take() {
-        stop.store(true, Ordering::Relaxed);
+        stop.stop();
         log::debug!("[devices] microphone level monitor stopped");
     }
 }
@@ -543,7 +573,7 @@ fn emit_microphone_levels(
 fn run_microphone_level_monitor(
     app: AppHandle,
     targets: Vec<MicrophoneLevelMonitorTarget>,
-    stop: Arc<AtomicBool>,
+    stop: Arc<MicrophoneLevelMonitorStop>,
 ) {
     let ids = targets.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
     let levels = Arc::new(Mutex::new(HashMap::<String, f32>::new()));
@@ -565,8 +595,7 @@ fn run_microphone_level_monitor(
         }
     }
 
-    while !stop.load(Ordering::Relaxed) {
-        thread::sleep(MICROPHONE_LEVEL_EMIT_INTERVAL);
+    while !stop.wait_timeout(MICROPHONE_LEVEL_EMIT_INTERVAL) {
         emit_microphone_levels(&app, &ids, &levels);
     }
 
@@ -588,7 +617,7 @@ pub fn start_microphone_level_monitor(app: AppHandle, targets: Vec<MicrophoneLev
         targets.len()
     );
 
-    let stop = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(MicrophoneLevelMonitorStop::new());
     {
         let mut current = MICROPHONE_LEVEL_MONITOR_STOP
             .lock()

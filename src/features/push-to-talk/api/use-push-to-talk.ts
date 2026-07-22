@@ -67,7 +67,12 @@ export function usePushToTalk(): void {
 	const onboardedRef = useRef(false);
 	useEffect(() => {
 		recordingModeRef.current = recordingMode;
-	}, [recordingMode]);
+		// A mode selection is also a UI-state boundary. The backend finalizes any
+		// live capture and emits recording-stop; clear the toggle latch immediately
+		// so a later return to Toggle always starts from a clean first press.
+		isActiveRef.current = false;
+		setActive(false);
+	}, [recordingMode, setActive]);
 	useEffect(() => {
 		onboardedRef.current = onboarded;
 	}, [onboarded]);
@@ -186,15 +191,17 @@ export function usePushToTalk(): void {
 		[setMicPhase],
 	);
 
-	// The recorder stopped (PTT release, VAD silence in toggle/listen/wakeword, or a
-	// manual stop). Return the badge to idle — this is the authoritative "no longer
-	// recording" signal across every mode (and a safety net for PTT).
+	// The recorder stopped (PTT release, VAD silence, a manual stop, or a mode
+	// boundary). Return the badge and toggle latch to idle — this is the
+	// authoritative "no longer recording" signal across every mode.
 	useEffect(
 		() =>
 			onRecordingStop(() => {
+				isActiveRef.current = false;
+				setActive(false);
 				setMicPhase("idle");
 			}),
-		[setMicPhase],
+		[setActive, setMicPhase],
 	);
 
 	// User-initiated cancel (overlay X button, Escape). The server

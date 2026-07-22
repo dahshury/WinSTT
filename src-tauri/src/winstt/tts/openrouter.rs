@@ -329,7 +329,7 @@ impl TtsEngine for OpenRouterTtsEngine {
         }
     }
 
-    /// Race the in-flight POST against the sink's cancel flag (TTS island X /
+    /// Race the in-flight POST against the sink's cancel token (TTS island X /
     /// dictation overlay X), exactly like the ElevenLabs engine.
     fn synthesize_stream(
         &self,
@@ -342,17 +342,16 @@ impl TtsEngine for OpenRouterTtsEngine {
         use tauri::async_runtime::block_on;
         let bytes = match self.validate(voice, text)? {
             None => Vec::new(),
-            Some(t) => block_on(async {
-                tokio::select! {
-                    biased;
-                    () = async {
-                        while !sink.is_cancelled() {
-                            tokio::time::sleep(Duration::from_millis(20)).await;
-                        }
-                    } => Err(TtsError::Cancelled),
-                    res = self.fetch_audio(voice, &t, speed) => res,
-                }
-            })?,
+            Some(t) => {
+                let cancel = sink.cancel_token();
+                block_on(async {
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => Err(TtsError::Cancelled),
+                        res = self.fetch_audio(voice, &t, speed) => res,
+                    }
+                })?
+            }
         };
         sink.push(SynthesisChunk::mp3(bytes, 0, false));
         Ok(())

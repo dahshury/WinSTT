@@ -52,7 +52,8 @@ use crate::winstt::commands::model_lifecycle::{
     self, LifecycleProgress, SttModelLifecyclePhase as LifecyclePhase,
 };
 use crate::winstt::downloads::{
-    PauseCancelFlags, TransferControl, TransferOutcome, TransferRequest, transfer_url,
+    PauseCancelFlags, TransferControl, TransferControlState, TransferOutcome, TransferRequest,
+    transfer_url,
 };
 use crate::winstt::stt::Quantization;
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
@@ -69,7 +70,7 @@ use progress::*;
 /// Per-(model, quant) control + progress state, shared between the registry and whichever pool
 /// worker currently owns the job.
 ///
-/// `paused`/`cancelled` are the hot flags the streamer polls on every chunk. `parked` is the
+/// `paused`/`cancelled` publish a watch-state edge that races each network await. `parked` is the
 /// lifecycle bit that lets a PAUSED download RELEASE its pool slot instead of tying up a worker
 /// thread: when the worker observes a pause it marks the job parked and RETURNS; `resume`
 /// re-enqueues a fresh `run_quant_download` for the same handle. `parked` is only ever read/written
@@ -82,8 +83,8 @@ struct DownloadHandle {
     /// Correlates every worker callback with the authoritative lifecycle request. A stale worker
     /// can still finish after a newer request begins, but its transition is then rejected.
     request_id: String,
-    /// The hot pause/cancel flags polled by `transfer_url` (shared `PauseCancelFlags`); the handle
-    /// embeds it and forwards `TransferControl` to it.
+    /// The watch-backed pause/cancel control shared with `transfer_url`; the handle embeds it and
+    /// forwards `TransferControl` to it.
     flags: PauseCancelFlags,
     parked: AtomicBool,
     agg: Arc<ProgressAgg>,
@@ -224,12 +225,8 @@ async fn verify_hf_integrity(path: PathBuf, etag: &str) -> Result<Option<u64>, S
 }
 
 impl TransferControl for DownloadHandle {
-    fn should_cancel(&self) -> bool {
-        self.flags.is_cancelled()
-    }
-
-    fn should_pause(&self) -> bool {
-        self.flags.is_paused()
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<TransferControlState> {
+        self.flags.subscribe()
     }
 }
 

@@ -18,10 +18,6 @@ pub(super) fn default_paste_delay_ms() -> u64 {
     60
 }
 
-pub(super) fn default_auto_submit() -> bool {
-    false
-}
-
 pub(super) fn default_show_tray_icon() -> bool {
     true
 }

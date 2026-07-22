@@ -6,7 +6,13 @@ import {
 	StopIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type ReactNode,
+} from "react";
 import { useTranslations } from "use-intl";
 import { commands } from "@/bindings";
 import { onTyped } from "@/shared/api/native-boundary";
@@ -16,7 +22,7 @@ import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 
 const MAX_LINES = 1000;
-const FLUSH_INTERVAL_MS = 250;
+const FLUSH_DELAY_MS = 250;
 
 interface LiveLogLinePayload {
 	level: string;
@@ -95,9 +101,30 @@ export function LiveDebugLogViewer(): ReactNode {
 	const mountedRef = useRef(true);
 	const pinnedRef = useRef(true);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+		undefined,
+	);
 	const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
 		undefined,
 	);
+	const scheduleFlush = useCallback(() => {
+		if (
+			flushTimerRef.current !== undefined ||
+			pendingRef.current.length === 0
+		) {
+			return;
+		}
+
+		flushTimerRef.current = setTimeout(() => {
+			flushTimerRef.current = undefined;
+			if (!backendEnabledRef.current || pendingRef.current.length === 0) {
+				return;
+			}
+			const incoming = pendingRef.current;
+			pendingRef.current = [];
+			setLines((current) => appendCapped(current, incoming));
+		}, FLUSH_DELAY_MS);
+	}, []);
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -110,6 +137,7 @@ export function LiveDebugLogViewer(): ReactNode {
 				if (pending.length > MAX_LINES) {
 					pending.splice(0, pending.length - MAX_LINES);
 				}
+				scheduleFlush();
 			},
 		);
 
@@ -119,24 +147,16 @@ export function LiveDebugLogViewer(): ReactNode {
 			if (copiedTimerRef.current !== undefined) {
 				clearTimeout(copiedTimerRef.current);
 			}
+			if (flushTimerRef.current !== undefined) {
+				clearTimeout(flushTimerRef.current);
+				flushTimerRef.current = undefined;
+			}
 			if (backendEnabledRef.current) {
 				backendEnabledRef.current = false;
 				void commands.diagSetLogStreaming(false);
 			}
 		};
-	}, []);
-
-	useEffect(() => {
-		const interval = setInterval(() => {
-			if (!backendEnabledRef.current || pendingRef.current.length === 0) {
-				return;
-			}
-			const incoming = pendingRef.current;
-			pendingRef.current = [];
-			setLines((current) => appendCapped(current, incoming));
-		}, FLUSH_INTERVAL_MS);
-		return () => clearInterval(interval);
-	}, []);
+	}, [scheduleFlush]);
 
 	useEffect(() => {
 		if (pinnedRef.current && scrollRef.current) {
@@ -158,6 +178,9 @@ export function LiveDebugLogViewer(): ReactNode {
 				return false;
 			}
 			backendEnabledRef.current = result.data;
+			if (result.data) {
+				scheduleFlush();
+			}
 			return result.data === enabled;
 		} catch {
 			if (mountedRef.current) {
@@ -201,6 +224,10 @@ export function LiveDebugLogViewer(): ReactNode {
 	};
 
 	const clear = () => {
+		if (flushTimerRef.current !== undefined) {
+			clearTimeout(flushTimerRef.current);
+			flushTimerRef.current = undefined;
+		}
 		pendingRef.current = [];
 		setLines([]);
 		pinnedRef.current = true;

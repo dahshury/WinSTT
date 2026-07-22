@@ -332,6 +332,72 @@ describe("useSyncSettings", () => {
 		}
 	});
 
+	test("keeps a failed hydration explicit until the user requests a retry", async () => {
+		let loadAttempts = 0;
+		commands.winsttGetSettingsSnapshot = async () => {
+			loadAttempts += 1;
+			if (loadAttempts === 1) {
+				throw new Error("settings backend unavailable");
+			}
+			return { revision: 0, settings: initialSettings as never };
+		};
+
+		renderHook(() => useSyncSettings());
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("error"),
+		);
+		expect(useSettingsHydrationStore.getState().error).toBe(
+			"settings backend unavailable",
+		);
+		expect(loadAttempts).toBe(1);
+
+		act(() => {
+			useSettingsHydrationStore.getState().requestRetry();
+		});
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("ready"),
+		);
+		expect(loadAttempts).toBe(2);
+	});
+
+	test("retries failed hydration when SETTINGS_CHANGED proves the backend is responsive", async () => {
+		const external = {
+			...initialSettings,
+			audio: { ...initialSettings.audio, sileroSensitivity: 0.83 },
+		};
+		let loadAttempts = 0;
+		commands.winsttGetSettingsSnapshot = async () => {
+			loadAttempts += 1;
+			if (loadAttempts === 1) {
+				throw new Error("transient startup failure");
+			}
+			return { revision: 4, settings: external as never };
+		};
+
+		renderHook(() => useSyncSettings());
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("error"),
+		);
+
+		act(() => {
+			for (const listener of listeners.get(IPC.SETTINGS_CHANGED) ?? []) {
+				listener({
+					changedSections: ["audio"],
+					revision: 4,
+					settings: external,
+				});
+			}
+		});
+
+		await waitFor(() =>
+			expect(useSettingsHydrationStore.getState().status).toBe("ready"),
+		);
+		expect(loadAttempts).toBe(2);
+		expect(useSettingsStore.getState().settings.audio.sileroSensitivity).toBe(
+			0.83,
+		);
+	});
+
 	test("flushes any pending debounced save on unmount", () => {
 		// At this stage the hook isLoaded is false, so no save is enqueued — the
 		// 'flush' on unmount path is exercised but is a no-op. No assertion needed

@@ -8,19 +8,18 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use super::{
-    DOWNLOAD_CONTROL_CANCEL, DOWNLOAD_CONTROL_PAUSE, DOWNLOAD_PROGRESS_EMIT_INTERVAL,
-    KWS_MODEL_DOWNLOAD_SHA256, KWS_MODEL_DOWNLOAD_URL, LEGACY_PORCUPINE_WHEEL_SHA256,
-    LEGACY_PORCUPINE_WHEEL_URL, WAKEWORD_MODEL_STATUS_EVENT, WakeWordDownloadPhase,
-    WakeWordModelDownloadSnapshot, WakeWordModelStatusPayload,
+    DOWNLOAD_PROGRESS_EMIT_INTERVAL, KWS_MODEL_DOWNLOAD_SHA256, KWS_MODEL_DOWNLOAD_URL,
+    LEGACY_PORCUPINE_WHEEL_SHA256, LEGACY_PORCUPINE_WHEEL_URL, WAKEWORD_MODEL_STATUS_EVENT,
+    WakeWordDownloadPhase, WakeWordModelDownloadSnapshot, WakeWordModelStatusPayload,
 };
-use crate::winstt::downloads::{TransferControl, TransferOutcome, TransferRequest, transfer_url};
+use crate::winstt::downloads::{PauseCancelFlags, TransferOutcome, TransferRequest, transfer_url};
 use crate::winstt::wakeword::{
     KWS_BUNDLE_DIRNAME, KwsModelPaths, LegacyPorcupinePaths, WakeWordRuntimeEngine,
 };
@@ -42,7 +41,7 @@ pub(super) fn download_model_bundle_for_engine(
     app: &AppHandle,
     engine: WakeWordRuntimeEngine,
     inflight: &Arc<AtomicBool>,
-    control: &Arc<AtomicU8>,
+    control: &Arc<PauseCancelFlags>,
     snapshot: &Arc<Mutex<WakeWordModelDownloadSnapshot>>,
 ) -> Result<WakeWordDownloadOutcome, String> {
     match engine {
@@ -58,7 +57,7 @@ pub(super) fn download_model_bundle_for_engine(
 pub(super) fn download_legacy_porcupine_bundle(
     app: &AppHandle,
     inflight: &Arc<AtomicBool>,
-    control: &Arc<AtomicU8>,
+    control: &Arc<PauseCancelFlags>,
     snapshot: &Arc<Mutex<WakeWordModelDownloadSnapshot>>,
 ) -> Result<WakeWordDownloadOutcome, String> {
     let root = wakeword_model_root_dir(app);
@@ -145,7 +144,7 @@ pub(super) fn download_legacy_porcupine_bundle(
 pub(super) fn download_kws_model_bundle(
     app: &AppHandle,
     inflight: &Arc<AtomicBool>,
-    control: &Arc<AtomicU8>,
+    control: &Arc<PauseCancelFlags>,
     snapshot: &Arc<Mutex<WakeWordModelDownloadSnapshot>>,
 ) -> Result<WakeWordDownloadOutcome, String> {
     let root = wakeword_model_root_dir(app);
@@ -231,7 +230,7 @@ pub(super) async fn download_kws_archive(
     target: &Path,
     app: &AppHandle,
     inflight: &Arc<AtomicBool>,
-    control: &Arc<AtomicU8>,
+    control: &Arc<PauseCancelFlags>,
     snapshot: &Arc<Mutex<WakeWordModelDownloadSnapshot>>,
 ) -> Result<WakeWordDownloadOutcome, String> {
     download_wakeword_file(url, target, app, inflight, control, snapshot).await
@@ -242,16 +241,13 @@ pub(super) async fn download_wakeword_file(
     target: &Path,
     app: &AppHandle,
     inflight: &Arc<AtomicBool>,
-    control: &Arc<AtomicU8>,
+    control: &Arc<PauseCancelFlags>,
     snapshot: &Arc<Mutex<WakeWordModelDownloadSnapshot>>,
 ) -> Result<WakeWordDownloadOutcome, String> {
     if let Some(outcome) = requested_download_action(control) {
         return Ok(outcome);
     }
     let client = reqwest::Client::new();
-    let control_adapter = WakeWordTransferControl {
-        control: control.as_ref(),
-    };
     let report = transfer_url(
         &client,
         TransferRequest {
@@ -262,7 +258,7 @@ pub(super) async fn download_wakeword_file(
             progress_interval: DOWNLOAD_PROGRESS_EMIT_INTERVAL,
             url,
         },
-        Some(&control_adapter),
+        Some(control.as_ref()),
         |progress| {
             update_download_snapshot(
                 snapshot,
@@ -364,26 +360,14 @@ pub(super) fn remove_path_if_exists(path: &Path) -> Result<(), String> {
 }
 
 pub(super) fn requested_download_action(
-    control: &Arc<AtomicU8>,
+    control: &Arc<PauseCancelFlags>,
 ) -> Option<WakeWordDownloadOutcome> {
-    match control.load(Ordering::Acquire) {
-        DOWNLOAD_CONTROL_PAUSE => Some(WakeWordDownloadOutcome::Paused),
-        DOWNLOAD_CONTROL_CANCEL => Some(WakeWordDownloadOutcome::Cancelled),
-        _ => None,
-    }
-}
-
-struct WakeWordTransferControl<'a> {
-    control: &'a AtomicU8,
-}
-
-impl TransferControl for WakeWordTransferControl<'_> {
-    fn should_cancel(&self) -> bool {
-        self.control.load(Ordering::Acquire) == DOWNLOAD_CONTROL_CANCEL
-    }
-
-    fn should_pause(&self) -> bool {
-        self.control.load(Ordering::Acquire) == DOWNLOAD_CONTROL_PAUSE
+    if control.is_cancelled() {
+        Some(WakeWordDownloadOutcome::Cancelled)
+    } else if control.is_paused() {
+        Some(WakeWordDownloadOutcome::Paused)
+    } else {
+        None
     }
 }
 

@@ -44,7 +44,7 @@ use crate::winstt::managers::llm_manager::PullOutcome;
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
-use super::ollama_pull::{clear_pull_cancel, is_pull_cancelled};
+use super::ollama_pull::{clear_pull_cancel, pull_cancel_token};
 use super::settings::read_settings;
 
 use conversions::{dictation_presets, openrouter_options, to_llm_effort, transforms_presets};
@@ -1090,8 +1090,8 @@ pub async fn ollama_start(
 }
 
 /// `ollama_pull` — pull a model, streaming `llm:pull-progress` for every frame.
-/// Honors the `ollama_cancel_pull` registry (polled between NDJSON frames).
-/// Returns `OllamaPullResult` (`{ success, model, cancelled?, error? }`).
+/// Honors the `ollama_cancel_pull` registry (awaitable token — cancel aborts the
+/// drain instantly). Returns `OllamaPullResult` (`{ success, model, cancelled?, error? }`).
 #[tauri::command]
 #[specta::specta]
 pub async fn ollama_pull(
@@ -1122,7 +1122,7 @@ pub async fn ollama_pull(
 
     // A cancel issued after a previous pull loop already ended leaves its flag
     // set with nothing to consume it — without this reset the NEXT pull of the
-    // model aborts on its first between-chunk poll and instantly reads as
+    // model would start with an already-cancelled token and instantly read as
     // "paused" to the user.
     clear_pull_cancel(&model);
 
@@ -1132,11 +1132,9 @@ pub async fn ollama_pull(
         serde_json::json!({ "model": model.as_str(), "status": "pulling", "statusText": "starting" }),
     );
 
-    let model_for_cancel = model.clone();
     let model_for_emit = model.clone();
-    let outcome = mgr
-        .ollama_pull_stream(&endpoint, &model, || is_pull_cancelled(&model_for_cancel))
-        .await;
+    let cancel = pull_cancel_token(&model);
+    let outcome = mgr.ollama_pull_stream(&endpoint, &model, &cancel).await;
     clear_pull_cancel(&model);
 
     match outcome {

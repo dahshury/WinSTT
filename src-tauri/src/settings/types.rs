@@ -37,9 +37,8 @@ pub struct ShortcutBinding {
     pub current_binding: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[specta(rename = "CoreModelUnloadTimeout")]
 pub enum ModelUnloadTimeout {
     Never,
     Immediately,
@@ -51,7 +50,7 @@ pub enum ModelUnloadTimeout {
     Sec15, // Debug mode only
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PasteMethod {
     CtrlV,
@@ -62,20 +61,11 @@ pub enum PasteMethod {
     ExternalScript,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardHandling {
     DontModify,
     CopyToClipboard,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-#[specta(rename = "CoreAutoSubmitKey")]
-pub enum AutoSubmitKey {
-    Enter,
-    CtrlEnter,
-    CmdEnter,
 }
 
 impl Default for ModelUnloadTimeout {
@@ -98,12 +88,6 @@ impl Default for PasteMethod {
 impl Default for ClipboardHandling {
     fn default() -> Self {
         ClipboardHandling::DontModify
-    }
-}
-
-impl Default for AutoSubmitKey {
-    fn default() -> Self {
-        AutoSubmitKey::Enter
     }
 }
 
@@ -195,7 +179,7 @@ impl From<&AtomicModelUnloadTimeout> for ModelUnloadTimeout {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TypingTool {
     Auto,
@@ -212,7 +196,7 @@ impl Default for TypingTool {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WhisperAcceleratorSetting {
     Auto,
@@ -225,7 +209,7 @@ impl Default for WhisperAcceleratorSetting {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OrtAcceleratorSetting {
     Auto,
@@ -242,16 +226,11 @@ impl Default for OrtAcceleratorSetting {
     }
 }
 
-/* still useful for composing the initial JSON in the store ------------ */
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
     #[serde(default = "default_update_checks_enabled")]
     pub update_checks_enabled: bool,
-    #[serde(default)]
-    pub selected_microphone: Option<String>,
-    #[serde(default)]
-    pub clamshell_microphone: Option<String>,
     #[serde(default)]
     pub selected_output_device: Option<String>,
     #[serde(default = "default_debug_mode")]
@@ -262,10 +241,6 @@ pub struct AppSettings {
     pub paste_method: PasteMethod,
     #[serde(default)]
     pub clipboard_handling: ClipboardHandling,
-    #[serde(default = "default_auto_submit")]
-    pub auto_submit: bool,
-    #[serde(default)]
-    pub auto_submit_key: AutoSubmitKey,
     #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]

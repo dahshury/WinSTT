@@ -88,15 +88,20 @@ pub(super) fn validated_hwnd() -> Option<u64> {
 /// Restore the recording-start target after a mouse click activates the overlay.
 /// The Alt+S path leaves focus alone; this is only needed for the clickable pill
 /// action so the eventual raw-text paste still lands in the dictation target.
-pub(super) fn restore_focus() {
+pub(super) fn restore_focus()
+-> Option<crate::winstt::commands::preview::ForegroundRestoreCompletion> {
     #[cfg(target_os = "windows")]
     {
         let pinned = *PINNED
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(foreground) = pinned.filter(|foreground| foreground.is_valid()) {
-            crate::winstt::commands::preview::restore_foreground(foreground);
-        }
+        pinned
+            .filter(|foreground| foreground.is_valid())
+            .map(crate::winstt::commands::preview::restore_foreground)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
     }
 }
 

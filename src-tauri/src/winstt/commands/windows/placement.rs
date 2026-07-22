@@ -8,8 +8,6 @@
 // Extracted verbatim from the original `windows.rs` (no logic changes).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
 };
@@ -18,11 +16,9 @@ use super::{PickerAnchor, PickerState, with_picker_state};
 
 // ── Picker placement sequencing ─────────────────────────────────────────────
 
-/// Monotonic open/close counter for the model-picker. Every open and every
-/// hide/reset bumps it; the delayed re-emit (see `place_model_picker`) captures
-/// the value at schedule time and only fires while it's still current — so a
-/// close (or a reopen at a new anchor) during the 250ms wait invalidates a stray
-/// re-emit that would otherwise re-plant a stale panel rect.
+/// Monotonic open/close counter for the model-picker. Renderer close-completion
+/// acknowledgements carry this generation so an old animation can never hide a
+/// picker that has since reopened at a new anchor.
 static MODEL_PICKER_SEQ: AtomicU64 = AtomicU64::new(0);
 
 // ── Monitor work-area helpers (logical px) ──────────────────────────────────
@@ -35,17 +31,10 @@ const TASKBAR_MARGIN: f64 = 8.0;
 /// Gap between the popup's bottom edge and the trigger that opened it. Mirrors
 /// `ANCHOR_GAP` in the reference pickers.
 const ANCHOR_GAP: f64 = 6.0;
-/// How long after the close starts the OS window is actually hidden. MUST stay
-/// longer than the renderer's 120ms close fade (`MODEL_PICKER_CLOSE_MS` in the
-/// detached model-picker renderer / `--dropdown-close-dur` in globals.css) so
-/// the fully-faded (transparent) frame is composited BEFORE the hide: WebView2
-/// re-presents the last composited frame when the window is next shown, and if
-/// that frame still holds the visible panel it flashes at the PREVIOUS
-/// trigger's position on the next open. The window ignores cursor events for
-/// this whole grace (set at close start), so the extra ~140ms of invisible
-/// backdrop cannot swallow clicks.
-const MODEL_PICKER_HIDE_DELAY_MS: u64 = 260;
-const MODEL_PICKER_ANCHOR_REEMIT_MS: &[u64] = &[75, 250, 700];
+/// Hard backstop for a crashed renderer or an animation suppressed before it can
+/// emit `animationend`. Normal closes are completed immediately by the renderer's
+/// `window_model_picker_close_complete` acknowledgement.
+const MODEL_PICKER_CLOSE_FAILSAFE_MS: u64 = 1_500;
 /// Smallest usable model-picker height before we pin it to the screen top.
 const MODEL_MIN_HEIGHT: f64 = 160.0;
 /// Smallest usable footprint-panel height before we pin it to the screen top.
@@ -265,20 +254,25 @@ fn compute_panel(
 pub(super) fn close_model_picker_with_animation(app: &AppHandle, window: &tauri::WebviewWindow) {
     let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     // Mark the grace so `resize_window` won't re-place (and thereby re-show)
-    // the still-visible window before the delayed hide lands. Cleared on the
+    // the still-visible window before close completion lands. Cleared on the
     // next anchored open.
     with_picker_state("model-picker", |s| s.closing = true);
-    let _ = app.emit("model-picker:closing", serde_json::Value::Null);
+    let _ = window.emit(
+        crate::winstt::commands::events::names::MODEL_PICKER_CLOSING,
+        seq,
+    );
     // The backdrop's job is done the instant the close starts: let every
     // further click fall through to whatever is underneath while the fade
     // plays and the transparent post-fade frame is composited (see
-    // `MODEL_PICKER_HIDE_DELAY_MS`). Re-enabled on the next open.
+    // renderer acknowledgement). Re-enabled on the next open.
     let _ = window.set_ignore_cursor_events(true);
 
     let app2 = app.clone();
     let window2 = window.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(MODEL_PICKER_HIDE_DELAY_MS));
+        std::thread::sleep(std::time::Duration::from_millis(
+            MODEL_PICKER_CLOSE_FAILSAFE_MS,
+        ));
         if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
             return;
         }
@@ -286,83 +280,58 @@ pub(super) fn close_model_picker_with_animation(app: &AppHandle, window: &tauri:
             if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
                 return;
             }
-            let _ = window2.hide();
-            with_picker_state("model-picker", |s| {
-                s.anchor = None;
-                s.closing = false;
-            });
+            let _ = complete_model_picker_close(&window2, seq);
         });
     });
 }
 
-/// Where the picker is parked for its startup compositor warmup — far enough
-/// off-screen that the (600×560 seed) window can never peek into the desktop.
-const MODEL_PICKER_WARMUP_PARK: f64 = -9999.0;
-/// How long the warmup keeps the window shown off-screen. Long enough for
-/// WebView2 to create its composition surface and present a few frames.
-const MODEL_PICKER_WARMUP_MS: u64 = 800;
-
-/// One-time compositor warmup at startup. The picker window is pre-CREATED
-/// hidden, but WebView2 only builds its composition surface on the first show —
-/// so the FIRST user open paid a several-hundred-ms cold-composite during which
-/// the whole open animation elapsed invisibly (the renderer's double-rAF reveal
-/// gate can't detect this: rAF keeps ticking even in a hidden WebView2 window).
-/// Show the window once, parked off-screen and non-focusable, then hide it
-/// again so the first real open behaves like every subsequent one.
-pub(super) fn warm_model_picker_compositor(app: &AppHandle, window: &tauri::WebviewWindow) {
-    let seq = MODEL_PICKER_SEQ.load(Ordering::SeqCst);
-    let _ = window.set_focusable(false);
-    let _ = window.set_position(LogicalPosition::new(
-        MODEL_PICKER_WARMUP_PARK,
-        MODEL_PICKER_WARMUP_PARK,
-    ));
-    let _ = window.show();
-    let app2 = app.clone();
-    let window2 = window.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(MODEL_PICKER_WARMUP_MS));
-        let _ = app2.run_on_main_thread(move || {
-            let _ = window2.set_focusable(true);
-            // A real open landed during the warmup — the window is theirs now.
-            if MODEL_PICKER_SEQ.load(Ordering::SeqCst) == seq {
-                let _ = window2.hide();
-            }
-        });
+/// Hide the picker only if `seq` is still the active close generation. Called
+/// by the renderer's actual animation completion and by the single hard
+/// failsafe above.
+pub(super) fn complete_model_picker_close(
+    window: &tauri::WebviewWindow,
+    seq: u64,
+) -> Result<(), String> {
+    if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
+        return Ok(());
+    }
+    let should_hide = with_picker_state("model-picker", |state| {
+        if !state.closing {
+            return false;
+        }
+        state.anchor = None;
+        state.closing = false;
+        true
     });
+    if should_hide {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
-/// Place + show the MODEL picker: the window fills the display work area as a
-/// transparent backdrop, and we emit `model-picker:anchor` with the window-local
-/// panel rect so the renderer draws the visible panel around the chip.
-fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: PickerState) {
-    let Some(anchor) = state.anchor else {
-        // A full-screen transparent model-picker without a panel looks like the
-        // app hung and captures input. Keep it hidden until a real anchored open.
-        log::warn!("model-picker open requested without an anchor; keeping it hidden");
-        MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst);
-        let _ = window.hide();
-        return;
-    };
-    // Treat open as a repair/re-anchor operation. This cancels any delayed hide
-    // from a close animation before it can race a fresh click.
-    let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    with_picker_state("model-picker", |s| s.closing = false);
+fn model_picker_layout(
+    app: &AppHandle,
+    state: &PickerState,
+) -> Option<((f64, f64, f64, f64), PanelBounds)> {
+    let anchor = state.anchor?;
     let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));
-    let (work_x, work_y, work_w, work_h) = work;
+    let (_, _, work_w, _) = work;
     // Match the picker to the width of the trigger combobox that opened it. The
-    // renderer-reported `state.width` (the mode's natural footprint) is the minimum
-    // floor, so a tiny trigger (the main-window footer chip) still yields a usable
-    // picker. `compute_x_axis` right-aligns the panel to the trigger's right edge, so
-    // when the panel width equals the trigger width it spans the button exactly.
+    // renderer-reported size is the minimum floor, so the compact main-window
+    // footer trigger still yields a usable picker.
     let trigger_width = anchor.screen_right - anchor.screen_left;
     let panel_width = trigger_width.max(state.width).min(work_w);
     let panel = compute_panel(anchor, (panel_width, state.height), work, MODEL_MIN_HEIGHT);
+    Some((work, panel))
+}
 
-    // The window fills the whole work area; the panel is positioned inside it.
-    let _ = window.set_position(LogicalPosition::new(work_x, work_y));
-    let _ = window.set_size(LogicalSize::new(work_w, work_h));
-
-    let payload = serde_json::json!({
+fn model_picker_anchor_payload(
+    state: &PickerState,
+    work: (f64, f64, f64, f64),
+    panel: &PanelBounds,
+) -> serde_json::Value {
+    let (work_x, work_y, _, _) = work;
+    serde_json::json!({
         "x": panel.x - work_x,
         "y": panel.y - work_y,
         "width": panel.width,
@@ -373,12 +342,63 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
             "feature": state.mode.feature,
             "target": state.mode.target,
         },
-    });
+    })
+}
+
+fn emit_model_picker_anchor(
+    window: &tauri::WebviewWindow,
+    state: &PickerState,
+    work: (f64, f64, f64, f64),
+    panel: &PanelBounds,
+) {
+    let payload = model_picker_anchor_payload(state, work, panel);
+    let _ = window.emit(
+        crate::winstt::commands::events::names::MODEL_PICKER_ANCHOR,
+        payload,
+    );
+}
+
+/// Re-emit the latest active anchor after the renderer confirms its listener is
+/// installed. If no picker is open, the next open will deliver through that
+/// already-installed listener.
+pub(super) fn emit_model_picker_anchor_snapshot(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let state = with_picker_state("model-picker", |state| state.clone());
+    if state.closing {
+        return;
+    }
+    let Some((work, panel)) = model_picker_layout(app, &state) else {
+        return;
+    };
+    emit_model_picker_anchor(window, &state, work, &panel);
+}
+
+/// Place + show the MODEL picker: the window fills the display work area as a
+/// transparent backdrop, and we emit `model-picker:anchor` with the window-local
+/// panel rect so the renderer draws the visible panel around the chip.
+fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: PickerState) {
+    if state.anchor.is_none() {
+        // A full-screen transparent model-picker without a panel looks like the
+        // app hung and captures input. Keep it hidden until a real anchored open.
+        log::warn!("model-picker open requested without an anchor; keeping it hidden");
+        MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst);
+        let _ = window.hide();
+        return;
+    };
+    // Treat open as a repair/re-anchor operation. This invalidates any close
+    // acknowledgement or failsafe before it can race a fresh click.
+    MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst);
+    with_picker_state("model-picker", |s| s.closing = false);
+    let Some((work, panel)) = model_picker_layout(app, &state) else {
+        return;
+    };
+    let (work_x, work_y, work_w, work_h) = work;
+
+    // The window fills the whole work area; the panel is positioned inside it.
+    let _ = window.set_position(LogicalPosition::new(work_x, work_y));
+    let _ = window.set_size(LogicalSize::new(work_w, work_h));
 
     // A close leaves the backdrop click-through (see
-    // `close_model_picker_with_animation`); restore input before showing. The
-    // startup compositor warmup leaves the window non-focusable — restore that
-    // too in case an open lands mid-warmup.
+    // `close_model_picker_with_animation`); restore input before showing.
     let _ = window.set_ignore_cursor_events(false);
     let _ = window.set_focusable(true);
     let _ = window.show();
@@ -388,26 +408,7 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
     exempt_popup_from_occlusion_tracking(window);
     // Window-local panel coords = screen coords minus the work-area origin.
     // Show first so a hidden/suspended WebView2 has resumed before the event.
-    let _ = app.emit("model-picker:anchor", payload.clone());
-
-    // First-open and long-idle race: the listener may not have registered
-    // or the hidden webview may need a beat after show. Duplicate anchors are
-    // cheap and idempotent; the sequence guard cancels stale retries after close.
-    let app2 = app.clone();
-    std::thread::spawn(move || {
-        let started = Instant::now();
-        for delay_ms in MODEL_PICKER_ANCHOR_REEMIT_MS {
-            let target = Duration::from_millis(*delay_ms);
-            let elapsed = started.elapsed();
-            if target > elapsed {
-                std::thread::sleep(target - elapsed);
-            }
-            if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
-                return;
-            }
-            let _ = app2.emit("model-picker:anchor", payload.clone());
-        }
-    });
+    emit_model_picker_anchor(window, &state, work, &panel);
 }
 
 /// Mark a popup `WS_EX_TOOLWINDOW` so OTHER apps' occlusion trackers ignore
@@ -490,7 +491,7 @@ fn place_anchored_popup(app: &AppHandle, window: &tauri::WebviewWindow, state: P
     let _ = window.show();
     // The footprint is informational. Keep pointer ownership on the trigger
     // underneath it, including on Linux where click-through cannot be applied
-    // while the prewarmed native window is still hidden/unrealized.
+    // before the native window is shown and realized.
     let _ = window.set_ignore_cursor_events(true);
     let _ = window.set_always_on_top(true);
     #[cfg(target_os = "windows")]

@@ -2,20 +2,17 @@ import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	finalizeListenSession,
 	type ListenSessionSnapshot,
 	listenSessionSnapshot,
+	onListenSessionChangedReady,
 } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import { EntryCard } from "@/shared/ui/entry-card-list";
 import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
-
-/** Poll cadence for the live session snapshot while the History tab is open.
- *  A tiny IPC clone — cheap enough to keep the card feeling live without an
- *  event feed (the settings window has no listen-mode event subscriptions). */
-const POLL_MS = 1000;
 
 export interface LiveListenSessionCardViewProps {
 	canFinalize: boolean;
@@ -29,10 +26,10 @@ export interface LiveListenSessionCardViewProps {
 }
 
 /**
- * Presentational card for the ONGOING listen session at the top of the
+ * Presentational card for the ongoing listen session at the top of the
  * History table: committed caption lines plus the in-flight preview, with a
  * Finalize action that cuts the session-so-far into its own entry while the
- * session keeps running. Pure view — polling lives in the wrapper below.
+ * session keeps running. Pure view — subscription state lives in the wrapper.
  */
 export function LiveListenSessionCardView({
 	canFinalize,
@@ -108,51 +105,71 @@ export function LiveListenSessionCardView({
 }
 
 /**
- * Polls the backend for the ongoing listen session and renders the live card
- * while one is active. The finalized entry arrives through the standard
- * history `Added` event, so the table below refreshes itself; the card
- * empties on the next poll (the running session restarts from zero lines).
+ * Subscribes to the backend's authoritative ongoing-session snapshots and
+ * renders the live card while one is active. One command snapshot hydrates a
+ * newly opened History tab; all subsequent updates are pushed. The finalized
+ * entry arrives through the standard history `Added` event, while the session
+ * event empties this card as the running session restarts from zero lines.
+ *
+ * Gated on the recording mode: outside listen mode the card never renders and
+ * the subscription is off, so a snapshot that momentarily still reads active (a
+ * stop racing a slow start on the backend) can't strand a "Listening now"
+ * card after the user has switched away.
  */
 export function LiveListenSessionCard(): ReactNode {
 	const t = useTranslations("history");
+	const isListenMode = useSettingsStore(
+		(s) => (s.settings.general?.recordingMode ?? "ptt") === "listen",
+	);
 	const [snapshot, setSnapshot] = useState<ListenSessionSnapshot | null>(null);
 	const [finalizing, setFinalizing] = useState(false);
 
 	useEffect(() => {
+		if (!isListenMode) {
+			// Drop the last snapshot so re-entering listen mode can't flash the
+			// previous session's lines before the initial snapshot lands.
+			setSnapshot(null);
+			return;
+		}
 		let cancelled = false;
-		let timer: ReturnType<typeof setTimeout> | null = null;
-		const poll = async () => {
-			const next = await listenSessionSnapshot();
+		let receivedEvent = false;
+		let unsubscribe: () => void = () => undefined;
+		void (async () => {
+			const cleanup = await onListenSessionChangedReady((next) => {
+				receivedEvent = true;
+				if (!cancelled) {
+					setSnapshot(next);
+				}
+			});
 			if (cancelled) {
+				cleanup();
 				return;
 			}
-			setSnapshot(next);
-			timer = setTimeout(() => {
-				void poll();
-			}, POLL_MS);
-		};
-		void poll();
+			unsubscribe = cleanup;
+			// The native subscription is now installed. If a push wins while the
+			// snapshot is in flight, do not let the older response overwrite it.
+			const next = await listenSessionSnapshot();
+			if (!(cancelled || receivedEvent)) {
+				setSnapshot(next);
+			}
+		})().catch((error) => {
+			console.warn("[listen-session] failed to reconcile live session:", error);
+		});
 		return () => {
 			cancelled = true;
-			if (timer) {
-				clearTimeout(timer);
-			}
+			unsubscribe();
 		};
-	}, []);
+	}, [isListenMode]);
 
-	if (!snapshot?.active) {
+	// The mode check also covers the render between a mode switch and the
+	// effect above clearing the stale snapshot.
+	if (!(isListenMode && snapshot?.active)) {
 		return null;
 	}
 
 	const handleFinalize = () => {
 		setFinalizing(true);
-		finalizeListenSession()
-			.then(async () => {
-				// Refresh immediately so the card empties without waiting a tick.
-				const next = await listenSessionSnapshot();
-				setSnapshot(next);
-			})
-			.finally(() => setFinalizing(false));
+		finalizeListenSession().finally(() => setFinalizing(false));
 	};
 
 	return (

@@ -71,7 +71,7 @@ describe("OllamaModelSelector detached-open mode", () => {
 		expect(className).not.toContain("border-border");
 	});
 
-	test("renders selected Ollama quantization and estimated VRAM in the closed trigger", () => {
+	test("renders selected Ollama parameters, quantization, and estimated VRAM in the closed trigger", () => {
 		render(
 			<OllamaModelSelector
 				models={[
@@ -100,10 +100,31 @@ describe("OllamaModelSelector detached-open mode", () => {
 		);
 		expect(trigger?.textContent).toContain("Llama 3.2");
 		expect(trigger?.textContent).toContain("Instruct");
-		expect(trigger?.textContent).not.toContain("8B");
+		expect(trigger?.textContent).toContain("8B");
 		expect(trigger?.textContent).toContain("Q4_K_M");
 		expect(trigger?.textContent).toContain("6.6 GB");
 		expect(trigger?.textContent).not.toContain("4.7 GB");
+	});
+
+	test("recovers the selected Qwen parameter count from its model tag", () => {
+		render(
+			<OllamaModelSelector
+				models={[
+					model({
+						name: "qwen3.5:4b",
+						details: { family: "qwen" },
+					}),
+				]}
+				onChange={() => undefined}
+				value="qwen3.5:4b"
+			/>,
+		);
+
+		const trigger = document.querySelector(
+			'[data-slot="ollama-model-selector-trigger"]',
+		);
+		expect(trigger?.textContent).toContain("Qwen 3.5");
+		expect(trigger?.textContent).toContain("4B");
 	});
 
 	test("a typed off-catalog tag renders a full card from the on-demand homepage hit", () => {

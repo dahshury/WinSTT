@@ -61,6 +61,10 @@ describe("formatOllamaDisplayName", () => {
 });
 
 describe("installed Ollama metadata", () => {
+	it("normalizes a parameter count recovered from a lowercase model tag", () => {
+		expect(resolveOllamaParameterSize(model("qwen3.5:4b"))).toBe("4B");
+	});
+
 	it("recovers Bonsai metadata when Ollama describes its drafter", () => {
 		const bonsai: OllamaModel = {
 			name: "hf.co/prism-ml/Bonsai-27B-gguf:Q1_0",

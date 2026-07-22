@@ -42,6 +42,8 @@ pub mod names {
     pub const LOOPBACK_STARTED: &str = "stt:loopback-started";
     /// WASAPI loopback capture stopped for Listen mode.
     pub const LOOPBACK_STOPPED: &str = "stt:loopback-stopped";
+    /// Authoritative ongoing Listen-session transcript snapshot.
+    pub const LISTEN_SESSION_CHANGED: &str = "listen:session-changed";
     /// An atomic STT model transaction started.
     pub const STT_MODEL_SWAP_STARTED: &str = "stt:model-swap-started";
     /// An atomic STT model transaction committed.
@@ -54,7 +56,7 @@ pub mod names {
     pub const STT_RUNTIME_INFO: &str = "stt:runtime-info";
     /// The shared overlay window was shown.
     pub const OVERLAY_SHOW: &str = "overlay:show";
-    /// The shared overlay window was hidden.
+    /// The shared overlay window should animate out; payload is its hide generation.
     pub const OVERLAY_HIDE: &str = "overlay:hide";
     /// Startup progress tick (splash window + parity broadcast).
     pub const STARTUP_PROGRESS: &str = "startup:progress";
@@ -81,6 +83,10 @@ pub mod names {
     /// Fresh RAM/VRAM snapshot delivered to the prewarmed footprint renderer
     /// immediately before its hover window is shown.
     pub const MODEL_FOOTPRINT_RESOURCES: &str = "model-footprint:resources";
+    /// Latest window-local panel rectangle for the detached model picker.
+    pub const MODEL_PICKER_ANCHOR: &str = "model-picker:anchor";
+    /// Model-picker close generation whose renderer animation must complete.
+    pub const MODEL_PICKER_CLOSING: &str = "model-picker:closing";
     /// One existing, privacy-gated app log record for Settings > About.
     pub const DIAGNOSTICS_LOG_LINE: &str = "diagnostics:log-line";
 }

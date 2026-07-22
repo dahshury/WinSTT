@@ -93,9 +93,13 @@ pub struct TtsManager {
     current_speed: AtomicU32,
     /// Local-model idle tracking shared with the global model unload timeout.
     active_reads: AtomicU32,
-    last_used_ms: AtomicU64,
+    last_used_at: Mutex<Instant>,
     idle_unload_timeout: crate::settings::AtomicModelUnloadTimeout,
     idle_watcher_started: AtomicBool,
+    /// Lifecycle edge for the idle watcher. The atomics / engine readiness stay
+    /// the source of truth; this only tells the watcher to recompute its exact
+    /// deadline after use, policy, load, or shutdown changes that state.
+    idle_state_changed: tokio::sync::Notify,
     /// Coalesces TTS engine warmups by engine fingerprint and remembers resident warm sessions.
     lifecycle: ModelSwapCoordinator,
     /// Shared reqwest client for the cloud catalog / subscription GETs.
@@ -113,6 +117,36 @@ const OPENROUTER_PREVIEW_TEXT: &str = "This is a WinSTT voice preview.";
 
 fn tts_idle_unload_duration(timeout: crate::settings::ModelUnloadTimeout) -> Option<Duration> {
     timeout.to_seconds().map(Duration::from_secs)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TtsIdleWatcherAction {
+    WaitForChange,
+    WaitUntil(Instant),
+    Unload,
+}
+
+fn tts_idle_watcher_action(
+    timeout: crate::settings::ModelUnloadTimeout,
+    active_reads: u32,
+    local_model_ready: bool,
+    last_used_at: Instant,
+    now: Instant,
+) -> TtsIdleWatcherAction {
+    if active_reads != 0 || !local_model_ready {
+        return TtsIdleWatcherAction::WaitForChange;
+    }
+    let Some(max_idle) = tts_idle_unload_duration(timeout) else {
+        return TtsIdleWatcherAction::WaitForChange;
+    };
+    let Some(deadline) = last_used_at.checked_add(max_idle) else {
+        return TtsIdleWatcherAction::WaitForChange;
+    };
+    if deadline <= now {
+        TtsIdleWatcherAction::Unload
+    } else {
+        TtsIdleWatcherAction::WaitUntil(deadline)
+    }
 }
 
 fn tts_engine_key(source: TtsSource, fingerprint: &str) -> String {
@@ -231,6 +265,7 @@ struct ActiveTtsUseGuard<'a> {
 impl<'a> ActiveTtsUseGuard<'a> {
     fn new(manager: &'a TtsManager, source: TtsSource) -> Self {
         manager.active_reads.fetch_add(1, Ordering::AcqRel);
+        manager.notify_idle_state_changed();
         Self { manager, source }
     }
 }
@@ -238,10 +273,11 @@ impl<'a> ActiveTtsUseGuard<'a> {
 impl Drop for ActiveTtsUseGuard<'_> {
     fn drop(&mut self) {
         self.manager.active_reads.fetch_sub(1, Ordering::AcqRel);
-        self.manager.mark_model_used();
+        self.manager.record_model_used_now();
         if matches!(self.source, TtsSource::Local) && self.manager.idle_unload_is_immediate() {
             self.manager.unload_active_local_model("immediate timeout");
         }
+        self.manager.notify_idle_state_changed();
     }
 }
 
@@ -266,11 +302,12 @@ impl TtsManager {
             synth_lock: Mutex::new(()),
             current_speed: AtomicU32::new(1.0_f32.to_bits()),
             active_reads: AtomicU32::new(0),
-            last_used_ms: AtomicU64::new(now_ms()),
+            last_used_at: Mutex::new(Instant::now()),
             idle_unload_timeout: crate::settings::AtomicModelUnloadTimeout::new(
                 idle_unload_timeout,
             ),
             idle_watcher_started: AtomicBool::new(false),
+            idle_state_changed: tokio::sync::Notify::new(),
             lifecycle: ModelSwapCoordinator::new(),
             // Shared pooled client (cheap Arc clone) — voice catalog /
             // subscription fetches ride the same ElevenLabs connections as the
@@ -301,31 +338,59 @@ impl TtsManager {
             return;
         }
         let manager = Arc::clone(self);
-        std::thread::spawn(move || {
+        tauri::async_runtime::spawn(async move {
             loop {
-                std::thread::sleep(Duration::from_secs(5));
-                let Some(max_idle) = manager.cached_idle_unload_duration() else {
-                    continue;
-                };
-                if max_idle.is_zero() || manager.active_reads.load(Ordering::Acquire) != 0 {
-                    continue;
-                }
-                let idle_for = Duration::from_millis(
-                    now_ms().saturating_sub(manager.last_used_ms.load(Ordering::Acquire)),
-                );
-                if idle_for >= max_idle {
-                    manager.unload_active_local_model("idle timeout");
+                // Register the wake before reading state. A notification racing
+                // the snapshot is then either delivered to this waiter or kept
+                // as a permit, so no lifecycle edge can be lost.
+                let state_changed = manager.idle_state_changed.notified();
+                match manager.idle_watcher_action() {
+                    TtsIdleWatcherAction::WaitForChange => state_changed.await,
+                    TtsIdleWatcherAction::WaitUntil(deadline) => {
+                        tokio::select! {
+                            () = tokio::time::sleep_until(deadline.into()) => {}
+                            () = state_changed => {}
+                        }
+                    }
+                    TtsIdleWatcherAction::Unload => {
+                        let unloading = Arc::clone(&manager);
+                        if let Err(err) = tauri::async_runtime::spawn_blocking(move || {
+                            unloading.unload_active_local_model("idle timeout");
+                        })
+                        .await
+                        {
+                            log::warn!("[tts] idle unload task failed: {err}");
+                        }
+                    }
                 }
             }
         });
     }
 
-    fn mark_model_used(&self) {
-        self.last_used_ms.store(now_ms(), Ordering::Release);
+    fn notify_idle_state_changed(&self) {
+        self.idle_state_changed.notify_one();
     }
 
-    fn cached_idle_unload_duration(&self) -> Option<Duration> {
-        tts_idle_unload_duration(self.idle_unload_timeout.load())
+    fn record_model_used_now(&self) {
+        *self.last_used_at.lock_recover() = Instant::now();
+    }
+
+    fn mark_model_used(&self) {
+        self.record_model_used_now();
+        self.notify_idle_state_changed();
+    }
+
+    fn idle_watcher_action(&self) -> TtsIdleWatcherAction {
+        let local_model_ready = self.active.lock().is_ok_and(|active| {
+            matches!(active.source, TtsSource::Local) && active.engine.is_ready()
+        });
+        tts_idle_watcher_action(
+            self.idle_unload_timeout.load(),
+            self.active_reads.load(Ordering::Acquire),
+            local_model_ready,
+            *self.last_used_at.lock_recover(),
+            Instant::now(),
+        )
     }
 
     fn idle_unload_is_immediate(&self) -> bool {
@@ -337,6 +402,7 @@ impl TtsManager {
         if timeout == crate::settings::ModelUnloadTimeout::Immediately {
             self.unload_active_local_model("immediate timeout");
         }
+        self.notify_idle_state_changed();
     }
 
     fn unload_active_local_model(&self, reason: &str) {
@@ -728,6 +794,7 @@ impl TtsManager {
             if let Some(started) = swap_started {
                 crate::log_model_duration("tts engine swap", started);
             }
+            self.notify_idle_state_changed();
         }
         result
     }
@@ -1862,6 +1929,54 @@ mod tests {
         assert_eq!(
             tts_idle_unload_duration(ModelUnloadTimeout::Sec15),
             Some(Duration::from_secs(15))
+        );
+    }
+
+    #[test]
+    fn tts_idle_watcher_uses_the_exact_monotonic_deadline() {
+        let last_used_at = Instant::now();
+        let before_deadline = last_used_at + Duration::from_secs(4);
+        assert_eq!(
+            tts_idle_watcher_action(
+                ModelUnloadTimeout::Sec15,
+                0,
+                true,
+                last_used_at,
+                before_deadline,
+            ),
+            TtsIdleWatcherAction::WaitUntil(last_used_at + Duration::from_secs(15))
+        );
+        assert_eq!(
+            tts_idle_watcher_action(
+                ModelUnloadTimeout::Sec15,
+                0,
+                true,
+                last_used_at,
+                last_used_at + Duration::from_secs(15),
+            ),
+            TtsIdleWatcherAction::Unload
+        );
+    }
+
+    #[test]
+    fn tts_idle_watcher_parks_until_relevant_lifecycle_changes() {
+        let last_used_at = Instant::now();
+        let now = last_used_at + Duration::from_secs(60);
+        assert_eq!(
+            tts_idle_watcher_action(ModelUnloadTimeout::Never, 0, true, last_used_at, now),
+            TtsIdleWatcherAction::WaitForChange
+        );
+        assert_eq!(
+            tts_idle_watcher_action(ModelUnloadTimeout::Sec15, 1, true, last_used_at, now),
+            TtsIdleWatcherAction::WaitForChange
+        );
+        assert_eq!(
+            tts_idle_watcher_action(ModelUnloadTimeout::Sec15, 0, false, last_used_at, now),
+            TtsIdleWatcherAction::WaitForChange
+        );
+        assert_eq!(
+            tts_idle_watcher_action(ModelUnloadTimeout::Immediately, 0, true, last_used_at, now,),
+            TtsIdleWatcherAction::Unload
         );
     }
 

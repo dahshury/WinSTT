@@ -420,8 +420,7 @@ mod windows_impl {
     /// scoped so a single bad request can't hang the warm server forever.
     fn serve() {
         use std::io::{BufRead, Write};
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::{Arc, Mutex};
+        use std::sync::{Arc, Condvar, Mutex};
 
         // COM apartment (single-threaded), initialized once for the process life.
         // SAFETY: Initializes COM for this thread before any UIA COM call; all UIA
@@ -441,22 +440,33 @@ mod windows_impl {
         // Per-request watchdog: the reader thread arms `deadline` before each
         // capture and disarms it after. A background thread trips ExitProcess if
         // a capture blows past the budget (a wedged UIA call the parent can't see).
-        let deadline: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-        let armed = Arc::new(AtomicBool::new(false));
+        // The condition variable makes arm/disarm/deadline changes immediate; the
+        // waiter otherwise sleeps exactly until the currently armed deadline.
+        let watchdog = Arc::new((Mutex::new(None::<Instant>), Condvar::new()));
         {
-            let deadline = Arc::clone(&deadline);
-            let armed = Arc::clone(&armed);
+            let watchdog = Arc::clone(&watchdog);
             std::thread::spawn(move || {
+                let (deadline, deadline_changed) = &*watchdog;
+                let mut current = deadline.lock().unwrap_or_else(|e| e.into_inner());
                 loop {
-                    std::thread::sleep(Duration::from_millis(50));
-                    if armed.load(Ordering::Acquire)
-                        && let Some(d) = *deadline.lock().unwrap_or_else(|e| e.into_inner())
-                        && Instant::now() >= d
-                    {
+                    let Some(armed_until) = *current else {
+                        current = deadline_changed
+                            .wait(current)
+                            .unwrap_or_else(|e| e.into_inner());
+                        continue;
+                    };
+
+                    let now = Instant::now();
+                    if now >= armed_until {
                         // A UIA call has wedged this request. Exit so the manager
                         // respawns a fresh warm server (one retry, then give up).
                         std::process::exit(3);
                     }
+
+                    let (next, _) = deadline_changed
+                        .wait_timeout(current, armed_until.saturating_duration_since(now))
+                        .unwrap_or_else(|e| e.into_inner());
+                    current = next;
                 }
             });
         }
@@ -472,11 +482,13 @@ mod windows_impl {
             // Frame one request → response, arming the per-request watchdog only
             // around the (potentially wedging) UIA capture.
             let response = format_serve_response(line, |req| {
+                let (deadline, deadline_changed) = &*watchdog;
                 *deadline.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some(Instant::now() + Duration::from_millis(WATCHDOG_TIMEOUT_MS));
-                armed.store(true, Ordering::Release);
+                deadline_changed.notify_one();
                 let body = capture_json(uia.as_ref(), req, true);
-                armed.store(false, Ordering::Release);
+                *deadline.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                deadline_changed.notify_one();
                 body
             });
             if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {

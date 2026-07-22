@@ -13,6 +13,54 @@ fn normalize_dictionary_term(term: &str) -> String {
     term.trim().to_lowercase()
 }
 
+fn dictionary_similarity_key(term: &str) -> String {
+    let mut key = String::with_capacity(term.len());
+    for ch in term.chars() {
+        if ch.is_alphanumeric() {
+            key.extend(ch.to_lowercase());
+        } else {
+            match ch {
+                '+' => key.push_str("plus"),
+                '#' => key.push_str("sharp"),
+                '&' => key.push_str("and"),
+                _ => {}
+            }
+        }
+    }
+    key
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (left_index, left_char) in left.chars().enumerate() {
+        let mut current = Vec::with_capacity(right.len() + 1);
+        current.push(left_index + 1);
+        for (right_index, right_char) in right.iter().enumerate() {
+            current.push(std::cmp::min(
+                std::cmp::min(current[right_index] + 1, previous[right_index + 1] + 1),
+                previous[right_index] + usize::from(left_char != *right_char),
+            ));
+        }
+        previous = current;
+    }
+    previous[right.len()]
+}
+
+fn dictionary_terms_are_near_duplicates(left: &str, right: &str) -> bool {
+    let left = dictionary_similarity_key(left);
+    let right = dictionary_similarity_key(right);
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    if left == right {
+        return true;
+    }
+    let shortest = left.chars().count().min(right.chars().count());
+    let allowed_distance = if shortest >= 12 { 2 } else { 1 };
+    shortest >= 8 && edit_distance(&left, &right) <= allowed_distance
+}
+
 fn slugify_or(value: &str, fallback: &str) -> String {
     let slug = value
         .chars()
@@ -108,14 +156,27 @@ fn append_auto_dictionary_terms(
         .map(|entry| normalize_dictionary_term(&entry.term))
         .filter(|term| !term.is_empty())
         .collect();
+    let mut similarity_terms: Vec<String> = dictionary
+        .iter()
+        .flat_map(|entry| std::iter::once(entry.term.as_str()).chain(entry.replacement.as_deref()))
+        .filter(|term| !term.trim().is_empty())
+        .map(str::to_string)
+        .collect();
     let mut added = Vec::new();
 
     for raw in terms {
         let term = raw.trim();
         let normalized = normalize_dictionary_term(term);
-        if normalized.is_empty() || !existing.insert(normalized) {
+        if normalized.is_empty()
+            || existing.contains(&normalized)
+            || similarity_terms
+                .iter()
+                .any(|existing| dictionary_terms_are_near_duplicates(existing, term))
+        {
             continue;
         }
+        existing.insert(normalized);
+        similarity_terms.push(term.to_string());
         let index = added.len();
         dictionary.push(DictionaryEntry {
             id: auto_dictionary_entry_id(term, index),
@@ -240,6 +301,45 @@ mod tests {
         assert_eq!(dictionary[1].auto_added, Some(true));
         assert_eq!(dictionary[2].term, "Base UI");
         assert_eq!(dictionary[2].auto_added, Some(true));
+    }
+
+    #[test]
+    fn append_auto_dictionary_terms_skips_spacing_and_near_duplicates() {
+        let mut dictionary = vec![
+            DictionaryEntry {
+                id: "manual-base-ui".into(),
+                term: "Base UI".into(),
+                auto_added: None,
+                replacement: None,
+            },
+            DictionaryEntry {
+                id: "manual-kubernetes".into(),
+                term: "cube her net ease".into(),
+                auto_added: None,
+                replacement: Some("Kubernetes".into()),
+            },
+        ];
+
+        let added = append_auto_dictionary_terms(
+            &mut dictionary,
+            &[
+                "BaseUI".into(),
+                "Kubernets".into(),
+                "WinSTT".into(),
+                "Win STT".into(),
+            ],
+        );
+
+        assert_eq!(added, vec!["WinSTT"]);
+        assert_eq!(dictionary.len(), 3);
+    }
+
+    #[test]
+    fn near_duplicate_guard_keeps_distinct_short_terms() {
+        assert!(!dictionary_terms_are_near_duplicates("Gmail", "Email"));
+        assert!(!dictionary_terms_are_near_duplicates("Docker", "Docket"));
+        assert!(!dictionary_terms_are_near_duplicates("C++", "C#"));
+        assert!(dictionary_terms_are_near_duplicates("C++", "C plus plus"));
     }
 
     #[test]
