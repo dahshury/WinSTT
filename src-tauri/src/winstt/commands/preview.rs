@@ -67,12 +67,17 @@ struct ForegroundRestoreState {
 }
 
 impl ForegroundRestoreCompletion {
+    // `ready`/`complete` drive the Windows foreground-restore hook; off Windows the
+    // only caller (`restore_foreground`) is cfg'd out, so allow them to be unused
+    // there. (`complete` is still exercised by the cross-platform unit tests.)
+    #[allow(dead_code)]
     fn ready() -> Self {
         let completion = Self::default();
         completion.complete();
         completion
     }
 
+    #[allow(dead_code)]
     fn complete(&self) {
         if !self.state.completed.swap(true, Ordering::AcqRel) {
             // There is one consumer per restore. `notify_one` also stores a

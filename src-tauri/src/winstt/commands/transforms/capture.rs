@@ -25,7 +25,9 @@ const CLIPBOARD_UPDATE_TIMEOUT_MS: u64 = 700;
 const CLIPBOARD_FALLBACK_POLL_INTERVAL_MS: u64 = 10;
 /// Do not let first-use listener initialization wedge selection capture if the
 /// Windows message thread fails before publishing readiness. The capture path
-/// can always fall back to its bounded clipboard read loop.
+/// can always fall back to its bounded clipboard read loop. Windows-only: the
+/// clipboard-update listener it guards is a Windows message-loop concept.
+#[cfg(target_os = "windows")]
 const CLIPBOARD_LISTENER_READY_TIMEOUT: Duration = Duration::from_secs(2);
 /// Keep Ctrl/Cmd held just long enough for apps that sample modifier state
 /// asynchronously; the clipboard update waiter owns the real post-copy wait.
@@ -263,6 +265,7 @@ impl Drop for CopyModifierGuard<'_> {
 static CLIPBOARD_UPDATE_SIGNAL: LazyLock<(Mutex<u64>, Condvar)> =
     LazyLock::new(|| (Mutex::new(0), Condvar::new()));
 
+#[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClipboardListenerStatus {
     Starting,
