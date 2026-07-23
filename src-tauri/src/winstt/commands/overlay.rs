@@ -422,6 +422,14 @@ fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Re
     Ok(())
 }
 
+/// CSS opacity-transition duration for the non-Windows document-root fade. Kept
+/// shorter than the smallest hide grace (`FLOATING_BOTTOM_HIDE_GRACE_MS`) so the
+/// fade-to-zero always completes before the window is actually hidden. Gated to
+/// non-Windows: the Windows path drives opacity through the layered-window API and
+/// never reads this, so a module-wide const would be dead code there.
+#[cfg(not(target_os = "windows"))]
+const OVERLAY_OPACITY_TRANSITION_MS: u64 = 120;
+
 #[cfg(not(target_os = "windows"))]
 fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
     // There is no `SetLayeredWindowAttributes` off Windows, and Tauri v2 exposes no

@@ -472,9 +472,17 @@ mod platform {
 
     pub fn update(_app: &AppHandle, _accelerator: &str) {}
     pub fn disable() {}
+    // Stub kept for a uniform module surface; the PTT low-level-hook combo state
+    // is a Windows-only concept, so nothing calls this on other platforms.
+    #[allow(dead_code)]
     pub fn ptt_hook_combo_engaged() -> Option<bool> {
         None
     }
 }
 
-pub(crate) use platform::{disable, ptt_hook_combo_engaged, update};
+pub(crate) use platform::{disable, update};
+// Consumed only by the Windows PTT release-watchdog path. The non-Windows platform
+// module still defines a stub (re-exported for a uniform surface), so the re-export
+// is unused there — allow it rather than fail `-D warnings` off Windows.
+#[cfg_attr(not(windows), allow(unused_imports))]
+pub(crate) use platform::ptt_hook_combo_engaged;
