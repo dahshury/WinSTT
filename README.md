@@ -20,15 +20,15 @@ One click, straight to the file — no scrolling through the releases page.
 <!-- DOWNLOAD_BADGES:START -->
 
 <p align="center">
-  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.8/WinSTT.exe"><img alt="Download WinSTT for Windows" src="https://img.shields.io/badge/Download--Windows-0A66C2?style=for-the-badge&logo=windows11&logoColor=white&labelColor=0A66C2"></a>
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.9/WinSTT.exe"><img alt="Download WinSTT for Windows" src="https://img.shields.io/badge/Download--Windows-0A66C2?style=for-the-badge&logo=windows11&logoColor=white&labelColor=0A66C2"></a>
   &nbsp;
-  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.8/WinSTT_0.1.3-alpha.8_aarch64.dmg"><img alt="Download WinSTT for macOS" src="https://img.shields.io/badge/Download--macOS-111111?style=for-the-badge&logo=apple&logoColor=white&labelColor=111111"></a>
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.9/WinSTT_0.1.3-alpha.9_aarch64.dmg"><img alt="Download WinSTT for macOS" src="https://img.shields.io/badge/Download--macOS-111111?style=for-the-badge&logo=apple&logoColor=white&labelColor=111111"></a>
   &nbsp;
-  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.8/WinSTT_0.1.3-alpha.8_amd64.AppImage"><img alt="Download WinSTT for Linux" src="https://img.shields.io/badge/Download--Linux-F5B700?style=for-the-badge&logo=linux&logoColor=black&labelColor=F5B700"></a>
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.9/WinSTT_0.1.3-alpha.9_amd64.AppImage"><img alt="Download WinSTT for Linux" src="https://img.shields.io/badge/Download--Linux-F5B700?style=for-the-badge&logo=linux&logoColor=black&labelColor=F5B700"></a>
 </p>
 
 <p align="center">
-  <sub><a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.8/WinSTT-portable.zip">Windows portable (.zip)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.8/WinSTT_0.1.3-alpha.8_amd64.deb">Debian / Ubuntu (.deb)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.8/WinSTT-0.1.3-alpha.8-1.x86_64.rpm">Fedora / RHEL (.rpm)</a> · <a href="https://github.com/dahshury/WinSTT/releases/tag/v0.1.3-alpha.8">All v0.1.3-alpha.8 assets</a></sub>
+  <sub><a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.9/WinSTT-portable.zip">Windows portable (.zip)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.9/WinSTT_0.1.3-alpha.9_amd64.deb">Debian / Ubuntu (.deb)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.9/WinSTT-0.1.3-alpha.9-1.x86_64.rpm">Fedora / RHEL (.rpm)</a> · <a href="https://github.com/dahshury/WinSTT/releases/tag/v0.1.3-alpha.9">All v0.1.3-alpha.9 assets</a></sub>
 </p>
 
 <!-- DOWNLOAD_BADGES:END -->

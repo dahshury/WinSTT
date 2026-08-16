@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.1.3-alpha.9] - 2026-08-16
+
+Changes since `v0.1.3-alpha.8`.
+
+### Added
+
+- Added Ark ASR, Audio8, and VibeVoice AED speech-recognition families, live VAD support, and expanded model metadata and selection coverage.
+- Added Audio8, NeuTTS, and OmniVoice text-to-speech backends alongside voice cloning, voice design, reusable voice libraries, inline tags, and scripted TTS playback.
+- Added richer settings experiences for integrations, credential verification, feature assignment, recording-mode transitions, history filtering, shortcut guidance, app-data usage, and inline audio-device selection.
+- Added a settings-control manifest and Playwright coverage, model/catalog parity fixtures, import-cycle detection, and stricter native-boundary and mock-discipline tests.
+
+### Changed
+
+- Expanded and reorganized STT, TTS, model-picker, navigation-popover, data-grid, overlay, history, dictionary, and settings capabilities across the renderer and Rust backend.
+- Upgraded ONNX Runtime to `2.0.0-rc.13` and vendored the VAD integration so its runtime dependency remains compatible with the application workspace.
+- Standardized GitHub Actions on Bun `1.3.14` and hardened the Windows, Linux, and macOS validation and packaging paths.
+
+### Fixed
+
+- Made shared Bun mocks export-complete and order-independent, eliminating full-suite failures caused by process-global module mocks and reused store singletons.
+- Fixed cross-platform compilation of the DirectML probe and Windows-only shortcut test imports so all-target Rust checks pass on macOS and Linux.
+- Corrected test IPC routing for dialog and log-folder operations and stabilized visualizer, widget, and live-debug-log test behavior.
+
+### Maintenance
+
+- Bumped the application and context-sidecar versions from `0.1.3-alpha.8` to `0.1.3-alpha.9` while retaining the alpha release policy.
+
+## [0.1.3-alpha.8] - 2026-07-23
+
+Changes since `v0.1.3-alpha.7`.
+
+### Added
+
+- Added and refined CTC, AED, streaming, Whisper, and Granite NAR recognition paths, including runtime-provider reporting and DirectML fallback behavior.
+- Added listen-mode post-processing, diarization, microphone-mix capture, and integrated streaming transcription flows.
+
+### Changed
+
+- Refined LLM command and transport paths and polished transcript-preview controls.
+- Removed the obsolete waveform visualizer and detached device-picker window after their replacements were integrated.
+
+### Fixed
+
+- Fixed Granite NAR decoding, non-Windows overlay/PTT compilation, and Windows-only clipboard and foreground dead-code checks.
+- Skipped the secure-storage envelope test on hosts without OS-backed secure storage.
+
+### Maintenance
+
+- Added Rust formatting and Clippy to the push gate and bumped the application version from `0.1.3-alpha.7` to `0.1.3-alpha.8`.
+
 ## [0.1.3-alpha.7] - 2026-07-15
 
 Changes since `v0.1.3-alpha.6`.
