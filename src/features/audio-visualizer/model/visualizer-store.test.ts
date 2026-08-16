@@ -1,18 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { useVisualizerStore } from "./visualizer-store";
+import { createVisualizerStore, useVisualizerStore } from "./visualizer-store";
 
-// Capture the AS-CONSTRUCTED store state at module load — BEFORE any
-// `beforeEach` runs and resets the state via setState. This is the only
-// way to assert that the literals on L30 (`isRecording: false`) and L31
-// (`isSpeaking: false`) really are `false` by default; once setState
-// runs, the mutant's `true` default is overwritten and indistinguishable
-// from the original.
-const INITIAL_STATE_SNAPSHOT = {
-	isRecording: useVisualizerStore.getState().isRecording,
-	isSpeaking: useVisualizerStore.getState().isSpeaking,
-	audioLevel: useVisualizerStore.getState().audioLevel,
-	sentencePulse: useVisualizerStore.getState().sentencePulse,
-};
+// Capture an isolated AS-CONSTRUCTED store instead of the app-wide singleton.
+// Other test modules legitimately mutate the singleton at module load, so using
+// a fresh instance keeps these constructor-literal assertions order-independent.
+const INITIAL_STATE_SNAPSHOT = createVisualizerStore().getState();
 
 beforeEach(() => {
 	useVisualizerStore.setState({
@@ -33,11 +25,10 @@ describe("useVisualizerStore", () => {
 	});
 
 	// Mutator-killer for L30 (`isRecording: false`) and L31 (`isSpeaking:
-	// false`) booleans. The `initial state` test above runs AFTER
-	// beforeEach() has called setState — so a mutant that defaults
-	// these to `true` at construction is invisible to it. The captured
-	// snapshot above was taken BEFORE any reset, so it sees the actual
-	// constructor literal.
+	// false`) booleans. The `initial state` test above runs AFTER beforeEach()
+	// has called setState, so a mutant that defaults these to `true` at
+	// construction is invisible to it. The isolated snapshot sees the actual
+	// constructor literal without depending on cross-file load order.
 	test("constructor literal: isRecording defaults to false (not true)", () => {
 		expect(INITIAL_STATE_SNAPSHOT.isRecording).toBe(false);
 	});

@@ -11,7 +11,7 @@ const ipcOverrides: {
 } = { transitionCb: null, pullState: null };
 
 mock.module("@/shared/api/ipc-client", () => ({
-	...ipcClientMock,
+	...ipcClientMock(),
 	onRecordingModeTransition: (cb: (payload: ModeTransitionPayload) => void) => {
 		ipcOverrides.transitionCb = cb;
 		return () => {
