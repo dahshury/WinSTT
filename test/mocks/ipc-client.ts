@@ -50,6 +50,7 @@
  */
 
 import { commands } from "@/bindings";
+import { callPlugin } from "@/shared/api/adapter/plugins";
 import { IPC } from "@test/mocks/legacy-ipc";
 import { decodeSettingsPayload } from "@/shared/config/settings-codec";
 
@@ -162,25 +163,63 @@ function onCast<T>(channel: string, cb: (value: T) => void): () => void {
 	return on(channel, (data) => cb(data as T));
 }
 
+function nativeEventName(channel: string): string {
+	if (channel === IPC.STT_REALTIME_TEXT) {
+		return "realtime:update";
+	}
+	if (channel === IPC.STT_WAKEWORD_DETECTED) {
+		return "wakeword:detected";
+	}
+	return channel;
+}
+
+function reshapeNativeEvent(channel: string, payload: unknown): unknown {
+	if (
+		channel === IPC.STT_WAKEWORD_DETECTED &&
+		payload !== null &&
+		typeof payload === "object"
+	) {
+		const value = payload as { keyword?: string; word?: string };
+		return { word: value.word ?? value.keyword ?? "" };
+	}
+	return payload;
+}
+
 /**
  * Build a fresh, complete, behavior-faithful fake of the ipc-client module.
  * Every key mirrors the real export of the same name and routes through
  * `window.nativeBridge` with identical channel + fallback semantics.
  */
-export function ipcClientMock(): Record<string, unknown> {
+export function ipcClientMock(): Record<
+	keyof typeof import("@/shared/api/ipc-client"),
+	unknown
+> {
 	return {
 		// Low-level wrappers (re-exported by the real module)
 		noop,
+		waitForPendingNativeListeners: async () => true,
 		send,
 		invoke,
 		on,
 		onTyped,
 		onCast,
 		hasNativeBridge: hasBridge,
+		hasNativeRuntime: hasBridge,
 		hasSettingsBackend: hasBridge,
+		commandOrDefault: <T>(
+			_label: string,
+			thunk: () => Promise<T>,
+			fallback: FallbackValue<T>,
+		) => commandOrDefault(thunk, fallback),
+		nativeEventName,
+		reshapeNativeEvent,
 		ipcSend: send,
 		ipcInvoke: invoke,
 		ipcOn: on,
+		ipcOnReady: async (
+			channel: string,
+			callback: (...args: unknown[]) => void,
+		) => on(channel, callback),
 
 		getFilePath: (file: File): string =>
 			hasBridge() ? (api()?.getPathForFile(file) ?? "") : "",
@@ -423,6 +462,16 @@ export function ipcClientMock(): Record<string, unknown> {
 			on(IPC.LLM_PROFILE_SWAP, () => cb()),
 		onRecordingModeCycle: (cb: () => void) =>
 			on(IPC.RECORDING_MODE_CYCLE, () => cb()),
+		onRecordingModeTransition: (cb: (payload: unknown) => void) =>
+			onCast("recording:mode-transition", cb),
+		recordingModeTransitionState: () =>
+			commandOrDefault(() => commands.recordingModeTransitionState(), {
+				error: null,
+				from: "ptt",
+				generation: 0,
+				phase: "idle",
+				to: "ptt",
+			}),
 		onHotkeyRecordingUpdate: (cb: (keys: string[]) => void) =>
 			onTyped(
 				IPC.HOTKEY_RECORDING_UPDATE,
@@ -550,15 +599,40 @@ export function ipcClientMock(): Record<string, unknown> {
 		onLoopbackStopped: (cb: () => void) => on(IPC.STT_LOOPBACK_STOPPED, cb),
 		onListenSessionChanged: (cb: (snapshot: unknown) => void) =>
 			onCast(IPC.LISTEN_SESSION_CHANGED, cb),
+		onListenSessionChangedReady: async (cb: (snapshot: unknown) => void) =>
+			onCast(IPC.LISTEN_SESSION_CHANGED, cb),
+		listenSessionSnapshot: () =>
+			commandOrDefault(() => commands.listenSessionSnapshot(), {
+				active: false,
+				lines: [],
+				livePreview: "",
+			}),
+		finalizeListenSession: () =>
+			commandOrDefault(
+				async () => unwrapCommandResult(await commands.finalizeListenSession()),
+				false,
+			),
 		onDeviceSwitchFailed: (cb: (p: unknown) => void) =>
 			onTyped(IPC.STT_DEVICE_SWITCH_FAILED, (d: unknown) => d, cb),
 
 		// Dialog
 		dialogOpenFile: (filters?: unknown, title?: unknown) =>
-			invokeOrDefault<string | null>(IPC.DIALOG_OPEN_FILE, null, {
-				filters,
-				title,
-			}),
+			commandOrDefault(
+				async () =>
+					(await callPlugin("dialog:open", { filters, title })) as string,
+				null,
+			),
+		dialogOpenFiles: (filters?: unknown, title?: unknown) =>
+			commandOrDefault<string[]>(async () => {
+				const picked = await callPlugin("dialog:open", {
+					filters,
+					multiple: true,
+					title,
+				});
+				return Array.isArray(picked)
+					? picked.filter((entry): entry is string => typeof entry === "string")
+					: [];
+			}, []),
 
 		// Clipboard
 		clipboardReadText: async () => {
@@ -963,6 +1037,7 @@ export function ipcClientMock(): Record<string, unknown> {
 		onTtsStarted: (cb: (payload: unknown) => void) =>
 			onCast(IPC.TTS_STARTED, cb),
 		onTtsChunk: (cb: (payload: unknown) => void) => onCast(IPC.TTS_CHUNK, cb),
+		onTtsScript: (cb: (payload: unknown) => void) => onCast("tts:script", cb),
 		onTtsCompleted: (cb: (payload: unknown) => void) =>
 			onCast(IPC.TTS_COMPLETED, cb),
 		onTtsFailed: (cb: (payload: unknown) => void) => onCast(IPC.TTS_FAILED, cb),
@@ -1004,6 +1079,13 @@ export function ipcClientMock(): Record<string, unknown> {
 				ok: false,
 				error: "IPC unavailable",
 			}),
+		diagObservabilityTimeline: (limit = 20) =>
+			commandOrDefault<unknown[]>(
+				() => commands.diagObservabilityTimeline(limit),
+				[],
+			),
+		diagClearObservabilityTimeline: () =>
+			commandOrDefault<number>(commands.diagClearObservabilityTimeline, 0),
 		webviewDiagLog: (label: string, level: string, message: string) =>
 			void commands.winsttDiag(label, level, message).catch(noop),
 		aboutGetLicense: () =>
@@ -1075,6 +1157,25 @@ export function ipcClientMock(): Record<string, unknown> {
 				async () => unwrapCommandResult(await commands.ttsHistoryLoadAudio(id)),
 				null,
 			),
+		fetchTtsHistory: () =>
+			commandOrDefault<unknown[]>(
+				async () => unwrapCommandResult(await commands.ttsHistoryGetAll()),
+				[],
+			),
+		clearTtsHistory: () =>
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ttsHistoryClear()),
+				{ cleared: true },
+			),
+		deleteTtsHistoryEntry: (id: string) =>
+			commandOrDefault<unknown>(
+				async () => unwrapCommandResult(await commands.ttsHistoryDelete(id)),
+				{ deleted: false },
+			),
+		onTtsHistoryAdded: (cb: (entry: unknown) => void) =>
+			onCast("tts-history:added", cb),
+		onTtsHistoryDeleted: (cb: (payload: { id: string }) => void) =>
+			onCast("tts-history:deleted", cb),
 		onTranscriptionHistoryDeleted: (cb: (payload: { id: string }) => void) =>
 			onCast<{ id: string }>(IPC.HISTORY_DELETED, cb),
 		onTranscriptionFailed: (
