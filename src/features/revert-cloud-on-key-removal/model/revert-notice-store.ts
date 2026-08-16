@@ -22,9 +22,10 @@ const nextNoticeId = (() => {
 
 /**
  * Decoupled from the toast component because the auto-revert hook
- * (`useCloudKeyAutoRevert`, mounted in the main window's `IpcProvider`) and the
- * `CloudKeyRevertNotice` toast (mounted in `RootLayout`) live in different
- * subtrees. The hook `push`es; the toast subscribes + `dismiss`es.
+ * (`useCloudKeyAutoRevert`) and the `CloudKeyRevertNotice` toast must live in
+ * the same webview process because Zustand stores are not cross-webview state.
+ * They may be separate React subtrees: the hook `push`es; the toast subscribes
+ * and `dismiss`es.
  */
 export const useRevertNoticeStore = create<RevertNoticeState>()((set) => ({
 	notices: [],

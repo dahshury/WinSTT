@@ -14,6 +14,7 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
+use crate::winstt::commands::events::names;
 use crate::winstt::downloads::{PauseCancelFlags, TransferOutcome, TransferRequest, transfer_url};
 
 use super::{MODEL_FILENAME, TOKENIZER_FILENAME, model_dir};
@@ -28,9 +29,6 @@ const FILES: &[(&str, &str)] = &[
 /// persist it once known — that way a partial download shows its real % when the tab is reopened in a
 /// later session instead of an indeterminate bar. Best-effort; absence just means "% not yet known".
 const TOTAL_FILENAME: &str = ".total";
-
-pub const EVT_PROGRESS: &str = "encoder-dict:download-progress";
-pub const EVT_COMPLETE: &str = "encoder-dict:download-complete";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -49,12 +47,14 @@ pub struct EncoderDownloadStatus {
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub speed_bps: u64,
+    pub error: Option<String>,
 }
 
 #[derive(Default)]
 struct Inner {
     downloaded: u64,
     total: u64,
+    error: Option<String>,
 }
 
 /// Singleton manager, registered as Tauri state.
@@ -158,11 +158,12 @@ impl EncoderModelDownloader {
                 downloaded_bytes: 0,
                 total_bytes: 0,
                 speed_bps: 0,
+                error: None,
             };
         }
-        let (mem_downloaded, mem_total) = {
+        let (mem_downloaded, mem_total, error) = {
             let prog = self.progress.lock().unwrap_or_else(|e| e.into_inner());
-            (prog.downloaded, prog.total)
+            (prog.downloaded, prog.total, prog.error.clone())
         };
         let downloaded = mem_downloaded.max(self.bytes_on_disk());
         let total = if mem_total > 0 {
@@ -195,6 +196,7 @@ impl EncoderModelDownloader {
             downloaded_bytes: downloaded,
             total_bytes: total,
             speed_bps,
+            error,
         }
     }
 
@@ -216,7 +218,7 @@ impl EncoderModelDownloader {
             self.speed_eta(downloaded, total)
         };
         let _ = self.app.emit(
-            EVT_PROGRESS,
+            names::ENCODER_DICT_DOWNLOAD_PROGRESS,
             json!({
                 "state": if paused { "paused" } else { "downloading" },
                 "downloadedBytes": downloaded,
@@ -224,27 +226,36 @@ impl EncoderModelDownloader {
                 "progress": progress,
                 "speedBps": speed_bps,
                 "etaSeconds": eta_seconds,
+                "error": null,
             }),
         );
     }
 
-    fn emit_complete(&self, present: bool, cancelled: bool) {
+    fn emit_complete(&self, present: bool, cancelled: bool, error: Option<String>) {
+        self.progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .error = error.clone();
         let _ = self.app.emit(
-            EVT_COMPLETE,
-            json!({ "present": present, "cancelled": cancelled }),
+            names::ENCODER_DICT_DOWNLOAD_COMPLETE,
+            json!({ "present": present, "cancelled": cancelled, "error": error }),
         );
     }
 
     /// Start (or resume) the download. Idempotent: a no-op if already present or in flight.
     pub fn start(self: &Arc<Self>) {
         if super::is_model_present(&self.app) {
-            self.emit_complete(true, false);
+            self.emit_complete(true, false, None);
             return;
         }
         if matches!(self.phase(), Phase::Downloading) {
             return;
         }
         self.control.reset();
+        self.progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .error = None;
         self.set_phase(Phase::Downloading);
         let this = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
@@ -265,7 +276,7 @@ impl EncoderModelDownloader {
             self.cleanup_partials();
             self.set_phase(Phase::Idle);
             self.clear_progress();
-            self.emit_complete(false, true);
+            self.emit_complete(false, true, None);
         }
     }
 
@@ -283,7 +294,7 @@ impl EncoderModelDownloader {
         super::clear_loaded();
         self.set_phase(Phase::Idle);
         self.clear_progress();
-        self.emit_complete(false, false);
+        self.emit_complete(false, false, None);
     }
 
     fn cleanup_partials(&self) {
@@ -305,18 +316,35 @@ impl EncoderModelDownloader {
     async fn run(self: Arc<Self>) {
         let Some(dir) = model_dir(&self.app) else {
             self.set_phase(Phase::Idle);
-            self.emit_complete(false, false);
+            self.emit_complete(
+                false,
+                false,
+                Some("Could not resolve the encoder model directory.".into()),
+            );
             return;
         };
         if let Err(e) = std::fs::create_dir_all(&dir) {
             log::warn!("[encoder-dict] create dir failed: {e}");
             self.set_phase(Phase::Idle);
-            self.emit_complete(false, false);
+            self.emit_complete(
+                false,
+                false,
+                Some(format!("Could not create model directory: {e}")),
+            );
             return;
         }
-        let client = reqwest::Client::builder()
-            .build()
-            .expect("reqwest TLS init");
+        let client = match reqwest::Client::builder().build() {
+            Ok(client) => client,
+            Err(error) => {
+                self.set_phase(Phase::Idle);
+                self.emit_complete(
+                    false,
+                    false,
+                    Some(format!("Could not initialize the download client: {error}")),
+                );
+                return;
+            }
+        };
 
         // Start the speed/ETA clock once (preserved across pause→resume).
         {
@@ -416,14 +444,14 @@ impl EncoderModelDownloader {
                     self.cleanup_partials();
                     self.set_phase(Phase::Idle);
                     self.clear_progress();
-                    self.emit_complete(false, true);
+                    self.emit_complete(false, true, None);
                     return;
                 }
                 Err(e) => {
                     log::warn!("[encoder-dict] download {repo_path} failed: {e}");
                     self.set_phase(Phase::Idle);
                     *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                    self.emit_complete(false, false);
+                    self.emit_complete(false, false, Some(format!("Model download failed: {e}")));
                     return;
                 }
             }
@@ -432,7 +460,7 @@ impl EncoderModelDownloader {
         self.set_phase(Phase::Idle);
         self.clear_progress();
         self.remove_total();
-        self.emit_complete(true, false);
+        self.emit_complete(true, false, None);
         // Warm the just-downloaded model in the background if the feature is on, so the first
         // dictation right after the download lands fast instead of cold-loading mid-utterance.
         let settings = crate::winstt::settings_store::read_settings(&self.app);

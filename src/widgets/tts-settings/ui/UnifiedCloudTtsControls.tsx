@@ -1,5 +1,6 @@
 import { OpenRouterModelSelector } from "@/features/select-cloud-stt-model";
 import { SettingField, useSettingsStore } from "@/entities/setting";
+import { useEffect } from "react";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
@@ -9,6 +10,7 @@ import {
 	type CloudTtsProvider,
 	providerForModelId,
 	resolveActiveCloudProvider,
+	resolveOpenRouterTtsFallback,
 } from "../lib/cloud-tts-picker";
 import { useOpenRouterTtsCatalogStore } from "@/entities/openrouter-catalog";
 import { CloudTtsControls } from "./CloudTtsControls";
@@ -70,6 +72,7 @@ export function UnifiedCloudTtsControls({
 	const cloud = useSettingsStore((s) => s.settings.tts.cloud);
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 	const openrouterModels = useOpenRouterTtsCatalogStore((s) => s.models);
+	const openrouterLoaded = useOpenRouterTtsCatalogStore((s) => s.isLoaded);
 	const openrouterScanning = useOpenRouterTtsCatalogStore((s) => s.isScanning);
 	const openrouterError = useOpenRouterTtsCatalogStore((s) => s.error);
 	const scanOpenrouterModels = useOpenRouterTtsCatalogStore(
@@ -83,20 +86,70 @@ export function UnifiedCloudTtsControls({
 		openrouterAvailable,
 	);
 
+	// Resolve a usable model without requiring the user to open the picker first.
+	// The catalog landing drives the persistence effect below.
+	useEffect(() => {
+		if (openrouterAvailable && !openrouterLoaded && !openrouterScanning) {
+			fireAndForget(scanOpenrouterModels(), "tts.prewarmOpenrouterModels");
+		}
+	}, [
+		openrouterAvailable,
+		openrouterLoaded,
+		openrouterScanning,
+		scanOpenrouterModels,
+	]);
+
 	const pickerModels = buildCloudPickerModels({
 		elevenAvailable,
 		openrouterAvailable,
 		openrouterModels,
 	});
 
-	const firstOpenrouterModel = openrouterModels[0] ?? null;
-	const selectedOpenrouterModel = openrouterModels.some(
-		(m) => m.id === cloud.openrouterModel,
-	)
-		? cloud.openrouterModel
-		: (firstOpenrouterModel?.id ?? cloud.openrouterModel);
+	const openrouterSelection = resolveOpenRouterTtsFallback(
+		openrouterModels,
+		cloud.openrouterModel,
+		cloud.openrouterVoice,
+	);
+	const selectedOpenrouterModel =
+		openrouterSelection?.modelId ?? cloud.openrouterModel;
 	const selectedModelId =
 		activeProvider === "elevenlabs" ? cloud.model : selectedOpenrouterModel;
+
+	// The picker previously displayed the first live model when the persisted id
+	// was empty/stale without saving that effective choice. Rust therefore read
+	// the stale id and failed at playback time. Commit the exact model + valid
+	// voice that the UI is showing once the catalog is available.
+	useEffect(() => {
+		if (
+			activeProvider !== "openrouter" ||
+			!openrouterAvailable ||
+			openrouterSelection === null
+		) {
+			return;
+		}
+		if (
+			cloud.provider === "openrouter" &&
+			cloud.openrouterModel === openrouterSelection.modelId &&
+			cloud.openrouterVoice === openrouterSelection.voiceId
+		) {
+			return;
+		}
+		update({
+			cloud: {
+				...cloud,
+				provider: "openrouter",
+				openrouterModel: openrouterSelection.modelId,
+				openrouterVoice: openrouterSelection.voiceId,
+			},
+		});
+	}, [
+		activeProvider,
+		cloud,
+		openrouterAvailable,
+		openrouterSelection?.modelId,
+		openrouterSelection?.voiceId,
+		update,
+	]);
 
 	let modelPlaceholder = "Choose a cloud voice model";
 	if (openrouterError && !elevenAvailable) {

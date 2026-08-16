@@ -114,20 +114,36 @@ fn ensure_tray_indicator_is_panel(window: &tauri::WebviewWindow) {
     });
 }
 
-/// The pill is suppressed only while the settings window is FOCUSED — the user is
-/// already looking at the recording controls there. Settings open-but-in-the-
-/// background (or closed) still shows the pill.
-fn settings_is_focused(app: &AppHandle) -> bool {
-    app.get_webview_window("settings")
-        .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+/// Purely informational surfaces: they either cannot take focus at all or are
+/// click-through, so seeing one focused would never mean "the user is looking at
+/// the control they just used".
+const NON_INTERACTIVE_WINDOWS: [&str; 3] = ["tray-indicator", "overlay", "model-footprint"];
+
+/// The pill announces a switch the user could not otherwise see, so it is
+/// suppressed whenever an interactive WinSTT window HAS FOCUS — changing the mode
+/// in Settings, or with the main pill's own push-to-talk button, is already
+/// visible on screen and a corner pill just repeats it. Windows that are open but
+/// in the background (or closed) still get the pill, which is the global-hotkey
+/// case this surface exists for.
+///
+/// Checked across every interactive window rather than Settings alone: Settings is
+/// a modal CHILD of `main`, so which of the two owns focus at broadcast time is
+/// not something the caller should have to reason about.
+fn winstt_surface_is_focused(app: &AppHandle) -> bool {
+    app.webview_windows().iter().any(|(label, window)| {
+        !NON_INTERACTIVE_WINDOWS.contains(&label.as_str())
+            && window.is_visible().unwrap_or(false)
+            && window.is_focused().unwrap_or(false)
+    })
 }
 
 /// Show the tray-indicator pill anchored at the notification-area corner. Returns
-/// `true` if it was actually shown, `false` when suppressed (settings focused).
+/// `true` if it was actually shown, `false` when suppressed (a WinSTT window is
+/// focused, so the switch is already visible).
 #[tauri::command]
 #[specta::specta]
 pub fn tray_indicator_show(app: AppHandle) -> Result<bool, String> {
-    if settings_is_focused(&app) {
+    if winstt_surface_is_focused(&app) {
         return Ok(false);
     }
     let Some(window) = ensure_window(&app) else {

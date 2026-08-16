@@ -126,13 +126,11 @@ pub fn initialize_enigo(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // Check if already initialized
     if app.try_state::<EnigoState>().is_some() {
         log::debug!("Enigo already initialized");
         return Ok(());
     }
 
-    // Try to initialize
     match EnigoState::new() {
         Ok(enigo_state) => {
             app.manage(enigo_state);
@@ -167,16 +165,13 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // Check if already initialized
     if app.try_state::<ShortcutsInitialized>().is_some() {
         log::debug!("Shortcuts already initialized");
         return Ok(());
     }
 
-    // Initialize shortcuts
     crate::shortcut::init_shortcuts(&app);
 
-    // Mark as initialized
     app.manage(ShortcutsInitialized);
 
     log::debug!("Shortcuts initialized successfully");

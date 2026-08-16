@@ -92,7 +92,8 @@ fn bytes_per_param(q: Quantization) -> f64 {
     match q {
         Quantization::Default => 4.0,
         Quantization::Fp16 | Quantization::Fp16w => 2.0,
-        Quantization::Int8 | Quantization::Uint8 => 1.2,
+        // Int8g is the same int8 weights, just a different KV contract — identical footprint.
+        Quantization::Int8 | Quantization::Uint8 | Quantization::Int8g => 1.2,
         Quantization::Q4 | Quantization::Q4f16 | Quantization::Bnb4 | Quantization::Int4 => 0.75,
     }
 }
@@ -118,7 +119,8 @@ fn accuracy_weight(q: Quantization) -> u32 {
     match q {
         Quantization::Default => 32,
         Quantization::Fp16 | Quantization::Fp16w => 16,
-        Quantization::Int8 | Quantization::Uint8 => 8,
+        // Int8g carries the SAME weights as Int8 — identical accuracy, so identical weight.
+        Quantization::Int8 | Quantization::Uint8 | Quantization::Int8g => 8,
         Quantization::Q4f16 => 6,
         Quantization::Bnb4 | Quantization::Q4 | Quantization::Int4 => 4,
     }

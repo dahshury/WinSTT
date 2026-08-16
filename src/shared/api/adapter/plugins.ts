@@ -28,8 +28,6 @@ export type WindowOp =
 	| "quit"
 	| "ignore-mouse";
 
-// Plugin targets are handled by a small dispatch (see callPlugin) so we don't
-// statically import every plugin at module top (keeps the cold path lean).
 export type PluginTarget =
 	| "dialog:open"
 	| "clipboard:operate"
@@ -52,10 +50,14 @@ export async function callPlugin(
 			const { open } = await import("@tauri-apps/plugin-dialog");
 			const a = (args ?? {}) as {
 				filters?: Array<{ name: string; extensions: string[] }>;
+				multiple?: boolean;
 				title?: string;
 			};
+			// `multiple` flips the plugin's return type from `string | null` to
+			// `string[] | null`, so it stays opt-in and every existing caller keeps
+			// the single-path shape it already unwraps.
 			return open({
-				multiple: false,
+				multiple: a.multiple === true,
 				...(a.filters ? { filters: a.filters } : {}),
 				...(a.title ? { title: a.title } : {}),
 			});

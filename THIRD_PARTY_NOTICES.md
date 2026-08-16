@@ -84,7 +84,7 @@ crate's upstream repository, linked below.
 | rayon                                     | MIT OR Apache-2.0             | <https://github.com/rayon-rs/rayon>                                                                                        |
 | num_cpus                                  | MIT OR Apache-2.0             | <https://github.com/seanmonstar/num_cpus>                                                                                  |
 | sherpa-onnx                               | Apache-2.0                    | KWS wake word + speaker-embedding diarization (linked as a shared DLL on Windows). <https://github.com/k2-fsa/sherpa-onnx> |
-| vad-rs (git)                              | MIT                           | Silero VAD wrapper, git rev `2a412ed`. <https://github.com/cjpais/vad-rs>                                                  |
+| vad-rs (vendored)                         | MIT                           | Silero VAD wrapper, rev `2a412ed` vendored at `src-tauri/vendor/vad-rs` (ort pin relaxed). <https://github.com/cjpais/vad-rs> |
 | ferrous-opencc                            | Apache-2.0                    | Chinese text conversion for TTS. <https://github.com/apoint123/ferrous-opencc>                                             |
 | libloading                                | ISC                           | `dlopen` of the espeak-ng shared lib. <https://github.com/nagisa/rust_libloading>                                          |
 | enigo                                     | MIT                           | Synthetic keyboard input for paste. <https://github.com/enigo-rs/enigo>                                                    |
@@ -246,8 +246,9 @@ demand rather than shipping them in the installer.
 
 STT models are downloaded on demand into the user's Hugging Face cache
 (`%USERPROFILE%\.cache\huggingface` on Windows). The catalogue is defined in
-`src-tauri/src/winstt/catalog.rs` (71 entries across 10 families: Whisper,
-Moonshine, NeMo, Kaldi, GigaAM, Cohere, Granite, SenseVoice, T-One, Dolphin).
+`src-tauri/src/winstt/catalog.rs` (73 entries across 13 families: Whisper,
+Moonshine, NeMo, Kaldi, GigaAM, Cohere, Granite, SenseVoice, T-One, Dolphin,
+Qwen3-ASR, VibeVoice, Audio8).
 
 ### OpenAI Whisper / Lite-Whisper (family: Whisper)
 
@@ -309,6 +310,23 @@ Moonshine, NeMo, Kaldi, GigaAM, Cohere, Granite, SenseVoice, T-One, Dolphin).
 - DataoceanAI Dolphin multilingual ASR. — Apache-2.0.
   <https://huggingface.co/DataoceanAI>
 
+### Audio8-ASR / ARK-ASR (family: Audio8)
+
+- `audio8-asr-0.1b` — Audio8 / AutoArk `arkasr` (Qwen3-ASR audio tower + MLP
+  adapter over an 8-layer Qwen-style decoder), ONNX-runtime bundle.
+  — **CC-BY-NC-4.0 (NonCommercial — commercial use is not permitted under this
+  licence; verify per the model card before any commercial use).**
+  <https://huggingface.co/Audio8/Audio8-ASR-0.1B-onnx-runtime>
+- `ark-asr-0.6b` — the larger `arkasr` sibling (Whisper-large encoder + 0.6 B
+  Qwen-style decoder), int8 ONNX export. — Apache-2.0 (NOT the 0.1 B's
+  non-commercial licence). <https://huggingface.co/Audio8/ARK-ASR-0.6B>
+- `ark-asr-3b` — the 3 B `arkasr` model. Upstream ships safetensors only;
+  the catalog points at our own int8 ONNX export,
+  <https://huggingface.co/Masterx/ark-asr-3b-onnx>, which redistributes the
+  upstream weights in converted form. — Apache-2.0, inherited from
+  <https://huggingface.co/Audio8/ARK-ASR-3B> (redistribution and modification
+  permitted; NOTICE attribution retained in the export's README).
+
 ---
 
 ## Text-to-speech models
@@ -325,6 +343,26 @@ TTS models are downloaded on demand from Hugging Face. The catalogue is in
   licenses are noted in the Piper repo). <https://github.com/rhasspy/piper>
 - **Supertonic** — `Supertone/supertonic-3`. — see the model card for terms
   **(verify before commercial use).** <https://huggingface.co/Supertone>
+- **NeuTTS-2E** — backbone weights `neuphonic/neutts-2e`, downloaded as the
+  community ONNX export `Danny-Dasilva/neutts-2e-onnx` (an unofficial FP32 +
+  dynamic-int8 conversion, not affiliated with Neuphonic). (c) Neuphonic
+  Limited. — **NeuTTS Open License v1.0**, *not* Apache-2.0. It permits free
+  research use, redistribution (including converted/ONNX formats) with
+  attribution notices preserved, and desktop-app distribution; but **§5 licenses
+  Commercial Use only to a Legal Entity whose annual revenue is under
+  US$5,000,000** — above that threshold a paid license from Neuphonic is
+  required. WinSTT downloads the upstream `LICENSE` alongside the weights (to
+  `%LOCALAPPDATA%/winstt/tts/neutts-2e/LICENSE`) so every recipient of the model
+  receives a copy, per §4(a). The four fixed speaker references shipped with
+  WinSTT (pre-encoded NeuCodec codes plus their transcripts, in
+  `src-tauri/src/winstt/tts/neutts.rs`) are extracted unmodified from
+  Neuphonic's `neutts` package and are covered by the same license.
+  <https://huggingface.co/neuphonic/neutts-2e> —
+  <https://github.com/neuphonic/neutts>
+- **NeuCodec decoder** — `neuphonic/neucodec-onnx-decoder` and
+  `neuphonic/neucodec-onnx-decoder-int8` (the neural vocoder NeuTTS-2E decodes
+  through). (c) Neuphonic Limited — Apache-2.0, no revenue threshold.
+  <https://huggingface.co/neuphonic/neucodec>
 
 The Piper recipe is derived from `OHF-Voice/piper1-gpl` (GPL-3.0); WinSTT's
 Piper inference is a clean-room ONNX runner and does not link GPL Piper code.

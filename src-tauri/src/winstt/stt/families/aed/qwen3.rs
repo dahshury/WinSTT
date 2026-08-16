@@ -196,7 +196,7 @@ impl Qwen3AsrEngine {
 
     /// Device `MemoryInfo` for binding the audio embeds + KV-cache resident on the session's device
     /// (CPU when no device GPU EP). Cheap to build; one per encode + one per decode step.
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -207,7 +207,7 @@ impl Qwen3AsrEngine {
     }
 
     /// Host `MemoryInfo` for binding the logits back to the CPU for argmax.
-    fn host_mem() -> SttResult<MemoryInfo> {
+    fn host_mem() -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             AllocationDevice::CPU,
             0,
@@ -392,6 +392,12 @@ impl Transcriber for Qwen3AsrEngine {
                 break;
             }
             generated.push(current);
+            // Phrase-loop guard (shared with the other maskless AED decodes): keep one occurrence
+            // of a verbatim-repeated cycle and stop — see `phrase_loop_truncation`.
+            if let Some(keep) = phrase_loop_truncation(&generated) {
+                generated.truncate(keep);
+                break;
+            }
             let embeds = Tensor::from_array(self.embed_row(current)?)
                 .map_err(|e| SttError::Inference(format!("qwen3 step embeds: {e}")))?;
             let pos_ids = tensor_i64((1, 1), vec![pos])?;

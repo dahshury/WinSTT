@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { IPC } from "@test/mocks/legacy-ipc";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { useTranscriptionHistorySync } from "./use-history-sync";
@@ -32,7 +33,10 @@ beforeEach(() => {
 		isLoaded: false,
 		transformEntries: [],
 		transformsLoaded: false,
+		ttsEntries: [],
+		ttsLoaded: false,
 	});
+	useSettingsStore.setState({ settings: structuredClone(DEFAULT_SETTINGS) });
 	window.nativeBridge = {
 		...originalApi,
 		invoke: (channel: string) => invokeImpl(channel),
@@ -262,5 +266,60 @@ describe("useTranscriptionHistorySync", () => {
 		expect(useTranscriptionHistoryStore.getState().transformsLoaded).toBe(
 			false,
 		);
+	});
+
+	test("refreshes all collections after a retention setting is applied", async () => {
+		useTranscriptionHistoryStore.setState({
+			entries: [
+				{
+					durationMs: 1000,
+					id: "old-stt",
+					text: "old",
+					timestamp: 1,
+					wordCount: 1,
+				},
+			],
+			isLoaded: true,
+			transformEntries: [],
+			transformsLoaded: true,
+			ttsEntries: [],
+			ttsLoaded: true,
+		});
+		invokeImpl = (cmd) => {
+			if (matchesHistoryRead(cmd, IPC.HISTORY_GET_ALL, "history_get_all")) {
+				return Promise.resolve([
+					{
+						durationMs: 500,
+						id: "retained-stt",
+						text: "retained",
+						timestamp: 2,
+						wordCount: 1,
+					},
+				]);
+			}
+			return Promise.resolve([]);
+		};
+		renderHook(() => useTranscriptionHistorySync());
+
+		act(() => {
+			fire(IPC.SETTINGS_CHANGED, {
+				changedSections: ["general"],
+				settings: {
+					...structuredClone(DEFAULT_SETTINGS),
+					general: {
+						...structuredClone(DEFAULT_SETTINGS.general),
+						historyMaxEntries: 42,
+					},
+				},
+			});
+		});
+
+		await waitFor(() => {
+			expect(
+				useTranscriptionHistoryStore
+					.getState()
+					.entries.map((entry) => entry.id),
+			).toEqual(["retained-stt"]);
+		});
 	});
 });

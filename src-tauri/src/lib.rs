@@ -494,10 +494,8 @@ fn initialize_desktop_integration(
             let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
         }
     }
-    // Get the current theme to set the appropriate initial icon
     let initial_theme = tray::get_current_theme(app_handle);
 
-    // Choose the appropriate initial icon based on theme
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle);
     let initial_icon_path = app_handle
         .path()
@@ -523,6 +521,16 @@ fn initialize_desktop_integration(
         // instead of showing the app — the reported bug.
         .on_tray_icon_event(|tray_handle, event| {
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+            // DIAGNOSTIC: the tray click path is invisible in a packaged build
+            // (no console), so a "right-click does nothing" report has no trace
+            // to follow. Log the CLICKS only — the tray also emits Move/Enter/
+            // Leave for every pixel the cursor crosses.
+            if matches!(
+                event,
+                TrayIconEvent::Click { .. } | TrayIconEvent::DoubleClick { .. }
+            ) {
+                log::debug!("[tray] {event:?}");
+            }
             match event {
                 TrayIconEvent::Click {
                     button: MouseButton::Left,
@@ -562,7 +570,6 @@ fn initialize_desktop_integration(
     tray::sync_tray_visualizer_style_from_settings(app_handle);
     advance_startup_phase(startup, app_handle, "tray icon created");
 
-    // Initialize tray menu with idle state
     utils::update_tray_menu(app_handle, &utils::TrayIconState::Idle, None);
 
     // Apply show_tray_icon setting
@@ -782,6 +789,21 @@ fn continue_startup_after_splash_paint(
         splash::spawn_ready_watcher(&app_handle, will_show_main);
     } else if will_show_main {
         show_main_window(&app_handle);
+    }
+    // Start-hidden launches never reach `show_main_window_with_restore` (which
+    // warms on visible launches), yet the tray icon is right-clickable
+    // immediately — warm the tray-menu webview so the first click can't land on
+    // a still-loading transparent window.
+    if tray_available && !will_show_main {
+        winstt::commands::tray_menu::schedule_tray_menu_warmup(&app_handle);
+    }
+    // Same reasoning for the other always-warm surfaces (overlay /
+    // model-footprint / tray-indicator): a hidden or onboarding launch never
+    // reaches `show_main_window_with_restore`, yet global hotkeys work
+    // immediately — warm them so the first PTT pill and the first hotkey
+    // mode-switch pill don't depend on a webview that was never created.
+    if !will_show_main {
+        winstt::commands::windows::schedule_secondary_window_warmup(&app_handle);
     }
     advance_startup_phase(&mut startup, &app_handle, "startup handoff scheduled");
     advance_startup_phase(&mut startup, &app_handle, "setup complete");
@@ -1027,7 +1049,6 @@ pub fn run(cli_args: CliArgs) {
             }
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::debug!("Theme changed to: {:?}", theme);
-                // Update tray icon to match new theme, maintaining idle state
                 utils::change_tray_icon(window.app_handle(), utils::TrayIconState::Idle);
             }
             tauri::WindowEvent::Focused(true) if window.label() == "main" => {

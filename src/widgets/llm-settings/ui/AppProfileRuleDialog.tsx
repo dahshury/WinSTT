@@ -90,12 +90,12 @@ export function AppProfileRuleDialog({
 							placeholder={t("appProfileUrlPatternPlaceholder")}
 							value={urlPattern}
 						/>
-						<span className="font-normal text-caption text-foreground-muted">
+						<span className="font-normal text-foreground-muted text-xs-tight">
 							{t("appProfileUrlHint")}
 						</span>
 					</label>
 					{canSave ? null : (
-						<p className="text-caption text-foreground-muted">
+						<p className="text-foreground-muted text-xs-tight">
 							{t("appProfileValidation")}
 						</p>
 					)}

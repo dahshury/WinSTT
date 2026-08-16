@@ -137,4 +137,68 @@ describe("useTtsVoiceCatalog", () => {
 		});
 		expect(pendingRequests).toHaveLength(1);
 	});
+
+	test("never heals away a cloning model's reference-clip path", async () => {
+		// A cloning engine stores the clip PATH in `voice`, and it is never in the
+		// catalog. Healing it would silently delete the user's clip on the next
+		// enable/model change.
+		const update = mock(() => undefined);
+		renderHook(() =>
+			useTtsVoiceCatalog(
+				true,
+				"chatterbox-multilingual",
+				"C:/appdata/tts/reference-voices/narrator-9f.wav",
+				update,
+				true,
+			),
+		);
+
+		await act(async () => {
+			pendingRequests[0]?.resolve(catalog("default"));
+			await Promise.resolve();
+		});
+
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	test("never heals away a voice-design model's prompt", async () => {
+		// A voice-design engine stores the user's PROMPT in `voice`, and its
+		// catalog is a single entry whose id is the EMPTY string. That passes the
+		// non-empty-catalog guard, so without the keep-unlisted flag the prompt is
+		// replaced by `""` on every remount — silently, with no undo.
+		const update = mock(() => undefined);
+		renderHook(() =>
+			useTtsVoiceCatalog(
+				true,
+				"qwen3-tts-1.7b-voicedesign",
+				"A deep, gravelly middle-aged American man speaking in a near-whisper.",
+				update,
+				true,
+			),
+		);
+
+		await act(async () => {
+			pendingRequests[0]?.resolve({
+				languages: [{ code: "en", label: "EN" }],
+				voices: [{ id: "", label: "Default", language: "en", gender: "" }],
+			});
+			await Promise.resolve();
+		});
+
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	test("still heals a stale preset id when the value is not authored", async () => {
+		// The guard must stay narrow: an unprotected model with a leftover voice id
+		// from a previous engine is still repaired to a real preset.
+		const update = mock(() => undefined);
+		renderHook(() => useTtsVoiceCatalog(true, "kokoro-82m", "female", update));
+
+		await act(async () => {
+			pendingRequests[0]?.resolve(catalog("af_heart"));
+			await Promise.resolve();
+		});
+
+		expect(update).toHaveBeenCalledWith({ voice: "af_heart", lang: "en" });
+	});
 });

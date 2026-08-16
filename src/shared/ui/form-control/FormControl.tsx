@@ -111,7 +111,9 @@ function TooltipTarget({
 	tooltip?: ReactNode | undefined;
 }) {
 	const content = disabled ? (
-		<div className="pointer-events-none">{children}</div>
+		<div aria-disabled="true" className="pointer-events-none" inert>
+			{children}
+		</div>
 	) : (
 		children
 	);

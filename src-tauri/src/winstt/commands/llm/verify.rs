@@ -14,7 +14,7 @@ use crate::winstt::cloud_stt::{
 };
 
 use super::payloads::VerifyCredentialPayload;
-use crate::winstt::commands::settings::{SECRET_PRESENT_SENTINEL, read_settings};
+use crate::winstt::commands::settings::{is_masked_secret, read_settings};
 
 // ── verify probe (shared OpenAI/OpenRouter/ElevenLabs classification) ──────────
 
@@ -26,7 +26,10 @@ pub(super) enum VerifyProbe {
 
 pub(super) fn resolve_verify_api_key(app: &AppHandle, probe: VerifyProbe, api_key: &str) -> String {
     let trimmed = api_key.trim();
-    if trimmed != SECRET_PRESENT_SENTINEL {
+    // Prefix test, not equality: the renderer's masked value may carry a last-4
+    // hint (`__WINSTT_SECRET_PRESENT__:4f2a`), and probing THAT as the key would
+    // report every saved credential invalid.
+    if !is_masked_secret(trimmed) {
         return trimmed.to_string();
     }
     let settings = read_settings(app);

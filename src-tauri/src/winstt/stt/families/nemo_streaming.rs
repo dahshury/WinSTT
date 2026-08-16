@@ -414,7 +414,7 @@ impl NativeNemoStreamingEngine {
     }
 
     /// Device `MemoryInfo` for binding the carried encoder cache resident (CPU when no GPU EP).
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,

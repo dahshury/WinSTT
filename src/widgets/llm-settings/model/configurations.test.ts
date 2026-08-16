@@ -3,6 +3,9 @@ import type {
 	BuiltinPresetEntry,
 	CustomModifier,
 } from "@/entities/llm-catalog";
+import { useSettingsStore } from "@/entities/setting";
+import { SECRET_CLEAR_SENTINEL } from "@/shared/config/settings-schema";
+import { configSnapshotFromSavedConfiguration } from "./app-profile-rules";
 import {
 	BUILTIN_CONFIGURATIONS,
 	configurationsEqual,
@@ -11,10 +14,13 @@ import {
 	matchFullConfigurationId,
 	matchPostProcessingProfileId,
 	mergeSavedConfigurations,
+	parseSavedConfigurations,
 	postProcessingPatchFromConfiguration,
 	reorderSavedConfigurations,
 	type SavedConfiguration,
 	seedBuiltinConfigurations,
+	syncConfigurationsFromStorage,
+	useLlmConfigurationsStore,
 	withAvailableLlmProvider,
 } from "./configurations";
 
@@ -576,6 +582,13 @@ describe("withAvailableLlmProvider", () => {
 		).toBe("ollama");
 	});
 
+	test("treats the explicit clear sentinel as absent", () => {
+		const config = body({ provider: "openrouter" });
+		expect(
+			withAvailableLlmProvider(config, SECRET_CLEAR_SENTINEL).provider,
+		).toBe("ollama");
+	});
+
 	test("leaves OpenRouter intact when a key is present (returns same ref)", () => {
 		const config = body({ provider: "openrouter" });
 		expect(withAvailableLlmProvider(config, "sk-or-123")).toBe(config);
@@ -586,5 +599,122 @@ describe("withAvailableLlmProvider", () => {
 		expect(withAvailableLlmProvider(ollama, "")).toBe(ollama);
 		const apple = body({ provider: "apple-intelligence" });
 		expect(withAvailableLlmProvider(apple, "")).toBe(apple);
+	});
+});
+
+describe("saved configuration storage validation", () => {
+	test("repairs duplicate/invalid preset and modifier entries", () => {
+		const raw = JSON.stringify([
+			{
+				id: "profile",
+				name: "Profile",
+				config: body({
+					presets: [
+						{ key: "neutral" },
+						{ key: "formal" },
+						{ key: "concise", level: "high" },
+						{ key: "concise", level: "light" },
+						{ key: "summarize", level: "caveman" },
+					] as BuiltinPresetEntry[],
+					customModifiers: [mod({ id: "same" }), mod({ id: "same" })],
+				}),
+			},
+		]);
+
+		const parsed = parseSavedConfigurations(raw);
+		expect(parsed.repaired).toBe(true);
+		expect(parsed.configs).toHaveLength(1);
+		expect(parsed.configs[0]?.config.presets).toEqual([
+			{ key: "neutral" },
+			{ key: "concise", level: "high" },
+		]);
+		expect(parsed.configs[0]?.config.customModifiers).toHaveLength(1);
+	});
+
+	test("drops empty shells, duplicate ids, and out-of-range token limits", () => {
+		const valid = saved("one");
+		const parsed = parseSavedConfigurations(
+			JSON.stringify([
+				valid,
+				{ ...valid, name: "duplicate" },
+				{ ...saved(""), name: "No id" },
+				{
+					...saved("too-many"),
+					config: body({ maxOutputTokens: 200_001 }),
+				},
+			]),
+		);
+
+		expect(parsed.repaired).toBe(true);
+		expect(parsed.configs.map((entry) => entry.id)).toEqual(["one"]);
+	});
+
+	test("cross-window sync refreshes app-profile snapshots and active cache", () => {
+		const configurationState = useLlmConfigurationsStore.getState();
+		const settingsBefore = useSettingsStore.getState().settings;
+		const oldConfig = saved("shared", { model: "old-model" });
+		const editedConfig: SavedConfiguration = {
+			...oldConfig,
+			name: "Edited",
+			config: body({ model: "new-model" }),
+		};
+		try {
+			useLlmConfigurationsStore.setState({
+				activeConfigurationId: "shared",
+				configurations: [oldConfig],
+				seededBuiltinIds: BUILTIN_CONFIGURATIONS.map((entry) => entry.id),
+			});
+			useSettingsStore.setState({
+				settings: {
+					...settingsBefore,
+					llm: {
+						...settingsBefore.llm,
+						appProfiles: {
+							rules: [
+								{
+									id: "rule",
+									enabled: true,
+									appExe: "editor.exe",
+									titlePattern: "",
+									urlPattern: "",
+									configurationId: "shared",
+									configurationName: oldConfig.name,
+									config: configSnapshotFromSavedConfiguration(
+										oldConfig.config,
+									),
+								},
+							],
+						},
+					},
+				},
+			});
+
+			syncConfigurationsFromStorage(
+				JSON.stringify({
+					version: 1,
+					configurations: [editedConfig],
+					seededBuiltinIds: BUILTIN_CONFIGURATIONS.map((entry) => entry.id),
+				}),
+			);
+
+			expect(useLlmConfigurationsStore.getState().activeConfigurationId).toBe(
+				"shared",
+			);
+			expect(
+				useSettingsStore.getState().settings.llm.appProfiles.rules[0]
+					?.configurationName,
+			).toBe("Edited");
+			expect(
+				useSettingsStore.getState().settings.llm.appProfiles.rules[0]?.config
+					.model,
+			).toBe("new-model");
+		} finally {
+			useLlmConfigurationsStore.setState({
+				activeConfigurationId: configurationState.activeConfigurationId,
+				configurations: configurationState.configurations,
+				seededBuiltinIds: configurationState.seededBuiltinIds,
+			});
+			useSettingsStore.setState({ settings: settingsBefore });
+		}
 	});
 });

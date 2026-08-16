@@ -19,6 +19,7 @@ import {
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
+import type { AssignableFeature } from "./configuration-assignment";
 import {
 	buildLevelOpts,
 	buildProviderOpts,
@@ -57,14 +58,13 @@ const resolveOpenRouterEnablePatch = (
 // the dialog is a widget and widgets can't import widgets). Toggling a feature
 // on with no installed model routes here; the picker's install callback then
 // commits `enabled: true` — the toggle never enables on its own.
-const setShowModelPickerFor =
-	(feature: "dictation" | "transforms") => (v: boolean) => {
-		if (v) {
-			useLlmModelPickerStore.getState().openFor(feature, true);
-		} else {
-			useLlmModelPickerStore.getState().close();
-		}
-	};
+const setShowModelPickerFor = (feature: AssignableFeature) => (v: boolean) => {
+	if (v) {
+		useLlmModelPickerStore.getState().openFor(feature, true);
+	} else {
+		useLlmModelPickerStore.getState().close();
+	}
+};
 
 /**
  * Owns every store subscription, derived snapshot, effect and handler the
@@ -80,6 +80,8 @@ export function useLlmSettingsPanel() {
 		(s) => s.updateLlmPostProcessing,
 	);
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
+	const updateReadAloud = useSettingsStore((s) => s.updateLlmReadAloud);
+	const readAloud = useSettingsStore((s) => s.settings.llm.readAloud);
 	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
 	const smartEndpoint = useSettingsStore(
 		(s) => s.settings.quality.smartEndpoint,
@@ -344,10 +346,11 @@ export function useLlmSettingsPanel() {
 	const [showOllamaDialog, setShowOllamaDialog] = useState(false);
 	const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
 	// Tracks which feature initiated the OllamaDialog / ApiKeyDialog so the
-	// dialog completion handler knows which feature to enable.
-	const [pendingFeature, setPendingFeature] = useState<
-		"dictation" | "transforms" | null
-	>(null);
+	// dialog completion handler knows which feature to enable. All three
+	// consumers can raise these dialogs — folding read aloud into "dictation"
+	// here made finishing its dialog enable DICTATION instead.
+	const [pendingFeature, setPendingFeature] =
+		useState<AssignableFeature | null>(null);
 
 	// Build the same "enable with a resolved model" patch the toggle uses,
 	// so the post-dialog enable path can't slip past the no-model guard.
@@ -370,19 +373,57 @@ export function useLlmSettingsPanel() {
 		return {};
 	};
 
+	/** The models a dialog-completion patch has to be built from, per consumer.
+	 *  Read aloud is not in `readLlmSnapshot` (it has no dialogs of its own to
+	 *  snapshot), so it comes straight off settings. */
+	const featureModels: Record<
+		AssignableFeature,
+		{ model: string; openrouterModel: string }
+	> = {
+		dictation: {
+			model: dictation.model,
+			openrouterModel: dictation.openrouterModel,
+		},
+		readAloud: {
+			model: readAloud.model,
+			openrouterModel: readAloud.openrouterModel,
+		},
+		transforms: {
+			model: transforms.model,
+			openrouterModel: transforms.openrouterModel,
+		},
+	};
+
+	/** Commit a dialog-completion patch onto the consumer that raised the dialog.
+	 *  Each has its own updater — routing read aloud through dictation's is what
+	 *  made "start Ollama" from the Read aloud row enable DICTATION instead. */
+	const applyPendingFeaturePatch = (
+		feature: AssignableFeature,
+		patch: Partial<LlmFeatureDraft>,
+	) => {
+		if (feature === "dictation") {
+			updatePostProcessing(patch);
+			if (patch.enabled) {
+				disableDictationConflicts();
+			}
+			return;
+		}
+		if (feature === "transforms") {
+			updateTransforms(patch);
+			return;
+		}
+		updateReadAloud(patch);
+	};
+
 	const handleOllamaStarted = () => {
 		setShowOllamaDialog(false);
 		scanOllama();
-		if (pendingFeature === "dictation") {
-			const patch = resolveOllamaEnablePatch(dictation.model);
+		if (pendingFeature) {
+			const patch = resolveOllamaEnablePatch(
+				featureModels[pendingFeature].model,
+			);
 			if (patch.enabled) {
-				updatePostProcessing(patch);
-				disableDictationConflicts();
-			}
-		} else if (pendingFeature === "transforms") {
-			const patch = resolveOllamaEnablePatch(transforms.model);
-			if (patch.enabled) {
-				updateTransforms(patch);
+				applyPendingFeaturePatch(pendingFeature, patch);
 			}
 		}
 		setPendingFeature(null);
@@ -394,28 +435,26 @@ export function useLlmSettingsPanel() {
 		// Force past the loaded-cache guard: the prior scan failed (no key) and
 		// marked the catalog loaded, so a plain scan would skip the retry.
 		scanOpenRouter(true);
-		if (pendingFeature === "dictation") {
-			updatePostProcessing(
-				resolveOpenRouterEnablePatch(dictation.openrouterModel),
-			);
-			disableDictationConflicts();
-		} else if (pendingFeature === "transforms") {
-			updateTransforms(
-				resolveOpenRouterEnablePatch(transforms.openrouterModel),
+		if (pendingFeature) {
+			applyPendingFeaturePatch(
+				pendingFeature,
+				resolveOpenRouterEnablePatch(
+					featureModels[pendingFeature].openrouterModel,
+				),
 			);
 		}
 		setPendingFeature(null);
 	};
 
 	const setShowOllamaDialogFor =
-		(feature: "dictation" | "transforms") => (v: boolean) => {
+		(feature: AssignableFeature) => (v: boolean) => {
 			setShowOllamaDialog(v);
 			if (v) {
 				setPendingFeature(feature);
 			}
 		};
 	const setShowApiKeyDialogFor =
-		(feature: "dictation" | "transforms") => (v: boolean) => {
+		(feature: AssignableFeature) => (v: boolean) => {
 			setShowApiKeyDialog(v);
 			if (v) {
 				setPendingFeature(feature);
@@ -454,6 +493,7 @@ export function useLlmSettingsPanel() {
 		endpoint,
 		openrouterApiKey,
 		dictation,
+		readAloud,
 		transforms,
 		warmupStatus,
 		librarySearchProps,

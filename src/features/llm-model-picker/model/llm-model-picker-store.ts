@@ -2,7 +2,31 @@ import { create } from "zustand";
 import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { useSettingsStore } from "@/entities/setting";
 
-type LlmPickerFeature = "dictation" | "transforms";
+/** Every consumer that can open the picker. Read aloud used to be folded into
+ *  `"dictation"` here, which meant a picker opened from the Read aloud row
+ *  committed (and, on dismissal, disabled) DICTATION instead. */
+type LlmPickerFeature = "dictation" | "readAloud" | "transforms";
+
+/** The subset of a consumer's slice the picker ever writes. Structurally
+ *  assignable to all three per-feature updaters, which take different partials. */
+interface PickerFeaturePatch {
+	enabled?: boolean;
+	model?: string;
+	provider?: "ollama";
+}
+
+function writeFeature(feature: LlmPickerFeature, patch: PickerFeaturePatch) {
+	const settings = useSettingsStore.getState();
+	if (feature === "dictation") {
+		settings.updateLlmPostProcessing(patch);
+		return;
+	}
+	if (feature === "transforms") {
+		settings.updateLlmTransforms(patch);
+		return;
+	}
+	settings.updateLlmReadAloud(patch);
+}
 
 interface LlmModelPickerState {
 	close: () => void;
@@ -36,8 +60,8 @@ interface LlmModelPickerState {
 }
 
 /**
- * Coordinates the Ollama model-picker modal for the two LLM features
- * (dictation cleanup / text transforms). The modal itself
+ * Coordinates the Ollama model-picker modal for the three LLM consumers
+ * (dictation cleanup / text transforms / read aloud). The modal itself
  * (`OllamaModelManagerDialog`) is a widget, so — per the FSD widget→widget ban
  * — it is rendered at the VIEW layer (SettingsPage, OnboardingPage) while this
  * feature store is the shared coordination point both the settings widget and
@@ -58,6 +82,8 @@ export const useLlmModelPickerStore = create<LlmModelPickerState>(
 			// session parked (its pull may still be running).
 			const pullInFlight =
 				Object.keys(useLlmCatalogStore.getState().pulls).length > 0;
+			const abandonedTurnOn =
+				enableOnInstall && feature !== null && !pullInFlight;
 			set({
 				open: false,
 				feature: null,
@@ -67,6 +93,14 @@ export const useLlmModelPickerStore = create<LlmModelPickerState>(
 						? feature
 						: pendingFeature,
 			});
+			// Dismissed without downloading anything, on a turn-on request: the
+			// feature must end up OFF. The toggle that opened this picker never
+			// committed `enabled` (only a landed model does), but an ALREADY-enabled
+			// feature whose model went missing would otherwise be left on with
+			// nothing to run — so switch it off explicitly rather than assuming.
+			if (abandonedTurnOn) {
+				writeFeature(feature, { enabled: false });
+			}
 		},
 		commitInstalled: (model) => {
 			const { feature, enableOnInstall, pendingFeature } = get();
@@ -79,20 +113,22 @@ export const useLlmModelPickerStore = create<LlmModelPickerState>(
 			const enable = feature === null ? true : enableOnInstall;
 			set({ pendingFeature: null });
 			const settings = useSettingsStore.getState();
+			// A model that just landed becomes THE shared local model, and the store
+			// action pushes it onto every locally-running consumer in one write —
+			// writing `localModel` alone left the other consumers on the previous
+			// model, which is exactly the second resident model the rule forbids.
+			settings.updateLlmSharedLocalModel(model);
 			const patch = enable
 				? { model, provider: "ollama" as const, enabled: true }
 				: { model, provider: "ollama" as const };
-			if (target === "dictation") {
-				settings.updateLlmPostProcessing(patch);
-				if (enable) {
-					// Mutual exclusion with Smart Endpoint — mirrors the panel's
-					// `disableSmartEndpoint`: turning dictation cleanup on turns the
-					// Smart Endpoint heuristic off.
-					settings.updateQualitySettings({ smartEndpoint: false });
-				}
-				return;
+			writeFeature(target, patch);
+			if (enable && target === "dictation") {
+				// Mutual exclusion with Smart Endpoint — mirrors the panel's
+				// `disableSmartEndpoint`: turning dictation cleanup on turns the
+				// Smart Endpoint heuristic off. Dictation only: the other consumers
+				// run nowhere near the finalization heuristic.
+				settings.updateQualitySettings({ smartEndpoint: false });
 			}
-			settings.updateLlmTransforms(patch);
 		},
 	}),
 );

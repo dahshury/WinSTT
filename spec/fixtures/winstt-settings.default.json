@@ -100,10 +100,12 @@
     }
   },
   "llm": {
+    "allowMultipleLocalModels": false,
     "appProfiles": {
       "rules": []
     },
     "dictation": {
+      "configurationId": "builtin:default",
       "customModifiers": [],
       "dictionaryAutoAddEnabled": false,
       "enabled": false,
@@ -114,15 +116,6 @@
       "presets": [
         {
           "key": "neutral"
-        },
-        {
-          "key": "reorder"
-        },
-        {
-          "key": "restructure"
-        },
-        {
-          "key": "rewordForClarity"
         }
       ],
       "provider": "ollama",
@@ -131,10 +124,30 @@
       "verbosity": "medium"
     },
     "endpoint": "http://localhost:11434",
+    "localModel": "",
     "openrouterApiKey": "",
     "profileSwapHotkey": "LCtrl+LShift+P",
+    "readAloud": {
+      "configurationId": "builtin:default",
+      "customModifiers": [],
+      "enabled": false,
+      "maxOutputTokens": null,
+      "model": "",
+      "openrouterFallbackModel": "",
+      "openrouterModel": "",
+      "presets": [
+        {
+          "key": "neutral"
+        }
+      ],
+      "provider": "ollama",
+      "reasoningEffort": "medium",
+      "thinkingEffort": "off",
+      "verbosity": "medium"
+    },
     "timeout": 5000,
     "transforms": {
+      "configurationId": "builtin:default",
       "customModifiers": [],
       "enabled": false,
       "hotkey": "LCtrl+LShift+T",
@@ -147,7 +160,6 @@
           "key": "neutral"
         }
       ],
-      "prompts": [],
       "provider": "ollama",
       "reasoningEffort": "medium",
       "thinkingEffort": "off",
@@ -198,11 +210,13 @@
     },
     "enabled": false,
     "hotkey": "LCtrl+Space",
+    "inlineTags": false,
     "lang": "en-us",
     "model": "kokoro-82m",
     "quantization": "",
     "source": "local",
     "speed": 1.0,
-    "voice": "af_heart"
+    "voice": "af_heart",
+    "voiceInstruct": ""
   }
 }

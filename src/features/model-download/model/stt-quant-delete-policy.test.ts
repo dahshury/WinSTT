@@ -72,7 +72,7 @@ describe("canDeleteSttQuant", () => {
 });
 
 describe("resolveSttDeleteRecovery", () => {
-	test("switches active main deletion to a cached similar model first", () => {
+	test("blocks deletion while the main slot still references that precision", () => {
 		const models = [
 			model("nemo-current", "nemo"),
 			model("whisper-cached", "whisper"),
@@ -91,11 +91,29 @@ describe("resolveSttDeleteRecovery", () => {
 				models,
 				quantization: "int8",
 				statesById,
-			}).mainTarget,
-		).toEqual({ modelId: "nemo-cached", quantization: "int8" });
+			}),
+		).toEqual({ canDelete: false });
 	});
 
-	test("keeps realtime recovery language-compatible with the main model", () => {
+	test("blocks even partial-byte cleanup for a precision referenced by a live slot", () => {
+		const models = [model("active"), model("fallback")];
+		const statesById = {
+			active: state("active", { int8: partial }),
+			fallback: state("fallback", { int8: cached }),
+		};
+		expect(
+			resolveSttDeleteRecovery({
+				currentMainModel: "active",
+				currentQuantization: "int8",
+				modelId: "active",
+				models,
+				quantization: "int8",
+				statesById,
+			}),
+		).toEqual({ canDelete: false });
+	});
+
+	test("blocks deletion while the realtime slot still references that precision", () => {
 		const main = model("main-en", "whisper", ["en"]);
 		const models = [
 			main,
@@ -119,7 +137,30 @@ describe("resolveSttDeleteRecovery", () => {
 				models,
 				quantization: "int8",
 				statesById,
-			}).realtimeTarget,
-		).toEqual({ modelId: "rt-en", quantization: "int8" });
+			}),
+		).toEqual({ canDelete: false });
+	});
+
+	test("allows deletion after both slots have explicitly switched away", () => {
+		const models = [model("current"), model("old")];
+		const statesById = {
+			current: state("current", { int8: cached }),
+			old: state("old", { int8: cached }),
+		};
+		expect(
+			resolveSttDeleteRecovery({
+				currentMainModel: "current",
+				currentQuantization: "int8",
+				currentRealtimeModel: "current",
+				modelId: "old",
+				models,
+				quantization: "int8",
+				statesById,
+			}),
+		).toEqual({
+			canDelete: true,
+			mainTarget: undefined,
+			realtimeTarget: undefined,
+		});
 	});
 });

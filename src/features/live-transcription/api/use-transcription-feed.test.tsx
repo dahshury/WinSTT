@@ -354,6 +354,38 @@ describe("useTranscriptionFeed", () => {
 		expect(state.hasDetectedSpeech).toBe(true);
 	});
 
+	test("recording_start during a still-winding-down session wipes the previous take's text", () => {
+		// Quick re-press: the previous session's full_sentence hasn't landed yet
+		// (final decode / LLM cleanup still running), so `isRecordingActive` is
+		// still armed and the full session reset is skipped. The stale realtime
+		// text must NOT survive into the new take — it painted the previous
+		// transcription into the pill the moment the user started talking again.
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			hasDetectedSpeech: true,
+			recordingSessionId: 7,
+			currentRealtime: "previous take's words",
+			ephemeral: { kind: "info", text: "stale status", timestamp: 1 },
+			isTranscribing: true,
+			processingPhase: "transcribing",
+			transcribingStartedAt: 100,
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_START);
+		const state = useTranscriptionStore.getState();
+		// Session identity + recovered speech latch are preserved…
+		expect(state.recordingSessionId).toBe(7);
+		expect(state.hasDetectedSpeech).toBe(true);
+		expect(state.isRecordingActive).toBe(true);
+		// …but every piece of stale per-take text/processing state is wiped.
+		expect(state.currentRealtime).toBe("");
+		expect(state.ephemeral).toBeNull();
+		expect(state.isTranscribing).toBe(false);
+		expect(state.processingPhase).toBeNull();
+	});
+
 	test("transcription_start marks final decode as transcribing after VAD speech", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -414,6 +446,33 @@ describe("useTranscriptionFeed", () => {
 		expect(state.transcribingStartedAt).toBeNull();
 	});
 
+	test("recording_stop wipes the live realtime preview (non-listen)", () => {
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			currentRealtime: "words painted during the take",
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_STOP);
+		expect(useTranscriptionStore.getState().currentRealtime).toBe("");
+	});
+
+	test("listen mode recording_stop keeps the in-flight caption", () => {
+		setRecordingMode("listen");
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			currentRealtime: "rolling caption",
+		});
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_RECORDING_STOP);
+		expect(useTranscriptionStore.getState().currentRealtime).toBe(
+			"rolling caption",
+		);
+	});
+
 	test("recording_stop is ignored when no recording session is active", () => {
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -451,10 +510,14 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 	});
 
-	test("recording_stop preserves the armed session and live text", () => {
+	test("recording_stop preserves the armed session but drops the live text", () => {
 		// `recording_stop` arrives before the terminal transcription event. If
 		// it closes the floating pill here, the terminal event starts a second
-		// close path and the bottom-pill fade-out feels laggy.
+		// close path and the bottom-pill fade-out feels laggy — so the SESSION
+		// stays armed. The live realtime text, however, is invalidated at the
+		// recording boundary: the pill hides it behind the processing spinner
+		// from here anyway, and keeping it around let a quick re-press resurface
+		// the previous take's transcription in the next session's pill.
 		useTranscriptionStore.setState({
 			isRecordingActive: true,
 			isTranscribing: false,
@@ -474,7 +537,7 @@ describe("useTranscriptionFeed", () => {
 		expect(state.isTranscribing).toBe(true);
 		expect(state.processingPhase).toBe("uploading");
 		expect(typeof state.transcribingStartedAt).toBe("number");
-		expect(state.currentRealtime).toBe("live preview");
+		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral?.text).toBe("stale");
 	});
 

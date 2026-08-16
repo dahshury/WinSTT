@@ -28,6 +28,13 @@ pub enum Family {
     Dolphin,
     /// Qwen3-ASR (Qwen3 LLM decoder + audio encoder; init/step ONNX graphs, raw fp16 embed table).
     Qwen3,
+    /// VibeVoice-ASR (BitNet): dual ConvNeXt tokenizer over raw 24 kHz audio + ternarized
+    /// Qwen2.5-1.5B decoder (qwen3-style init/step graphs, raw fp16 embed table).
+    VibeVoice,
+    /// Audio8-ASR (`arkasr`): Qwen3-ASR audio tower + MLP adapter → 8-layer Qwen-style causal LM,
+    /// with the adapter and token-embedding lookup running host-side from raw NumPy weights and a
+    /// prefill/decode pair driving a static 512-position KV cache.
+    Audio8,
     /// Runtime sentinel for user custom models (not in the shipped catalog).
     Custom,
 }
@@ -47,6 +54,8 @@ impl Family {
             Family::TOne => "t-one",
             Family::Dolphin => "dolphin",
             Family::Qwen3 => "qwen3",
+            Family::VibeVoice => "vibevoice",
+            Family::Audio8 => "audio8",
             Family::Custom => "custom",
         }
     }
@@ -70,6 +79,8 @@ impl Family {
             "t-one" => Family::TOne,
             "dolphin" => Family::Dolphin,
             "qwen3" => Family::Qwen3,
+            "vibevoice" => Family::VibeVoice,
+            "audio8" => Family::Audio8,
             _ => Family::Custom,
         }
     }

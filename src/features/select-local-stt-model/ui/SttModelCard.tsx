@@ -36,7 +36,7 @@ import type { MetaEntry } from "@/shared/ui/model-picker/core/model-card/CardMet
 import { ModelCard } from "@/shared/ui/model-picker/core/model-card/ModelCard";
 import {
 	type QuantCacheState,
-	type QuantDownloadAction,
+	type QuantDownloadCallbacks,
 	type QuantDownloadSnapshot,
 	QuantShelf,
 	type QuantShelfEntry,
@@ -263,48 +263,13 @@ function buildMetaEntries(
 	return entries;
 }
 
-interface PrecisionGroupProps {
+interface PrecisionGroupProps extends QuantDownloadCallbacks<OnnxQuantization> {
 	currentQuantization: OnnxQuantization;
-	/** Lookup ``(modelId, quantization) -> snapshot`` for the active
-	 *  download (if any) on this card's variants. Empty / missing entry
-	 *  means the badge renders its idle state. */
-	getDownloadSnapshot?:
-		| ((
-				modelId: string,
-				quantization: OnnxQuantization,
-		  ) => QuantDownloadSnapshot | undefined)
-		| undefined;
-	/** Suggested per-quant gating: fitting quant set per BACKING model id
-	 *  (`null` = no verdict for that model → no gating). Only passed while
-	 *  the Suggested filter is ON. */
-	getFittingQuants?:
-		| ((modelId: string) => ReadonlySet<string> | null)
-		| undefined;
 	isSelectedModel: boolean;
 	model: PrecisionRoutedSttModel;
-	/** Single dispatch for the four download actions. Selector wires
-	 *  this to ``useDownloadStore.{predownloadQuant,pauseQuantDownload,
-	 *  resumeQuantDownload,cancelQuantDownload}``. */
-	onDownloadAction?:
-		| ((
-				action: QuantDownloadAction,
-				modelId: string,
-				quantization: OnnxQuantization,
-		  ) => void)
-		| undefined;
-	onRequestDeleteQuant?:
-		| ((
-				modelId: string,
-				quantization: OnnxQuantization,
-				displayName: string,
-				quantLabel: string,
-		  ) => void)
-		| undefined;
-	canDeleteQuant?:
-		| ((modelId: string, quantization: OnnxQuantization) => boolean)
-		| undefined;
 	onSelect: (modelId: string, quantization: OnnxQuantization) => void;
 	state: ModelStateEntry | undefined;
+	compact?: boolean;
 }
 
 /**
@@ -436,6 +401,7 @@ function PrecisionGroup(props: PrecisionGroupProps) {
 			entries={buildSttQuantEntries(props, t("quantNeedsMoreMemory"))}
 			modelDisplayName={model.displayName}
 			modelId={model.id}
+			compact={props.compact ?? false}
 			onDownloadAction={
 				onDownloadAction
 					? (action, id, q) =>
@@ -516,6 +482,7 @@ interface LatencyShelfProps {
 	onSelect: (modelId: string, quantization: OnnxQuantization) => void;
 	selectedId: string | undefined;
 	statesById: Record<string, ModelStateEntry>;
+	compact?: boolean;
 }
 
 function LatencyShelf({
@@ -526,6 +493,7 @@ function LatencyShelf({
 	onSelect,
 	selectedId,
 	statesById,
+	compact = false,
 }: LatencyShelfProps) {
 	const variants = latencyVariantsForModel(model);
 	if (variants.length <= 1) {
@@ -533,13 +501,21 @@ function LatencyShelf({
 	}
 	const maxLatencyMs = Math.max(...variants.map((v) => v.latencyMs));
 	return (
-		<div className="flex flex-wrap items-center gap-2">
+		<div
+			className={cn(
+				"flex flex-wrap items-center",
+				compact ? "gap-1.5" : "gap-2",
+			)}
+		>
 			<Tooltip
 				content="Streaming latency. Pick lower latency for faster on-screen text, or higher latency for more right-context and steadier accuracy."
 				side="top"
 			>
 				<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
-					<HugeiconsIcon className="size-3" icon={Clock01Icon} />
+					<HugeiconsIcon
+						className={compact ? "size-2.5" : "size-3"}
+						icon={Clock01Icon}
+					/>
 				</span>
 			</Tooltip>
 			{variants.map((variant) => {
@@ -603,7 +579,8 @@ function LatencyShelf({
 									// enclosing ButtonGroup, so the inner button carries NO ring of
 									// its own (a second inset ring here is what made these badges
 									// read heavier than the quant badges).
-									"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden rounded-[5px] px-2 font-medium text-[10.5px] leading-none transition-colors",
+									"group/badge relative inline-flex items-center gap-1.5 overflow-hidden rounded-[5px] px-2 font-medium leading-none transition-colors",
+									compact ? "h-5 text-[10px]" : "h-6 text-[10.5px]",
 									isDownloading ? "cursor-default" : "cursor-pointer",
 									isActive
 										? "bg-accent/20 text-accent"
@@ -639,7 +616,10 @@ function LatencyShelf({
 								{isRecommended ? (
 									<HugeiconsIcon
 										aria-hidden="true"
-										className="size-3 shrink-0 text-accent"
+										className={cn(
+											"shrink-0 text-accent",
+											compact ? "size-2.5" : "size-3",
+										)}
 										icon={SparklesIcon}
 									/>
 								) : null}
@@ -650,7 +630,10 @@ function LatencyShelf({
 										</span>
 										<HugeiconsIcon
 											aria-hidden="true"
-											className="absolute inset-0 m-auto size-3 opacity-0 transition-opacity duration-150 group-hover/badge:opacity-100 motion-reduce:transition-none"
+											className={cn(
+												"absolute inset-0 m-auto opacity-0 transition-opacity duration-150 group-hover/badge:opacity-100 motion-reduce:transition-none",
+												compact ? "size-2.5" : "size-3",
+											)}
 											icon={CloudDownloadIcon}
 										/>
 									</span>
@@ -676,7 +659,8 @@ function LatencyShelf({
 	);
 }
 
-export interface SttModelCardProps {
+export interface SttModelCardProps
+	extends QuantDownloadCallbacks<OnnxQuantization> {
 	/**
 	 * Optional content rendered in the card's BOTTOM-right footer (above the
 	 * precision shelf). Used by ``SttVariantBundle`` to slot in the
@@ -685,23 +669,8 @@ export interface SttModelCardProps {
 	 */
 	variantExpander?: import("react").ReactNode;
 	currentQuantization: OnnxQuantization;
-	/** Lookup for the active download snapshot per (modelId, quant). The
-	 *  picker is self-contained so the consumer wires it; ``undefined``
-	 *  return = no active download for that variant. */
-	getDownloadSnapshot?:
-		| ((
-				modelId: string,
-				quantization: OnnxQuantization,
-		  ) => QuantDownloadSnapshot | undefined)
-		| undefined;
 	/** Live RAM/VRAM fit assessment for this card, if the host app has one. */
 	fitAssessment?: FitAssessmentEntry | null | undefined;
-	/** Suggested per-quant gating (fitting quant set per BACKING model id).
-	 *  Only passed while the Suggested filter is ON; badges outside the set
-	 *  render disabled/greyed. */
-	getFittingQuants?:
-		| ((modelId: string) => ReadonlySet<string> | null)
-		| undefined;
 	/**
 	 * Set on a bundle primary card whose currently-selected model is one of
 	 * its hidden siblings (e.g. a ``.en`` or lite-whisper variant). Renders
@@ -720,35 +689,6 @@ export interface SttModelCardProps {
 	 * they read as subordinate to their primary.
 	 */
 	nested?: boolean;
-	/** Single dispatch for the four download actions emitted by the
-	 *  badge controls (Download / Pause / Resume / Cancel). */
-	onDownloadAction?:
-		| ((
-				action: QuantDownloadAction,
-				modelId: string,
-				quantization: OnnxQuantization,
-		  ) => void)
-		| undefined;
-	/**
-	 * Optional handler invoked when the user clicks the trash icon next
-	 * to a cached/partial quant badge. Receives `(modelId, quantization,
-	 * displayName, quantLabel)` so the consumer can render its own
-	 * confirmation dialog. When omitted, no trash icon is rendered (the
-	 * card stays read-only as it was before).
-	 */
-	onRequestDeleteQuant?:
-		| ((
-				modelId: string,
-				quantization: OnnxQuantization,
-				displayName: string,
-				quantLabel: string,
-		  ) => void)
-		| undefined;
-	/** Optional handler that can suppress the trash icon for a specific
-	 *  cached/partial precision while leaving other precision actions enabled. */
-	canDeleteQuant?:
-		| ((modelId: string, quantization: OnnxQuantization) => boolean)
-		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	/** Star / unstar handler. When omitted, no favorite toggle is rendered
 	 *  (keeps the card read-only for consumers that don't wire favorites). */
@@ -763,6 +703,7 @@ export interface SttModelCardProps {
 	siblings?: readonly ModelInfo[] | undefined;
 	state: ModelStateEntry | undefined;
 	systemInfo: SystemInfoEntry | null;
+	compact?: boolean;
 }
 
 export function SttModelCard({
@@ -781,6 +722,7 @@ export function SttModelCard({
 	onDownloadAction,
 	variantExpander,
 	hasSelectedVariant = false,
+	compact = false,
 	isFavorite,
 	nested = false,
 	onToggleFavorite,
@@ -817,8 +759,9 @@ export function SttModelCard({
 	return (
 		<ModelCard
 			data-model-id={model.id}
+			compact={compact}
 			footer={variantExpander}
-			description={model.description || undefined}
+			description={compact ? undefined : model.description || undefined}
 			errorMessage={model.errorMessage}
 			favorite={
 				onToggleFavorite
@@ -833,13 +776,18 @@ export function SttModelCard({
 			meta={metaEntries}
 			name={variantDisplayName(model, siblings)}
 			nested={nested}
-			perf={{
-				accuracyScore: model.accuracyScore,
-				speedScore: model.speedScore,
-			}}
+			className={compact ? "gap-1.5 my-1 py-2" : undefined}
+			perf={
+				compact
+					? undefined
+					: {
+							accuracyScore: model.accuracyScore,
+							speedScore: model.speedScore,
+						}
+			}
 			selected={isSelected}
 			shelf={
-				<div className="flex flex-col gap-2">
+				<div className={cn("flex flex-col", compact ? "gap-1.5" : "gap-2")}>
 					<LatencyShelf
 						currentQuantization={currentQuantization}
 						getDownloadSnapshot={getDownloadSnapshot}
@@ -848,6 +796,7 @@ export function SttModelCard({
 						onSelect={onSelect}
 						selectedId={selectedId}
 						statesById={stateLookup}
+						compact={compact}
 					/>
 					<PrecisionGroup
 						currentQuantization={currentQuantization}
@@ -860,6 +809,7 @@ export function SttModelCard({
 						canDeleteQuant={canDeleteQuant}
 						onSelect={onSelect}
 						state={activeState}
+						compact={compact}
 					/>
 				</div>
 			}

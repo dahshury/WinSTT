@@ -175,7 +175,6 @@ impl TranscriptionManager {
             ));
         }
 
-        // Update last activity timestamp
         self.touch_activity();
 
         let st = std::time::Instant::now();

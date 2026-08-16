@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { type OutputDevice, useOutputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
-import { loopbackListDevices } from "@/shared/api/ipc-client";
+import {
+	audioSetSelectedOutputDevice,
+	loopbackListDevices,
+} from "@/shared/api/ipc-client";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 import {
 	type LoopbackDevice,
@@ -88,6 +91,15 @@ export function outputSelectionPatch(
 	};
 }
 
+/** CPAL device name used by Rust-native recording/error chime playback. */
+export function nativeOutputDeviceName(
+	entries: readonly OutputDeviceEntry[],
+	id: string,
+): string {
+	const entry = entries.find((candidate) => candidate.id === id);
+	return entry && !entry.isDefault ? entry.label : "default";
+}
+
 interface UseOutputDevicePickerResult {
 	/** The full device list, "System default" first. */
 	entries: OutputDeviceEntry[];
@@ -112,7 +124,8 @@ interface UseOutputDevicePickerResult {
  * playback routing identically. This is what makes "changing the output device"
  * actually re-target the loopback capture (and update the footer pill): the
  * deterministic `loopbackDeviceIndex` is written alongside the browser sink id,
- * and listen mode prefers it when valid.
+ * listen mode prefers it when valid, and the matching CPAL name is sent to Rust
+ * so native recording/error chimes follow the same selection.
  */
 export function useOutputDevicePicker({
 	systemDefaultLabel,
@@ -166,6 +179,7 @@ export function useOutputDevicePicker({
 
 	const select = async (id: string): Promise<void> => {
 		const entry = entries.find((candidate) => candidate.id === id);
+		const nativeDeviceName = nativeOutputDeviceName(entries, id);
 		// A non-default device whose loopback index hasn't resolved yet: the picker
 		// body mounts on open and fetches the loopback list asynchronously, so a
 		// fast click can land before it arrives. Resolve the index FRESHLY here (by
@@ -178,9 +192,11 @@ export function useOutputDevicePicker({
 			const loopbackIndex = Array.isArray(raw)
 				? loopbackIndexForName(parseLoopbackDevices(raw), entry.label)
 				: null;
+			await audioSetSelectedOutputDevice(nativeDeviceName);
 			updateGeneral({ outputDeviceId: id, loopbackDeviceIndex: loopbackIndex });
 			return;
 		}
+		await audioSetSelectedOutputDevice(nativeDeviceName);
 		updateGeneral(outputSelectionPatch(entries, id));
 	};
 

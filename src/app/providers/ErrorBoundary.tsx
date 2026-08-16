@@ -98,10 +98,8 @@ export class ErrorBoundary extends Component<
 		console.error("[ErrorBoundary] Caught error:", formatErrorForLog(error));
 		console.error("[ErrorBoundary] Component stack:", componentStack);
 
-		// Update state with error info
 		this.setState({ errorInfo: componentStack });
 
-		// Call custom error handler if provided
 		this.props.onError?.(error, componentStack);
 	}
 

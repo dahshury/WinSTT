@@ -12,7 +12,15 @@ import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 
 type AboutActionButtonVariant = "neutral" | "accent" | "danger";
 
+/** Width of the trailing action column of an About row. Exported so a row that
+ *  carries no action can reserve the same column and keep the list aligned. */
+export const ABOUT_ACTION_WIDTH = "w-52";
+
 interface AboutActionButtonProps {
+	/** Accessible name override. Needed where the visible label repeats down a
+	 *  list ("Remove") and the name must say WHAT is being acted on; it keeps
+	 *  the visible label as its prefix so speech input still matches. */
+	ariaLabel?: string | undefined;
 	children: ReactNode;
 	disabled?: boolean;
 	icon: IconSvgElement;
@@ -28,6 +36,7 @@ const VARIANT_CLASS: Record<AboutActionButtonVariant, string> = {
 };
 
 function AboutActionButtonTrigger({
+	ariaLabel,
 	children,
 	disabled,
 	icon,
@@ -41,6 +50,7 @@ function AboutActionButtonTrigger({
 
 	return (
 		<Button
+			aria-label={ariaLabel}
 			className={cn(
 				"flex h-8 w-full items-center justify-start gap-2 rounded-lg px-2.5 text-body leading-normal transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50",
 				surfaceClasses(level),
@@ -69,7 +79,7 @@ function AboutActionButtonTrigger({
 
 export function AboutActionButton(props: AboutActionButtonProps) {
 	return (
-		<ElevatedSurface className="w-52 shrink-0" inline>
+		<ElevatedSurface className={cn(ABOUT_ACTION_WIDTH, "shrink-0")} inline>
 			<AboutActionButtonTrigger {...props} />
 		</ElevatedSurface>
 	);

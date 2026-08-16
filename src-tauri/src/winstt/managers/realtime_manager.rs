@@ -644,6 +644,7 @@ impl RealtimeManager {
                 if !self.audio.is_recording() || self.audio.recording_generation() != generation {
                     return WorkerWait::Continue;
                 }
+                self.audio.set_latest_endpoint_text(&text);
                 self.maybe_word_by_word_paste(generation, settings, &text, is_final);
                 if emit_preview && (is_final || text != state.last_native_emit_text) {
                     state.last_native_emit_text = text.clone();
@@ -774,6 +775,8 @@ impl RealtimeManager {
         if !self.audio.is_recording() || self.audio.recording_generation() != generation {
             return WorkerWait::Continue;
         }
+
+        self.audio.set_latest_endpoint_text(&publish.stabilized);
 
         // ── emit STABILIZED first, then UPDATE (RealtimeSTT ordering) ──
         // Both carry `publish.stabilized` (matches the Python publish payload: the

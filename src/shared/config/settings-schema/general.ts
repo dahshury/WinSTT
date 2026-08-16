@@ -253,10 +253,8 @@ export const generalSettingsSchema = z.object({
 	// leaves the machine. Never runs on password fields.
 	contextScreenOcr: z.boolean().default(false).catch(false),
 	speakerDiarization: z.boolean().default(false),
-	// Opt-out toggle for Sentry crash/error reporting. Defaults to `true` —
-	// installers ship with reporting on so we collect the early-adopter crash
-	// data we can't reproduce locally. The Tauri port must not ask the user to
-	// restart after toggling this setting.
+	// Deprecated compatibility leaf retained so older settings files continue to
+	// round-trip. WinSTT has no crash-report upload runtime or user-facing toggle.
 	sendCrashReports: z.boolean().default(true),
 	// Opt-in toggle for pre-release (alpha/beta) auto-updates. Defaults to
 	// `false` so a future stable release stays on stable for everyone except

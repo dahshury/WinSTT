@@ -6,6 +6,8 @@ import {
 	surfaceBg90,
 	surfaceCheckedBg,
 	surfaceClasses,
+	surfaceDraggingBg,
+	surfaceDraggingShadow,
 	surfaceHighlightedBg,
 	surfaceHoverBg,
 	surfacePopupOpenBg,
@@ -51,6 +53,16 @@ const ACCESSORS: ReadonlyArray<{
 		name: "surfacePopupOpenBg",
 		fn: surfacePopupOpenBg,
 		cls: (n) => `data-[popup-open]:bg-surface-${n}`,
+	},
+	{
+		name: "surfaceDraggingBg",
+		fn: surfaceDraggingBg,
+		cls: (n) => `data-dragging:bg-surface-${n}`,
+	},
+	{
+		name: "surfaceDraggingShadow",
+		fn: surfaceDraggingShadow,
+		cls: (n) => `data-dragging:shadow-surface-${n}`,
 	},
 	{ name: "surfaceBg90", fn: surfaceBg90, cls: (n) => `bg-surface-${n}/90` },
 	{

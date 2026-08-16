@@ -29,10 +29,21 @@ function renderMenu(
 	return onFiltersChange;
 }
 
+/** The menu's root is a list of filter dimensions; every control lives one
+ *  level down, reached by clicking its row. */
+function openSection(name: RegExp) {
+	fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+	fireEvent.click(screen.getByRole("button", { name }));
+}
+
+function backToRoot() {
+	fireEvent.click(screen.getByRole("button", { name: /^Back to/ }));
+}
+
 describe("TtsFiltersMenu", () => {
 	test("offers all applicable TTS filters", () => {
 		renderMenu();
-		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+		openSection(/^Filters/);
 
 		for (const label of [
 			"Available on this system",
@@ -43,17 +54,32 @@ describe("TtsFiltersMenu", () => {
 		]) {
 			expect(screen.getByRole("checkbox", { name: label })).not.toBeNull();
 		}
+
+		backToRoot();
+		fireEvent.click(screen.getByRole("button", { name: /^Language/ }));
 		expect(
 			screen.getByRole("combobox", { name: "Filter by language" }),
 		).not.toBeNull();
+
+		backToRoot();
+		fireEvent.click(screen.getByRole("button", { name: /^Precision/ }));
 		expect(
 			screen.getByRole("combobox", { name: "Filter by quantization" }),
 		).not.toBeNull();
 	});
 
+	test("every dimension is listed on the root view", () => {
+		renderMenu();
+		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+
+		for (const row of [/^Sort by/, /^Filters/, /^Language/, /^Precision/]) {
+			expect(screen.getByRole("button", { name: row })).not.toBeNull();
+		}
+	});
+
 	test("toggles a capability filter", () => {
 		const onFiltersChange = renderMenu();
-		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+		openSection(/^Filters/);
 		fireEvent.click(screen.getByRole("checkbox", { name: "Voice cloning" }));
 
 		expect(onFiltersChange).toHaveBeenCalledWith({
@@ -66,7 +92,7 @@ describe("TtsFiltersMenu", () => {
 describe("TtsFiltersMenu suggested flag", () => {
 	test("hidden while the host has no Suggested verdict wired", () => {
 		renderMenu();
-		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+		openSection(/^Filters/);
 		expect(screen.queryByRole("checkbox", { name: "Suggested" })).toBeNull();
 	});
 
@@ -76,7 +102,7 @@ describe("TtsFiltersMenu suggested flag", () => {
 			mock((_next: TtsFilterState) => undefined),
 			true,
 		);
-		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+		openSection(/^Filters/);
 		fireEvent.click(screen.getByRole("checkbox", { name: "Suggested" }));
 		expect(onFiltersChange).toHaveBeenCalledWith({
 			...EMPTY_TTS_FILTER_STATE,

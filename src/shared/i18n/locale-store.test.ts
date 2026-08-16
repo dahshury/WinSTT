@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { waitFor } from "@testing-library/react";
 import { DEFAULT_LOCALE } from "./config";
-import { useLocaleStore } from "./locale-store";
-
-const PERSIST_KEY = "winstt-locale";
+import { LOCALE_STORAGE_KEY, useLocaleStore } from "./locale-store";
 
 beforeEach(() => {
-	window.localStorage.removeItem(PERSIST_KEY);
+	window.localStorage.removeItem(LOCALE_STORAGE_KEY);
 	useLocaleStore.setState({ locale: DEFAULT_LOCALE });
 });
 
 afterEach(() => {
-	window.localStorage.removeItem(PERSIST_KEY);
+	window.localStorage.removeItem(LOCALE_STORAGE_KEY);
 	useLocaleStore.setState({ locale: DEFAULT_LOCALE });
 });
 
@@ -26,7 +25,7 @@ describe("useLocaleStore", () => {
 
 	test("setLocale persists the value to localStorage", () => {
 		useLocaleStore.getState().setLocale("ar");
-		const raw = window.localStorage.getItem(PERSIST_KEY);
+		const raw = window.localStorage.getItem(LOCALE_STORAGE_KEY);
 		expect(raw).not.toBeNull();
 		const persisted = JSON.parse(raw!);
 		expect(persisted.state.locale).toBe("ar");
@@ -40,5 +39,22 @@ describe("useLocaleStore", () => {
 		unsub();
 		useLocaleStore.getState().setLocale("es");
 		expect(seen).toEqual(["zh", "hi"]);
+	});
+
+	test("rehydrates a locale chosen in another window", async () => {
+		window.localStorage.setItem(
+			LOCALE_STORAGE_KEY,
+			JSON.stringify({ state: { locale: "fr" }, version: 0 }),
+		);
+		window.dispatchEvent(
+			new StorageEvent("storage", {
+				key: LOCALE_STORAGE_KEY,
+				newValue: window.localStorage.getItem(LOCALE_STORAGE_KEY),
+			}),
+		);
+
+		await waitFor(() => {
+			expect(useLocaleStore.getState().locale).toBe("fr");
+		});
 	});
 });

@@ -7,6 +7,7 @@ import {
 	onTtsFailed,
 	onTtsPausePlayback,
 	onTtsResumePlayback,
+	onTtsScript,
 	onTtsStarted,
 	type TtsChunkPayload,
 	type TtsCompletedPayload,
@@ -17,6 +18,7 @@ import {
 	ttsRequestPlaybackResume,
 } from "@/shared/api/ipc-client";
 import { TtsPlaybackQueue } from "../lib/playback-queue";
+import { useTtsScriptStore } from "./tts-script-store";
 import {
 	discardTts,
 	pauseTts,
@@ -135,7 +137,15 @@ export function handleTtsChunkPayload(
 		channels: payload.channels,
 		format: payload.format,
 		pcm: payload.pcm,
+		sentenceIndex: payload.sentenceIndex,
 	});
+	// Republish where the script's sentences now sit on the timeline. Done here
+	// (once per chunk) rather than in the overlay's rAF so the island's word
+	// timings refresh exactly when new audio lands and never per frame. Encoded
+	// (cloud) chunks decode asynchronously, so their span appears on the NEXT
+	// chunk or the completion below — one sentence of lag on a path that already
+	// buffers a whole sentence ahead.
+	useTtsScriptStore.getState().setSpans(queue.getSentenceSpans());
 }
 
 /**
@@ -151,6 +161,10 @@ export function handleTtsCompletedPayload(
 	// is usually still playing. Let the queue play out; `onEnd`
 	// fires once the last scheduled source actually stops.
 	queue.markComplete(payload.requestId);
+	// Final span refresh: an async (cloud) decode can resolve after the last
+	// chunk event, so this is the point where every sentence is known to be
+	// timed. The script itself is cleared later, by `onEnd`.
+	useTtsScriptStore.getState().setSpans(queue.getSentenceSpans());
 	if (payload.cancelled) {
 		queue.stop();
 		const store = useTtsPlaybackStore.getState();
@@ -209,6 +223,9 @@ export function useTtsPlayback(): void {
 			const endedId = activeIdRef.current;
 			activeIdRef.current = null;
 			store().markEnded();
+			// Only drop the script if it is still THIS read's: a second read can
+			// have published its own while this one's buffered audio was draining.
+			useTtsScriptStore.getState().clearFor(endedId ?? "");
 			// Tell every window that audio truly stopped. Always emit (even
 			// with an empty id) so a wildcard listener can reset.
 			ttsReportPlaybackEnded(endedId ?? "");
@@ -220,6 +237,13 @@ export function useTtsPlayback(): void {
 		const unChunk = onTtsChunk((payload) =>
 			handleTtsChunkPayload(queue, activeIdRef, payload),
 		);
+		// The read's final text, published before the first sample exists — the
+		// island shows it while synthesis is still running.
+		const unScript = onTtsScript((payload) => {
+			useTtsScriptStore
+				.getState()
+				.setScript(payload.requestId, payload.sentences);
+		});
 		const unCompleted = onTtsCompleted((payload) =>
 			handleTtsCompletedPayload(queue, payload),
 		);
@@ -236,11 +260,13 @@ export function useTtsPlayback(): void {
 			queue.stop();
 			activeIdRef.current = null;
 			store().markFailed(payload.reason);
+			useTtsScriptStore.getState().clearFor(payload.requestId);
 		});
 
 		return () => {
 			unStarted();
 			unChunk();
+			unScript();
 			unCompleted();
 			unPausePlayback();
 			unResumePlayback();

@@ -68,6 +68,11 @@ struct QueueItem {
     text: Option<String>,
     /// True when the USER manually paused this row (survives a PTT auto-resume).
     paused_by_user: bool,
+    /// Output policy captured at enqueue. A settings edit while this job is
+    /// decoding must not change which artifacts it produces (or switch a TXT
+    /// decode into segment-dependent subtitle serialization halfway through).
+    output_formats: Vec<FileTranscriptionFormat>,
+    save_location: FileSaveLocation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,6 +208,11 @@ impl FileTranscribeManager {
     pub fn enqueue(self: &Arc<Self>, files: Vec<(PathBuf, String)>) -> Vec<String> {
         let mut ids = Vec::with_capacity(files.len());
         let mut added = false;
+        let enqueue_settings = crate::winstt::settings_store::read_settings_raw(&self.app);
+        let output_formats = enqueue_settings
+            .general
+            .effective_file_transcription_formats();
+        let save_location = enqueue_settings.general.file_transcription_save_location;
         {
             let mut st = self.lock_state();
             for (file_path, file_name) in files {
@@ -228,6 +238,8 @@ impl FileTranscribeManager {
                     message: String::new(),
                     text: None,
                     paused_by_user: false,
+                    output_formats: output_formats.clone(),
+                    save_location,
                 });
                 added = true;
             }
@@ -546,9 +558,7 @@ impl FileTranscribeManager {
         // Mid-file progress tick so the bar moves before the (blocking) transcribe.
         self.tick_progress(&item.id, 0.5, "transcribing");
 
-        let settings = crate::winstt::settings_store::read_settings_raw(&self.app);
-        let formats = settings.general.effective_file_transcription_formats();
-        let result = if formats == [FileTranscriptionFormat::Txt] {
+        let result = if !output_formats_require_segments(&item.output_formats) {
             self.transcription
                 .transcribe(&audio)
                 .map(|text| Transcription {
@@ -623,14 +633,23 @@ impl FileTranscribeManager {
                 st.items
                     .iter()
                     .find(|it| it.id == id && it.status != QueueStatus::Canceled)
-                    .map(|it| (it.file_path.clone(), it.file_name.clone()))
+                    .map(|it| {
+                        (
+                            it.file_path.clone(),
+                            it.file_name.clone(),
+                            it.output_formats.clone(),
+                            it.save_location,
+                        )
+                    })
             };
-            if let Some((source_path, file_name)) = output_target
+            if let Some((source_path, file_name, formats, save_location)) = output_target
                 && let Err(e) = self.write_transcript_file(
                     &source_path,
                     &file_name,
                     transcription,
                     duration_secs.unwrap_or(0.0),
+                    &formats,
+                    save_location,
                 )
             {
                 status = QueueStatus::Error;
@@ -759,9 +778,10 @@ impl FileTranscribeManager {
         file_name: &str,
         transcription: &Transcription,
         duration_secs: f64,
+        formats: &[FileTranscriptionFormat],
+        save_location: FileSaveLocation,
     ) -> Result<Vec<PathBuf>, String> {
         let settings = crate::winstt::settings_store::read_settings_raw(&self.app);
-        let formats = settings.general.effective_file_transcription_formats();
         let language = settings.model.language.trim();
         let language = (!settings.model.auto_detect_language && !language.is_empty())
             .then(|| language.to_string());
@@ -773,13 +793,9 @@ impl FileTranscribeManager {
             duration_secs,
             file_name.to_string(),
         );
-        let output_paths = self.resolve_transcript_output_paths(
-            source_path,
-            file_name,
-            &formats,
-            settings.general.file_transcription_save_location,
-        )?;
-        for (format, output_path) in formats.into_iter().zip(&output_paths) {
+        let output_paths =
+            self.resolve_transcript_output_paths(source_path, file_name, formats, save_location)?;
+        for (format, output_path) in formats.iter().copied().zip(&output_paths) {
             let body = serialize_transcript(format, &document);
             std::fs::write(output_path, body)
                 .map_err(|e| format!("Failed to write {}: {e}", output_path.display()))?;
@@ -878,6 +894,10 @@ fn transcript_extension(format: FileTranscriptionFormat) -> &'static str {
     }
 }
 
+fn output_formats_require_segments(formats: &[FileTranscriptionFormat]) -> bool {
+    formats != [FileTranscriptionFormat::Txt]
+}
+
 fn transcript_filter_name(format: FileTranscriptionFormat) -> &'static str {
     match format {
         FileTranscriptionFormat::Txt => "Text",
@@ -963,6 +983,8 @@ mod tests {
                 message: String::new(),
                 text: None,
                 paused_by_user: status == QueueStatus::Paused,
+                output_formats: vec![FileTranscriptionFormat::Txt],
+                save_location: FileSaveLocation::Auto,
             }],
             ..QueueState::default()
         }
@@ -995,5 +1017,19 @@ mod tests {
         // Late cleanup from the retired thread must not clear the replacement.
         retire_worker_slot(&mut state, first);
         assert_eq!(state.active_worker, Some(replacement));
+    }
+
+    #[test]
+    fn enqueued_output_snapshot_selects_the_required_decode_shape() {
+        assert!(!output_formats_require_segments(&[
+            FileTranscriptionFormat::Txt
+        ]));
+        assert!(output_formats_require_segments(&[
+            FileTranscriptionFormat::Srt
+        ]));
+        assert!(output_formats_require_segments(&[
+            FileTranscriptionFormat::Txt,
+            FileTranscriptionFormat::Json,
+        ]));
     }
 }

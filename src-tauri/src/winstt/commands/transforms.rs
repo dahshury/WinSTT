@@ -254,7 +254,8 @@ fn is_transforms_enabled(settings: &WinsttSettings) -> bool {
     }
     match t.base.provider {
         LlmProvider::Openrouter => !settings.llm.openrouter_api_key.trim().is_empty(),
-        LlmProvider::Ollama | LlmProvider::AppleIntelligence => !t.base.model.trim().is_empty(),
+        LlmProvider::AppleIntelligence => true,
+        LlmProvider::Ollama => !t.base.model.trim().is_empty(),
     }
 }
 
@@ -698,6 +699,7 @@ pub async fn apply_transform_preview(
                     &user_prompt,
                     &feature,
                     &request_id,
+                    settings.llm.timeout,
                     openrouter_request_options,
                 )
                 .await
@@ -801,6 +803,10 @@ pub async fn apply_transform_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Test-only: the preset KEY enum is needed to build fixtures here, but no
+    // non-test code in this module names it, so importing it at file scope would
+    // be an unused import in a normal (non-test) build.
+    use crate::winstt::settings_schema::PresetKey as SettingsPresetKey;
 
     #[test]
     fn source_strings_match_renderer() {
@@ -862,13 +868,8 @@ mod tests {
     }
 
     #[test]
-    fn gate_apple_intelligence_requires_model() {
+    fn gate_apple_intelligence_needs_no_model() {
         assert!(is_transforms_enabled(&enabled_settings(
-            LlmProvider::AppleIntelligence,
-            "apple",
-            ""
-        )));
-        assert!(!is_transforms_enabled(&enabled_settings(
             LlmProvider::AppleIntelligence,
             "",
             ""
@@ -878,13 +879,40 @@ mod tests {
     #[test]
     fn preview_system_prompt_uses_dictation_post_processing_layers() {
         let settings = WinsttSettings::default();
-        let presets = transforms_presets(&settings.llm.dictation.presets, &[]);
+        // Presets built EXPLICITLY rather than taken from the dictation defaults:
+        // those default to the plain neutral stack (the shipped "Default"
+        // configuration), which by design requires no visible change, so reading
+        // them here would silently stop exercising the branch below.
+        let presets = transforms_presets(
+            &[SettingsPreset {
+                key: SettingsPresetKey::Restructure,
+                level: None,
+                target_lang: None,
+            }],
+            &[],
+        );
         let prompt = preview_system_prompt(&settings, &presets, None);
 
         assert!(prompt.contains("Interpret first:"));
         assert!(prompt.contains("INSTRUCTION aimed at you"));
         assert!(prompt.contains("Return JSON with only `text`"));
         assert!(prompt.contains("Preview: apply active operations visibly"));
+
+        // The plain neutral stack is a cleanup pass with no active operation, so
+        // it must NOT demand a visible change — otherwise a preview of
+        // already-clean text would look broken.
+        let neutral_only = transforms_presets(
+            &[SettingsPreset {
+                key: SettingsPresetKey::Neutral,
+                level: None,
+                target_lang: None,
+            }],
+            &[],
+        );
+        assert!(
+            !preview_system_prompt(&settings, &neutral_only, None)
+                .contains("Preview: apply active operations visibly")
+        );
     }
 
     #[test]

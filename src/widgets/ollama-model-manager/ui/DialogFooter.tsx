@@ -4,9 +4,9 @@ const OLLAMA_LIBRARY_URL = "https://ollama.com/library";
 
 export function DialogFooter({ t }: { t: TranslateFn }) {
 	return (
-		<div className="border-border border-t pt-3">
+		<div className="dialog-rail-bottom shrink-0 px-5 py-3">
 			<a
-				className="inline-flex items-center gap-1.5 text-accent text-xs hover:underline"
+				className="inline-flex items-center gap-1.5 text-accent text-xs-tight hover:underline"
 				href={OLLAMA_LIBRARY_URL}
 				rel="noreferrer"
 				target="_blank"

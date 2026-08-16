@@ -16,12 +16,25 @@ use tokio::sync::watch;
 /// so a stall self-heals instead of wedging the badge.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How many times `transfer_url` re-opens a dropped transfer before giving up. A retry only happens
+/// when the previous attempt actually appended bytes (see `transfer_url`), so this bounds "the link
+/// keeps dying mid-file" rather than spinning on a hard failure like a 404.
+const MAX_RESUME_ATTEMPTS: u32 = 4;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error("io: {0}")]
     Io(String),
     #[error("network: {0}")]
     Network(String),
+    /// The body ended before `expected` bytes arrived. The partial file is left on disk so the next
+    /// attempt resumes via HTTP Range instead of restarting.
+    #[error("truncated {url}: got {downloaded} of {expected} bytes")]
+    Truncated {
+        downloaded: u64,
+        expected: u64,
+        url: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,11 +159,52 @@ impl TransferControl for PauseCancelFlags {
     }
 }
 
+/// Stream `request.url` into `request.partial_path`, resuming a prior partial via HTTP Range, and on
+/// success rename it to `request.final_path`.
+///
+/// A dropped connection mid-body is retried (up to [`MAX_RESUME_ATTEMPTS`]) as long as the previous
+/// attempt appended bytes, so a flaky link self-heals by resuming instead of surfacing an error or —
+/// far worse — publishing a short file. A failure that writes nothing (404, DNS, offline) breaks out
+/// immediately rather than burning retries.
 pub async fn transfer_url<F>(
     client: &Client,
     request: TransferRequest<'_>,
     control: Option<&dyn TransferControl>,
     mut on_progress: F,
+) -> Result<TransferReport, TransferError>
+where
+    F: FnMut(TransferProgress),
+{
+    let partial_len = || fs::metadata(request.partial_path).map_or(0, |metadata| metadata.len());
+    let mut bytes_before = partial_len();
+    let mut last_error = None;
+
+    for _ in 0..MAX_RESUME_ATTEMPTS {
+        match transfer_attempt(client, request, control, &mut on_progress).await {
+            Ok(report) => return Ok(report),
+            Err(error) => {
+                let bytes_now = partial_len();
+                let progressed = bytes_now > bytes_before;
+                bytes_before = bytes_now;
+                last_error = Some(error);
+                // No new bytes ⇒ retrying would replay the same failure against the same offset.
+                if !progressed {
+                    break;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        TransferError::Network(format!("{}: transfer made no attempt", request.url))
+    }))
+}
+
+async fn transfer_attempt<F>(
+    client: &Client,
+    request: TransferRequest<'_>,
+    control: Option<&dyn TransferControl>,
+    on_progress: &mut F,
 ) -> Result<TransferReport, TransferError>
 where
     F: FnMut(TransferProgress),
@@ -217,6 +271,11 @@ where
     let appending = existing_bytes > 0 && status == StatusCode::PARTIAL_CONTENT;
     let mut downloaded = if appending { existing_bytes } else { 0 };
     let resumed_from = downloaded;
+    // Two different numbers on purpose: `expected_total` comes only from THIS response's own
+    // headers and is the authority on completeness, while `total_bytes` may fall back to a catalog
+    // estimate (`known_total_bytes`) that is good enough for a progress bar but must never decide
+    // whether a file is finished.
+    let expected_total = response_expected_total(&response, downloaded);
     let total_bytes = response_total_bytes(&response, downloaded, request.known_total_bytes);
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -230,13 +289,7 @@ where
     let mut last_emit = Instant::now()
         .checked_sub(request.progress_interval)
         .unwrap_or_else(Instant::now);
-    emit_progress(
-        &mut on_progress,
-        started,
-        resumed_from,
-        downloaded,
-        total_bytes,
-    );
+    emit_progress(on_progress, started, resumed_from, downloaded, total_bytes);
 
     loop {
         if let Some(outcome) = requested_outcome(control.as_ref()) {
@@ -276,26 +329,31 @@ where
         downloaded = downloaded.saturating_add(bytes.len() as u64);
 
         if last_emit.elapsed() >= request.progress_interval {
-            emit_progress(
-                &mut on_progress,
-                started,
-                resumed_from,
-                downloaded,
-                total_bytes,
-            );
+            emit_progress(on_progress, started, resumed_from, downloaded, total_bytes);
             last_emit = Instant::now();
         }
     }
 
     file.flush().map_err(io_error)?;
     drop(file);
-    emit_progress(
-        &mut on_progress,
-        started,
-        resumed_from,
-        downloaded,
-        total_bytes,
-    );
+
+    // A body can end EARLY and still look like a clean end-of-stream to reqwest — an HTTP/2 stream
+    // reset, a CDN/proxy cutting the connection, a captive portal. Without this check the short
+    // `.partial` was renamed into place and reported Complete, which then poisons the cache
+    // permanently: every later pass sees the final file exists and skips it, so the corruption only
+    // ever surfaces at load time as "Protobuf parsing failed". Leave the partial on disk (no
+    // rename, no delete) so the retry in `transfer_url` resumes via Range from where it stopped.
+    if let Some(expected) = expected_total
+        && downloaded < expected
+    {
+        return Err(TransferError::Truncated {
+            downloaded,
+            expected,
+            url: request.url.to_string(),
+        });
+    }
+
+    emit_progress(on_progress, started, resumed_from, downloaded, total_bytes);
 
     if let Some(final_path) = request.final_path {
         if let Some(parent) = final_path.parent() {
@@ -421,14 +479,15 @@ fn emit_progress<F>(
     });
 }
 
-fn response_total_bytes(
+/// The full size of the resource as declared by THIS response — `Content-Range`'s total on a 206,
+/// otherwise `Content-Length` (plus the resume offset). Never falls back to a caller-supplied
+/// estimate, which is what makes it safe to decide completeness with. `None` when the server
+/// declares no length (chunked without a total), in which case completeness is unknowable and the
+/// body's end is taken at face value.
+fn response_expected_total(
     response: &reqwest::Response,
     downloaded_before_response: u64,
-    known_total_bytes: Option<u64>,
 ) -> Option<u64> {
-    if let Some(total) = known_total_bytes {
-        return Some(total.max(downloaded_before_response));
-    }
     if response.status() == StatusCode::PARTIAL_CONTENT {
         if let Some(total) = response
             .headers()
@@ -445,8 +504,109 @@ fn response_total_bytes(
     response.content_length()
 }
 
+fn response_total_bytes(
+    response: &reqwest::Response,
+    downloaded_before_response: u64,
+    known_total_bytes: Option<u64>,
+) -> Option<u64> {
+    if let Some(total) = known_total_bytes {
+        return Some(total.max(downloaded_before_response));
+    }
+    response_expected_total(response, downloaded_before_response)
+}
+
 fn parse_content_range_total(value: &str) -> Option<u64> {
     value.rsplit_once('/')?.1.parse::<u64>().ok()
+}
+
+/// True when `path` is an ONNX file that was cut off mid-transfer.
+///
+/// A `ModelProto` stores its `graph` (field 7) as a length-delimited record, so the header states
+/// how many bytes the graph occupies; a file shorter than that ended early. This is the corruption
+/// the pre-fix downloader could publish (see `transfer_attempt`) and it is otherwise invisible until
+/// ORT fails at load with "Protobuf parsing failed" — by which point the cache looks complete and
+/// nothing re-fetches it. Checking it costs one 64-byte read, no network.
+///
+/// Deliberately conservative: anything unexpected (unreadable file, unknown field order, a varint
+/// that does not terminate) returns `false`. A false negative just reproduces today's behaviour,
+/// whereas a false positive would re-download a perfectly good multi-GB model forever.
+///
+/// Works for external-data exports too: `model.onnx` still fully contains its own graph record, with
+/// only the tensor payloads living in the `.onnx_data` sidecar.
+pub fn onnx_is_truncated(path: &Path) -> bool {
+    use std::io::Read;
+
+    let Ok(file_len) = fs::metadata(path).map(|m| m.len()) else {
+        return false;
+    };
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 64];
+    let Ok(read) = file.read(&mut head) else {
+        return false;
+    };
+    let head = &head[..read];
+
+    let mut offset = 0usize;
+    loop {
+        let Some((key, next)) = read_varint(head, offset) else {
+            return false;
+        };
+        offset = next;
+        let (field, wire_type) = (key >> 3, key & 7);
+        match (field, wire_type) {
+            // graph — the record whose declared length we can compare against the file size.
+            (7, 2) => {
+                let Some((graph_len, after_len)) = read_varint(head, offset) else {
+                    return false;
+                };
+                return (after_len as u64).saturating_add(graph_len) > file_len;
+            }
+            // ir_version / model_version: varint, skip the value.
+            (1 | 5, 0) => {
+                let Some((_, next)) = read_varint(head, offset) else {
+                    return false;
+                };
+                offset = next;
+            }
+            // producer_name / producer_version / domain / doc_string: length-delimited, skip it.
+            (2 | 3 | 4 | 6, 2) => {
+                let Some((len, after_len)) = read_varint(head, offset) else {
+                    return false;
+                };
+                let Some(end) = usize::try_from(len)
+                    .ok()
+                    .and_then(|l| after_len.checked_add(l))
+                else {
+                    return false;
+                };
+                if end > head.len() {
+                    // The preamble runs past our 64-byte window — rare, and not worth a
+                    // bigger read just to guess. Treat as "can't tell".
+                    return false;
+                }
+                offset = end;
+            }
+            // The graph must precede anything else we care about; bail rather than guess.
+            _ => return false,
+        }
+    }
+}
+
+/// Read a protobuf base-128 varint at `offset`, returning `(value, offset_after)`. `None` on
+/// truncation or an over-long encoding.
+fn read_varint(buf: &[u8], mut offset: usize) -> Option<(u64, usize)> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let byte = *buf.get(offset)?;
+        offset += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some((value, offset));
+        }
+    }
+    None
 }
 
 /// The canonical download progress ratio in `[0, 1]`, 0.0 when the total is unknown/zero.
@@ -503,6 +663,70 @@ fn io_error(err: std::io::Error) -> TransferError {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// Build the preamble every one of these exports actually starts with —
+    /// `ir_version`, `producer_name`, `producer_version`, then the length-delimited `graph`
+    /// header declaring `graph_len` bytes — and pad the body to `body_len`.
+    fn onnx_bytes(graph_len: u64, body_len: usize) -> Vec<u8> {
+        let mut buf = vec![0x08, 0x09]; // field 1 (ir_version) varint = 9
+        buf.extend([0x12, 0x07]); // field 2 (producer_name), len 7
+        buf.extend(b"pytorch");
+        buf.extend([0x1a, 0x06]); // field 3 (producer_version), len 6
+        buf.extend(b"2.12.1");
+        buf.push(0x3a); // field 7 (graph), wire type 2
+        let mut value = graph_len;
+        loop {
+            let byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value == 0 {
+                buf.push(byte);
+                break;
+            }
+            buf.push(byte | 0x80);
+        }
+        buf.resize(buf.len() + body_len, 0);
+        buf
+    }
+
+    fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(name);
+        fs::write(&path, bytes).expect("write fixture");
+        path
+    }
+
+    #[test]
+    fn flags_an_onnx_truncated_mid_transfer() {
+        // The shape of the real failure: talker_cache.onnx declared a 911 MB graph but only
+        // 621 MB landed, and existence-only checks called that "downloaded".
+        let path = write_temp("winstt_truncated.onnx", &onnx_bytes(4096, 100));
+        assert!(onnx_is_truncated(&path));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn accepts_a_complete_onnx() {
+        let path = write_temp("winstt_complete.onnx", &onnx_bytes(4096, 4096));
+        assert!(!onnx_is_truncated(&path));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn accepts_an_onnx_with_trailing_opset_records() {
+        // Real files carry ~25 bytes of `opset_import` after the graph, so the file is a
+        // little LARGER than header+graph. That must not read as corrupt.
+        let path = write_temp("winstt_trailing.onnx", &onnx_bytes(4096, 4096 + 25));
+        assert!(!onnx_is_truncated(&path));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn declines_to_judge_non_onnx_or_missing_files() {
+        // Conservative by design: a false positive re-downloads a good multi-GB model forever.
+        assert!(!onnx_is_truncated(std::path::Path::new("nope.onnx")));
+        let path = write_temp("winstt_notonnx.bin", b"this is not a protobuf at all");
+        assert!(!onnx_is_truncated(&path));
+        let _ = fs::remove_file(path);
+    }
 
     #[test]
     fn parses_content_range_totals() {

@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
-import { providerOf } from "@/entities/cloud-stt-provider";
-import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import {
+	useCatalogStore,
+	useModelStateStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	affectedProviders,
@@ -11,6 +14,8 @@ import {
 	planReverts,
 	type RevertPlan,
 	resolveLocalSttTarget,
+	type SurfaceSnapshot,
+	unavailableProviders,
 } from "./cloud-revert-decision";
 import { revertSttToLocalAtomic } from "./atomic-local-revert";
 import { useRevertNoticeStore } from "./revert-notice-store";
@@ -31,6 +36,9 @@ function revertSttToLocal(currentCloudModel: string): void {
 	const { models } = useCatalogStore.getState();
 	const { statesById } = useModelStateStore.getState();
 	const target = resolveLocalSttTarget(models, statesById);
+	if (useModelSwapStore.getState().activeMain === target.model) {
+		return;
+	}
 	revertSttToLocalAtomic(currentCloudModel, target.model);
 }
 
@@ -59,6 +67,38 @@ function notify(providers: ReadonlySet<ClearableProvider>): void {
 	}
 }
 
+function currentSurfaces(): SurfaceSnapshot {
+	const settings = useSettingsStore.getState().settings;
+	return {
+		dictationProvider: settings.llm.dictation.provider,
+		model: settings.model?.model ?? "",
+		transformsProvider: settings.llm.transforms.provider,
+		ttsProvider: settings.tts.cloud.provider,
+		ttsSource: settings.tts.source,
+	};
+}
+
+/**
+ * Revert every surface backed by a provider immediately before its key is
+ * cleared. Explicit removal actions call this synchronously, so closing the
+ * settings webview cannot suspend the debounce between the wipe and revert.
+ */
+export function revertSurfacesForClearedProvider(
+	provider: ClearableProvider,
+	showNotice = true,
+): boolean {
+	const surfaces = currentSurfaces();
+	const plan = planReverts(new Set([provider]), surfaces);
+	if (!planHasWork(plan)) {
+		return false;
+	}
+	applyPlan(plan, surfaces.model);
+	if (showNotice) {
+		notify(affectedProviders(plan, surfaces));
+	}
+	return true;
+}
+
 /**
  * Evaluate the settled key snapshot and apply any revert. Split out of the
  * effect so the debounce timer body stays readable.
@@ -67,34 +107,29 @@ function notify(providers: ReadonlySet<ClearableProvider>): void {
  *   1. Transition-driven (a key just went non-empty → empty): revert the
  *      affected surfaces AND surface a toast — this is the user's explicit
  *      "I removed the key" action.
- *   2. Steady-state safety net: a persisted/imported cloud STT model whose
+ *   2. Steady-state safety net: any persisted/imported cloud surface whose
  *      provider has no key is unusable but produces no transition. Repair it
- *      silently (no toast) so the app never boots into a dead cloud model.
+ *      silently (no toast) so the app never boots into a dead provider state.
  */
 function evaluateRevert(
 	prevKeys: KeySnapshot,
 	next: KeySnapshot,
-	surfaces: {
-		dictationProvider: string;
-		model: string;
-		transformsProvider: string;
-		ttsSource: string;
-	},
+	surfaces: SurfaceSnapshot,
 ): void {
 	const plan = planReverts(detectClearedKeys(prevKeys, next), surfaces);
 	if (planHasWork(plan)) {
 		applyPlan(plan, surfaces.model);
-		notify(affectedProviders(plan, surfaces.model));
+		notify(affectedProviders(plan, surfaces));
 		return;
 	}
-	const activeProvider = providerOf(surfaces.model);
-	if (activeProvider !== null && next[activeProvider].trim() === "") {
-		revertSttToLocal(surfaces.model);
+	const safetyPlan = planReverts(unavailableProviders(next), surfaces);
+	if (planHasWork(safetyPlan)) {
+		applyPlan(safetyPlan, surfaces.model);
 	}
 }
 
 /**
- * Watch the three cloud API keys and, when one is removed (non-empty → empty)
+ * Watch the cloud API keys and, when one is removed (non-empty → empty)
  * while a surface is actively using that provider, revert that surface to its
  * local engine: cloud STT model → smallest local model, LLM dictation/transforms
  * on OpenRouter → Ollama + disabled, cloud TTS → local Kokoro.
@@ -129,6 +164,7 @@ export function useCloudKeyAutoRevert(
 		(s) => s.settings.llm.transforms.provider,
 	);
 	const ttsSource = useSettingsStore((s) => s.settings.tts.source);
+	const ttsProvider = useSettingsStore((s) => s.settings.tts.cloud.provider);
 
 	// Seeded with the boot values so the first settle sees no transition.
 	const prevKeysRef = useRef<KeySnapshot>({
@@ -168,6 +204,7 @@ export function useCloudKeyAutoRevert(
 				model,
 				dictationProvider,
 				transformsProvider,
+				ttsProvider,
 				ttsSource,
 			});
 		}, debounceMs);
@@ -182,6 +219,7 @@ export function useCloudKeyAutoRevert(
 		model,
 		dictationProvider,
 		transformsProvider,
+		ttsProvider,
 		ttsSource,
 		debounceMs,
 		enabled,

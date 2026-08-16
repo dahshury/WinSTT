@@ -1,14 +1,14 @@
-import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { commands, type EncoderDownloadStatus, type Result } from "@/bindings";
-import { fireAndForget } from "@/shared/lib/fire-and-forget";
+import { hasNativeRuntime, ipcOnReady } from "@/shared/api/native-boundary";
+import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
 
 /**
  * State + controls for the on-device encoder dictionary model (the non-LLM fallback).
  *
- * The model downloads via a managed backend flow (start/pause/resume/cancel). This hook seeds
- * itself from `encoder_dict_status` on mount — so leaving the Vocabulary tab mid-download and
- * returning shows the CURRENT progress — and then tracks live `encoder-dict:download-*` events.
+ * The model downloads via a managed backend flow (start/pause/resume/cancel). This hook subscribes
+ * before taking its status snapshot, so leaving and returning to Vocabulary cannot overwrite a
+ * newer progress event with stale mount-time state.
  */
 export type EncoderModelState =
 	| "loading"
@@ -22,10 +22,16 @@ type StatusPayload = EncoderDownloadStatus;
 interface CompletePayload {
 	present: boolean;
 	cancelled: boolean;
+	error?: string | null;
+}
+
+interface ModelErrorPayload {
+	error: string;
 }
 
 export interface EncoderModel {
 	downloadedBytes: number;
+	error: string | null;
 	progress: number; // 0..1
 	speedBps: number;
 	state: EncoderModelState;
@@ -34,11 +40,11 @@ export interface EncoderModel {
 	pause: () => void;
 	/** Load + warm the model in the background so the first dictation is fast (no-op if not present). */
 	preload: () => void;
-	/** Delete the model from disk (and any in-flight transfer) — used when the feature is turned off. */
+	/** Delete the model from disk (and any in-flight transfer). */
 	remove: () => void;
 	resume: () => void;
 	start: () => void;
-	/** Drop the loaded model from memory (keeps files on disk) — frees RAM when the feature is off. */
+	/** Drop the loaded model from memory (keeps files on disk). */
 	unload: () => void;
 }
 
@@ -49,10 +55,16 @@ type EncoderModelSnapshot = Omit<
 
 const INITIAL: EncoderModelSnapshot = {
 	state: "loading",
+	error: null,
 	progress: 0,
 	downloadedBytes: 0,
 	totalBytes: 0,
 	speedBps: 0,
+};
+
+const BROWSER_FALLBACK: EncoderModelSnapshot = {
+	...INITIAL,
+	state: "absent",
 };
 
 function normalizeEncoderState(
@@ -70,14 +82,19 @@ function normalizeEncoderState(
 	}
 }
 
-function applyStatus(p: StatusPayload): EncoderModelSnapshot {
+function applyStatus(payload: StatusPayload): EncoderModelSnapshot {
 	return {
-		state: normalizeEncoderState(p.state),
-		progress: p.progress,
-		downloadedBytes: p.downloadedBytes,
-		totalBytes: p.totalBytes,
-		speedBps: p.speedBps ?? 0,
+		state: normalizeEncoderState(payload.state),
+		error: payload.error,
+		progress: payload.progress,
+		downloadedBytes: payload.downloadedBytes,
+		totalBytes: payload.totalBytes,
+		speedBps: payload.speedBps ?? 0,
 	};
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 async function runEncoderCommand(
@@ -89,161 +106,172 @@ async function runEncoderCommand(
 	}
 }
 
-function cancelEncoderDownload(): void {
-	fireAndForget(
-		runEncoderCommand(commands.encoderDictDownloadCancel()),
-		"encoder_dict_download_cancel",
-	);
-}
-
-function preloadEncoderModel(): void {
-	fireAndForget(
-		runEncoderCommand(commands.encoderDictPreload()),
-		"encoder_dict_preload",
-	);
-}
-
-function unloadEncoderModel(): void {
-	fireAndForget(
-		runEncoderCommand(commands.encoderDictUnload()),
-		"encoder_dict_unload",
-	);
-}
-
 export function useEncoderModel(): EncoderModel {
-	const [s, setS] = useState(INITIAL);
+	const [snapshot, setSnapshot] = useState<EncoderModelSnapshot>(() =>
+		hasNativeRuntime() ? INITIAL : BROWSER_FALLBACK,
+	);
 
-	// Re-query the backend so an optimistic UI state (start → "downloading",
-	// remove → "absent") self-corrects when the underlying invoke actually
-	// failed. Without this, a rejected start/remove leaves the card showing a
-	// state the backend never entered.
-	const reconcileFromBackend = () => {
-		commands
+	const reconcileFromBackend = (surfacedError?: string) => {
+		if (!hasNativeRuntime()) {
+			return;
+		}
+		void commands
 			.encoderDictStatus()
-			.then((status) => setS(applyStatus(status)))
+			.then((status) => {
+				const next = applyStatus(status);
+				setSnapshot({ ...next, error: surfacedError ?? next.error });
+			})
 			.catch((error) => {
+				const message = surfacedError ?? errorMessage(error);
 				console.error("[encoder-dict] status reconcile failed:", error);
+				setSnapshot((previous) => ({ ...previous, error: message }));
 			});
 	};
 
 	useEffect(() => {
+		if (!hasNativeRuntime()) {
+			return;
+		}
+
 		let active = true;
-		commands
-			.encoderDictStatus()
-			.then((status) => {
-				if (active) {
-					setS(applyStatus(status));
-				}
-			})
-			.catch((error) => {
-				console.error("[encoder-dict] initial status query failed:", error);
-				if (active) {
-					setS((prev) => ({ ...prev, state: "absent" }));
-				}
-			});
-		const offProgress = listen<StatusPayload>(
-			"encoder-dict:download-progress",
-			(e) => {
-				if (active) {
-					setS(applyStatus(e.payload));
-				}
-			},
-		);
-		const offComplete = listen<CompletePayload>(
-			"encoder-dict:download-complete",
-			(e) => {
+		let eventRevision = 0;
+		const cleanups: Array<() => void> = [];
+		const register = async <T>(
+			channel: string,
+			handle: (payload: T) => void,
+		) => {
+			const cleanup = await ipcOnReady(channel, (payload) => {
 				if (!active) {
 					return;
 				}
-				setS(
-					e.payload.present
-						? {
-								state: "present",
-								progress: 1,
-								downloadedBytes: 0,
-								totalBytes: 0,
-								speedBps: 0,
+				eventRevision += 1;
+				handle(payload as T);
+			});
+			if (active) {
+				cleanups.push(cleanup);
+			} else {
+				cleanup();
+			}
+		};
+
+		void (async () => {
+			try {
+				await Promise.all([
+					register<StatusPayload>(
+						IPC.ENCODER_DICT_DOWNLOAD_PROGRESS,
+						(payload) => setSnapshot(applyStatus(payload)),
+					),
+					register<CompletePayload>(
+						IPC.ENCODER_DICT_DOWNLOAD_COMPLETE,
+						(payload) => {
+							if (payload.error) {
+								setSnapshot((previous) => ({
+									...previous,
+									error: payload.error ?? null,
+								}));
+								reconcileFromBackend(payload.error);
+								return;
 							}
-						: {
-								state: "absent",
-								progress: 0,
-								downloadedBytes: 0,
-								totalBytes: 0,
-								speedBps: 0,
-							},
-				);
-			},
-		);
+							setSnapshot(
+								payload.present
+									? {
+											state: "present",
+											error: null,
+											progress: 1,
+											downloadedBytes: 0,
+											totalBytes: 0,
+											speedBps: 0,
+										}
+									: BROWSER_FALLBACK,
+							);
+						},
+					),
+					register<ModelErrorPayload>(IPC.ENCODER_DICT_MODEL_ERROR, (payload) =>
+						setSnapshot((previous) => ({
+							...previous,
+							error: payload.error,
+						})),
+					),
+				]);
+				const revisionBeforeSnapshot = eventRevision;
+				const status = await commands.encoderDictStatus();
+				if (active && eventRevision === revisionBeforeSnapshot) {
+					setSnapshot(applyStatus(status));
+				}
+			} catch (error) {
+				if (active) {
+					const message = errorMessage(error);
+					console.error("[encoder-dict] lifecycle setup failed:", error);
+					setSnapshot((previous) => ({
+						...previous,
+						state: previous.state === "loading" ? "absent" : previous.state,
+						error: message,
+					}));
+				}
+			}
+		})();
+
 		return () => {
 			active = false;
-			offProgress
-				.then((f) => f())
-				.catch((error) => {
-					console.error(
-						"[encoder-dict] progress listener cleanup failed:",
-						error,
-					);
-				});
-			offComplete
-				.then((f) => f())
-				.catch((error) => {
-					console.error(
-						"[encoder-dict] complete listener cleanup failed:",
-						error,
-					);
-				});
+			for (const cleanup of cleanups) {
+				cleanup();
+			}
 		};
 	}, []);
 
-	const start = () => {
-		setS((prev) => ({ ...prev, state: "downloading" }));
-		runEncoderCommand(commands.encoderDictDownloadStart()).catch((error) => {
-			// The optimistic "downloading" state above is wrong if the start
-			// invoke rejected — surface it and reconcile with the real status.
-			console.error("[encoder-dict] download start failed:", error);
-			reconcileFromBackend();
-		});
-	};
-	const pause = () => {
-		setS((prev) => ({ ...prev, state: "paused" }));
-		runEncoderCommand(commands.encoderDictDownloadPause()).catch((error) => {
-			console.error("[encoder-dict] download pause failed:", error);
-			reconcileFromBackend();
-		});
-	};
-	const resume = () => {
-		setS((prev) => ({ ...prev, state: "downloading" }));
-		runEncoderCommand(commands.encoderDictDownloadResume()).catch((error) => {
-			console.error("[encoder-dict] download resume failed:", error);
-			reconcileFromBackend();
-		});
-	};
-	const remove = () => {
-		// Optimistically drop to "absent" so the card reflects the off-switch
-		// immediately; the backend `download-complete` event confirms it.
-		setS({
-			state: "absent",
-			progress: 0,
-			downloadedBytes: 0,
-			totalBytes: 0,
-			speedBps: 0,
-		});
-		runEncoderCommand(commands.encoderDictRemove()).catch((error) => {
-			// The optimistic "absent" state above is wrong if remove rejected —
-			// surface it and reconcile with the real on-disk status.
-			console.error("[encoder-dict] remove failed:", error);
-			reconcileFromBackend();
+	const runAction = (
+		label: string,
+		command: () => Promise<Result<null, string>>,
+		optimistic?: EncoderModelSnapshot,
+	) => {
+		if (!hasNativeRuntime()) {
+			return;
+		}
+		if (optimistic) {
+			setSnapshot(optimistic);
+		} else {
+			setSnapshot((previous) => ({ ...previous, error: null }));
+		}
+		void runEncoderCommand(command()).catch((error) => {
+			const message = errorMessage(error);
+			console.error(`[encoder-dict] ${label} failed:`, error);
+			reconcileFromBackend(message);
 		});
 	};
 
+	const start = () =>
+		runAction("download start", commands.encoderDictDownloadStart, {
+			...snapshot,
+			state: "downloading",
+			error: null,
+		});
+	const pause = () =>
+		runAction("download pause", commands.encoderDictDownloadPause, {
+			...snapshot,
+			state: "paused",
+			error: null,
+		});
+	const resume = () =>
+		runAction("download resume", commands.encoderDictDownloadResume, {
+			...snapshot,
+			state: "downloading",
+			error: null,
+		});
+	const cancel = () =>
+		runAction("download cancel", commands.encoderDictDownloadCancel);
+	const preload = () => runAction("preload", commands.encoderDictPreload);
+	const unload = () => runAction("unload", commands.encoderDictUnload);
+	const remove = () =>
+		runAction("remove", commands.encoderDictRemove, BROWSER_FALLBACK);
+
 	return {
-		...s,
+		...snapshot,
 		start,
 		pause,
 		resume,
-		cancel: cancelEncoderDownload,
+		cancel,
 		remove,
-		preload: preloadEncoderModel,
-		unload: unloadEncoderModel,
+		preload,
+		unload,
 	};
 }

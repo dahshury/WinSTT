@@ -30,7 +30,6 @@ static SKIP_POST_PROCESSING_SHORTCUT_REGISTERED: AtomicBool = AtomicBool::new(fa
 
 // Note: commands are accessed through their shortcut implementation module.
 
-/// Initialize shortcuts.
 pub fn init_shortcuts(app: &AppHandle) {
     if crate::winstt::commands::onboarding::is_onboarding_active() {
         log::debug!("skipping shortcut initialization while onboarding is active");
@@ -146,7 +145,6 @@ pub fn unregister_skip_post_processing_shortcut(app: &AppHandle) {
     }
 }
 
-/// Register a shortcut.
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     if crate::winstt::commands::onboarding::is_onboarding_active() {
         log::debug!(
@@ -169,18 +167,21 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
     // this is the single chokepoint hit by both startup (`tauri_impl::init_shortcuts`)
     // and every rebind (`change_binding`), and it runs BEFORE the modifier-only
     // early return so it covers both the combo-hook and full-accelerator backends.
-    if binding.id == "transcribe" {
-        mode_cycle::update(app, binding.current_binding.trim());
-    }
-
+    let cycle_accelerator = binding.current_binding.clone();
     if modifier_combo::register_if_modifier_only(app, &binding)? {
+        if binding.id == "transcribe" {
+            mode_cycle::update(app, binding.current_binding.trim());
+        }
         return Ok(());
     }
     let binding = binding_for_tauri_backend(binding);
-    tauri_impl::register_shortcut(app, binding)
+    tauri_impl::register_shortcut(app, binding.clone())?;
+    if binding.id == "transcribe" {
+        mode_cycle::update(app, cycle_accelerator.trim());
+    }
+    Ok(())
 }
 
-/// Unregister a shortcut.
 pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     if modifier_combo::unregister_if_modifier_only(&binding)? {
         return Ok(());
@@ -217,7 +218,7 @@ pub(crate) fn validate_binding_for_active_backend(id: &str, binding: &str) -> Re
     if id == "transcribe" && modifier_combo::is_modifier_only_accelerator(binding) {
         Ok(())
     } else {
-        tauri_impl::validate_shortcut(binding)
+        tauri_impl::validate_shortcut(&binding_for_active_backend(id, binding))
     }
 }
 
@@ -284,12 +285,23 @@ pub fn reconcile_winstt_hotkeys(app: &AppHandle) {
 fn reconcile_one(app: &AppHandle, id: &str, enabled: bool, accel: &str) {
     let accel = accel.trim();
     if enabled && !accel.is_empty() {
-        // `change_binding` translates to the backend parser vocabulary, validates,
-        // (re)registers, and
-        // persists. It unregisters the previous accelerator first, so a rebind never
-        // leaves the old combo hijacked.
-        if let Err(e) = change_binding(app.clone(), id.to_string(), accel.to_string()) {
-            warn!("reconcile_winstt_hotkeys: failed to arm '{}': {}", id, e);
+        // `change_binding` translates to the backend parser vocabulary,
+        // validates, claims the candidate, persists it, and only then releases
+        // the previous accelerator.
+        match change_binding(app.clone(), id.to_string(), accel.to_string()) {
+            Ok(response) if !response.success => warn!(
+                "reconcile_winstt_hotkeys: failed to arm '{}': {}",
+                id,
+                response
+                    .error
+                    .as_deref()
+                    .unwrap_or("unknown registration error")
+            ),
+            Err(error) => warn!(
+                "reconcile_winstt_hotkeys: failed to arm '{}': {}",
+                id, error
+            ),
+            Ok(_) => {}
         }
     } else {
         // Disabled / empty: drop any live registration (idempotent by binding id,
@@ -387,7 +399,6 @@ pub fn change_binding(
     let binding_to_modify = match settings.bindings.get(&id) {
         Some(binding) => binding.clone(),
         None => {
-            // Try to get the default binding for this id
             let default_settings = settings::get_default_settings();
             match default_settings.bindings.get(&id) {
                 Some(default_binding) => {
@@ -450,18 +461,17 @@ pub fn change_binding(
         });
     }
 
-    // Unregister the existing binding
-    if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
-        let error_msg = format!("Failed to unregister shortcut: {}", e);
-        error!("change_binding error: {}", error_msg);
-    }
-
-    // Create an updated binding
-    let mut updated_binding = binding_to_modify;
+    let mut updated_binding = binding_to_modify.clone();
     updated_binding.current_binding = binding;
 
-    // Register the new binding
+    // Claim the candidate first and keep it registered. This is both the OS
+    // availability check and the reservation; releasing it after a probe would
+    // create a race with another process. A failed claim leaves the old binding
+    // untouched.
     if let Err(e) = register_shortcut(&app, updated_binding.clone()) {
+        if id == "transcribe" {
+            mode_cycle::update(&app, binding_to_modify.current_binding.trim());
+        }
         let error_msg = format!("Failed to register shortcut: {}", e);
         error!("change_binding error: {}", error_msg);
         return Ok(BindingResponse {
@@ -471,13 +481,32 @@ pub fn change_binding(
         });
     }
 
-    // Update the binding in the settings
-    settings.bindings.insert(id, updated_binding.clone());
+    let replacing_modifier_only = id == "transcribe"
+        && modifier_combo::is_modifier_only_accelerator(&binding_to_modify.current_binding)
+        && modifier_combo::is_modifier_only_accelerator(&updated_binding.current_binding);
+    if !replacing_modifier_only && let Err(e) = unregister_shortcut(&app, binding_to_modify.clone())
+    {
+        let rollback = unregister_shortcut(&app, updated_binding);
+        if id == "transcribe" {
+            mode_cycle::update(&app, binding_to_modify.current_binding.trim());
+        }
+        let error_msg = match rollback {
+            Ok(()) => format!("Failed to release the previous shortcut: {e}"),
+            Err(rollback_err) => format!(
+                "Failed to release the previous shortcut: {e}; candidate rollback also failed: {rollback_err}"
+            ),
+        };
+        error!("change_binding error: {error_msg}");
+        return Ok(BindingResponse {
+            success: false,
+            binding: None,
+            error: Some(error_msg),
+        });
+    }
 
-    // Save the settings
+    settings.bindings.insert(id, updated_binding.clone());
     settings::write_settings(&app, settings);
 
-    // Return the updated binding
     Ok(BindingResponse {
         success: true,
         binding: Some(updated_binding),

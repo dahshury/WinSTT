@@ -66,8 +66,7 @@ export function hasNativeRuntime(): boolean {
 
 export function hasSettingsBackend(): boolean {
 	return (
-		hasTauriRuntime() ||
-		(typeof window !== "undefined" && window.location.port === "1420")
+		hasTauriRuntime() || (import.meta.env.DEV && typeof window !== "undefined")
 	);
 }
 
@@ -81,6 +80,12 @@ export async function commandOrDefault<T>(
 	thunk: () => Promise<T>,
 	fallback: FallbackValue<T>,
 ): Promise<T> {
+	// Browser previews deliberately have no Tauri bridge. Avoid invoking the
+	// generated command just to catch the inevitable error: it adds noisy
+	// console output and can hide a genuinely unexpected browser failure.
+	if (!hasNativeRuntime()) {
+		return resolveFallback(fallback);
+	}
 	try {
 		const value = await thunk();
 		return value === undefined ? resolveFallback(fallback) : value;

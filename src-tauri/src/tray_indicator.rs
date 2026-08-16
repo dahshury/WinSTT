@@ -1,5 +1,6 @@
 use crate::winstt::commands::settings;
 use crate::winstt::settings_schema::{GeneralSettings, VisualizerAuraShape, VisualizerType};
+use crate::winstt::sync_ext::MutexExt;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -149,16 +150,28 @@ struct TrayIndicator {
     paint_gate: PaintGate,
 }
 
+/// Orders tray paints without ever holding a lock across a native tray call.
+///
+/// Every native call is handed to the main thread by [`paint_on_main_thread`],
+/// so the event loop itself serializes paints and a mutex around them would buy
+/// nothing but deadlocks: `TrayIcon::set_icon` posts a task to the main thread
+/// and blocks on its reply, so a paint thread holding a shared lock while the
+/// main thread was busy inside a blocking `#[tauri::command]` wedged the app
+/// permanently (leaving listen mode paints an idle icon from the command thread
+/// while the 50 ms recording renderer is mid-`set_icon`).
+///
+/// `generation` is the only ordering primitive left: it is stamped when the
+/// paint is scheduled and re-checked once the closure actually runs on the main
+/// thread, so a frame from a superseded animation can never land after the
+/// static icon that replaced it.
 struct PaintGate {
     generation: AtomicU64,
-    native_paint: Mutex<()>,
 }
 
 impl PaintGate {
     fn new() -> Self {
         Self {
             generation: AtomicU64::new(0),
-            native_paint: Mutex::new(()),
         }
     }
 
@@ -170,25 +183,17 @@ impl PaintGate {
         self.generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    fn advance_and_paint(&self, paint: impl FnOnce()) -> u64 {
-        let _paint_guard = self
-            .native_paint
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    fn advance_and_paint(&self, paint: impl FnOnce(u64)) -> u64 {
         let generation = self.advance_generation();
-        paint();
+        paint(generation);
         generation
     }
 
-    fn paint_if_current(&self, generation: u64, paint: impl FnOnce()) -> bool {
-        let _paint_guard = self
-            .native_paint
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    fn paint_if_current(&self, generation: u64, paint: impl FnOnce(u64)) -> bool {
         if self.current_generation() != generation {
             return false;
         }
-        paint();
+        paint(generation);
         true
     }
 }
@@ -199,10 +204,95 @@ static TRAY_INDICATOR: Lazy<TrayIndicator> = Lazy::new(|| TrayIndicator {
     paint_gate: PaintGate::new(),
 });
 
-pub(crate) fn set_visualizer_style_from_general(general: &GeneralSettings) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        state.config = VisualizerConfig::from_general(general);
+/// One lifecycle edge from the STT pipeline. Every tray view change goes through
+/// [`apply_signal`], which is a PURE function of the flag set — that is what makes
+/// the "does the icon always come back to idle?" question testable without a live
+/// `AppHandle`, a tray, or a window event loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IndicatorSignal {
+    RecordingStart,
+    RecordingStop,
+    TranscribingStart,
+    TranscribingStop,
+    LlmThinkingStart,
+    LlmThinkingStop,
+    /// Hard reset. Terminal events (`full_sentence`, `no_audio_detected`,
+    /// `transcription_failed`, `session_aborted`) and every self-heal path use
+    /// this, so it must clear EVERY flag rather than just the one it knows about.
+    Idle,
+}
+
+/// Fold a lifecycle signal into the flag set and report the view it implies.
+///
+/// Returns `None` when the signal is inert (a stop for something that was never
+/// started, a duplicate start) so the caller can skip the repaint entirely.
+/// `Idle` always returns `Some` — it is the recovery valve, and a stuck animation
+/// must repaint even when the bookkeeping already believed it was idle.
+fn apply_signal(state: &mut IndicatorState, signal: IndicatorSignal) -> Option<IndicatorView> {
+    match signal {
+        IndicatorSignal::RecordingStart => {
+            state.is_recording = true;
+            state.raw_level = 0.0;
+            state.peak = PEAK_FLOOR;
+            state.session_start = Instant::now();
+            state.recording_frame_pending = false;
+        }
+        IndicatorSignal::RecordingStop => {
+            if !state.is_recording {
+                return None;
+            }
+            state.is_recording = false;
+            state.raw_level = 0.0;
+            state.peak = PEAK_FLOOR;
+            state.recording_frame_pending = false;
+        }
+        IndicatorSignal::TranscribingStart => {
+            if state.is_transcribing {
+                return None;
+            }
+            if !(state.is_llm_thinking || state.is_recording) {
+                state.thinking_start = Instant::now();
+            }
+            state.is_transcribing = true;
+        }
+        IndicatorSignal::TranscribingStop => {
+            if !state.is_transcribing {
+                return None;
+            }
+            state.is_transcribing = false;
+        }
+        IndicatorSignal::LlmThinkingStart => {
+            if state.is_llm_thinking {
+                return None;
+            }
+            // Same guard as TranscribingStart: only restart the topology phase when
+            // nothing was already driving it, so a cleanup pass that follows a decode
+            // continues the animation instead of snapping back to frame zero.
+            if !(state.is_transcribing || state.is_recording) {
+                state.thinking_start = Instant::now();
+            }
+            state.is_llm_thinking = true;
+        }
+        IndicatorSignal::LlmThinkingStop => {
+            if !state.is_llm_thinking {
+                return None;
+            }
+            state.is_llm_thinking = false;
+        }
+        IndicatorSignal::Idle => {
+            state.is_recording = false;
+            state.is_transcribing = false;
+            state.is_llm_thinking = false;
+            state.raw_level = 0.0;
+            state.peak = PEAK_FLOOR;
+            state.recording_frame_pending = false;
+        }
     }
+    Some(derive_view(state))
+}
+
+pub(crate) fn set_visualizer_style_from_general(general: &GeneralSettings) {
+    TRAY_INDICATOR.state.lock_recover().config = VisualizerConfig::from_general(general);
 }
 
 pub(crate) fn sync_visualizer_style_from_settings(app: &AppHandle) {
@@ -212,100 +302,54 @@ pub(crate) fn sync_visualizer_style_from_settings(app: &AppHandle) {
 
 pub(crate) fn on_recording_start(app: &AppHandle) {
     sync_visualizer_style_from_settings(app);
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        state.is_recording = true;
-        state.raw_level = 0.0;
-        state.peak = PEAK_FLOOR;
-        state.session_start = Instant::now();
-        state.recording_frame_pending = false;
-    }
-    reconcile_view(app);
+    reconcile_view(app, IndicatorSignal::RecordingStart);
 }
 
 pub(crate) fn on_recording_stop(app: &AppHandle) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        if !state.is_recording {
-            return;
-        }
-        state.is_recording = false;
-        state.raw_level = 0.0;
-        state.peak = PEAK_FLOOR;
-        state.recording_frame_pending = false;
-    }
-    reconcile_view(app);
+    reconcile_view(app, IndicatorSignal::RecordingStop);
 }
 
 pub(crate) fn on_audio_level(level: f32) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock()
-        && state.is_recording
-    {
-        state.raw_level = (level as f64).clamp(0.0, 1.0);
-        state.recording_frame_pending = true;
-        // The recorder callback only updates shared state and wakes the coalescing
-        // renderer. Pixel generation and native tray calls remain off the audio
-        // thread.
-        TRAY_INDICATOR.recording_frame_ready.notify_one();
+    let mut state = TRAY_INDICATOR.state.lock_recover();
+    if !state.is_recording {
+        return;
     }
+    state.raw_level = (level as f64).clamp(0.0, 1.0);
+    state.recording_frame_pending = true;
+    drop(state);
+    // The recorder callback only updates shared state and wakes the coalescing
+    // renderer. Pixel generation and native tray calls remain off the audio
+    // thread.
+    TRAY_INDICATOR.recording_frame_ready.notify_one();
 }
 
 pub(crate) fn on_transcribing_start(app: &AppHandle) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        if state.is_transcribing {
-            return;
-        }
-        if !(state.is_llm_thinking || state.is_recording) {
-            state.thinking_start = Instant::now();
-        }
-        state.is_transcribing = true;
-    }
-    reconcile_view(app);
+    reconcile_view(app, IndicatorSignal::TranscribingStart);
 }
 
 pub(crate) fn on_transcribing_stop(app: &AppHandle) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        if !state.is_transcribing {
-            return;
-        }
-        state.is_transcribing = false;
-    }
-    reconcile_view(app);
+    reconcile_view(app, IndicatorSignal::TranscribingStop);
 }
 
 pub(crate) fn on_llm_thinking_start(app: &AppHandle) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        if state.is_llm_thinking {
-            return;
-        }
-        if !(state.is_transcribing || state.is_llm_thinking) {
-            state.thinking_start = Instant::now();
-        }
-        state.is_llm_thinking = true;
-    }
-    reconcile_view(app);
+    reconcile_view(app, IndicatorSignal::LlmThinkingStart);
 }
 
 pub(crate) fn on_llm_thinking_stop(app: &AppHandle) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        if !state.is_llm_thinking {
-            return;
-        }
-        state.is_llm_thinking = false;
-    }
-    reconcile_view(app);
+    reconcile_view(app, IndicatorSignal::LlmThinkingStop);
 }
 
+/// Hard reset to the static idle icon. UNCONDITIONAL: it repaints even when the
+/// flag set already read idle, because this is the only lever that can rescue a
+/// tray whose animation outlived the pipeline that started it (a lost stop event,
+/// a panicking pipeline task, a recorder that closed itself).
 pub(crate) fn on_idle(app: &AppHandle) {
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        state.is_recording = false;
-        state.is_transcribing = false;
-        state.is_llm_thinking = false;
-        state.raw_level = 0.0;
-        state.peak = PEAK_FLOOR;
-        state.recording_frame_pending = false;
-        state.current_view = IndicatorView::Idle;
-    }
-    TRAY_INDICATOR.paint_gate.advance_and_paint(|| {
-        crate::tray::paint_static_tray_icon(app, crate::tray::TrayIconState::Idle);
+    let mut state = TRAY_INDICATOR.state.lock_recover();
+    let _ = apply_signal(&mut state, IndicatorSignal::Idle);
+    state.current_view = IndicatorView::Idle;
+    drop(state);
+    TRAY_INDICATOR.paint_gate.advance_and_paint(|generation| {
+        paint_static_on_main_thread(app, crate::tray::TrayIconState::Idle, generation);
     });
     TRAY_INDICATOR.recording_frame_ready.notify_all();
 }
@@ -320,25 +364,23 @@ fn derive_view(state: &IndicatorState) -> IndicatorView {
     }
 }
 
-fn reconcile_view(app: &AppHandle) {
-    let mut next = IndicatorView::Idle;
-    let mut changed = false;
-    if let Ok(mut state) = TRAY_INDICATOR.state.lock() {
-        next = derive_view(&state);
-        changed = next != state.current_view;
-        if changed {
-            state.current_view = next;
+fn reconcile_view(app: &AppHandle, signal: IndicatorSignal) {
+    let next = {
+        let mut state = TRAY_INDICATOR.state.lock_recover();
+        let Some(next) = apply_signal(&mut state, signal) else {
+            return;
+        };
+        if next == state.current_view {
+            return;
         }
-    }
-
-    if !changed {
-        return;
-    }
+        state.current_view = next;
+        next
+    };
 
     match next {
         IndicatorView::Idle => {
-            TRAY_INDICATOR.paint_gate.advance_and_paint(|| {
-                crate::tray::paint_static_tray_icon(app, crate::tray::TrayIconState::Idle);
+            TRAY_INDICATOR.paint_gate.advance_and_paint(|generation| {
+                paint_static_on_main_thread(app, crate::tray::TrayIconState::Idle, generation);
             });
         }
         IndicatorView::Recording => {
@@ -357,6 +399,32 @@ fn reconcile_view(app: &AppHandle) {
     TRAY_INDICATOR.recording_frame_ready.notify_all();
 }
 
+/// Condvar waits that RECOVER a poisoned lock instead of bailing out.
+///
+/// The animation threads used to `return` on a poisoned lock, and every mutating
+/// entry point used to silently skip its work — so ONE panic anywhere under this
+/// mutex froze the tray on whatever frame it happened to be showing, with no way
+/// back to idle for the rest of the process. Recovering the value (the crate-wide
+/// [`MutexExt::lock_recover`] policy) turns that permanent wedge into a transient.
+fn wait_recover(guard: std::sync::MutexGuard<'static, IndicatorState>) -> WaitGuard {
+    TRAY_INDICATOR
+        .recording_frame_ready
+        .wait(guard)
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn wait_timeout_recover(guard: WaitGuard, timeout: Duration) -> WaitGuard {
+    match TRAY_INDICATOR
+        .recording_frame_ready
+        .wait_timeout(guard, timeout)
+    {
+        Ok((guard, _)) => guard,
+        Err(poisoned) => poisoned.into_inner().0,
+    }
+}
+
+type WaitGuard = std::sync::MutexGuard<'static, IndicatorState>;
+
 /// Paint recording frames only in response to recorder level callbacks.
 ///
 /// The condition variable eliminates the former fixed-rate polling loop. A
@@ -368,30 +436,18 @@ fn spawn_recording_renderer(app: AppHandle, generation: u64) {
         let mut next_frame_at = Instant::now() + frame_interval;
 
         loop {
-            let mut state = match TRAY_INDICATOR.state.lock() {
-                Ok(state) => state,
-                Err(_) => return,
-            };
+            let mut state = TRAY_INDICATOR.state.lock_recover();
             while !state.recording_frame_pending
                 && TRAY_INDICATOR.paint_gate.current_generation() == generation
             {
-                state = match TRAY_INDICATOR.recording_frame_ready.wait(state) {
-                    Ok(state) => state,
-                    Err(_) => return,
-                };
+                state = wait_recover(state);
             }
             if TRAY_INDICATOR.paint_gate.current_generation() != generation {
                 return;
             }
 
             while let Some(remaining) = next_frame_at.checked_duration_since(Instant::now()) {
-                state = match TRAY_INDICATOR
-                    .recording_frame_ready
-                    .wait_timeout(state, remaining)
-                {
-                    Ok((state, _)) => state,
-                    Err(_) => return,
-                };
+                state = wait_timeout_recover(state, remaining);
                 if TRAY_INDICATOR.paint_gate.current_generation() != generation {
                     return;
                 }
@@ -410,21 +466,12 @@ fn spawn_thinking_animation(app: AppHandle, generation: u64) {
         let frame_interval = Duration::from_millis(THINK_TICK_MS);
         loop {
             let deadline = Instant::now() + frame_interval;
-            let mut state = match TRAY_INDICATOR.state.lock() {
-                Ok(state) => state,
-                Err(_) => return,
-            };
+            let mut state = TRAY_INDICATOR.state.lock_recover();
             while TRAY_INDICATOR.paint_gate.current_generation() == generation {
                 let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
                     break;
                 };
-                state = match TRAY_INDICATOR
-                    .recording_frame_ready
-                    .wait_timeout(state, remaining)
-                {
-                    Ok((state, _)) => state,
-                    Err(_) => return,
-                };
+                state = wait_timeout_recover(state, remaining);
             }
             if TRAY_INDICATOR.paint_gate.current_generation() != generation {
                 return;
@@ -451,10 +498,7 @@ fn render_frame_for_generation(app: &AppHandle, generation: u64) {
     }
 
     let frame = {
-        let mut state = match TRAY_INDICATOR.state.lock() {
-            Ok(state) => state,
-            Err(_) => return,
-        };
+        let mut state = TRAY_INDICATOR.state.lock_recover();
         match state.current_view {
             IndicatorView::Recording => {
                 let raw_level = state.raw_level;
@@ -494,14 +538,47 @@ fn render_frame_for_generation(app: &AppHandle, generation: u64) {
     // a newer idle icon has completed.
     TRAY_INDICATOR
         .paint_gate
-        .paint_if_current(generation, || set_icon_on_tray(app, rgba));
+        .paint_if_current(generation, |generation| {
+            set_icon_on_tray(app, rgba, generation);
+        });
 }
 
-fn set_icon_on_tray(app: &AppHandle, rgba: Vec<u8>) {
-    let Some(tray) = app.try_state::<TrayIcon>() else {
-        return;
-    };
-    let _ = tray.set_icon(Some(Image::new_owned(rgba, TARGET_SIZE, TARGET_SIZE)));
+/// Hand a native tray call to the main thread WITHOUT waiting for it.
+///
+/// `TrayIcon::set_icon`/`set_tooltip` post to the event loop and block on the
+/// reply, so calling them from a worker while the main thread is inside a
+/// blocking command is a deadlock waiting to happen. `run_on_main_thread` runs
+/// the closure inline when the caller already IS the main thread and otherwise
+/// queues it, so no caller ever parks on the event loop. The generation is
+/// re-checked inside the closure because scheduling order, not call order, is
+/// what decides which frame reaches the tray.
+fn paint_on_main_thread(
+    app: &AppHandle,
+    generation: u64,
+    paint: impl FnOnce(&AppHandle) + Send + 'static,
+) {
+    let app_for_paint = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if TRAY_INDICATOR.paint_gate.current_generation() != generation {
+            return;
+        }
+        paint(&app_for_paint);
+    });
+}
+
+fn paint_static_on_main_thread(app: &AppHandle, icon: crate::tray::TrayIconState, generation: u64) {
+    paint_on_main_thread(app, generation, move |app| {
+        crate::tray::paint_static_tray_icon(app, icon);
+    });
+}
+
+fn set_icon_on_tray(app: &AppHandle, rgba: Vec<u8>, generation: u64) {
+    paint_on_main_thread(app, generation, move |app| {
+        let Some(tray) = app.try_state::<TrayIcon>() else {
+            return;
+        };
+        let _ = tray.set_icon(Some(Image::new_owned(rgba, TARGET_SIZE, TARGET_SIZE)));
+    });
 }
 
 fn clamp_i64(value: i64, lo: i64, hi: i64, _fallback: i64) -> i64 {
@@ -1080,6 +1157,473 @@ fn stamp_disc(data: &mut [u8], cx: f64, cy: f64, radius: f64, tint: Rgb) {
     }
 }
 
+/// Does the tray icon always come back to idle once recording is over?
+///
+/// The animation itself is fine — every stuck-tray report traces to a lifecycle
+/// edge that was never delivered, so these tests replay the REAL emitter
+/// sequences (transcribed call-for-call from the sites named in each test) against
+/// the same reducer the live tray runs, and assert the view the user is left
+/// looking at.
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{IndicatorSignal, IndicatorState, IndicatorView, apply_signal};
+
+    /// Headless mirror of the live indicator: same state, same reducer, no
+    /// `AppHandle` and no native paints.
+    struct TrayModel {
+        state: IndicatorState,
+        view: IndicatorView,
+    }
+
+    impl TrayModel {
+        fn new() -> Self {
+            Self {
+                state: IndicatorState::default(),
+                view: IndicatorView::Idle,
+            }
+        }
+
+        /// Mirrors `reconcile_view`: inert signals change nothing.
+        fn send(&mut self, signal: IndicatorSignal) {
+            let Some(next) = apply_signal(&mut self.state, signal) else {
+                return;
+            };
+            if next == self.view {
+                return;
+            }
+            self.view = next;
+        }
+
+        /// Mirrors `on_idle`: unconditional hard reset, repaints even when the
+        /// bookkeeping already read idle.
+        fn force_idle(&mut self) {
+            let _ = apply_signal(&mut self.state, IndicatorSignal::Idle);
+            self.view = IndicatorView::Idle;
+        }
+    }
+
+    // ── the production emitters, transcribed 1:1 ────────────────────────────────
+    //
+    // Each method is exactly what the named source site does to the tray, so a
+    // scenario below reads as the sequence of events the pipeline actually emits.
+    impl TrayModel {
+        /// `SttEvents::recording_start` → `tray::on_tray_recording_start`.
+        fn recording_start(&mut self) {
+            self.send(IndicatorSignal::RecordingStart);
+        }
+
+        /// `SttEvents::recording_stop` → `tray::on_tray_recording_stop`.
+        fn recording_stop(&mut self) {
+            self.send(IndicatorSignal::RecordingStop);
+        }
+
+        /// `SttEvents::transcription_start` → `tray::on_tray_transcription_start`.
+        fn transcription_start(&mut self) {
+            self.send(IndicatorSignal::TranscribingStart);
+        }
+
+        /// The shared terminal epilogue of `SttEvents::full_sentence`,
+        /// `no_audio_detected`, `transcription_failed` and `session_aborted`:
+        /// `on_tray_transcription_stop` followed by `on_tray_idle`.
+        fn terminal(&mut self) {
+            self.send(IndicatorSignal::TranscribingStop);
+            self.force_idle();
+        }
+
+        /// `LlmCommandProcessingGuard::new` / `TransformProcessingGuard::new`.
+        fn llm_guard_enter(&mut self) {
+            self.send(IndicatorSignal::LlmThinkingStart);
+        }
+
+        /// The matching `Drop` impls.
+        fn llm_guard_exit(&mut self) {
+            self.send(IndicatorSignal::LlmThinkingStop);
+        }
+
+        /// `tray::change_tray_icon(app, TrayIconState::Idle)`.
+        fn change_tray_icon_idle(&mut self) {
+            self.force_idle();
+        }
+    }
+
+    // ── paths that DO pair up ───────────────────────────────────────────────────
+
+    #[test]
+    fn push_to_talk_round_trip_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        // actions/transcribe.rs: start() → stop() → async decode → full_sentence.
+        tray.recording_start();
+        assert_eq!(tray.view, IndicatorView::Recording);
+        tray.recording_stop();
+        tray.transcription_start();
+        assert_eq!(tray.view, IndicatorView::Thinking);
+        tray.terminal();
+        tray.change_tray_icon_idle();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn llm_cleanup_between_decode_and_paste_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        tray.recording_start();
+        tray.recording_stop();
+        tray.transcription_start();
+        tray.llm_guard_enter();
+        assert_eq!(tray.view, IndicatorView::Thinking);
+        tray.llm_guard_exit();
+        tray.terminal();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn silent_recording_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        // transcribe.rs: is_silent_recording_with_mask → no_audio_detected.
+        tray.recording_start();
+        tray.recording_stop();
+        tray.terminal();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn decode_failure_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        // transcribe.rs: Err(err) → transcription_failed.
+        tray.recording_start();
+        tray.recording_stop();
+        tray.transcription_start();
+        tray.terminal();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn escape_cancel_mid_recording_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        // utils::cancel_current_operation → change_tray_icon(Idle),
+        // then commands/cancel.rs → session_aborted.
+        tray.recording_start();
+        tray.change_tray_icon_idle();
+        tray.terminal();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn microphone_open_failure_never_shows_recording() {
+        let mut tray = TrayModel::new();
+        // transcribe.rs start(): recording_error.is_some() skips recording_start
+        // entirely and paints idle.
+        tray.change_tray_icon_idle();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn preview_before_pasting_returns_to_idle_before_the_pill_closes() {
+        let mut tray = TrayModel::new();
+        // transcribe.rs preview branch: preview_ready → full_sentence →
+        // change_tray_icon(Idle). The pill outlives the tray animation by design.
+        tray.recording_start();
+        tray.recording_stop();
+        tray.transcription_start();
+        tray.terminal();
+        tray.change_tray_icon_idle();
+        assert_eq!(tray.view, IndicatorView::Idle);
+        // preview.rs confirm_paste / cancel_preview repaint idle again; still idle.
+        tray.change_tray_icon_idle();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn listen_mode_stop_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        // listen.rs start_listen → recording_start; stop_listen_runtime →
+        // recording_stop (listen never emits transcription_start).
+        tray.recording_start();
+        assert_eq!(tray.view, IndicatorView::Recording);
+        tray.recording_stop();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn listen_mode_restart_is_idempotent_and_still_stops() {
+        let mut tray = TrayModel::new();
+        // LoopbackManager::start is idempotent, but start_listen emits
+        // recording_start on every Ok — so a second start must not need a second stop.
+        tray.recording_start();
+        tray.recording_start();
+        tray.recording_stop();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn transforms_hotkey_without_any_recording_returns_to_idle() {
+        let mut tray = TrayModel::new();
+        // transforms.rs: TransformProcessingGuard has no recording phase at all.
+        tray.llm_guard_enter();
+        assert_eq!(tray.view, IndicatorView::Thinking);
+        tray.llm_guard_exit();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    // ── the gaps ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_recorder_that_closes_itself_is_rescued_by_the_stage_self_heal() {
+        // The recorder closed on its own — device unplugged, WASAPI drop, stream end
+        // — so `TranscribeAction::stop`, the ONLY emitter of `stt:recording-stop`,
+        // never runs for this take.
+        let mut stranded = TrayModel::new();
+        stranded.recording_start();
+        assert_eq!(
+            stranded.view,
+            IndicatorView::Recording,
+            "nothing inside the reducer can leave Recording on its own — a caller must"
+        );
+
+        // `recover_wedged_stage` used to reset Stage::Recording → Idle silently, which
+        // is what left the visualizer animating with no pipeline behind it. It now
+        // routes through `reset_ui_after_silent_stage_recovery` → session_aborted.
+        let mut rescued = TrayModel::new();
+        rescued.recording_start();
+        rescued.terminal();
+        assert_eq!(rescued.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn a_panicking_pipeline_task_is_rescued_by_the_finish_guard() {
+        // transcribe.rs spawns the decode task; a panic inside it unwinds past every
+        // terminal emitter, so the thinking animation had nothing left to stop it.
+        let mut stranded = TrayModel::new();
+        stranded.recording_start();
+        stranded.recording_stop();
+        stranded.transcription_start();
+        assert_eq!(stranded.view, IndicatorView::Thinking);
+
+        // `FinishGuard::drop` runs during the unwind and now paints idle whenever the
+        // panicking session is still the current one.
+        let mut rescued = TrayModel::new();
+        rescued.recording_start();
+        rescued.recording_stop();
+        rescued.transcription_start();
+        rescued.change_tray_icon_idle();
+        assert_eq!(rescued.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn a_start_that_never_became_a_recording_is_disarmed() {
+        let mut tray = TrayModel::new();
+        // `TranscribeAction::start` emits recording_start as soon as the mic opens
+        // without error, but the coordinator's `start()` then finds the recorder
+        // already closed (an open that immediately dropped, or a racing cancel) and
+        // leaves the stage Idle — so no stop is ever issued for this take.
+        tray.recording_start();
+        assert_eq!(tray.view, IndicatorView::Recording);
+        // The `staying idle` branch now disarms the tray it just armed.
+        tray.change_tray_icon_idle();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn escape_is_a_reset_even_when_the_pipeline_believes_it_is_idle() {
+        let mut tray = TrayModel::new();
+        // Worst case: the icon is animating a take every automatic path has already
+        // forgotten. `cancel_current_operation` short-circuits on
+        // `!dictation_was_active`, and now repaints idle before it does.
+        tray.recording_start();
+        tray.change_tray_icon_idle();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn a_terminal_event_must_not_cancel_a_newer_recording() {
+        let mut tray = TrayModel::new();
+        // Take 1 is still decoding when take 2 starts (fast re-press: the decode is
+        // async and the coordinator only serializes the recorder, not the tray).
+        tray.recording_start();
+        tray.recording_stop();
+        tray.transcription_start();
+        tray.recording_start();
+        assert_eq!(tray.view, IndicatorView::Recording);
+
+        // Take 1's terminal lands. It is an UNCONDITIONAL hard reset, so it wipes
+        // take 2's live recording flag — the icon drops to idle while the mic is open.
+        tray.terminal();
+        assert_eq!(
+            tray.view,
+            IndicatorView::Idle,
+            "known: a stale terminal outranks a live recording"
+        );
+
+        // Take 2 then self-heals through its own terminal, so this is transient
+        // rather than sticky — the icon is wrong, not stuck.
+        tray.recording_stop();
+        tray.transcription_start();
+        tray.terminal();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    #[test]
+    fn concurrent_llm_guards_release_the_animation_early() {
+        let mut tray = TrayModel::new();
+        // `is_llm_thinking` is a bool, not a refcount: a transforms hotkey fired
+        // while a dictation cleanup is running shares the single flag.
+        tray.llm_guard_enter(); // dictation cleanup
+        tray.llm_guard_enter(); // transforms hotkey — inert, flag already set
+        tray.llm_guard_exit(); // transforms finishes first
+        assert_eq!(
+            tray.view,
+            IndicatorView::Idle,
+            "known: the first exit clears the flag for both"
+        );
+        tray.llm_guard_exit(); // dictation cleanup finishes — inert
+        assert_eq!(tray.view, IndicatorView::Idle, "errs idle, never stuck");
+    }
+
+    // ── invariants of the reducer itself ────────────────────────────────────────
+
+    #[test]
+    fn idle_recovers_from_every_reachable_flag_combination() {
+        // Exhaustive over the eight flag combinations: the hard reset is the one
+        // lever every self-heal path relies on, so it must be total.
+        for recording in [false, true] {
+            for transcribing in [false, true] {
+                for llm in [false, true] {
+                    let mut tray = TrayModel::new();
+                    if recording {
+                        tray.recording_start();
+                    }
+                    if transcribing {
+                        tray.transcription_start();
+                    }
+                    if llm {
+                        tray.llm_guard_enter();
+                    }
+                    tray.force_idle();
+                    assert_eq!(
+                        tray.view,
+                        IndicatorView::Idle,
+                        "stuck from recording={recording} transcribing={transcribing} llm={llm}"
+                    );
+                    assert!(!tray.state.is_recording);
+                    assert!(!tray.state.is_transcribing);
+                    assert!(!tray.state.is_llm_thinking);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_signal_sequence_up_to_length_four_ends_idle_after_a_terminal() {
+        const ALPHABET: [IndicatorSignal; 6] = [
+            IndicatorSignal::RecordingStart,
+            IndicatorSignal::RecordingStop,
+            IndicatorSignal::TranscribingStart,
+            IndicatorSignal::TranscribingStop,
+            IndicatorSignal::LlmThinkingStart,
+            IndicatorSignal::LlmThinkingStop,
+        ];
+
+        // Brute force every ordering — including the malformed ones a dropped or
+        // duplicated event produces — and assert the terminal always wins.
+        let mut sequences: Vec<Vec<IndicatorSignal>> = vec![Vec::new()];
+        for _ in 0..4 {
+            let mut next = Vec::new();
+            for sequence in &sequences {
+                for signal in ALPHABET {
+                    let mut extended = sequence.clone();
+                    extended.push(signal);
+                    next.push(extended);
+                }
+            }
+            sequences.extend(next);
+        }
+
+        for sequence in &sequences {
+            let mut tray = TrayModel::new();
+            for signal in sequence {
+                tray.send(*signal);
+            }
+            tray.force_idle();
+            assert_eq!(
+                tray.view,
+                IndicatorView::Idle,
+                "sequence left the tray stuck: {sequence:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn recording_outranks_thinking_while_the_microphone_is_open() {
+        let mut tray = TrayModel::new();
+        // Realtime dictation decodes WHILE recording; the icon must stay on the
+        // visualizer rather than flipping to the topology animation mid-take.
+        tray.recording_start();
+        tray.transcription_start();
+        assert_eq!(tray.view, IndicatorView::Recording);
+        tray.llm_guard_enter();
+        assert_eq!(tray.view, IndicatorView::Recording);
+        // Once the mic closes, the still-running decode takes over.
+        tray.recording_stop();
+        assert_eq!(tray.view, IndicatorView::Thinking);
+        tray.transcription_stop_then_llm_exit();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+
+    impl TrayModel {
+        fn transcription_stop_then_llm_exit(&mut self) {
+            self.send(IndicatorSignal::TranscribingStop);
+            self.send(IndicatorSignal::LlmThinkingStop);
+        }
+    }
+
+    #[test]
+    fn an_unpaired_stop_is_inert_rather_than_corrupting() {
+        let mut tray = TrayModel::new();
+        // Duplicate releases and double terminals are routine; they must not push
+        // the flag set negative or leave a phantom view behind.
+        tray.recording_stop();
+        tray.send(IndicatorSignal::TranscribingStop);
+        tray.llm_guard_exit();
+        assert_eq!(tray.view, IndicatorView::Idle);
+
+        tray.recording_start();
+        tray.recording_stop();
+        tray.recording_stop();
+        assert_eq!(tray.view, IndicatorView::Idle);
+    }
+}
+
+/// A panic under the indicator mutex must not freeze the tray for the rest of the
+/// process. Exercises the REAL static, not the headless model.
+#[cfg(test)]
+mod poisoning_tests {
+    use super::{IndicatorSignal, IndicatorView, TRAY_INDICATOR, apply_signal, derive_view};
+    use crate::winstt::sync_ext::MutexExt;
+
+    #[test]
+    fn a_poisoned_lock_still_reconciles_back_to_idle() {
+        TRAY_INDICATOR.state.lock_recover().is_recording = true;
+
+        let poisoner = std::thread::spawn(|| {
+            let _guard = TRAY_INDICATOR.state.lock_recover();
+            panic!("simulated panic while the tray state is locked");
+        });
+        assert!(
+            poisoner.join().is_err(),
+            "the poisoner should have panicked"
+        );
+
+        // Before `lock_recover`, every entry point here took `if let Ok(..) = lock()`
+        // and silently did nothing from this point on — the tray stayed on the
+        // recording animation until restart.
+        let mut state = TRAY_INDICATOR.state.lock_recover();
+        assert!(state.is_recording, "the value must survive the poisoning");
+        let view = apply_signal(&mut state, IndicatorSignal::Idle);
+        assert_eq!(view, Some(IndicatorView::Idle));
+        assert_eq!(derive_view(&state), IndicatorView::Idle);
+        state.current_view = IndicatorView::Idle;
+    }
+}
+
 #[cfg(test)]
 mod concurrency_tests {
     use super::PaintGate;
@@ -1091,11 +1635,11 @@ mod concurrency_tests {
         let painted = Mutex::new(Vec::new());
         let animation_generation = gate.advance_generation();
 
-        let static_generation = gate.advance_and_paint(|| {
+        let static_generation = gate.advance_and_paint(|_| {
             painted.lock().expect("paint log should lock").push("idle");
         });
 
-        assert!(!gate.paint_if_current(animation_generation, || {
+        assert!(!gate.paint_if_current(animation_generation, |_| {
             painted
                 .lock()
                 .expect("paint log should lock")

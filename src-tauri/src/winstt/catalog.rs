@@ -44,21 +44,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_69() {
+    fn catalog_total_count_is_75() {
         assert_eq!(
             STT_CATALOG.len(),
-            69,
-            "catalog.json ships exactly 69 STT models"
+            75,
+            "catalog.json ships exactly 75 STT models"
         );
     }
 
     #[test]
     fn per_family_counts_match_catalog_json() {
         let count = |f: Family| STT_CATALOG.iter().filter(|m| m.family == f).count();
-        assert_eq!(count(Family::Whisper), 15, "whisper count");
+        assert_eq!(count(Family::Whisper), 16, "whisper count");
         assert_eq!(count(Family::Moonshine), 10, "moonshine count");
         assert_eq!(count(Family::Nemo), 29, "nemo count");
-        assert_eq!(count(Family::Kaldi), 4, "kaldi count");
+        assert_eq!(count(Family::Kaldi), 5, "kaldi count");
         assert_eq!(count(Family::GigaAm), 2, "gigaam count");
         assert_eq!(count(Family::Cohere), 2, "cohere count");
         assert_eq!(count(Family::Granite), 2, "granite count");
@@ -66,13 +66,15 @@ mod tests {
         assert_eq!(count(Family::TOne), 1, "t-one count");
         assert_eq!(count(Family::Dolphin), 1, "dolphin count");
         assert_eq!(count(Family::Qwen3), 2, "qwen3 count");
+        assert_eq!(count(Family::VibeVoice), 1, "vibevoice count");
+        assert_eq!(count(Family::Audio8), 3, "audio8 count");
         assert_eq!(
             count(Family::Custom),
             0,
             "custom never appears in the shipped catalog"
         );
         // The family counts must sum to the catalog total.
-        let summed = 15 + 10 + 29 + 4 + 2 + 2 + 2 + 1 + 1 + 1 + 2;
+        let summed = 16 + 10 + 29 + 5 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 3;
         assert_eq!(summed, STT_CATALOG.len());
     }
 

@@ -6,5 +6,5 @@ export {
 	type Locale,
 	pickLocaleFromSystem,
 } from "./config";
-export { useLocaleStore } from "./locale-store";
+export { LOCALE_STORAGE_KEY, useLocaleStore } from "./locale-store";
 export { loadMessages, SUPPORTED_LOCALES } from "./messages";

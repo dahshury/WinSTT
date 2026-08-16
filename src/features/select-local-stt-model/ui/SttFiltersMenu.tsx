@@ -1,8 +1,10 @@
 "use client";
 
 import {
+	ArrowUpDownIcon,
 	CheckmarkCircle02Icon,
 	CpuIcon,
+	FilterIcon,
 	FlashIcon,
 	HardDriveIcon,
 	LanguageSkillIcon,
@@ -13,19 +15,20 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
-import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
+import { FilterCheckboxSection } from "@/shared/ui/model-picker/ui/FilterCheckboxSection";
+import { FilterMultiSelectView } from "@/shared/ui/model-picker/ui/FilterMultiSelectView";
 import {
-	FilterMenu,
-	SectionDivider,
-	SectionHeader,
-	type FilterFlagConfig,
-} from "@/shared/ui/model-picker/ui/FilterPopoverParts";
+	FilterNavMenu,
+	type FilterNavSection,
+} from "@/shared/ui/model-picker/ui/FilterNavMenu";
+import { SortChipsSection } from "@/shared/ui/model-picker/ui/FilterSortChipsSection";
+import type { FilterFlagConfig } from "@/shared/ui/model-picker/ui/filter-menu-types";
+import { languageLabel } from "@/shared/ui/model-picker/lib/language-names";
 import {
 	activeFilterCount,
 	EMPTY_FILTER_STATE,
 	type SttFilterState,
 } from "../lib/filter-state";
-import { languageLabel } from "@/shared/ui/model-picker/lib/language-names";
 import {
 	STT_SORT_CHIP_LABEL,
 	STT_SORT_KEYS,
@@ -58,8 +61,7 @@ const SORT_ICON: Record<SttSortKey, IconSvgElement> = {
 };
 
 /** The boolean catalog filters, rendered as a fluidfunctionalism
- *  checkbox group (the descriptions the old toggle rows carried are dropped in
- *  favour of a tighter, more minimal list — the labels are self-explanatory). */
+ *  checkbox group in the menu's "Filters" view. */
 type SttFilterFlag =
 	| "cachedOnly"
 	| "realtimeOnly"
@@ -103,47 +105,17 @@ function lockedActiveFilterCount(
 	return [...locked].filter((key) => filters[key]).length;
 }
 
-function LanguageFilterSection({
-	availableLanguages,
-	selected,
-	onChange,
-}: {
-	availableLanguages: string[];
-	onChange: (next: string[]) => void;
-	selected: string[];
-}) {
-	const options = [...new Set([...availableLanguages, ...selected])]
+function languageOptionsFor(
+	availableLanguages: string[],
+	selected: string[],
+): Array<{ badge: string; id: string; label: string }> {
+	return [...new Set([...availableLanguages, ...selected])]
 		.toSorted((a, b) => languageLabel(a).localeCompare(languageLabel(b)))
 		.map((code) => ({
 			badge: code.toUpperCase(),
 			id: code,
 			label: languageLabel(code),
 		}));
-	const t = useTranslations("modelPicker");
-	if (options.length === 0) {
-		return null;
-	}
-	return (
-		<div className="flex flex-col gap-1.5 p-2">
-			<SectionHeader icon={LanguageSkillIcon} label={t("language")} />
-			<p className="text-[11px] text-foreground-muted leading-snug">
-				{t("languageHint")}
-			</p>
-			<div className="w-full">
-				<LanguageMultiCombobox
-					ariaLabel={t("languageFilter")}
-					emptyLabel={t("noLanguagesFound")}
-					onChange={onChange}
-					options={options}
-					placeholder={t("selectLanguages")}
-					removeLabel={(language) => t("removeLanguage", { language })}
-					selectedCountLabel={(count) => t("languagesSelected", { count })}
-					selectedHeading={t("selectedLanguages")}
-					value={selected}
-				/>
-			</div>
-		</div>
-	);
 }
 
 export function SttFiltersMenu({
@@ -162,62 +134,99 @@ export function SttFiltersMenu({
 	const locked = lockedFilterSet(lockedFilterKeys);
 	const effectiveFilters = applyLockedFilters(filters, locked);
 	const activeFilters = activeFilterCount(effectiveFilters);
-	const hasLanguageFilterOptions =
-		availableLanguages.length > 0 || effectiveFilters.languages.length > 0;
+	// Locked-on flags (e.g. realtime in the realtime picker) can't be cleared.
+	const clearableFilters =
+		activeFilters - lockedActiveFilterCount(effectiveFilters, locked);
+	const flagCount = flags.filter((flag) => effectiveFilters[flag.key]).length;
+	const languageOptions = languageOptionsFor(
+		availableLanguages,
+		effectiveFilters.languages,
+	);
+
 	const setLanguages = (languages: string[]) => {
 		onFiltersChange(
 			applyLockedFilters({ ...effectiveFilters, languages }, locked),
 		);
 	};
-	const clear = () => {
-		onFiltersChange(applyLockedFilters(EMPTY_FILTER_STATE, locked));
-		onSortChange(null);
-	};
+
+	const sections: FilterNavSection[] = [
+		{
+			icon: ArrowUpDownIcon,
+			id: "sort",
+			label: t("sortBy"),
+			render: () => (
+				<SortChipsSection
+					hint={t("flattenMakers")}
+					icons={SORT_ICON}
+					keys={STT_SORT_KEYS}
+					labels={STT_SORT_CHIP_LABEL}
+					onChange={onSortChange}
+					value={sort}
+				/>
+			),
+			value: sort === null ? null : STT_SORT_CHIP_LABEL[sort],
+		},
+		{
+			badge: flagCount,
+			icon: FilterIcon,
+			id: "flags",
+			label: t("filters"),
+			render: () => (
+				<FilterCheckboxSection
+					filters={effectiveFilters}
+					flags={flags}
+					isDisabled={(flag) => locked.has(flag)}
+					onToggle={(flag) => {
+						if (locked.has(flag)) {
+							return;
+						}
+						onFiltersChange(
+							applyLockedFilters(
+								{ ...effectiveFilters, [flag]: !effectiveFilters[flag] },
+								locked,
+							),
+						);
+					}}
+				/>
+			),
+		},
+	];
+
+	if (languageOptions.length > 0) {
+		sections.push({
+			badge: effectiveFilters.languages.length,
+			icon: LanguageSkillIcon,
+			id: "language",
+			label: t("language"),
+			render: () => (
+				<FilterMultiSelectView
+					ariaLabel={t("languageFilter")}
+					emptyLabel={t("noLanguagesFound")}
+					hint={t("languageHint")}
+					onChange={setLanguages}
+					options={languageOptions}
+					placeholder={t("selectLanguages")}
+					removeLabel={(language) => t("removeLanguage", { language })}
+					selected={effectiveFilters.languages}
+					selectedCountLabel={(count) => t("languagesSelected", { count })}
+					selectedHeading={t("selectedLanguages")}
+				/>
+			),
+		});
+	}
 
 	return (
-		<FilterMenu
-			activeFilterCount={activeFilters}
-			// Locked-on flags (e.g. realtime in the realtime picker) can't be cleared.
-			clearableFilterCount={
-				activeFilters - lockedActiveFilterCount(effectiveFilters, locked)
-			}
+		<FilterNavMenu
+			activeFilterCount={activeFilters + (sort === null ? 0 : 1)}
+			canClear={clearableFilters > 0 || sort !== null}
 			clearLabel={t("clearAll")}
 			dataSlot="stt-filters-menu-content"
-			filters={effectiveFilters}
-			flags={flags}
-			isFlagDisabled={(flag) => locked.has(flag)}
 			label={t("sortAndFilter")}
-			onClearAll={clear}
-			onToggleFlag={(flag) => {
-				if (locked.has(flag)) {
-					return;
-				}
-				onFiltersChange(
-					applyLockedFilters(
-						{ ...effectiveFilters, [flag]: !effectiveFilters[flag] },
-						locked,
-					),
-				);
+			onClearAll={() => {
+				onFiltersChange(applyLockedFilters(EMPTY_FILTER_STATE, locked));
+				onSortChange(null);
 			}}
-			sort={{
-				hint: t("flattenMakers"),
-				icons: SORT_ICON,
-				keys: STT_SORT_KEYS,
-				labels: STT_SORT_CHIP_LABEL,
-				onChange: onSortChange,
-				sortByLabel: t("sortBy"),
-				value: sort,
-			}}
-			widthClass="w-[300px]"
-		>
-			{hasLanguageFilterOptions ? <SectionDivider /> : null}
-			{hasLanguageFilterOptions ? (
-				<LanguageFilterSection
-					availableLanguages={availableLanguages}
-					onChange={setLanguages}
-					selected={effectiveFilters.languages}
-				/>
-			) : null}
-		</FilterMenu>
+			sections={sections}
+		/>
 	);
 }

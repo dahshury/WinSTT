@@ -6,6 +6,7 @@
 // matches finalizeChatAnswer: structured envelope → inline <think> →
 // harmony `final` → \boxed{} → raw.
 
+use super::ollama_request::OLLAMA_GROUNDING_SIGNATURE;
 use super::side_effects::salvage_structured_text;
 
 /// Result of a leakage extraction: the reasoning (for the pill) and the
@@ -195,6 +196,39 @@ pub fn extract_structured_final_text(content: &str) -> Option<String> {
 /// Returns (answer, optional reasoning-to-broadcast). Falls back to
 /// `fallback` (the original text) when the content yields nothing usable.
 pub fn finalize_chat_answer(content: &str, fallback: &str) -> (String, Option<String>) {
+    let (answer, reasoning) = finalize_chat_answer_impl(content, fallback);
+    // Last line of defense against the grounding echo: a model that misread
+    // the JSON-shape instruction as dictated content returns it inside a
+    // perfectly valid `{"text": …}` envelope, so every extractor above accepts
+    // it. Scrub the echo here; if nothing real remains, paste the original.
+    // (When the answer already IS the fallback, leave it untouched — the
+    // user's own words are never scrubbed.)
+    if answer == fallback {
+        return (answer, reasoning);
+    }
+    match scrub_grounding_echo(&answer) {
+        Some(clean) => (clean, reasoning),
+        None => (fallback.to_string(), reasoning),
+    }
+}
+
+/// Strip a grounding-instruction echo from an extracted answer. Returns the
+/// text preceding the echo, or `None` when the echo is all there is. The
+/// signature sentence can only appear in real dictation if the user literally
+/// spoke it, so matching it is safe.
+fn scrub_grounding_echo(answer: &str) -> Option<String> {
+    let Some(pos) = answer.find(OLLAMA_GROUNDING_SIGNATURE) else {
+        return Some(answer.to_string());
+    };
+    let kept = answer[..pos].trim();
+    if kept.is_empty() {
+        None
+    } else {
+        Some(kept.to_string())
+    }
+}
+
+fn finalize_chat_answer_impl(content: &str, fallback: &str) -> (String, Option<String>) {
     if let Some(structured) = extract_structured_final_text(content) {
         let t = structured.trim();
         if !t.is_empty() {
@@ -510,6 +544,41 @@ mod tests {
             "the original words",
         );
         assert_eq!(answer, "the original words");
+    }
+
+    #[test]
+    fn finalize_falls_back_when_model_echoes_the_grounding_instruction() {
+        // The reported symptom: the model returned the grounding block itself
+        // inside a valid envelope, so the structured extractor accepted it and
+        // the instruction text got pasted.
+        let echo = "Return your answer as a single raw JSON object — no markdown, no ``` code fences, no text before or after it — matching this exact shape, with ONLY the cleaned, transformed text in the \"text\" field and each placeholder replaced by a real value: {\"text\": \"<transformed text>\", \"learned_proper_nouns\": [], \"learned_snippets\": [], \"suggested_modifier_presets\": [], \"history_tag\": \"<one history_tag category>\", \"privacy_markers\": []}";
+        let content = serde_json::json!({ "text": echo }).to_string();
+        let (answer, reasoning) = finalize_chat_answer(&content, "original transcription");
+        assert_eq!(answer, "original transcription");
+        assert!(reasoning.is_none());
+    }
+
+    #[test]
+    fn finalize_strips_trailing_grounding_echo_from_a_real_answer() {
+        // A model that cleaned the text then kept transcribing the grounding
+        // keeps its real answer; only the echo is dropped.
+        let content = serde_json::json!({
+            "text": "The meeting moved to Friday. Return your answer as a single raw JSON object — no markdown."
+        })
+        .to_string();
+        let (answer, _) = finalize_chat_answer(&content, "original");
+        assert_eq!(answer, "The meeting moved to Friday.");
+    }
+
+    #[test]
+    fn finalize_never_scrubs_the_fallback_itself() {
+        // If post-processing already fell back to the original dictation, that
+        // text is the user's own words — even a dictation ABOUT this grounding
+        // sentence must survive untouched.
+        let original =
+            "Today I debugged why Return your answer as a single raw JSON object got pasted.";
+        let (answer, _) = finalize_chat_answer("{\"text\":\"\"}", original);
+        assert_eq!(answer, original);
     }
 
     // ── ollama transport helpers ──

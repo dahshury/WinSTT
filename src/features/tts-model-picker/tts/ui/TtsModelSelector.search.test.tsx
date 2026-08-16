@@ -17,12 +17,18 @@ function model(overrides: Partial<TtsModelInfo> = {}): TtsModelInfo {
 		languages: ["en-us"],
 		numVoices: 54,
 		cloning: "none",
+		maxRefClipSecs: 0,
+		tagSyntax: "none",
+		tags: [],
 		voiceDesign: false,
+		voiceDesignMaxChars: 0,
+		voiceInstruct: false,
 		sampleRate: 24_000,
 		paramCountM: 82,
 		availableQuantizations: ["fp16"],
 		sizeBytesByQuantization: { fp16: 169_869_312 },
 		sizeLabel: "82M",
+		requiresReferenceClip: false,
 		qualityScore: 0.9,
 		speedScore: 0.85,
 		description: "",
@@ -226,6 +232,7 @@ describe("TtsModelSelector filters", () => {
 		]);
 
 		fireEvent.click(screen.getByRole("button", { name: "Sort & filter" }));
+		fireEvent.click(screen.getByRole("button", { name: /^Filters/ }));
 		fireEvent.click(screen.getByRole("checkbox", { name: "Voice cloning" }));
 
 		const names = visibleModelNames();

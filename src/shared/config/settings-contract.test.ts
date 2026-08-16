@@ -33,12 +33,30 @@ describe("settings runtime contract", () => {
 		expect(new Set(paths).size).toBe(paths.length);
 	});
 
-	test("keeps no-runtime settings explicit", () => {
-		expect(SETTINGS_CONTRACT.noRuntimeEffectYet).toContain(
+	test("keeps no-runtime and deprecated compatibility settings explicit", () => {
+		expect(SETTINGS_CONTRACT.backendRuntime).toContain(
 			"general.receivePrereleaseUpdates",
 		);
-		expect(SETTINGS_CONTRACT.noRuntimeEffectYet).toContain(
+		expect(SETTINGS_CONTRACT.noRuntimeEffectYet).toContain("audio.bufferSize");
+		expect(SETTINGS_CONTRACT.deprecatedCompatibility).toContain(
 			"general.sendCrashReports",
 		);
+	});
+
+	test("classifies settings with proven runtime consumers as backend runtime", () => {
+		for (const path of [
+			"audio.clamshellMicrophone",
+			"audio.sileroDeactivityDetection",
+			"audio.sileroSensitivity",
+			"audio.webrtcSensitivity",
+			"general.fileTranscriptionFormats",
+			"general.fileTranscriptionSaveLocation",
+			"model.realtimeLanguage",
+			"model.realtimeModel",
+			"quality.initRealtimeAfterSeconds",
+			"quality.useMainModelForRealtime",
+		] as const) {
+			expect(SETTINGS_CONTRACT.backendRuntime).toContain(path);
+		}
 	});
 });

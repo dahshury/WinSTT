@@ -36,9 +36,13 @@ describe("SnippetsTable", () => {
 		expect(screen.getAllByText("Expansion").length).toBeGreaterThan(0);
 	});
 
-	test("renders the grid toolbar", () => {
-		const { container } = renderTable();
-		expect(container.querySelector('[role="toolbar"]')).not.toBeNull();
+	test("renders the grid's table-controls trigger", () => {
+		// Filters / Sort / Row height / Columns are one drill-down popover now,
+		// so the toolbar of four buttons is a single count-badged trigger.
+		renderTable();
+		expect(
+			screen.getByRole("button", { name: /Table controls/ }),
+		).not.toBeNull();
 	});
 
 	test("renders complete pagination with disabled boundary controls", () => {

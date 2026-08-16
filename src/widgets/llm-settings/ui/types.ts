@@ -1,10 +1,8 @@
-import type { TranslateFn } from "@/shared/i18n/translation-types";
 import type {
 	OllamaFitAssessment,
 	PausedPullState,
 } from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
-import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
 
 export type { TranslateFn } from "@/shared/i18n/translation-types";
 
@@ -56,46 +54,3 @@ export interface OpenRouterCatalogState {
 	models: readonly import("@/shared/api/models").OpenRouterModel[];
 	scanModels: () => void;
 }
-
-export interface FeatureBlockProps {
-	dictationLayout?: boolean;
-	endpoint: string;
-	feature: "dictation" | "transforms";
-	featureSnapshot: LlmFeatureDraft;
-	librarySearch: import("@/features/llm-model-picker").OllamaModelSelectorProps["librarySearch"];
-	ollamaCatalog: OllamaCatalogState;
-	ollamaPullBundle: OllamaPullBundle;
-	ollamaReachable: boolean | null;
-	/**
-	 * Side effect fired when this feature gets enabled, after `update({enabled: true})`.
-	 * Used to enforce dictation conflicts such as Smart Endpoint and word-by-word
-	 * paste. Passed in by the parent rather than read from the store here so that
-	 * `useFeatureToggleHandler` stays a pure consumer of props.
-	 */
-	onEnabled?: () => void;
-	openrouterApiKey: string;
-	openrouterCatalog: OpenRouterCatalogState;
-	setShowApiKeyDialog: (v: boolean) => void;
-	/** Open the model-picker modal so the user can download a model when none
-	 *  is installed — the toggle commits `enabled` only once a model lands. */
-	setShowModelPicker: (v: boolean) => void;
-	setShowOllamaDialog: (v: boolean) => void;
-	t: TranslateFn;
-	tc: TranslateFn;
-	update: UpdateDictationFn | UpdateTransformsFn;
-	updateShared: UpdateSharedFn;
-	// Last broadcast from main process; null until first warmup pass.
-	// Drives the inline warmup-failure banner so the user can see why
-	// dictation didn't run without reading debug logs.
-	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null;
-}
-
-type LlmTransforms = LlmSettings["transforms"];
-type LlmSharedPatch = Partial<
-	Pick<LlmSettings, "endpoint" | "openrouterApiKey">
->;
-type LlmDictationPatch = Partial<LlmDictation>;
-type LlmTransformsPatch = Partial<LlmTransforms>;
-type UpdateSharedFn = (patch: LlmSharedPatch) => void;
-type UpdateDictationFn = (patch: LlmDictationPatch) => void;
-type UpdateTransformsFn = (patch: LlmTransformsPatch) => void;

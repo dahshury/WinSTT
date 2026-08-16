@@ -1,11 +1,8 @@
 "use client";
 
 import { Button as BaseButton } from "@base-ui/react/button";
-import { Popover } from "@base-ui/react/popover";
 import {
-	ArrowDown01Icon,
 	ArrowUpDownIcon,
-	BookOpen02Icon,
 	FilterIcon,
 	ServerStack01Icon,
 	Settings01Icon,
@@ -14,26 +11,17 @@ import {
 	Tag01Icon,
 	TextFontIcon,
 	Tick01Icon,
+	BookOpen02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { type ComponentPropsWithoutRef, type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
-import {
-	SurfaceProvider,
-	surfaceBg,
-	surfaceHoverBg,
-	useSurface,
-} from "@/shared/lib/surface";
-import { FilterMenuTriggerButton } from "../core/FilterMenuTriggerButton";
+import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { getParameterIcon, getVariantIcon } from "../lib/filter-icons";
-import {
-	computeActiveFilterCount,
-	getActiveFiltersAttr,
-} from "../lib/model-filters-menu-utils";
+import { computeActiveFilterCount } from "../lib/model-filters-menu-utils";
 import { computeModelFiltersMetadata } from "../lib/model-filters-metadata";
 import { formatMaker } from "../lib/model-selector-utils";
 import type { ModelVariant } from "../lib/model-variant-utils";
@@ -50,6 +38,7 @@ import {
 	type OpenRouterSortValue,
 } from "../lib/openrouter-sort";
 import { getVariantLabel } from "./active-filters-bar-helpers";
+import { FilterNavMenu, type FilterNavSection } from "./FilterNavMenu";
 
 export interface ModelFiltersMenuProps {
 	allProviders?: string[] | undefined;
@@ -71,8 +60,6 @@ export interface ModelFiltersMenuProps {
 
 const NO_PROVIDERS: readonly string[] = Object.freeze([]);
 
-type FilterSection = "sort" | "variant" | "author" | "parameters" | "provider";
-
 /** Icon per sort dimension - kept in the UI layer so the sort lib stays
  *  presentation-free. */
 const SORT_ICON: Record<OpenRouterSortKey, IconSvgElement> = {
@@ -85,13 +72,6 @@ function toggleInArray<T>(list: readonly T[], item: T): T[] {
 	return list.includes(item)
 		? list.filter((candidate) => candidate !== item)
 		: [...list, item];
-}
-
-function nextOpenSection(
-	current: FilterSection | null,
-	next: FilterSection,
-): FilterSection | null {
-	return current === next ? null : next;
 }
 
 function filterTextOptions(
@@ -132,98 +112,17 @@ function OptionCount({ count }: { count: number | undefined }) {
 	);
 }
 
-function ActiveFilterHeader({
-	count,
-	onClearAll,
-}: {
-	count: number;
-	onClearAll: () => void;
-}) {
-	const t = useTranslations("modelPicker");
-	if (count <= 0) {
-		return null;
-	}
-	return (
-		<div className="flex items-center justify-between px-3 py-2">
-			<span className="text-foreground-muted text-xs">
-				{t("activeCount", { count })}
-			</span>
-			<BaseButton
-				className="font-medium text-accent text-xs hover:underline"
-				onClick={onClearAll}
-				type="button"
-			>
-				{t("clearAll")}
-			</BaseButton>
-		</div>
-	);
-}
-
-function FilterAccordionSection({
-	children,
-	icon,
-	isLast,
-	isOpen,
-	label,
-	onToggle,
-	valueLabel,
-}: {
-	children: ReactNode;
-	icon: IconSvgElement;
-	isLast?: boolean | undefined;
-	isOpen: boolean;
-	label: string;
-	onToggle: () => void;
-	valueLabel?: string | null | undefined;
-}) {
-	return (
-		<div className={cn(!isLast && "border-divider/70 border-b")}>
-			<BaseButton
-				aria-expanded={isOpen}
-				className="flex min-h-10 w-full items-center justify-between gap-2 px-3 py-2 text-start transition-colors hover:bg-foreground/[0.045]"
-				onClick={onToggle}
-				type="button"
-			>
-				<span className="flex min-w-0 items-center gap-2">
-					<HugeiconsIcon
-						aria-hidden="true"
-						className="size-4 shrink-0 text-foreground-muted"
-						icon={icon}
-					/>
-					<span className="truncate font-medium text-body-sm text-foreground">
-						{label}
-					</span>
-				</span>
-				<span className="flex shrink-0 items-center gap-2">
-					{valueLabel ? (
-						<span className="max-w-32 truncate rounded-full bg-accent/15 px-2 py-0.5 font-medium text-[11px] text-accent">
-							{valueLabel}
-						</span>
-					) : null}
-					<HugeiconsIcon
-						aria-hidden="true"
-						className={cn(
-							"size-4 text-foreground-muted transition-transform duration-150",
-							isOpen && "rotate-180",
-						)}
-						icon={ArrowDown01Icon}
-					/>
-				</span>
-			</BaseButton>
-			{isOpen ? children : null}
-		</div>
-	);
-}
-
 function FilterChip({
 	active,
 	count,
+	initialFocus = false,
 	label,
 	leading,
 	onClick,
 }: {
 	active: boolean;
 	count?: number | undefined;
+	initialFocus?: boolean | undefined;
 	label: string;
 	leading?: ReactNode;
 	onClick: () => void;
@@ -238,9 +137,10 @@ function FilterChip({
 		<BaseButton
 			aria-pressed={active}
 			className={cn(
-				"inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 font-medium text-[11px] leading-none ring-1 transition-colors",
+				"inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 font-medium text-[11px] leading-none outline-none ring-1 transition-colors focus-visible:ring-2 focus-visible:ring-accent",
 				active ? "bg-accent/15 text-accent ring-accent/40" : idleChip,
 			)}
+			data-nav-initial-focus={initialFocus ? "" : undefined}
 			onClick={onClick}
 			type="button"
 		>
@@ -259,6 +159,7 @@ function SortFilterSection({
 	sortKey: OpenRouterSortValue;
 }) {
 	const t = useTranslations("modelPicker");
+	const focusKey = sortKey ?? OPENROUTER_SORT_KEYS[0];
 	return (
 		<div className="flex flex-col gap-2 px-3 pt-1 pb-3">
 			<p className="text-[11px] text-foreground-muted leading-snug">
@@ -268,6 +169,7 @@ function SortFilterSection({
 				{OPENROUTER_SORT_KEYS.map((key) => (
 					<FilterChip
 						active={sortKey === key}
+						initialFocus={key === focusKey}
 						key={key}
 						label={OPENROUTER_SORT_CHIP_LABEL[key]}
 						leading={
@@ -300,6 +202,7 @@ function VariantFilterSection({
 		<div className="grid grid-cols-2 gap-1.5 px-3 pt-1 pb-3">
 			<FilterChip
 				active={selectedVariant === null}
+				initialFocus={selectedVariant === null}
 				label="All"
 				leading={
 					<HugeiconsIcon
@@ -314,6 +217,7 @@ function VariantFilterSection({
 				<FilterChip
 					active={selectedVariant === variant}
 					count={variantCounts.get(variant)}
+					initialFocus={selectedVariant === variant}
 					key={variant}
 					label={getVariantLabel(variant)}
 					leading={getVariantIcon(variant)}
@@ -342,6 +246,7 @@ function SearchInput({
 					"h-8 w-full rounded-md border border-border px-2.5 font-inherit text-body text-foreground leading-normal outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
 					surfaceBg(Math.min(level + 1, 8)),
 				)}
+				data-nav-initial-focus
 				dir="ltr"
 				onChange={(event) => onChange(event.target.value)}
 				placeholder={placeholder}
@@ -432,22 +337,22 @@ function AuthorRow({
 }
 
 function AuthorFilterSection({
-	authorSearch,
 	favoriteProviders,
 	filteredAuthors,
-	onAuthorSearchChange,
 	onMakersChange,
 	onToggleFavorite,
+	onSearchChange,
 	providerCounts,
+	search,
 	selectedMakers,
 }: {
-	authorSearch: string;
 	favoriteProviders: string[];
 	filteredAuthors: readonly string[];
-	onAuthorSearchChange: (next: string) => void;
 	onMakersChange: (makers: string[]) => void;
+	onSearchChange: (next: string) => void;
 	onToggleFavorite?: ((maker: string) => void) | undefined;
 	providerCounts: Map<string, number>;
+	search: string;
 	selectedMakers: string[];
 }) {
 	const t = useTranslations("modelPicker");
@@ -458,9 +363,9 @@ function AuthorFilterSection({
 	return (
 		<>
 			<SearchInput
-				onChange={onAuthorSearchChange}
+				onChange={onSearchChange}
 				placeholder="Search authors"
-				value={authorSearch}
+				value={search}
 			/>
 			<div className="max-h-56 overflow-y-auto px-2 pb-2">
 				<div className="flex flex-col gap-0.5">
@@ -499,10 +404,11 @@ function ParametersFilterSection({
 }) {
 	return (
 		<div className="flex flex-wrap gap-1.5 px-3 pt-1 pb-3">
-			{FILTERABLE_PARAMETERS.map((param) => (
+			{FILTERABLE_PARAMETERS.map((param, index) => (
 				<FilterChip
 					active={selectedParameters.includes(param)}
 					count={parameterCounts.get(param)}
+					initialFocus={index === 0}
 					key={param}
 					label={PARAMETER_INFO[param].label}
 					leading={getParameterIcon(param)}
@@ -545,23 +451,23 @@ function ProviderRow({
 function EndpointProviderFilterSection({
 	filteredEndpointProviders,
 	onEndpointProviderSelect,
-	onProviderSearchChange,
-	providerSearch,
+	onSearchChange,
+	search,
 	selectedEndpointProvider,
 }: {
 	filteredEndpointProviders: readonly [string, number][];
 	onEndpointProviderSelect: (provider: string | null) => void;
-	onProviderSearchChange: (next: string) => void;
-	providerSearch: string;
+	onSearchChange: (next: string) => void;
+	search: string;
 	selectedEndpointProvider: string | null;
 }) {
 	const t = useTranslations("modelPicker");
 	return (
 		<>
 			<SearchInput
-				onChange={onProviderSearchChange}
+				onChange={onSearchChange}
 				placeholder="Search providers"
-				value={providerSearch}
+				value={search}
 			/>
 			<div className="max-h-56 overflow-y-auto px-2 pb-2">
 				<div className="flex flex-col gap-0.5">
@@ -595,6 +501,12 @@ function EndpointProviderFilterSection({
 	);
 }
 
+/**
+ * The cloud (OpenRouter) picker's sort + filter control. Same drill-down shell
+ * as the local pickers, which is the point: five dimensions that used to be a
+ * single-open accordion — where opening "Author" collapsed whatever you were
+ * reading — are now five peer rows that each get the whole frame.
+ */
 export function ModelFiltersMenu({
 	models,
 	selectedVariant,
@@ -612,21 +524,19 @@ export function ModelFiltersMenu({
 	sortKey = null,
 	onSortChange,
 }: ModelFiltersMenuProps) {
-	const level = Math.min(useSurface() + 1, 8);
-	const [openSection, setOpenSection] = useState<FilterSection | null>(
-		onSortChange ? "sort" : "variant",
-	);
+	const t = useTranslations("modelPicker");
+	// Search terms live here rather than in the views so drilling out and back
+	// in keeps the query — the views are unmounted between visits.
 	const [authorSearch, setAuthorSearch] = useState("");
 	const [providerSearch, setProviderSearch] = useState("");
 
-	const metadata = computeModelFiltersMetadata(models);
 	const {
 		availableVariants,
 		variantCounts,
 		endpointProviders,
 		providerCounts,
 		parameterCounts,
-	} = metadata;
+	} = computeModelFiltersMetadata(models);
 
 	// The trigger badge counts filters + the active sort as one combined signal.
 	const activeFilterCount =
@@ -636,162 +546,110 @@ export function ModelFiltersMenu({
 			selectedParameters,
 			selectedVariant,
 		}) + (sortKey === null ? 0 : 1);
-	const filteredAuthors = filterTextOptions(
-		allProviders,
-		authorSearch,
-		formatMaker,
-	);
-	const filteredEndpointProviders = filterEndpointProviderEntries(
-		endpointProviders,
-		providerSearch,
-	);
 
-	const toggleSection = (section: FilterSection) => {
-		setOpenSection((current) => nextOpenSection(current, section));
-	};
-	const clearAll = () => {
-		onMakersChange?.([]);
-		onVariantSelect(null);
-		onEndpointProviderSelect(null);
-		onParametersChange([]);
-		onSortChange?.(null);
-	};
+	const sections: FilterNavSection[] = [];
+	if (onSortChange) {
+		sections.push({
+			icon: ArrowUpDownIcon,
+			id: "sort",
+			label: t("sortBy"),
+			render: () => (
+				<SortFilterSection onSortChange={onSortChange} sortKey={sortKey} />
+			),
+			value: sortKey === null ? null : OPENROUTER_SORT_CHIP_LABEL[sortKey],
+		});
+	}
+	sections.push({
+		icon: Tag01Icon,
+		id: "variant",
+		label: t("variant"),
+		render: () => (
+			<VariantFilterSection
+				availableVariants={availableVariants}
+				onVariantSelect={onVariantSelect}
+				selectedVariant={selectedVariant}
+				variantCounts={variantCounts}
+			/>
+		),
+		value: selectedVariant === null ? null : getVariantLabel(selectedVariant),
+	});
+	if (allProviders.length > 0 && onMakersChange) {
+		sections.push({
+			badge: selectedMakers.length,
+			icon: SparklesIcon,
+			id: "author",
+			label: "Author",
+			render: () => (
+				<AuthorFilterSection
+					favoriteProviders={favoriteProviders}
+					filteredAuthors={filterTextOptions(
+						allProviders,
+						authorSearch,
+						formatMaker,
+					)}
+					onMakersChange={onMakersChange}
+					onSearchChange={setAuthorSearch}
+					onToggleFavorite={onToggleFavorite}
+					providerCounts={providerCounts}
+					search={authorSearch}
+					selectedMakers={selectedMakers}
+				/>
+			),
+		});
+	}
+	sections.push({
+		badge: selectedParameters.length,
+		icon: Settings01Icon,
+		id: "parameters",
+		label: t("capabilities"),
+		render: () => (
+			<ParametersFilterSection
+				onParametersChange={onParametersChange}
+				parameterCounts={parameterCounts}
+				selectedParameters={selectedParameters}
+			/>
+		),
+	});
+	if (endpointProviders.length > 0) {
+		sections.push({
+			icon: ServerStack01Icon,
+			id: "provider",
+			label: "Endpoint provider",
+			render: () => (
+				<EndpointProviderFilterSection
+					filteredEndpointProviders={filterEndpointProviderEntries(
+						endpointProviders,
+						providerSearch,
+					)}
+					onEndpointProviderSelect={onEndpointProviderSelect}
+					onSearchChange={setProviderSearch}
+					search={providerSearch}
+					selectedEndpointProvider={selectedEndpointProvider}
+				/>
+			),
+			value: selectedEndpointProvider
+				? formatProviderName(selectedEndpointProvider)
+				: null,
+		});
+	}
 
 	return (
-		<Popover.Root>
-			<Popover.Trigger
-				nativeButton
-				render={(props) => (
-					<FilterMenuTriggerButton
-						buttonProps={props as ComponentPropsWithoutRef<"button">}
-						className={className}
-						count={activeFilterCount}
-						label="Sort & filter"
-					/>
-				)}
-			/>
-			<Popover.Portal>
-				<Popover.Positioner
-					align="end"
-					sideOffset={6}
-					style={{ zIndex: Z_INDEX.popover }}
-				>
-					<Popover.Popup
-						className={cn(
-							"select-popup w-[320px] origin-(--transform-origin) overflow-hidden rounded-md border border-border p-1 font-sans text-body text-foreground shadow-md transition-[transform,opacity] duration-150 ease-out data-[ending-style]:ease-in",
-							surfaceBg(level),
-						)}
-						data-active-filters={getActiveFiltersAttr(activeFilterCount)}
-						data-slot="model-filters-menu-content"
-					>
-						<SurfaceProvider value={level}>
-							<ActiveFilterHeader
-								count={activeFilterCount}
-								onClearAll={clearAll}
-							/>
-							{onSortChange ? (
-								<FilterAccordionSection
-									icon={ArrowUpDownIcon}
-									isOpen={openSection === "sort"}
-									label="Sort by"
-									onToggle={() => toggleSection("sort")}
-									valueLabel={
-										sortKey === null
-											? null
-											: OPENROUTER_SORT_CHIP_LABEL[sortKey]
-									}
-								>
-									<SortFilterSection
-										onSortChange={onSortChange}
-										sortKey={sortKey}
-									/>
-								</FilterAccordionSection>
-							) : null}
-							<FilterAccordionSection
-								icon={Tag01Icon}
-								isOpen={openSection === "variant"}
-								label="Variant"
-								onToggle={() => toggleSection("variant")}
-								valueLabel={
-									selectedVariant === null
-										? null
-										: getVariantLabel(selectedVariant)
-								}
-							>
-								<VariantFilterSection
-									availableVariants={availableVariants}
-									onVariantSelect={onVariantSelect}
-									selectedVariant={selectedVariant}
-									variantCounts={variantCounts}
-								/>
-							</FilterAccordionSection>
-							{allProviders.length > 0 && onMakersChange ? (
-								<FilterAccordionSection
-									icon={SparklesIcon}
-									isOpen={openSection === "author"}
-									label="Author"
-									onToggle={() => toggleSection("author")}
-									valueLabel={
-										selectedMakers.length > 0
-											? `${selectedMakers.length}`
-											: null
-									}
-								>
-									<AuthorFilterSection
-										authorSearch={authorSearch}
-										favoriteProviders={favoriteProviders}
-										filteredAuthors={filteredAuthors}
-										onAuthorSearchChange={setAuthorSearch}
-										onMakersChange={onMakersChange}
-										onToggleFavorite={onToggleFavorite}
-										providerCounts={providerCounts}
-										selectedMakers={selectedMakers}
-									/>
-								</FilterAccordionSection>
-							) : null}
-							<FilterAccordionSection
-								icon={Settings01Icon}
-								isOpen={openSection === "parameters"}
-								label="Capabilities"
-								onToggle={() => toggleSection("parameters")}
-								valueLabel={
-									selectedParameters.length > 0
-										? `${selectedParameters.length}`
-										: null
-								}
-							>
-								<ParametersFilterSection
-									onParametersChange={onParametersChange}
-									parameterCounts={parameterCounts}
-									selectedParameters={selectedParameters}
-								/>
-							</FilterAccordionSection>
-							{endpointProviders.length > 0 ? (
-								<FilterAccordionSection
-									icon={ServerStack01Icon}
-									isLast
-									isOpen={openSection === "provider"}
-									label="Endpoint provider"
-									onToggle={() => toggleSection("provider")}
-									valueLabel={
-										selectedEndpointProvider
-											? formatProviderName(selectedEndpointProvider)
-											: null
-									}
-								>
-									<EndpointProviderFilterSection
-										filteredEndpointProviders={filteredEndpointProviders}
-										onEndpointProviderSelect={onEndpointProviderSelect}
-										onProviderSearchChange={setProviderSearch}
-										providerSearch={providerSearch}
-										selectedEndpointProvider={selectedEndpointProvider}
-									/>
-								</FilterAccordionSection>
-							) : null}
-						</SurfaceProvider>
-					</Popover.Popup>
-				</Popover.Positioner>
-			</Popover.Portal>
-		</Popover.Root>
+		<FilterNavMenu
+			activeFilterCount={activeFilterCount}
+			canClear={activeFilterCount > 0}
+			clearLabel={t("clearAll")}
+			dataSlot="model-filters-menu-content"
+			label={t("sortAndFilter")}
+			onClearAll={() => {
+				onMakersChange?.([]);
+				onVariantSelect(null);
+				onEndpointProviderSelect(null);
+				onParametersChange([]);
+				onSortChange?.(null);
+			}}
+			sections={sections}
+			triggerClassName={className}
+			widthPx={320}
+		/>
 	);
 }

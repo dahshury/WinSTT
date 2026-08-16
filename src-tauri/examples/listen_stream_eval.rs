@@ -65,6 +65,12 @@ fn run() -> Result<()> {
             let mut changed_updates = 0usize;
             let mut last_text = String::new();
             let mut decode_time = Duration::ZERO;
+            // Per-accept latencies. The TOTAL decode time hides the failure mode that
+            // matters for listen mode: the consumer thread is also the audio-intake
+            // thread, so ONE accept that overruns the chunk's own wall-clock duration
+            // is a visible caption freeze, even when the average is comfortably
+            // real-time.
+            let mut accept_ms: Vec<f64> = Vec::new();
             let started = Instant::now();
 
             engine.stream_reset();
@@ -73,7 +79,9 @@ fn run() -> Result<()> {
                 let update = engine
                     .stream_accept(chunk)
                     .map_err(|e| anyhow!("stream accept failed: {e}"))?;
-                decode_time += decode_started.elapsed();
+                let elapsed = decode_started.elapsed();
+                decode_time += elapsed;
+                accept_ms.push(elapsed.as_secs_f64() * 1000.0);
                 updates += 1;
                 if update.text != last_text {
                     changed_updates += 1;
@@ -112,11 +120,40 @@ fn run() -> Result<()> {
                 args.chunk_ms,
                 decode_time.as_millis()
             );
+            report_accept_latency(&accept_ms, args.chunk_ms);
             report("stream", &args.model, audio_ms, started.elapsed(), &text);
         }
     }
 
     Ok(())
+}
+
+/// Report the per-accept latency distribution against the chunk's own duration.
+/// `over_budget` counts the accepts that took longer than the audio they carried —
+/// each of those is a moment where the listen consumer could not pull the next
+/// frame in time, so the caption stalls and the backlog grows.
+fn report_accept_latency(accept_ms: &[f64], chunk_ms: usize) {
+    if accept_ms.is_empty() {
+        return;
+    }
+    let mut sorted = accept_ms.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let at = |q: f64| sorted[((sorted.len() as f64 - 1.0) * q).round() as usize];
+    let budget = chunk_ms as f64;
+    let over_budget = sorted.iter().filter(|ms| **ms > budget).count();
+    let total: f64 = sorted.iter().sum();
+    println!(
+        "accept_ms p50={:.1} p95={:.1} p99={:.1} max={:.1} mean={:.1} | budget={:.0} over_budget={}/{} rtf={:.3}",
+        at(0.50),
+        at(0.95),
+        at(0.99),
+        sorted[sorted.len() - 1],
+        total / sorted.len() as f64,
+        budget,
+        over_budget,
+        sorted.len(),
+        total / (sorted.len() as f64 * budget),
+    );
 }
 
 fn parse_args() -> Result<Args> {

@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import {
@@ -6,6 +6,7 @@ import {
 	type AppProfileRule,
 } from "../model/app-profile-rules";
 import { BUILTIN_CONFIGURATIONS } from "../model/configurations";
+import { useAppProfileIndicatorStore } from "../model/use-app-profile-indicator";
 import { AppProfileRuleDialog } from "./AppProfileRuleDialog";
 import {
 	buildAppProfileAppOptions,
@@ -61,13 +62,36 @@ function renderGrid(count: number) {
 	return { ...result, onChange };
 }
 
+// The row aria-label interpolates the display label, which for these fixtures is
+// the exe itself (RUNNING_APP is chatgpt.exe, the fixtures are app-N.exe).
+function ruleRow(index: number): HTMLElement {
+	return screen.getByRole("group", {
+		name: `Per-app rule for app-${index}.exe`,
+	});
+}
+
+function allRuleRows(): HTMLElement[] {
+	// Scoped by name: each row also nests the picker's own "Configuration" group,
+	// so a bare getAllByRole("group") returns two elements per rule.
+	return screen.queryAllByRole("group", { name: /^Per-app rule for / });
+}
+
 describe("AppProfileRulesGrid", () => {
-	test("uses the grid footer and opens the matcher dialog for the new rule", async () => {
+	// The indicator store is a process-global singleton; a leaked `current` would
+	// paint the "Active now" pill onto an unrelated test's rows.
+	beforeEach(() => {
+		useAppProfileIndicatorStore.getState().clear();
+	});
+	afterEach(() => {
+		useAppProfileIndicatorStore.getState().clear();
+	});
+
+	test("adds a rule from the add affordance and opens the matcher dialog for it", async () => {
 		const { onChange } = renderGrid(0);
 
-		expect(screen.getByRole("grid", { name: "Data grid" })).toBeDefined();
+		expect(screen.queryByRole("grid")).toBeNull();
 		await act(async () => {
-			fireEvent.click(screen.getByText("Add row"));
+			fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
 			await new Promise<void>((resolve) =>
 				requestAnimationFrame(() => resolve()),
 			);
@@ -131,32 +155,207 @@ describe("AppProfileRulesGrid", () => {
 		expect(onSave.mock.calls[0]?.[0].appExe).toBe("custom-tool.exe");
 	});
 
-	test("keeps configuration, matcher editor, and toggle as the grid columns", () => {
-		renderGrid(1);
+	test("renders each rule as one addressable line with no grid chrome", () => {
+		const { container } = renderGrid(1);
 
-		const grid = screen.getByRole("grid", { name: "Data grid" });
-		expect(screen.getByText("Configuration")).toBeDefined();
-		expect(screen.getByText("Edit per-app rule")).toBeDefined();
-		expect(grid.style.getPropertyValue("--col-select-size")).toBe("40");
-		expect(grid.style.getPropertyValue("--col-configurationId-size")).toBe(
-			"270",
-		);
-		expect(grid.style.getPropertyValue("--col-matcher-size")).toBe("200");
-		expect(grid.style.getPropertyValue("--col-actions-size")).toBe("72");
-		const configurationHeader = screen
-			.getByText("Configuration")
-			.closest('[role="columnheader"]');
-		const matcherHeader = screen
-			.getByText("Edit per-app rule")
-			.closest('[role="columnheader"]');
-		const actionHeader = screen.getAllByRole("columnheader").at(-1);
-		expect(configurationHeader?.classList.contains("grow")).toBe(false);
-		expect(matcherHeader?.classList.contains("grow")).toBe(false);
-		expect(actionHeader?.classList.contains("grow")).toBe(true);
-		expect(screen.queryByText("Window title contains")).toBeNull();
+		// The table is gone: no grid, no headers, no selection/row-number column,
+		// no pagination, and none of the grid's sizing custom properties.
+		expect(screen.queryByRole("grid")).toBeNull();
+		expect(screen.queryAllByRole("columnheader")).toHaveLength(0);
+		expect(screen.queryAllByRole("row")).toHaveLength(0);
+		expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+		expect(screen.queryByText("Configuration")).toBeNull();
+		expect(screen.queryByText("Edit per-app rule")).toBeNull();
+		expect(screen.queryByText("Add row")).toBeNull();
+		expect(screen.queryByRole("navigation")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Sort" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Move rule up" })).toBeNull();
 		expect(screen.queryByRole("button", { name: "Move rule down" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Sort" })).toBeNull();
+		expect(container.querySelectorAll("[style*='--col-']")).toHaveLength(0);
+
+		const rows = allRuleRows();
+		expect(rows).toHaveLength(1);
+		const row = rows[0];
+		if (!row) {
+			throw new Error("Expected a rule row");
+		}
+		// Everything that acts on the rule lives inside the rule's own group.
+		expect(
+			within(row).getByRole("button", { name: "Edit per-app rule" }),
+		).toBeDefined();
+		expect(within(row).getByRole("combobox")).toBeDefined();
+		expect(within(row).getByRole("switch")).toBeDefined();
+		expect(
+			within(row).getByRole("button", { name: "Delete rule" }),
+		).toBeDefined();
+	});
+
+	test("renders every rule at once instead of paginating", () => {
+		renderGrid(6);
+
+		expect(allRuleRows()).toHaveLength(6);
+		for (let index = 1; index <= 6; index += 1) {
+			expect(ruleRow(index)).toBeDefined();
+		}
+		expect(screen.queryByRole("navigation")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Next page" })).toBeNull();
+	});
+
+	test("deletes a rule from its own row", () => {
+		const { onChange } = renderGrid(2);
+
+		fireEvent.click(
+			within(ruleRow(1)).getByRole("button", { name: "Delete rule" }),
+		);
+
+		expect(onChange).toHaveBeenCalledTimes(1);
+		const next = onChange.mock.calls[0]?.[0];
+		expect(next?.map((rule) => rule.id)).toEqual(["rule-2"]);
+	});
+
+	test("toggling a rule writes only that rule", () => {
+		const { onChange } = renderGrid(2);
+
+		fireEvent.click(within(ruleRow(2)).getByRole("switch"));
+
+		expect(onChange).toHaveBeenCalledTimes(1);
+		const next = onChange.mock.calls[0]?.[0] ?? [];
+		expect(next.find((rule) => rule.id === "rule-2")?.enabled).toBe(false);
+		expect(next.find((rule) => rule.id === "rule-1")?.enabled).toBe(true);
+	});
+
+	test("shows the empty state when there are no rules", () => {
+		renderGrid(0);
+
+		expect(
+			screen.getByText(
+				"No rules yet. Everything uses the default configuration.",
+			),
+		).toBeDefined();
+		expect(allRuleRows()).toHaveLength(0);
+		expect(screen.getByRole("button", { name: "Add rule" })).toBeDefined();
+	});
+
+	test("closes with the fallback row after the rules and the add affordance", () => {
+		const { container } = renderGrid(2);
+
+		const root = container.firstElementChild;
+		const fallbackRow = root?.lastElementChild;
+		expect(fallbackRow?.textContent).toContain("Everything else");
+		expect(fallbackRow?.textContent).toContain("Default profile");
+		// `Node.DOCUMENT_POSITION_FOLLOWING` (4): the fallback row comes after both
+		// the last rule and the add affordance, so it reads as the catch-all.
+		const addButton = screen.getByRole("button", { name: "Add rule" });
+		expect(
+			ruleRow(2).compareDocumentPosition(addButton) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeGreaterThan(0);
+		expect(
+			addButton.compareDocumentPosition(fallbackRow as Node) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeGreaterThan(0);
+	});
+
+	// Keyed on the rule id the native side resolved, NOT on the foreground exe:
+	// the exe here belongs to no row at all, and the pill still lands on rule-2.
+	// Matching by exe lit up every row sharing it (two title-scoped rules for the
+	// same browser) and no row at all for a title- or url-only rule.
+	test("pins the active-rule pill to the rule the broadcast names", () => {
+		const configuration = BUILTIN_CONFIGURATIONS[0];
+		if (!configuration) {
+			throw new Error("Expected a built-in configuration");
+		}
+		useAppProfileIndicatorStore.getState().show({
+			appExe: "chrome.exe",
+			configurationName: configuration.name,
+			ruleId: "rule-2",
+		});
+		renderGrid(3);
+
+		// Queried by text, not by accessible name: `status` is not a
+		// name-from-content role, so `getByRole("status", { name: … })` never
+		// matches this pill even though the text is right there.
+		expect(within(ruleRow(2)).getByRole("status").textContent).toBe(
+			"Active now",
+		);
+		expect(within(ruleRow(1)).queryByText("Active now")).toBeNull();
+		expect(within(ruleRow(3)).queryByText("Active now")).toBeNull();
+		expect(screen.getAllByText("Active now")).toHaveLength(1);
+
+		act(() => {
+			useAppProfileIndicatorStore.getState().clear();
+		});
+		expect(screen.queryByText("Active now")).toBeNull();
+	});
+
+	// Two rules on the SAME executable, told apart only by their window-title
+	// matcher. The distinction was visible but never in an accessible name, so
+	// both rows announced as "Per-app rule for chrome.exe" — and both lit up as
+	// active when either fired.
+	test("keeps same-app rules addressable and pins the pill to the one that fired", () => {
+		const configuration = BUILTIN_CONFIGURATIONS[0];
+		if (!configuration) {
+			throw new Error("Expected a built-in configuration");
+		}
+		const rules: AppProfileRule[] = [
+			{ ...profileRule(1), appExe: "chrome.exe", titlePattern: "Gmail" },
+			{ ...profileRule(2), appExe: "chrome.exe", titlePattern: "GitHub" },
+		];
+		useAppProfileIndicatorStore.getState().show({
+			appExe: "chrome.exe",
+			configurationName: configuration.name,
+			ruleId: "rule-2",
+		});
+		render(
+			<IntlProvider>
+				<AppProfileRulesGrid
+					apps={[RUNNING_APP]}
+					configurations={[...BUILTIN_CONFIGURATIONS]}
+					enabled={true}
+					fallback="Default profile"
+					onChange={() => undefined}
+					rules={rules}
+				/>
+			</IntlProvider>,
+		);
+
+		const gmail = screen.getByRole("group", {
+			name: "Per-app rule for chrome.exe — chrome.exe · title contains “Gmail”",
+		});
+		const github = screen.getByRole("group", {
+			name: "Per-app rule for chrome.exe — chrome.exe · title contains “GitHub”",
+		});
+		expect(within(github).getByRole("status").textContent).toBe("Active now");
+		expect(within(gmail).queryByText("Active now")).toBeNull();
+	});
+
+	// Two clicks on "Add rule" used to seed the same executable twice, producing
+	// two rules with nothing — not even an accessible name — to tell them apart.
+	test("seeds a new rule with an app no existing rule claims", () => {
+		const onChange = mock((_rules: AppProfileRule[]) => undefined);
+		const secondApp = {
+			exe: "code.exe",
+			icon: null,
+			id: "code.exe",
+			label: "Editor",
+			title: null,
+		};
+		render(
+			<IntlProvider>
+				<AppProfileRulesGrid
+					apps={[RUNNING_APP, secondApp]}
+					configurations={[...BUILTIN_CONFIGURATIONS]}
+					enabled={true}
+					fallback="Default profile"
+					onChange={onChange}
+					rules={[{ ...profileRule(1), appExe: RUNNING_APP.exe }]}
+				/>
+			</IntlProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+
+		const next = onChange.mock.calls[0]?.[0] ?? [];
+		expect(next[1]?.appExe).toBe(secondApp.exe);
 	});
 
 	test("uses the selection-only preset combobox with navigation arrows", () => {
@@ -172,8 +371,11 @@ describe("AppProfileRulesGrid", () => {
 			</IntlProvider>,
 		);
 
+		// Derived, not hardcoded: the shipped list grows (and "Default" was later
+		// prepended to head it), so naming an entry here would break on every
+		// addition without testing anything about the combobox.
 		expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe(
-			"AI Prompt",
+			BUILTIN_CONFIGURATIONS[0]?.name ?? "",
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Next preset" }));
 		expect(onSelect).toHaveBeenCalledWith(BUILTIN_CONFIGURATIONS[1]?.id);
@@ -211,26 +413,5 @@ describe("AppProfileRulesGrid", () => {
 		expect(reconciled?.config).toEqual(
 			configSnapshotFromSavedConfiguration(nextConfiguration.config),
 		);
-	});
-
-	test("paginates profile rules at five rows per page", () => {
-		renderGrid(6);
-
-		const grid = screen.getByRole("grid", { name: "Data grid" });
-		const pagination = screen.getByRole("navigation", {
-			name: "Page 1 of 2",
-		});
-		// Five data rows plus the grid's add-row footer.
-		expect(grid.getAttribute("aria-rowcount")).toBe("6");
-
-		fireEvent.click(
-			within(pagination).getByRole("button", { name: "Next page" }),
-		);
-
-		// One data row plus the same add-row footer.
-		expect(grid.getAttribute("aria-rowcount")).toBe("2");
-		expect(
-			screen.getByRole("navigation", { name: "Page 2 of 2" }),
-		).toBeDefined();
 	});
 });

@@ -5,6 +5,7 @@ export {
 	CLOUD_PROVIDERS,
 	type CloudModel,
 	defaultCloudModelId,
+	getApiKeyPrefix,
 	getApiKeyUrl,
 	isCloudModelId,
 	providerDisplayName,

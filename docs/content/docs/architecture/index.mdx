@@ -59,12 +59,12 @@ type-checked end-to-end by [`tauri-specta`](https://github.com/specta-rs/tauri-s
     families, `ort` device policy), audio + VAD, TTS, and the threading model.
   </Card>
   <Card title="Frontend Architecture" href="/docs/architecture/frontend">
-    The Tauri WebView renderer, the native-bridge adapter that maps IPC calls onto Tauri,
+    The Tauri WebView renderer, the native boundary that carries calls and events,
     Feature-Sliced Design layers, the multi-window setup, and state management.
   </Card>
   <Card title="IPC: Commands" href="/docs/architecture/ipc">
     How the renderer reaches Rust — `#[tauri::command]` functions, the generated `bindings.ts`,
-    the `COMMAND_INVOKERS` map, and the command catalog by category.
+    the command registry, and the command catalog by category.
   </Card>
   <Card title="Events" href="/docs/architecture/events">
     Everything Rust pushes to the UI — typed `tauri-specta` payloads and high-frequency plain

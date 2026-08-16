@@ -1,0 +1,1728 @@
+{
+  "$schema": "./settings-controls.manifest.schema.json",
+  "version": 1,
+  "description": "Static, semantic inventory of every settings tab. rawControlBaseline is an informational DOM-drift smoke signal and is not the authoritative control count.",
+  "tabOrder": [
+    "recording",
+    "model",
+    "processing",
+    "vocabulary",
+    "output",
+    "readAloud",
+    "shortcuts",
+    "appearance",
+    "history",
+    "integrations",
+    "about"
+  ],
+  "nonInteractivePaths": [
+    {
+      "path": "llm.timeout",
+      "reason": "Runtime request deadline; no settings-window control is exposed."
+    },
+    {
+      "path": "model.initialPromptRealtime",
+      "reason": "Internal realtime prompt mirror; the settings window exposes the main prompt only."
+    },
+    {
+      "path": "quality.initRealtimeAfterSeconds",
+      "reason": "Internal realtime startup threshold with no settings-window control."
+    },
+    {
+      "path": "audio.sileroSensitivityByDeviceName",
+      "reason": "Automatically maintained per-device calibration cache, not a direct field."
+    },
+    {
+      "path": "general.onboarded",
+      "reason": "Onboarding state, not editable from Settings."
+    },
+    {
+      "path": "general.onboardedAt",
+      "reason": "Onboarding audit metadata, not editable from Settings."
+    },
+    {
+      "path": "general.onboardedTrack",
+      "reason": "Onboarding audit metadata, not editable from Settings."
+    },
+    {
+      "path": "general.sendCrashReports",
+      "reason": "Deprecated compatibility leaf; the inert upload toggle was removed."
+    },
+    {
+      "path": "audio.bufferSize",
+      "reason": "Compatibility/runtime-internal audio field with no settings-window control."
+    },
+    {
+      "path": "audio.extraRecordingBufferMs",
+      "reason": "Runtime-internal audio field with no settings-window control."
+    },
+    {
+      "path": "audio.minGapBetweenRecordings",
+      "reason": "Compatibility audio field with no settings-window control."
+    },
+    {
+      "path": "audio.preRecordingBufferDuration",
+      "reason": "Compatibility audio field with no settings-window control."
+    },
+    {
+      "path": "audio.sampleRate",
+      "reason": "Recorder-owned sample rate with no settings-window control."
+    },
+    {
+      "path": "audio.sileroUseOnnx",
+      "reason": "Compatibility engine-selection field with no settings-window control."
+    },
+    {
+      "path": "quality.earlyTranscriptionOnSilence",
+      "reason": "Reserved realtime tuning field with no settings-window control."
+    }
+  ],
+  "tabs": [
+    {
+      "id": "recording",
+      "label": "Recording",
+      "rawControlBaseline": { "observed": 43, "minimum": 20 },
+      "smokeSelectors": [{ "role": "heading", "name": "Recording Mode" }],
+      "items": [
+        {
+          "id": "recording-mode",
+          "kind": "control",
+          "label": "Recording Mode",
+          "selector": { "role": "button", "name": "Push to Talk" },
+          "settingsPaths": ["general.recordingMode"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "manual-toggle-stop",
+          "kind": "control",
+          "label": "Manual stop",
+          "selector": { "role": "switch", "name": "Manual stop" },
+          "settingsPaths": ["general.manualToggleStop"],
+          "availability": "toggle-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "toggle-silence-stop",
+          "kind": "control",
+          "label": "Post-speech silence",
+          "selector": { "role": "slider", "name": "Post-speech silence" },
+          "settingsPaths": ["audio.postSpeechSilenceDuration"],
+          "availability": "toggle-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "listen-capture-microphone",
+          "kind": "control",
+          "label": "Capture microphone",
+          "selector": { "role": "switch", "name": "Capture microphone" },
+          "settingsPaths": ["general.listenCaptureMicrophone"],
+          "availability": "listen-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "wake-word",
+          "kind": "control",
+          "label": "Wake word",
+          "selector": { "role": "combobox", "name": "Wake word" },
+          "settingsPaths": ["general.wakeWord", "general.customWakeWords"],
+          "availability": "wakeword-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "wake-word-sensitivity",
+          "kind": "control",
+          "label": "Wake word sensitivity",
+          "selector": { "role": "slider", "name": "Wake word sensitivity" },
+          "settingsPaths": ["general.wakeWordSensitivity"],
+          "availability": "wakeword-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "wake-word-timeout",
+          "kind": "control",
+          "label": "Wake word timeout",
+          "selector": { "role": "slider", "name": "Wake word timeout" },
+          "settingsPaths": ["general.wakeWordTimeout"],
+          "availability": "wakeword-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingModeSection.tsx"
+        },
+        {
+          "id": "wakeword-download",
+          "kind": "action",
+          "label": "Download and enable",
+          "selector": { "role": "button", "name": "Download and enable" },
+          "settingsPaths": [],
+          "availability": "wakeword-dialog",
+          "safety": "native-side-effect",
+          "source": "src/widgets/recording-settings/ui/WakewordDownload.tsx"
+        },
+        {
+          "id": "input-device",
+          "kind": "control",
+          "label": "Device",
+          "selector": { "role": "button", "name": "Device" },
+          "settingsPaths": [
+            "audio.inputDeviceIndex",
+            "audio.inputDevicePriority"
+          ],
+          "availability": "default",
+          "safety": "native-query",
+          "source": "src/widgets/recording-settings/ui/InputDeviceSection.tsx"
+        },
+        {
+          "id": "clamshell-microphone",
+          "kind": "control",
+          "label": "Clamshell microphone",
+          "selector": { "role": "button", "name": "Clamshell microphone" },
+          "settingsPaths": ["audio.clamshellMicrophone"],
+          "availability": "default",
+          "safety": "native-query",
+          "source": "src/widgets/recording-settings/ui/InputDeviceSection.tsx"
+        },
+        {
+          "id": "recording-sound",
+          "kind": "control",
+          "label": "Recording Sound",
+          "selector": { "role": "switch", "name": "Toggle Recording Sound" },
+          "settingsPaths": ["general.recordingSound"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/RecordingSoundSection.tsx"
+        },
+        {
+          "id": "sound-library",
+          "kind": "control",
+          "label": "Sound library",
+          "selector": { "role": "button", "name": "Add sound" },
+          "settingsPaths": [
+            "general.recordingSoundPath",
+            "general.recordingSoundLibrary"
+          ],
+          "availability": "recording-sound-enabled",
+          "safety": "native-file-dialog",
+          "source": "src/features/recording-sound"
+        },
+        {
+          "id": "vad-silero",
+          "kind": "control",
+          "label": "Silero sensitivity",
+          "selector": { "role": "slider", "name": "Silero sensitivity" },
+          "settingsPaths": [
+            "audio.sileroDeactivityDetection",
+            "audio.sileroSensitivity"
+          ],
+          "availability": "listen-or-wakeword",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/VadSection.tsx"
+        },
+        {
+          "id": "vad-webrtc",
+          "kind": "control",
+          "label": "WebRTC sensitivity",
+          "selector": { "role": "slider", "name": "WebRTC sensitivity" },
+          "settingsPaths": ["audio.webrtcSensitivity"],
+          "availability": "listen-or-wakeword",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/VadSection.tsx"
+        },
+        {
+          "id": "vad-post-speech",
+          "kind": "control",
+          "label": "Post-speech silence",
+          "selector": { "role": "spinbutton", "name": "Post-speech silence" },
+          "settingsPaths": ["audio.postSpeechSilenceDuration"],
+          "availability": "listen-or-wakeword",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/VadSection.tsx"
+        },
+        {
+          "id": "smart-endpoint",
+          "kind": "control",
+          "label": "Smart Endpoint",
+          "selector": { "role": "switch", "name": "Toggle Smart Endpoint" },
+          "settingsPaths": ["quality.smartEndpoint"],
+          "availability": "realtime-toggle-or-wakeword",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/SmartEndpointSection.tsx"
+        },
+        {
+          "id": "smart-endpoint-speed",
+          "kind": "control",
+          "label": "Detection Speed",
+          "selector": { "role": "spinbutton", "name": "Detection Speed" },
+          "settingsPaths": ["quality.smartEndpointSpeed"],
+          "availability": "smart-endpoint-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/SmartEndpointSection.tsx"
+        },
+        {
+          "id": "sentence-pauses",
+          "kind": "control",
+          "label": "Sentence Pauses",
+          "selector": { "role": "heading", "name": "Sentence Pauses" },
+          "settingsPaths": [
+            "quality.endOfSentenceDetectionPause",
+            "quality.unknownSentenceDetectionPause",
+            "quality.midSentenceDetectionPause"
+          ],
+          "availability": "silence-endpoint-mode",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/SentencePauseSection.tsx"
+        },
+        {
+          "id": "microphone-release",
+          "kind": "control",
+          "label": "Release Microphone",
+          "selector": { "role": "button", "name": "Release Microphone" },
+          "settingsPaths": ["audio.microphoneRelease"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/recording-settings/ui/AdvancedEndpointSection.tsx"
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "label": "Transcription",
+      "rawControlBaseline": { "observed": 43, "minimum": 15 },
+      "smokeSelectors": [{ "role": "heading", "name": "Main Model" }],
+      "items": [
+        {
+          "id": "stt-source",
+          "kind": "control",
+          "label": "Source",
+          "selector": { "role": "button", "name": "Local" },
+          "settingsPaths": ["model.model"],
+          "availability": "cloud-key-dependent",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/MainModelSection.tsx"
+        },
+        {
+          "id": "main-model",
+          "kind": "control",
+          "label": "Model",
+          "selector": { "role": "button", "name": "Model" },
+          "settingsPaths": ["model.model", "model.onnxQuantization"],
+          "availability": "default",
+          "safety": "native-model-manager",
+          "source": "src/widgets/model-settings/ui/MainModelSection.tsx"
+        },
+        {
+          "id": "spoken-language-auto",
+          "kind": "control",
+          "label": "Auto-detect language",
+          "selector": { "role": "switch", "name": "Auto-detect language" },
+          "settingsPaths": [
+            "model.autoDetectLanguage",
+            "model.language",
+            "model.languageCandidates"
+          ],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/MainModelSection.tsx"
+        },
+        {
+          "id": "spoken-language",
+          "kind": "control",
+          "label": "Spoken Language",
+          "selector": { "role": "combobox", "name": "Spoken Language" },
+          "settingsPaths": ["model.language", "model.languageCandidates"],
+          "availability": "manual-language",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/MainModelSection.tsx"
+        },
+        {
+          "id": "translate",
+          "kind": "control",
+          "label": "Translate To",
+          "selector": { "role": "switch", "name": "Enable translation" },
+          "settingsPaths": ["model.translateTargetLanguage"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/MainModelSection.tsx"
+        },
+        {
+          "id": "model-unload-timeout",
+          "kind": "control",
+          "label": "Unload model",
+          "selector": { "role": "combobox", "name": "Unload model" },
+          "settingsPaths": ["global.modelUnloadTimeout"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/model-settings-sections.tsx"
+        },
+        {
+          "id": "compute-device",
+          "kind": "control",
+          "label": "Compute Device",
+          "selector": { "role": "button", "name": "Auto" },
+          "settingsPaths": ["model.device"],
+          "availability": "local-model",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/model-settings-sections.tsx"
+        },
+        {
+          "id": "speaker-diarization",
+          "kind": "control",
+          "label": "Speaker diarization",
+          "selector": {
+            "role": "switch",
+            "name": "Toggle Speaker diarization"
+          },
+          "settingsPaths": ["general.speakerDiarization"],
+          "availability": "compatible-model",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/model-settings-sections.tsx"
+        },
+        {
+          "id": "realtime-model",
+          "kind": "control",
+          "label": "Realtime Model",
+          "selector": { "role": "combobox", "name": "Realtime Model" },
+          "settingsPaths": [
+            "model.realtimeModel",
+            "quality.useMainModelForRealtime"
+          ],
+          "availability": "default",
+          "safety": "native-model-manager",
+          "source": "src/widgets/model-settings/ui/RealtimeModelSection.tsx"
+        },
+        {
+          "id": "realtime-language",
+          "kind": "control",
+          "label": "Realtime Language",
+          "selector": { "role": "switch", "name": "Auto-detect language" },
+          "settingsPaths": ["model.realtimeLanguage"],
+          "availability": "realtime-model-selected",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/RealtimeModelSection.tsx"
+        },
+        {
+          "id": "realtime-update-interval",
+          "kind": "control",
+          "label": "Update Interval",
+          "selector": { "role": "spinbutton", "name": "Update Interval" },
+          "settingsPaths": ["quality.realtimeProcessingPause"],
+          "availability": "realtime-model-selected",
+          "safety": "local-setting",
+          "source": "src/widgets/model-settings/ui/RealtimeModelSection.tsx"
+        },
+        {
+          "id": "model-download",
+          "kind": "action",
+          "label": "Download model",
+          "selector": { "role": "button", "name": "Download" },
+          "settingsPaths": [],
+          "availability": "model-picker",
+          "safety": "native-download",
+          "source": "src/features/model-download"
+        },
+        {
+          "id": "model-delete",
+          "kind": "action",
+          "label": "Delete model",
+          "selector": { "role": "button", "name": "Delete" },
+          "settingsPaths": [],
+          "availability": "downloaded-model",
+          "safety": "destructive-native",
+          "source": "src/features/model-download"
+        }
+      ]
+    },
+    {
+      "id": "processing",
+      "label": "Processing",
+      "rawControlBaseline": { "observed": 21, "minimum": 14 },
+      "smokeSelectors": [{ "role": "heading", "name": "LLM Post-Processing" }],
+      "items": [
+        {
+          "id": "post-processing",
+          "kind": "control",
+          "label": "LLM Post-Processing",
+          "selector": { "role": "switch", "name": "Toggle post-processing" },
+          "settingsPaths": ["llm.dictation.enabled", "llm.transforms.enabled"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/LlmSettingsPanel.tsx"
+        },
+        {
+          "id": "processing-playground",
+          "kind": "action",
+          "label": "Playground",
+          "selector": { "role": "button", "name": "Playground" },
+          "settingsPaths": [],
+          "availability": "post-processing-enabled",
+          "safety": "native-llm-request",
+          "source": "src/widgets/llm-settings/ui/LlmSettingsPanel.tsx"
+        },
+        {
+          "id": "dictation-source",
+          "kind": "control",
+          "label": "Dictation source",
+          "selector": { "role": "button", "name": "Local" },
+          "settingsPaths": ["llm.dictation.provider"],
+          "availability": "dictation-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/FeatureBlock.tsx"
+        },
+        {
+          "id": "dictation-model",
+          "kind": "control",
+          "label": "Dictation model",
+          "selector": { "role": "combobox", "name": "Model" },
+          "settingsPaths": [
+            "llm.dictation.model",
+            "llm.dictation.openrouterModel",
+            "llm.dictation.openrouterFallbackModel"
+          ],
+          "availability": "dictation-enabled",
+          "safety": "native-model-manager",
+          "source": "src/widgets/llm-settings/ui/provider-sections.tsx"
+        },
+        {
+          "id": "dictation-thinking",
+          "kind": "control",
+          "label": "Thinking effort",
+          "selector": { "role": "group", "name": "Thinking effort" },
+          "settingsPaths": [
+            "llm.dictation.thinkingEffort",
+            "llm.dictation.reasoningEffort",
+            "llm.dictation.verbosity",
+            "llm.dictation.maxOutputTokens"
+          ],
+          "availability": "model-capability-dependent",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/provider-sections.tsx"
+        },
+        {
+          "id": "dictionary-auto-add",
+          "kind": "control",
+          "label": "Auto-add dictionary words",
+          "selector": { "role": "switch", "name": "Auto-add dictionary words" },
+          "settingsPaths": ["llm.dictation.dictionaryAutoAddEnabled"],
+          "availability": "dictation-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/provider-sections.tsx"
+        },
+        {
+          "id": "dictation-tone",
+          "kind": "control",
+          "label": "Tone",
+          "selector": { "role": "button", "name": "Natural" },
+          "settingsPaths": ["llm.dictation.presets"],
+          "availability": "dictation-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/modifier-presets.tsx"
+        },
+        {
+          "id": "dictation-modifiers",
+          "kind": "control",
+          "label": "Modifiers",
+          "selector": { "role": "checkbox", "name": "Modifiers" },
+          "settingsPaths": [
+            "llm.dictation.presets",
+            "llm.dictation.customModifiers"
+          ],
+          "availability": "dictation-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/modifier-presets.tsx"
+        },
+        {
+          "id": "custom-modifier-editor",
+          "kind": "action",
+          "label": "Add modifier",
+          "selector": { "role": "button", "name": "Add modifier" },
+          "settingsPaths": [
+            "llm.dictation.customModifiers",
+            "llm.transforms.customModifiers",
+            "llm.readAloud.customModifiers"
+          ],
+          "availability": "modifier-section",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/modifier-presets.tsx"
+        },
+        {
+          "id": "transforms-source",
+          "kind": "control",
+          "label": "Text transformation source",
+          "selector": { "role": "button", "name": "Local" },
+          "settingsPaths": ["llm.transforms.provider"],
+          "availability": "transforms-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/FeatureBlock.tsx"
+        },
+        {
+          "id": "transforms-model",
+          "kind": "control",
+          "label": "Text transformation model",
+          "selector": { "role": "combobox", "name": "Model" },
+          "settingsPaths": [
+            "llm.transforms.model",
+            "llm.transforms.openrouterModel",
+            "llm.transforms.openrouterFallbackModel"
+          ],
+          "availability": "transforms-enabled",
+          "safety": "native-model-manager",
+          "source": "src/widgets/llm-settings/ui/provider-sections.tsx"
+        },
+        {
+          "id": "openrouter-transform-tuning",
+          "kind": "control",
+          "label": "OpenRouter transformation tuning",
+          "selector": { "role": "group", "name": "Reasoning" },
+          "settingsPaths": [
+            "llm.transforms.thinkingEffort",
+            "llm.transforms.reasoningEffort",
+            "llm.transforms.verbosity",
+            "llm.transforms.maxOutputTokens"
+          ],
+          "availability": "playground-openrouter-model-capability",
+          "safety": "playground-setting",
+          "source": "src/widgets/llm-settings/ui/ReasoningControls.tsx"
+        },
+        {
+          "id": "transform-presets",
+          "kind": "control",
+          "label": "Text transformation presets",
+          "selector": { "role": "checkbox", "name": "Modifiers" },
+          "settingsPaths": [
+            "llm.transforms.presets",
+            "llm.transforms.customModifiers",
+            "llm.transforms.prompts"
+          ],
+          "availability": "transforms-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/modifier-presets.tsx"
+        },
+        {
+          "id": "read-aloud-modifiers",
+          "kind": "control",
+          "label": "Read aloud",
+          "selector": { "role": "switch", "name": "Toggle Read aloud" },
+          "settingsPaths": [
+            "llm.readAloud.enabled",
+            "llm.readAloud.presets",
+            "llm.readAloud.customModifiers"
+          ],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/ReadAloudModifiersSection.tsx"
+        },
+        {
+          "id": "app-profiles",
+          "kind": "control",
+          "label": "Per-app profiles",
+          "selector": { "role": "button", "name": "Add rule" },
+          "settingsPaths": ["llm.appProfiles.rules"],
+          "availability": "post-processing-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/AppProfileRulesSection.tsx"
+        },
+        {
+          "id": "context-awareness",
+          "kind": "control",
+          "label": "Context awareness",
+          "selector": { "role": "switch", "name": "Context awareness" },
+          "settingsPaths": ["general.contextAwareness"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/processing-extras/ui/ProcessingExtrasPanel.tsx"
+        },
+        {
+          "id": "context-scope",
+          "kind": "control",
+          "label": "Context scope",
+          "selector": { "role": "button", "name": "Context scope" },
+          "settingsPaths": [
+            "general.contextAppMode",
+            "general.contextAllowList",
+            "general.contextDenyList"
+          ],
+          "availability": "context-enabled",
+          "safety": "native-app-query",
+          "source": "src/widgets/processing-extras/ui/ProcessingExtrasPanel.tsx"
+        },
+        {
+          "id": "context-screen-ocr",
+          "kind": "control",
+          "label": "Screen text (OCR) fallback",
+          "selector": {
+            "role": "switch",
+            "name": "Screen text (OCR) fallback"
+          },
+          "settingsPaths": ["general.contextScreenOcr"],
+          "availability": "context-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/processing-extras/ui/ProcessingExtrasPanel.tsx"
+        },
+        {
+          "id": "model-assistance",
+          "kind": "control",
+          "label": "Model Assistance",
+          "selector": { "role": "heading", "name": "Model Assistance" },
+          "settingsPaths": [
+            "model.initialPrompt",
+            "quality.formatBasicPunctuationCasing",
+            "quality.formatSpokenCommands",
+            "quality.formatFillerRepeatCleanup"
+          ],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/processing-extras/ui/ProcessingExtrasPanel.tsx"
+        },
+        {
+          "id": "formatting-rules",
+          "kind": "control",
+          "label": "Rules",
+          "selector": {
+            "role": "checkbox",
+            "name": "Basic punctuation and casing"
+          },
+          "settingsPaths": [
+            "quality.formatBasicPunctuationCasing",
+            "quality.formatSpokenCommands",
+            "quality.formatFillerRepeatCleanup"
+          ],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/processing-extras/ui/ProcessingExtrasPanel.tsx"
+        }
+      ]
+    },
+    {
+      "id": "vocabulary",
+      "label": "Vocabulary",
+      "rawControlBaseline": { "observed": 74, "minimum": 15 },
+      "smokeSelectors": [
+        { "role": "heading", "name": "Dictionary" },
+        { "role": "heading", "name": "Snippets" }
+      ],
+      "items": [
+        {
+          "id": "ai-dictionary-handling",
+          "kind": "control",
+          "label": "Dictionary corrections by AI",
+          "selector": {
+            "role": "switch",
+            "name": "Dictionary corrections by AI"
+          },
+          "settingsPaths": ["general.llmHandlesDictionary"],
+          "availability": "llm-cleanup-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/dictionary-settings/ui/AiHandlingSection.tsx"
+        },
+        {
+          "id": "ai-snippet-handling",
+          "kind": "control",
+          "label": "Snippet expansion by AI",
+          "selector": { "role": "switch", "name": "Snippet expansion by AI" },
+          "settingsPaths": ["general.llmHandlesSnippets"],
+          "availability": "llm-cleanup-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/dictionary-settings/ui/AiHandlingSection.tsx"
+        },
+        {
+          "id": "encoder-model-enabled",
+          "kind": "control",
+          "label": "On-device dictionary model",
+          "selector": {
+            "role": "switch",
+            "name": "On-device dictionary model"
+          },
+          "settingsPaths": ["general.encoderDictionaryEnabled"],
+          "availability": "non-llm-dictionary",
+          "safety": "native-model-load",
+          "source": "src/widgets/dictionary-settings/ui/EncoderModelCard.tsx"
+        },
+        {
+          "id": "encoder-download",
+          "kind": "action",
+          "label": "Download",
+          "selector": { "role": "button", "name": "Download" },
+          "settingsPaths": [],
+          "availability": "encoder-absent",
+          "safety": "native-download",
+          "source": "src/widgets/dictionary-settings/ui/EncoderModelCard.tsx"
+        },
+        {
+          "id": "encoder-delete",
+          "kind": "action",
+          "label": "Delete",
+          "selector": { "role": "button", "name": "Delete" },
+          "settingsPaths": [],
+          "availability": "encoder-present",
+          "safety": "destructive-native",
+          "source": "src/widgets/dictionary-settings/ui/EncoderModelCard.tsx"
+        },
+        {
+          "id": "dictionary-context",
+          "kind": "control",
+          "label": "Context around each word",
+          "selector": { "role": "slider", "name": "Context around each word" },
+          "settingsPaths": ["general.dictionaryContextChars"],
+          "availability": "encoder-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/dictionary-settings/ui/DictionaryContextControl.tsx"
+        },
+        {
+          "id": "dictionary-grid",
+          "kind": "control",
+          "label": "Dictionary",
+          "selector": { "role": "grid", "name": "Dictionary" },
+          "settingsPaths": ["dictionary"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/dictionary-settings/ui/DictionaryTable.tsx"
+        },
+        {
+          "id": "dictionary-add-row",
+          "kind": "action",
+          "label": "Add row",
+          "selector": { "role": "button", "name": "Add row" },
+          "settingsPaths": ["dictionary"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/shared/ui/data-grid"
+        },
+        {
+          "id": "dictionary-delete-selected",
+          "kind": "action",
+          "label": "Delete selected",
+          "selector": { "role": "button", "name": "Delete selected" },
+          "settingsPaths": ["dictionary"],
+          "availability": "dictionary-selection",
+          "safety": "local-destructive",
+          "source": "src/shared/ui/data-grid"
+        },
+        {
+          "id": "dictionary-auto-add-accept",
+          "kind": "action",
+          "label": "Accept suggested term",
+          "selector": { "role": "button", "name": "Accept" },
+          "settingsPaths": ["dictionary"],
+          "availability": "suggestion-present",
+          "safety": "local-setting",
+          "source": "src/widgets/dictionary-settings/ui/AutoAddSuggestions.tsx"
+        },
+        {
+          "id": "dictionary-auto-add-decline",
+          "kind": "action",
+          "label": "Decline suggested term",
+          "selector": { "role": "button", "name": "Decline" },
+          "settingsPaths": [],
+          "availability": "suggestion-present",
+          "safety": "local-setting",
+          "source": "src/widgets/dictionary-settings/ui/AutoAddSuggestions.tsx"
+        },
+        {
+          "id": "snippets-grid",
+          "kind": "control",
+          "label": "Snippets",
+          "selector": { "role": "grid", "name": "Snippets" },
+          "settingsPaths": ["snippets"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/snippets-settings/ui/SnippetsTable.tsx"
+        },
+        {
+          "id": "snippet-add-row",
+          "kind": "action",
+          "label": "Add row",
+          "selector": { "role": "button", "name": "Add row" },
+          "settingsPaths": ["snippets"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/shared/ui/data-grid"
+        },
+        {
+          "id": "snippet-delete-selected",
+          "kind": "action",
+          "label": "Delete selected",
+          "selector": { "role": "button", "name": "Delete selected" },
+          "settingsPaths": ["snippets"],
+          "availability": "snippet-selection",
+          "safety": "local-destructive",
+          "source": "src/shared/ui/data-grid"
+        }
+      ]
+    },
+    {
+      "id": "output",
+      "label": "Output",
+      "rawControlBaseline": { "observed": 15, "minimum": 10 },
+      "smokeSelectors": [
+        { "role": "heading", "name": "Paste Behavior" },
+        { "role": "heading", "name": "Playback Routing" }
+      ],
+      "items": [
+        {
+          "id": "auto-submit",
+          "kind": "control",
+          "label": "Auto-Submit After Paste",
+          "selector": { "role": "switch", "name": "Auto-Submit After Paste" },
+          "settingsPaths": ["general.autoSubmit"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "auto-submit-key",
+          "kind": "control",
+          "label": "Submit Key",
+          "selector": { "role": "button", "name": "Enter" },
+          "settingsPaths": ["general.autoSubmitKey"],
+          "availability": "auto-submit-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "preview-before-paste",
+          "kind": "control",
+          "label": "Preview Before Pasting",
+          "selector": { "role": "switch", "name": "Preview Before Pasting" },
+          "settingsPaths": ["general.previewBeforePasting"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "word-by-word",
+          "kind": "control",
+          "label": "Word-by-Word Pasting",
+          "selector": { "role": "switch", "name": "Word-by-Word Pasting" },
+          "settingsPaths": ["general.wordByWordPasting"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "file-formats",
+          "kind": "control",
+          "label": "Format",
+          "selector": { "role": "combobox", "name": "Format" },
+          "settingsPaths": ["general.fileTranscriptionFormats"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "file-save-location",
+          "kind": "control",
+          "label": "Save location",
+          "selector": { "role": "button", "name": "Save location" },
+          "settingsPaths": ["general.fileTranscriptionSaveLocation"],
+          "availability": "format-selected",
+          "safety": "native-file-dialog",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "output-device",
+          "kind": "control",
+          "label": "Output Device",
+          "selector": { "role": "button", "name": "Output Device" },
+          "settingsPaths": [
+            "general.outputDeviceId",
+            "general.loopbackDeviceIndex"
+          ],
+          "availability": "default",
+          "safety": "native-query",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "system-audio-reduction",
+          "kind": "control",
+          "label": "System Audio",
+          "selector": { "role": "slider", "name": "Mute system audio" },
+          "settingsPaths": ["general.systemAudioReductionWhileDictating"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        }
+      ]
+    },
+    {
+      "id": "readAloud",
+      "label": "Read Aloud",
+      "rawControlBaseline": { "observed": 27, "minimum": 18 },
+      "smokeSelectors": [{ "role": "heading", "name": "Text-to-Speech" }],
+      "items": [
+        {
+          "id": "tts-enabled",
+          "kind": "control",
+          "label": "Text-to-Speech",
+          "selector": { "role": "switch", "name": "Toggle Text-to-Speech" },
+          "settingsPaths": ["tts.enabled"],
+          "availability": "default",
+          "safety": "native-model-load",
+          "source": "src/widgets/tts-settings/ui/TtsModelSection.tsx"
+        },
+        {
+          "id": "tts-source",
+          "kind": "control",
+          "label": "Source",
+          "selector": { "role": "button", "name": "Local" },
+          "settingsPaths": ["tts.source", "tts.cloud.provider"],
+          "availability": "tts-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/TtsModelSection.tsx"
+        },
+        {
+          "id": "tts-model",
+          "kind": "control",
+          "label": "Model",
+          "selector": { "role": "combobox", "name": "Model" },
+          "settingsPaths": [
+            "tts.model",
+            "tts.quantization",
+            "tts.cloud.model",
+            "tts.cloud.openrouterModel"
+          ],
+          "availability": "tts-enabled",
+          "safety": "native-model-manager",
+          "source": "src/widgets/tts-settings/ui/TtsModelSection.tsx"
+        },
+        {
+          "id": "tts-voice",
+          "kind": "control",
+          "label": "Voice",
+          "selector": { "role": "combobox", "name": "Voice" },
+          "settingsPaths": [
+            "tts.voice",
+            "tts.cloud.voice",
+            "tts.cloud.openrouterVoice"
+          ],
+          "availability": "tts-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/TtsControls.tsx"
+        },
+        {
+          "id": "tts-language",
+          "kind": "control",
+          "label": "Language",
+          "selector": { "role": "combobox", "name": "Language" },
+          "settingsPaths": ["tts.lang"],
+          "availability": "tts-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/TtsControls.tsx"
+        },
+        {
+          "id": "tts-speed",
+          "kind": "control",
+          "label": "Speed",
+          "selector": { "role": "slider", "name": "Speed" },
+          "settingsPaths": ["tts.speed", "tts.cloud.speed"],
+          "availability": "tts-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/TtsControls.tsx"
+        },
+        {
+          "id": "tts-preview",
+          "kind": "action",
+          "label": "Preview voice",
+          "selector": { "role": "button", "name": "Preview voice" },
+          "settingsPaths": [],
+          "availability": "tts-model-ready",
+          "safety": "native-audio",
+          "source": "src/widgets/tts-settings/ui/TtsPreviewButton.tsx"
+        },
+        {
+          "id": "voice-field",
+          "kind": "control",
+          "label": "Voice",
+          "selector": { "role": "combobox", "name": "Select or name a voice…" },
+          "settingsPaths": ["tts.cloneRefText", "tts.voice"],
+          "availability": "clone-or-design-capable-model",
+          "safety": "destructive-native",
+          "source": "src/widgets/tts-settings/ui/VoiceField.tsx"
+        },
+        {
+          "id": "voice-instruct",
+          "kind": "control",
+          "label": "Voice instructions",
+          "selector": { "role": "button", "name": "Voice instructions" },
+          "settingsPaths": ["tts.voiceInstruct"],
+          "availability": "instruct-capable-model",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/VoiceDesignField.tsx"
+        },
+        {
+          "id": "inline-tags",
+          "kind": "control",
+          "label": "Inline tags",
+          "selector": { "role": "switch", "name": "Inline tags" },
+          "settingsPaths": ["tts.inlineTags"],
+          "availability": "tag-capable-model",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/InlineTagsField.tsx"
+        },
+        {
+          "id": "cloud-stability",
+          "kind": "control",
+          "label": "Stability",
+          "selector": { "role": "slider", "name": "Stability" },
+          "settingsPaths": ["tts.cloud.stability"],
+          "availability": "elevenlabs-cloud",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/CloudTtsControls.tsx"
+        },
+        {
+          "id": "cloud-similarity",
+          "kind": "control",
+          "label": "Similarity",
+          "selector": { "role": "slider", "name": "Similarity" },
+          "settingsPaths": ["tts.cloud.similarity"],
+          "availability": "elevenlabs-cloud",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/CloudTtsControls.tsx"
+        },
+        {
+          "id": "cloud-style",
+          "kind": "control",
+          "label": "Style",
+          "selector": { "role": "slider", "name": "Style" },
+          "settingsPaths": ["tts.cloud.style"],
+          "availability": "elevenlabs-cloud",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/CloudTtsControls.tsx"
+        },
+        {
+          "id": "cloud-speaker-boost",
+          "kind": "control",
+          "label": "Speaker boost",
+          "selector": { "role": "switch", "name": "Speaker boost" },
+          "settingsPaths": ["tts.cloud.speakerBoost"],
+          "availability": "elevenlabs-cloud",
+          "safety": "local-setting",
+          "source": "src/widgets/tts-settings/ui/CloudTtsControls.tsx"
+        },
+        {
+          "id": "tts-install",
+          "kind": "action",
+          "label": "Install",
+          "selector": { "role": "button", "name": "Install" },
+          "settingsPaths": [],
+          "availability": "local-engine-absent",
+          "safety": "native-download",
+          "source": "src/widgets/tts-settings/ui/TtsInstallBanner.tsx"
+        },
+        {
+          "id": "tts-install-pause",
+          "kind": "action",
+          "label": "Pause install",
+          "selector": { "role": "button", "name": "Pause install" },
+          "settingsPaths": [],
+          "availability": "install-in-progress",
+          "safety": "native-download",
+          "source": "src/widgets/tts-settings/ui/TtsInstallBanner.tsx"
+        },
+        {
+          "id": "tts-install-cancel",
+          "kind": "action",
+          "label": "Cancel install",
+          "selector": { "role": "button", "name": "Cancel install" },
+          "settingsPaths": [],
+          "availability": "install-in-progress",
+          "safety": "native-download",
+          "source": "src/widgets/tts-settings/ui/TtsInstallBanner.tsx"
+        }
+      ]
+    },
+    {
+      "id": "shortcuts",
+      "label": "Shortcuts",
+      "rawControlBaseline": { "observed": 18, "minimum": 12 },
+      "smokeSelectors": [{ "role": "heading", "name": "Hotkey Configuration" }],
+      "items": [
+        {
+          "id": "push-to-talk-hotkey",
+          "kind": "control",
+          "label": "Push-to-Talk Key",
+          "selector": { "role": "button", "name": "Push-to-Talk Key" },
+          "settingsPaths": ["hotkey.pushToTalkKey"],
+          "availability": "default",
+          "safety": "native-hotkey",
+          "source": "src/widgets/shortcuts-settings/ui/ShortcutsSettingsPanel.tsx"
+        },
+        {
+          "id": "repaste-hotkey",
+          "kind": "control",
+          "label": "Re-paste Key",
+          "selector": { "role": "button", "name": "Re-paste Key" },
+          "settingsPaths": ["general.repasteHotkey"],
+          "availability": "default",
+          "safety": "native-hotkey",
+          "source": "src/widgets/shortcuts-settings/ui/ShortcutsSettingsPanel.tsx"
+        },
+        {
+          "id": "read-aloud-hotkey",
+          "kind": "control",
+          "label": "Read aloud shortcut",
+          "selector": { "role": "button", "name": "Read aloud shortcut" },
+          "settingsPaths": ["tts.hotkey"],
+          "availability": "tts-enabled",
+          "safety": "native-hotkey",
+          "source": "src/widgets/shortcuts-settings/ui/ShortcutsSettingsPanel.tsx"
+        },
+        {
+          "id": "profile-swap-hotkey",
+          "kind": "control",
+          "label": "Post processing profile swap",
+          "selector": {
+            "role": "button",
+            "name": "Post processing profile swap"
+          },
+          "settingsPaths": ["llm.profileSwapHotkey"],
+          "availability": "post-processing-enabled",
+          "safety": "native-hotkey",
+          "source": "src/widgets/shortcuts-settings/ui/ShortcutsSettingsPanel.tsx"
+        },
+        {
+          "id": "transform-hotkey",
+          "kind": "control",
+          "label": "Text transformation",
+          "selector": { "role": "button", "name": "Text transformation" },
+          "settingsPaths": ["llm.transforms.hotkey"],
+          "availability": "transforms-enabled",
+          "safety": "native-hotkey",
+          "source": "src/widgets/shortcuts-settings/ui/ShortcutsSettingsPanel.tsx"
+        },
+        {
+          "id": "shortcut-legend",
+          "kind": "control",
+          "label": "During dictation",
+          "selector": { "role": "group", "name": "During dictation" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "assert-only",
+          "source": "src/widgets/shortcuts-settings/ui/HotkeyShortcutsLegend.tsx"
+        }
+      ]
+    },
+    {
+      "id": "appearance",
+      "label": "Appearance",
+      "rawControlBaseline": { "observed": 16, "minimum": 11 },
+      "smokeSelectors": [
+        { "role": "heading", "name": "Display" },
+        { "role": "slider", "name": "Bar Count" }
+      ],
+      "items": [
+        {
+          "id": "display-language",
+          "kind": "control",
+          "label": "Display Language",
+          "selector": { "role": "combobox", "name": "Display Language" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/DisplayControls.tsx"
+        },
+        {
+          "id": "visualizer-style",
+          "kind": "control",
+          "label": "Visualizer Style",
+          "selector": { "role": "button", "name": "Bars" },
+          "settingsPaths": ["general.visualizerType"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/DisplayControls.tsx"
+        },
+        {
+          "id": "visualizer-bar-count",
+          "kind": "control",
+          "label": "Bar Count",
+          "selector": { "role": "slider", "name": "Bar Count" },
+          "settingsPaths": ["general.visualizerBarCount"],
+          "availability": "bar-visualizer",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/VisualizerShapeControls.tsx"
+        },
+        {
+          "id": "visualizer-radial",
+          "kind": "control",
+          "label": "Radial controls",
+          "selector": { "role": "slider", "name": "Dot count" },
+          "settingsPaths": [
+            "general.visualizerRadialDotCount",
+            "general.visualizerRadialRadius"
+          ],
+          "availability": "radial-visualizer",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/VisualizerShapeControls.tsx"
+        },
+        {
+          "id": "visualizer-grid",
+          "kind": "control",
+          "label": "Grid controls",
+          "selector": { "role": "slider", "name": "Grid rows" },
+          "settingsPaths": [
+            "general.visualizerGridRows",
+            "general.visualizerGridColumns",
+            "general.visualizerGridSpeed"
+          ],
+          "availability": "grid-visualizer",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/VisualizerShapeControls.tsx"
+        },
+        {
+          "id": "visualizer-wave",
+          "kind": "control",
+          "label": "Wave controls",
+          "selector": { "role": "slider", "name": "Line width" },
+          "settingsPaths": [
+            "general.visualizerWaveLineWidth",
+            "general.visualizerWaveSmoothing",
+            "general.visualizerWaveColorShift"
+          ],
+          "availability": "wave-visualizer",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/VisualizerShapeControls.tsx"
+        },
+        {
+          "id": "visualizer-aura",
+          "kind": "control",
+          "label": "Aura controls",
+          "selector": { "role": "button", "name": "Aura shape" },
+          "settingsPaths": [
+            "general.visualizerAuraShape",
+            "general.visualizerAuraBlur",
+            "general.visualizerAuraBloom",
+            "general.visualizerAuraColorShift"
+          ],
+          "availability": "aura-visualizer",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/VisualizerShapeControls.tsx"
+        },
+        {
+          "id": "recording-overlay",
+          "kind": "control",
+          "label": "Recording overlay",
+          "selector": { "role": "slider", "name": "Recording overlay" },
+          "settingsPaths": [
+            "general.showRecordingOverlay",
+            "general.visualizerSize"
+          ],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/DisplayControls.tsx"
+        },
+        {
+          "id": "overlay-layout",
+          "kind": "control",
+          "label": "Overlay layout",
+          "selector": { "role": "button", "name": "Floating bottom" },
+          "settingsPaths": ["general.overlayMode", "general.overlayPosition"],
+          "availability": "overlay-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/DisplayControls.tsx"
+        },
+        {
+          "id": "live-transcription-in-app",
+          "kind": "control",
+          "label": "In app",
+          "selector": { "role": "checkbox", "name": "In app" },
+          "settingsPaths": ["general.liveTranscriptionDisplay"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/DisplayControls.tsx"
+        },
+        {
+          "id": "live-transcription-pill",
+          "kind": "control",
+          "label": "In recording pill",
+          "selector": { "role": "checkbox", "name": "In recording pill" },
+          "settingsPaths": ["general.liveTranscriptionDisplay"],
+          "availability": "realtime-compatible",
+          "safety": "local-setting",
+          "source": "src/widgets/appearance-settings/ui/DisplayControls.tsx"
+        }
+      ]
+    },
+    {
+      "id": "history",
+      "label": "History",
+      "rawControlBaseline": { "observed": 26, "minimum": 12 },
+      "smokeSelectors": [
+        { "role": "heading", "name": "Transcription history" },
+        { "role": "heading", "name": "History" }
+      ],
+      "items": [
+        {
+          "id": "history-enabled",
+          "kind": "control",
+          "label": "Transcription history",
+          "selector": {
+            "role": "switch",
+            "name": "Toggle Transcription history"
+          },
+          "settingsPaths": ["general.historyEnabled"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryLimitsSection.tsx"
+        },
+        {
+          "id": "history-max-entries",
+          "kind": "control",
+          "label": "Max History Entries",
+          "selector": { "role": "spinbutton", "name": "Max History Entries" },
+          "settingsPaths": ["general.historyMaxEntries"],
+          "availability": "history-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryLimitsSection.tsx"
+        },
+        {
+          "id": "recording-retention",
+          "kind": "control",
+          "label": "Recording Retention",
+          "selector": { "role": "button", "name": "Recording Retention" },
+          "settingsPaths": ["general.recordingRetention"],
+          "availability": "history-enabled",
+          "safety": "local-setting",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryLimitsSection.tsx"
+        },
+        {
+          "id": "history-search",
+          "kind": "control",
+          "label": "Search history",
+          "selector": { "role": "searchbox", "name": "Search history" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "local-query",
+          "source": "src/widgets/transcription-history-settings/ui/HistorySearchInput.tsx"
+        },
+        {
+          "id": "history-filter",
+          "kind": "control",
+          "label": "Filter history",
+          "selector": { "role": "button", "name": "Filter history" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "local-query",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryFiltersMenu.tsx"
+        },
+        {
+          "id": "history-playback",
+          "kind": "action",
+          "label": "Play recording",
+          "selector": { "role": "button", "name": "Play" },
+          "settingsPaths": [],
+          "availability": "row-with-audio",
+          "safety": "native-audio",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryRowButtons.tsx"
+        },
+        {
+          "id": "history-copy",
+          "kind": "action",
+          "label": "Copy",
+          "selector": { "role": "button", "name": "Copy" },
+          "settingsPaths": [],
+          "availability": "history-row",
+          "safety": "native-clipboard",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryRowButtons.tsx"
+        },
+        {
+          "id": "history-view-original",
+          "kind": "action",
+          "label": "View original",
+          "selector": { "role": "button", "name": "View original" },
+          "settingsPaths": [],
+          "availability": "processed-row",
+          "safety": "assert-only",
+          "source": "src/widgets/transcription-history-settings/ui/RowTranscript.tsx"
+        },
+        {
+          "id": "history-clear",
+          "kind": "action",
+          "label": "Clear history",
+          "selector": { "role": "button", "name": "Clear history" },
+          "settingsPaths": [],
+          "availability": "history-data",
+          "safety": "destructive-native",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryTableSection.tsx"
+        },
+        {
+          "id": "history-delete-all",
+          "kind": "action",
+          "label": "Delete all data",
+          "selector": { "role": "button", "name": "Delete all data" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "destructive-native",
+          "source": "src/widgets/transcription-history-settings/ui/HistoryLimitsSection.tsx"
+        },
+        {
+          "id": "heatmap-previous",
+          "kind": "action",
+          "label": "Previous month",
+          "selector": { "role": "button", "name": "Previous month" },
+          "settingsPaths": [],
+          "availability": "history-data",
+          "safety": "local-query",
+          "source": "src/widgets/transcription-history-settings/ui/ActivityHeatmap.tsx"
+        },
+        {
+          "id": "heatmap-next",
+          "kind": "action",
+          "label": "Next month",
+          "selector": { "role": "button", "name": "Next month" },
+          "settingsPaths": [],
+          "availability": "history-data",
+          "safety": "local-query",
+          "source": "src/widgets/transcription-history-settings/ui/ActivityHeatmap.tsx"
+        }
+      ]
+    },
+    {
+      "id": "integrations",
+      "label": "Integrations",
+      "rawControlBaseline": { "observed": 16, "minimum": 11 },
+      "smokeSelectors": [
+        { "role": "heading", "name": "Language Models (LLM)" },
+        { "role": "heading", "name": "Cloud Speech-to-Text" }
+      ],
+      "items": [
+        {
+          "id": "ollama-endpoint",
+          "kind": "control",
+          "label": "Ollama endpoint",
+          "selector": { "role": "textbox", "name": "Ollama endpoint" },
+          "settingsPaths": ["llm.endpoint"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/integrations-settings/ui/LlmIntegrationSection.tsx"
+        },
+        {
+          "id": "openrouter-key",
+          "kind": "control",
+          "label": "OpenRouter API Key",
+          "selector": { "role": "textbox", "name": "OpenRouter API Key" },
+          "settingsPaths": ["llm.openrouterApiKey"],
+          "availability": "default",
+          "safety": "secret-native-verify",
+          "source": "src/widgets/integrations-settings/ui/LlmIntegrationSection.tsx"
+        },
+        {
+          "id": "openrouter-get-key",
+          "kind": "action",
+          "label": "Get API key",
+          "selector": { "role": "button", "name": "Get API key" },
+          "settingsPaths": [],
+          "availability": "no-openrouter-key",
+          "safety": "external-link",
+          "source": "src/widgets/integrations-settings/ui/LlmIntegrationSection.tsx"
+        },
+        {
+          "id": "openrouter-remove-key",
+          "kind": "action",
+          "label": "Remove key",
+          "selector": { "role": "button", "name": "Remove key" },
+          "settingsPaths": ["llm.openrouterApiKey"],
+          "availability": "openrouter-key-present",
+          "safety": "secret-destructive",
+          "source": "src/widgets/integrations-settings/ui/LlmIntegrationSection.tsx"
+        },
+        {
+          "id": "elevenlabs-key",
+          "kind": "control",
+          "label": "ElevenLabs API Key",
+          "selector": { "role": "textbox", "name": "ElevenLabs API Key" },
+          "settingsPaths": [
+            "integrations.elevenlabs.apiKey",
+            "integrations.elevenlabs.verified",
+            "integrations.elevenlabs.lastVerifiedAt"
+          ],
+          "availability": "default",
+          "safety": "secret-native-verify",
+          "source": "src/features/verify-credentials"
+        },
+        {
+          "id": "elevenlabs-get-key",
+          "kind": "action",
+          "label": "Get API key",
+          "selector": { "role": "button", "name": "Get API key" },
+          "settingsPaths": [],
+          "availability": "no-elevenlabs-key",
+          "safety": "external-link",
+          "source": "src/features/verify-credentials"
+        },
+        {
+          "id": "elevenlabs-remove-key",
+          "kind": "action",
+          "label": "Remove key",
+          "selector": { "role": "button", "name": "Remove key" },
+          "settingsPaths": ["integrations.elevenlabs.apiKey"],
+          "availability": "elevenlabs-key-present",
+          "safety": "secret-destructive",
+          "source": "src/features/verify-credentials"
+        }
+      ]
+    },
+    {
+      "id": "about",
+      "label": "About",
+      "rawControlBaseline": { "observed": 13, "minimum": 9 },
+      "smokeSelectors": [
+        { "role": "heading", "name": "WinSTT" },
+        { "role": "heading", "name": "Diagnostics" },
+        { "role": "heading", "name": "Reset settings" }
+      ],
+      "items": [
+        {
+          "id": "check-updates",
+          "kind": "action",
+          "label": "Check now",
+          "selector": { "role": "button", "name": "Check now" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "native-network",
+          "source": "src/widgets/about-settings/ui/UpdatesSection.tsx"
+        },
+        {
+          "id": "prerelease-updates",
+          "kind": "control",
+          "label": "Receive pre-release updates",
+          "selector": {
+            "role": "switch",
+            "name": "Receive pre-release updates"
+          },
+          "settingsPaths": ["general.receivePrereleaseUpdates"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/about-settings/ui/UpdatesSection.tsx"
+        },
+        {
+          "id": "start-on-login",
+          "kind": "control",
+          "label": "Start on login",
+          "selector": { "role": "switch", "name": "Start on login" },
+          "settingsPaths": [
+            "general.autoStart",
+            "general.startMinimized",
+            "general.minimizeToTray"
+          ],
+          "availability": "default",
+          "safety": "native-os-setting",
+          "source": "src/widgets/about-settings/ui/StartupSection.tsx"
+        },
+        {
+          "id": "open-logs",
+          "kind": "action",
+          "label": "Open Logs Folder",
+          "selector": { "role": "button", "name": "Open Logs Folder" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "native-os-action",
+          "source": "src/widgets/about-settings/ui/DiagnosticsSection.tsx"
+        },
+        {
+          "id": "save-diagnostics",
+          "kind": "action",
+          "label": "Save Diagnostic Bundle",
+          "selector": { "role": "button", "name": "Save Diagnostic Bundle" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "native-file-dialog",
+          "source": "src/widgets/about-settings/ui/DiagnosticsSection.tsx"
+        },
+        {
+          "id": "live-logs-start",
+          "kind": "action",
+          "label": "Start",
+          "selector": { "role": "button", "name": "Start" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "native-log-stream",
+          "source": "src/widgets/about-settings/ui/LiveDebugLogViewer.tsx"
+        },
+        {
+          "id": "live-logs-pause",
+          "kind": "action",
+          "label": "Pause",
+          "selector": { "role": "button", "name": "Pause" },
+          "settingsPaths": [],
+          "availability": "log-stream-live",
+          "safety": "native-log-stream",
+          "source": "src/widgets/about-settings/ui/LiveDebugLogViewer.tsx"
+        },
+        {
+          "id": "live-logs-copy",
+          "kind": "action",
+          "label": "Copy",
+          "selector": { "role": "button", "name": "Copy" },
+          "settingsPaths": [],
+          "availability": "log-output",
+          "safety": "native-clipboard",
+          "source": "src/widgets/about-settings/ui/LiveDebugLogViewer.tsx"
+        },
+        {
+          "id": "export-settings",
+          "kind": "action",
+          "label": "Export settings",
+          "selector": { "role": "button", "name": "Export settings" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "native-file-dialog",
+          "source": "src/widgets/about-settings/ui/SettingsTransferSection.tsx"
+        },
+        {
+          "id": "import-settings",
+          "kind": "action",
+          "label": "Import settings",
+          "selector": { "role": "button", "name": "Import settings" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "native-file-dialog",
+          "source": "src/widgets/about-settings/ui/SettingsTransferSection.tsx"
+        },
+        {
+          "id": "remove-stt-data",
+          "kind": "action",
+          "label": "Remove STT models",
+          "selector": { "role": "button", "name": "Remove STT models" },
+          "settingsPaths": [],
+          "availability": "data-present",
+          "safety": "destructive-native",
+          "source": "src/widgets/about-settings/ui/AppDataUsageBreakdown.tsx"
+        },
+        {
+          "id": "remove-downloaded-models",
+          "kind": "action",
+          "label": "Remove downloaded models",
+          "selector": { "role": "button", "name": "Remove downloaded models" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "destructive-native",
+          "source": "src/widgets/about-settings/ui/ResetSection.tsx"
+        },
+        {
+          "id": "remove-application-data",
+          "kind": "action",
+          "label": "Remove application data",
+          "selector": { "role": "button", "name": "Remove application data" },
+          "settingsPaths": [],
+          "availability": "default",
+          "safety": "destructive-native",
+          "source": "src/widgets/about-settings/ui/ResetSection.tsx"
+        },
+        {
+          "id": "reset-defaults",
+          "kind": "action",
+          "label": "Reset Defaults",
+          "selector": { "role": "button", "name": "Reset Defaults" },
+          "settingsPaths": ["*"],
+          "availability": "default",
+          "safety": "local-destructive",
+          "source": "src/widgets/about-settings/ui/ResetSection.tsx"
+        }
+      ]
+    }
+  ]
+}

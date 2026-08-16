@@ -37,9 +37,9 @@ export function swapQuantTransition(
 	return { from: currentQuantization, to: quantization };
 }
 
-/** The default/auto precision sentinel. Always a valid selection for any model —
- *  it ships with every catalog entry and the server re-resolves it per model
- *  (e.g. NeMo / parakeet → int8). */
+/** The concrete default-file precision sentinel. It ships with every catalog
+ *  entry. The separate persisted `"auto"` selection is also universal and the
+ *  server re-resolves it per model (e.g. NeMo / parakeet → int8). */
 const DEFAULT_QUANTIZATION: OnnxQuantization = "";
 export function buildAtomicSwitchRequest(
 	args: IssueSwapArgs,
@@ -87,9 +87,9 @@ function dispatchAtomicMainSwitch(
 /** True when ``info`` ships ``quantization`` (or it's the universal default). */
 function modelOffersQuantization(
 	info: NonNullable<ReturnType<GetModelFn>>,
-	quantization: OnnxQuantization,
+	quantization: OnnxQuantization | "auto",
 ): boolean {
-	if (quantization === DEFAULT_QUANTIZATION) {
+	if (quantization === DEFAULT_QUANTIZATION || quantization === "auto") {
 		return true;
 	}
 	const available = info.availableQuantizations;
@@ -110,7 +110,7 @@ function resolveSwapQuantization(
 	info: NonNullable<ReturnType<GetModelFn>>,
 	quantization: OnnxQuantization | undefined,
 	quantizationChanging: boolean,
-	currentQuantization: OnnxQuantization,
+	currentQuantization: OnnxQuantization | "auto",
 ): OnnxQuantization | undefined {
 	if (quantizationChanging) {
 		return quantization;
@@ -125,7 +125,7 @@ export function buildMainSwapPatch(
 	info: NonNullable<ReturnType<GetModelFn>>,
 	quantization: OnnxQuantization | undefined,
 	quantizationChanging: boolean,
-	currentQuantization: OnnxQuantization = DEFAULT_QUANTIZATION,
+	currentQuantization: OnnxQuantization | "auto" = DEFAULT_QUANTIZATION,
 ): UpdatePatch {
 	const patch: UpdatePatch = { model: value };
 	const resolved = resolveSwapQuantization(

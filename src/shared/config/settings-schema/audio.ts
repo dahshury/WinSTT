@@ -9,11 +9,16 @@ export const audioSettingsSchema = z.object({
 	// far-mic speech routinely lives in 0.3–0.6. Per-device adaptive
 	// calibration (`sileroSensitivityByDeviceName` below) adjusts from
 	// this baseline.
-	sileroSensitivity: z.number().min(0).max(1).default(0.7),
+	sileroSensitivity: z.number().min(0).max(1).default(0.7).catch(0.7),
 	sileroUseOnnx: z.boolean().default(false),
 	sileroDeactivityDetection: z.boolean().default(true),
-	webrtcSensitivity: z.number().int().min(0).max(3).default(3),
-	postSpeechSilenceDuration: z.number().default(0.7),
+	webrtcSensitivity: z.number().int().min(0).max(3).default(3).catch(3),
+	postSpeechSilenceDuration: z
+		.number()
+		.min(0.1)
+		.max(10)
+		.default(0.7)
+		.catch(0.7),
 	minGapBetweenRecordings: z.number().default(0),
 	preRecordingBufferDuration: z.number().default(1.0),
 	// Per-device Silero sensitivity, keyed by input-device name. On device
@@ -60,9 +65,6 @@ export const audioSettingsSchema = z.object({
 	//   - "min1"      → same, after 1 minute.
 	//   - "min5"      → same, after 5 minutes.
 	//
-	// At spawn time, `stt-process.ts` derives the three server-side
-	// CLI args from this enum (`--always_on_microphone` flag,
-	// `--lazy_stream_close` flag, `--lazy_close_timeout_seconds N`).
 	// Invalid persisted values use the safe immediate-release default.
 	microphoneRelease: z
 		.enum(["always", "immediate", "sec30", "min1", "min5"])

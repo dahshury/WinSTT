@@ -65,6 +65,7 @@ describe("useSettingsSearchKeywords (real i18n wiring)", () => {
 		const about = kw("about");
 		expect(matchesSearchQuery(about, "export")).toBe(true);
 		expect(matchesSearchQuery(about, "import")).toBe(true);
+		expect(matchesSearchQuery(about, "crash reports")).toBe(false);
 	});
 
 	test("every tab has a non-empty keyword string", () => {

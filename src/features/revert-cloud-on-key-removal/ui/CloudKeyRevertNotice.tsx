@@ -13,7 +13,7 @@ const AUTO_DISMISS_MS = 8000;
 /**
  * Transient confirmation toast surfaced when a removed cloud API key auto-
  * reverted a surface to its local engine (see `useCloudKeyAutoRevert`). Mounted
- * once in `RootLayout` (main window); mirrors `CloudSttErrorToasts` styling but
+ * once in each webview that can initiate a revert; mirrors `CloudSttErrorToasts`
  * reads-stack from the shared `useRevertNoticeStore` since the hook that pushes
  * notices lives in a different subtree. Auto-dismisses after 8s.
  */

@@ -381,6 +381,40 @@ fn type_text_via_xdotool(text: &str) -> Result<(), ClipboardError> {
     Ok(())
 }
 
+/// Build the stdin command lines that type `text` through dotool.
+///
+/// dotool's stdin is a LINE-ORIENTED command protocol ("type <text>", "key <chord>",
+/// "keydown", ... — see `send_key_combo_via_dotool` below), so a bare newline inside
+/// transcript/LLM text would terminate the `type` command and let the remainder be
+/// parsed as further dotool commands, i.e. arbitrary key-chord synthesis. Splitting
+/// into newline-free runs plus explicit Enter presses keeps every byte of `text`
+/// inside a `type` argument and matches the Windows Direct path
+/// (`input::paste_text_unicode`), which already turns line breaks into real Enters.
+/// Pure so the invariant is unit-testable without spawning dotool.
+#[cfg(any(target_os = "linux", test))]
+fn dotool_command_lines(text: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    for op in input::split_paste_ops(text) {
+        match op {
+            input::PasteOp::Text(run) => {
+                // belt and braces: `split_paste_ops` already consumed `\r` and `\n`, so
+                // this drops the residual control bytes (NUL, VT, FF, DEL, C1) dotool
+                // can't type. It also drops TAB, which Rust counts as control — a raw
+                // tab here would synthesize a real Tab keypress and move focus out of
+                // the target field, which is the very escape this function exists to
+                // prevent. The Windows path types tabs literally; dotool has no
+                // primitive for that, so dropping is the conservative divergence.
+                let run: String = run.chars().filter(|c| !c.is_control()).collect();
+                if !run.is_empty() {
+                    lines.push(format!("type {run}"));
+                }
+            }
+            input::PasteOp::LineBreak => lines.push("key enter".to_string()),
+        }
+    }
+    lines
+}
+
 /// Type text directly via dotool (works on both Wayland and X11 via uinput).
 #[cfg(target_os = "linux")]
 fn type_text_via_dotool(text: &str) -> Result<(), ClipboardError> {
@@ -393,9 +427,11 @@ fn type_text_via_dotool(text: &str) -> Result<(), ClipboardError> {
         .map_err(|e| ClipboardError::Tool(format!("Failed to spawn dotool: {}", e)))?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        // dotool uses "type <text>" command
-        writeln!(stdin, "type {}", text)
-            .map_err(|e| ClipboardError::Tool(format!("Failed to write to dotool stdin: {}", e)))?;
+        for line in dotool_command_lines(text) {
+            writeln!(stdin, "{line}").map_err(|e| {
+                ClipboardError::Tool(format!("Failed to write to dotool stdin: {}", e))
+            })?;
+        }
     }
 
     let output = child
@@ -825,7 +861,6 @@ fn paste_inner(
         return Ok(());
     }
 
-    // Get the managed Enigo instance
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or_else(|| ClipboardError::Config("Enigo state not initialized".into()))?;
@@ -841,7 +876,6 @@ fn paste_inner(
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    // Perform the paste operation
     match paste_method {
         PasteMethod::None => unreachable!("PasteMethod::None returned before input synthesis"),
         PasteMethod::Direct => {
@@ -898,7 +932,6 @@ fn paste_inner(
         warn_if_slow_paste_phase("auto_submit", elapsed_ms);
     }
 
-    // After pasting, optionally copy to clipboard based on settings
     if core_settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         let clipboard = app_handle.clipboard();
         let phase_started = Instant::now();
@@ -947,5 +980,53 @@ mod tests {
         assert!(should_send_auto_submit(&settings, PasteMethod::Direct));
         assert!(should_send_auto_submit(&settings, PasteMethod::CtrlShiftV));
         assert!(should_send_auto_submit(&settings, PasteMethod::ShiftInsert));
+    }
+
+    #[test]
+    fn dotool_single_line_text_is_one_type_command() {
+        assert_eq!(
+            dotool_command_lines("hello world"),
+            vec!["type hello world".to_string()]
+        );
+    }
+
+    #[test]
+    fn dotool_multiline_transcript_alternates_type_and_enter() {
+        assert_eq!(
+            dotool_command_lines("Steps:\n1. one\n2. two"),
+            vec![
+                "type Steps:".to_string(),
+                "key enter".to_string(),
+                "type 1. one".to_string(),
+                "key enter".to_string(),
+                "type 2. two".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn dotool_text_can_never_begin_a_command_line() {
+        // dotool's stdin is a line-oriented command protocol, so the invariant is that
+        // no attacker-controlled byte ever starts a line: every emitted line is either a
+        // `type` whose argument is the untrusted run, or our own literal Enter press.
+        let payload = "ok\nkey ctrl+alt+t\ntype pwned\nkey enter";
+        let lines = dotool_command_lines(payload);
+        assert!(!lines.is_empty());
+        for line in &lines {
+            assert!(
+                line == "key enter" || line.starts_with("type "),
+                "line escaped its type argument: {line}"
+            );
+        }
+        // and the injected verbs survive as literal typed text, not as commands
+        assert!(lines.contains(&"type key ctrl+alt+t".to_string()));
+    }
+
+    #[test]
+    fn dotool_strips_residual_control_bytes() {
+        assert_eq!(
+            dotool_command_lines("a\u{0}b\u{b}c"),
+            vec!["type abc".to_string()]
+        );
     }
 }

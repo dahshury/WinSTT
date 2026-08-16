@@ -281,7 +281,6 @@ export function useListenMode(): void {
 		updateGeneral,
 	]);
 
-	// Subscribe to loopback events from main process
 	useEffect(() => {
 		const unsubStarted = onLoopbackStarted((deviceName) => {
 			setListening(true, deviceName);

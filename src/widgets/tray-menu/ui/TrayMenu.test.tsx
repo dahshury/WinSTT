@@ -83,6 +83,8 @@ describe("TrayMenu", () => {
 			).not.toBe(null);
 		}
 
+		// The modes moved behind the "Recording mode" row.
+		fireEvent.click(screen.getByRole("button", { name: /^Recording mode/ }));
 		for (const name of ["PTT", "Toggle", "Listen", "Wake Word"]) {
 			expect(
 				screen.getByRole("button", { name }).querySelector("svg"),
@@ -90,21 +92,71 @@ describe("TrayMenu", () => {
 		}
 	});
 
-	test("renders microphone selection inline", () => {
+	test("recording mode and microphone are drill-down rows", () => {
+		render(
+			<IntlProvider>
+				<TrayMenu />
+			</IntlProvider>,
+		);
+
+		// Both summarise their current value on the root menu...
+		const modeRow = screen.getByRole("button", { name: /^Recording mode/ });
+		expect(modeRow.textContent).toContain("PTT");
+		expect(screen.queryByRole("button", { name: "Toggle" })).toBeNull();
+
+		// ...and open a view with a back button that returns to the menu.
+		fireEvent.click(modeRow);
+		expect(screen.getByRole("button", { name: "Toggle" })).not.toBeNull();
+		expect(screen.queryByRole("button", { name: /^Quit/ })).toBeNull();
+
+		fireEvent.click(screen.getByRole("button", { name: "Back to menu" }));
+		expect(screen.getByRole("button", { name: /^Quit/ })).not.toBeNull();
+	});
+
+	test("Escape backs out of a view before it closes the menu", () => {
+		render(
+			<IntlProvider>
+				<TrayMenu />
+			</IntlProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: /^Recording mode/ }));
+
+		fireEvent.keyDown(window, { key: "Escape" });
+		expect(screen.getByRole("button", { name: /^Quit/ })).not.toBeNull();
+		expect(screen.queryByRole("button", { name: "Toggle" })).toBeNull();
+	});
+
+	test("letter accelerators are inert inside a sub-view", () => {
+		render(
+			<IntlProvider>
+				<TrayMenu />
+			</IntlProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: /^Recording mode/ }));
+
+		// "W" would show the main window from the root menu; the row it belongs
+		// to is not on screen here.
+		fireEvent.keyDown(window, { key: "w" });
+		expect(screen.getByRole("button", { name: "Toggle" })).not.toBeNull();
+	});
+
+	test("microphone selection stays inside the tray window", () => {
 		const { container } = render(
 			<IntlProvider>
 				<TrayMenu />
 			</IntlProvider>,
 		);
 
+		// At rest the device is a summary on its row, not an open control.
 		expect(container.textContent?.match(/System Default/g)?.length ?? 0).toBe(
 			1,
 		);
-		fireEvent.click(screen.getByText("System Default"));
+
+		// Drilling in lists the devices in place — no portalled popup that the
+		// ~192px OS window would clip, and no second window.
+		fireEvent.click(screen.getByRole("button", { name: /^Input Device/ }));
 		expect(openWindowCalls).toHaveLength(0);
-		expect(container.textContent?.match(/System Default/g)?.length ?? 0).toBe(
-			1,
-		);
+		expect(screen.getByRole("group", { name: "Input Device" })).not.toBeNull();
 		expect(container.firstElementChild?.className).toContain("w-[196px]");
 		expect(container.firstElementChild?.className).not.toContain(
 			"flex-row-reverse",

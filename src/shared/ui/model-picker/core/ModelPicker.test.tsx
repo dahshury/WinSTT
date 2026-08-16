@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { ModelPicker } from "./ModelPicker";
 import { scrollModelItemIntoView } from "./model-picker-scroll";
+import { useModelPickerShortcut } from "./model-picker-shortcuts";
 
 const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
 const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
@@ -53,6 +54,10 @@ function domRect(top: number, height: number): DOMRect {
 		x: 0,
 		y: top,
 	} as DOMRect;
+}
+
+function ShortcutLabel({ modelId }: { modelId: string }) {
+	return <span>{useModelPickerShortcut(modelId)}</span>;
 }
 
 describe("ModelPicker popup animation", () => {
@@ -233,5 +238,83 @@ describe("ModelPicker popup animation", () => {
 
 		expect(scrollModelItemIntoView(root, "target")).toBe(true);
 		expect(list.scrollTop).toBe(155);
+	});
+
+	test("Ctrl+1 through Ctrl+9 select models in rendered order", () => {
+		const selected: string[] = [];
+		render(
+			<ModelPicker<string, string | null>
+				inline
+				items={[
+					{ value: "author-a", items: ["one", "two"] },
+					{ value: "author-b", items: ["three"] },
+				]}
+				list={
+					<div>
+						<div data-model-id="download-only">Download only</div>
+						<div data-model-id="three">Three</div>
+						<div data-model-id="one">One</div>
+						<div data-model-id="two">Two</div>
+					</div>
+				}
+				onValueChange={(next) => {
+					if (next) {
+						selected.push(next);
+					}
+				}}
+				trigger={<button type="button">Open</button>}
+			/>,
+		);
+
+		fireEvent.keyDown(window, { ctrlKey: true, key: "1", code: "Digit1" });
+		fireEvent.keyDown(window, { ctrlKey: true, key: "3", code: "Digit3" });
+
+		expect(selected).toEqual(["three", "two"]);
+	});
+
+	test("shows shortcut labels only while Control is held", () => {
+		render(
+			<ModelPicker<string, string | null>
+				inline
+				items={["one"]}
+				list={
+					<div data-model-id="one">
+						One
+						<ShortcutLabel modelId="one" />
+					</div>
+				}
+				trigger={<button type="button">Open</button>}
+			/>,
+		);
+
+		expect(screen.queryByText("Ctrl+1")).toBeNull();
+
+		fireEvent.keyDown(window, { ctrlKey: true, key: "Control" });
+		expect(screen.getByText("Ctrl+1")).toBeDefined();
+
+		fireEvent.keyUp(window, { ctrlKey: false, key: "Control" });
+		expect(screen.queryByText("Ctrl+1")).toBeNull();
+	});
+
+	test("does not bind Ctrl+0 or plain number keys", () => {
+		const selected: string[] = [];
+		render(
+			<ModelPicker<string, string | null>
+				inline
+				items={["one"]}
+				list={<div data-model-id="one">One</div>}
+				onValueChange={(next) => {
+					if (next) {
+						selected.push(next);
+					}
+				}}
+				trigger={<button type="button">Open</button>}
+			/>,
+		);
+
+		fireEvent.keyDown(window, { ctrlKey: true, key: "0", code: "Digit0" });
+		fireEvent.keyDown(window, { key: "1", code: "Digit1" });
+
+		expect(selected).toEqual([]);
 	});
 });

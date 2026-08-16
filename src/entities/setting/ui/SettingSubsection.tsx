@@ -104,10 +104,12 @@ export function SettingSubsection({
 				</div>
 			)}
 			<div
+				aria-disabled={isDisabled || undefined}
 				className={cn(
 					"transition-opacity duration-200 ease-out",
 					isDisabled && "settings-dim pointer-events-none",
 				)}
+				inert={isDisabled ? true : undefined}
 			>
 				{children}
 			</div>

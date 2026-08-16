@@ -40,23 +40,24 @@ use crate::winstt::settings_store::{read_settings, read_settings_raw};
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
 use crate::winstt::tts::local_engines::{
-    CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES, KittenLocalEngine,
-    ORPHEUS_VOICE_INFOS, OrpheusLocalEngine, PiperLocalEngine, QWEN3TTS_VOICES,
-    Qwen3TtsLocalEngine, SPARK_VOICE_INFOS, SUPERTONIC_VOICES, SparkLocalEngine,
-    SupertonicLocalEngine, piper_voice_infos,
+    AUDIO8_VOICES, Audio8LocalEngine, CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES,
+    KittenLocalEngine, NEUTTS_VOICE_INFOS, NeuTtsLocalEngine, OMNIVOICE_VOICES,
+    ORPHEUS_VOICE_INFOS, OmniVoiceLocalEngine, OrpheusLocalEngine, PiperLocalEngine,
+    QWEN3TTS_CUSTOMVOICE_VOICES, QWEN3TTS_VOICES, Qwen3TtsLocalEngine, SPARK_VOICE_INFOS,
+    SUPERTONIC_VOICES, SparkLocalEngine, SupertonicLocalEngine, piper_voice_infos,
 };
 use crate::winstt::tts::phonemize::{
     ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, EspeakCliPhonemizer, Phonemizer,
     ensure_espeak_runtime, espeak_runtime_available, espeak_runtime_pack,
 };
+use crate::winstt::tts::qwen3_tts::Qwen3TtsVoiceMode;
 use crate::winstt::tts::supertonic::SUPERTONIC_LANGUAGES;
 use crate::winstt::tts::{
     CloudVoiceSettings, DEFAULT_MAX_SENTENCE_LEN, ELEVENLABS_SUBSCRIPTION_URL,
     ELEVENLABS_VOICES_URL, ElevenLabsEngine, KOKORO_VOICE_CATALOG, KokoroLocalEngine,
     LocalTtsConfig, OpenRouterTtsEngine, SUPPORTED_LANGUAGES, SynthesisChunk, TtsDevice, TtsEngine,
-    TtsError, TtsResult, TtsSource, VoiceInfo, clamp_cloud_speed, clamp_speed,
-    clamp_speed_to_range, classify_cloud_status, parse_cloud_voices, parse_detail_status,
-    split_sentences,
+    TtsError, TtsResult, TtsSource, VoiceInfo, clamp_cloud_speed, clamp_speed_to_range,
+    classify_cloud_status, parse_cloud_voices, parse_detail_status, split_sentences,
 };
 
 mod chunk_sink;
@@ -157,6 +158,18 @@ fn tts_engine_key(source: TtsSource, fingerprint: &str) -> String {
 /// when it's a concrete pick the model actually publishes, else the catalog
 /// default. Shared by the engine build and the asset-ensure so the files that
 /// get downloaded are the files that get loaded (only Qwen3-TTS ships a ladder).
+/// How a Qwen3-TTS catalog row reads `tts.voice`. The VoiceDesign checkpoint has no
+/// preset bank (`voice_design: true`, `num_voices: 0`) and treats it as an instruct
+/// prompt; every other Qwen3-TTS row is a CustomVoice checkpoint whose `voice` names one
+/// of its preset timbres. Driven off the catalog facets so a future checkpoint needs no
+/// code change here.
+fn qwen3_tts_voice_mode(model_id: &str) -> Qwen3TtsVoiceMode {
+    match catalog::find(model_id) {
+        Some(entry) if entry.voice_design => Qwen3TtsVoiceMode::DesignPrompt,
+        _ => Qwen3TtsVoiceMode::PresetSpeaker,
+    }
+}
+
 fn resolve_selected_quant(model_id: &str, settings_quant: &str) -> String {
     match catalog::find(model_id) {
         Some(entry) if !settings_quant.is_empty() && entry.quant(settings_quant).is_some() => {
@@ -283,13 +296,17 @@ impl Drop for ActiveTtsUseGuard<'_> {
 
 impl TtsManager {
     pub fn new(app: &AppHandle) -> Self {
-        // Default to a local Kokoro engine; the first real call reloads from
-        // settings (source + voice + key) via `ensure_engine`.
+        // Start with a placeholder local Kokoro engine; the first real call
+        // reloads source/voice/key via `ensure_engine`. Live speed is different:
+        // the hotkey reads the atomic directly, so seed it from persisted settings.
         let engine: Arc<dyn TtsEngine> =
             Arc::new(KokoroLocalEngine::new(LocalTtsConfig::default()));
+        let persisted = read_settings_raw(app);
         let idle_unload_timeout = crate::winstt::commands::settings::core_timeout_from_winstt(
-            read_settings_raw(app).global.model_unload_timeout,
+            persisted.global.model_unload_timeout,
         );
+        let current_speed =
+            clamp_speed_to_range(Self::configured_speed_from(&persisted), (0.4, 2.0));
         Self {
             app: app.clone(),
             active: Mutex::new(ActiveEngine {
@@ -300,7 +317,7 @@ impl TtsManager {
             cancelled: CancelRegistry::new(),
             seq: AtomicU64::new(1),
             synth_lock: Mutex::new(()),
-            current_speed: AtomicU32::new(1.0_f32.to_bits()),
+            current_speed: AtomicU32::new(current_speed.to_bits()),
             active_reads: AtomicU32::new(0),
             last_used_at: Mutex::new(Instant::now()),
             idle_unload_timeout: crate::settings::AtomicModelUnloadTimeout::new(
@@ -324,13 +341,28 @@ impl TtsManager {
     /// UPCOMING sentences and to every subsequent read until changed. The store
     /// write (`tts.speed` / `tts.cloud.speed`) is the settings command's job.
     pub fn set_speed(&self, speed: f32) {
-        self.current_speed
-            .store(clamp_speed(speed).to_bits(), Ordering::Relaxed);
+        // Store the union of local engine ranges. The active engine performs the
+        // final per-sentence clamp below; pre-clamping to Kokoro's 0.5 floor made
+        // Supertonic's supported 0.4 setting unreachable from the hotkey path.
+        self.current_speed.store(
+            clamp_speed_to_range(speed, (0.4, 2.0)).to_bits(),
+            Ordering::Relaxed,
+        );
     }
 
     /// The live read-aloud speed sampled by `read_aloud` per sentence.
     pub fn current_speed(&self) -> f32 {
         f32::from_bits(self.current_speed.load(Ordering::Relaxed))
+    }
+
+    /// Speed persisted for the currently selected source. The read-aloud hotkey
+    /// samples `current_speed`, so startup and settings-save paths must seed it
+    /// from this exact source-specific field rather than always starting at 1.0.
+    pub(crate) fn configured_speed_from(settings: &WinsttSettings) -> f32 {
+        match settings.tts.source {
+            SettingsTtsSource::Local => settings.tts.speed as f32,
+            SettingsTtsSource::Cloud => settings.tts.cloud.speed as f32,
+        }
     }
 
     pub fn start_idle_watcher(self: &Arc<Self>) {
@@ -505,9 +537,27 @@ impl TtsManager {
         (s.llm.openrouter_api_key, s.tts.cloud.openrouter_model)
     }
 
+    /// Change-detector for a cloud credential. The fingerprint below is logged
+    /// (engine swap at INFO / warm-up lines) and lands in the shareable diagnostic
+    /// bundle, so the key itself must never appear in it — same discipline as
+    /// `settings_transfer::redact_secret`. A truncated digest is enough: the
+    /// fingerprint is only ever compared for equality, in memory, within one
+    /// process (`ActiveEngine.fingerprint` + the `lifecycle` warm map), so it is
+    /// never persisted and needs no migration.
+    fn secret_tag(key: &str) -> String {
+        let key = key.trim();
+        if key.is_empty() {
+            return "nokey".to_string();
+        }
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(key.as_bytes());
+        digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+    }
+
     /// Fingerprint the engine-relevant settings so `ensure_engine` rebuilds only
-    /// when the source / key / model / device / quant actually changes (voice/lang/
-    /// speed are passed per-call to the engine, so they don't force a rebuild).
+    /// when construction-time inputs actually change. Local voice/lang/speed and
+    /// cloud voice/speed are passed per call. ElevenLabs tuning parameters are
+    /// captured by the engine constructor, so they are part of its fingerprint.
     fn engine_fingerprint_from(settings: &WinsttSettings) -> (TtsSource, String) {
         let device_tag = match settings.model.device {
             DeviceType::Cpu => "cpu",
@@ -521,25 +571,35 @@ impl TtsManager {
                 // empty quant, leaving their fingerprint unchanged. `clone_ref_text` is
                 // included so editing a Spark clone reference transcript rebuilds the
                 // engine (it's a construction-time field); empty for every other engine,
-                // so their fingerprint is unaffected.
+                // so their fingerprint is unaffected. `voice_instruct` likewise, for the
+                // rows whose prompt carries a dedicated instruct span (OmniVoice).
                 format!(
-                    "local|{}|{device_tag}|{}|{}",
-                    settings.tts.model, settings.tts.quantization, settings.tts.clone_ref_text
+                    "local|{}|{device_tag}|{}|{}|{}",
+                    settings.tts.model,
+                    settings.tts.quantization,
+                    settings.tts.clone_ref_text,
+                    settings.tts.voice_instruct
                 ),
             ),
             SettingsTtsSource::Cloud => match effective_cloud_provider(settings) {
                 TtsCloudProvider::Elevenlabs => (
                     TtsSource::Cloud,
                     format!(
-                        "cloud|elevenlabs|{}|{}",
-                        settings.integrations.elevenlabs.api_key, settings.tts.cloud.model
+                        "cloud|elevenlabs|{}|{}|{}|{}|{}|{}",
+                        Self::secret_tag(&settings.integrations.elevenlabs.api_key),
+                        settings.tts.cloud.model,
+                        settings.tts.cloud.stability,
+                        settings.tts.cloud.similarity,
+                        settings.tts.cloud.style,
+                        settings.tts.cloud.speaker_boost
                     ),
                 ),
                 TtsCloudProvider::Openrouter => (
                     TtsSource::Cloud,
                     format!(
                         "cloud|openrouter|{}|{}",
-                        settings.llm.openrouter_api_key, settings.tts.cloud.openrouter_model
+                        Self::secret_tag(&settings.llm.openrouter_api_key),
+                        settings.tts.cloud.openrouter_model
                     ),
                 ),
             },
@@ -571,15 +631,22 @@ impl TtsManager {
             Some(TtsEngineId::Supertonic) => {
                 Arc::new(SupertonicLocalEngine::new(self.model_cache_dir(&model_id)))
             }
-            Some(TtsEngineId::Chatterbox) => {
-                Arc::new(ChatterboxLocalEngine::new(self.model_cache_dir(&model_id)))
-            }
+            // Chatterbox (multilingual / turbo / nano): the persisted `tts.quantization`
+            // picks the rung; the per-graph filenames for that rung come from the catalog
+            // (each export quantizes its four graphs independently — nano mixes three
+            // precisions in one set).
+            Some(TtsEngineId::Chatterbox) => Arc::new(ChatterboxLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                &model_id,
+                &resolve_selected_quant(&model_id, &settings.tts.quantization),
+            )),
             // Qwen3-TTS Voice Design: the persisted `tts.quantization` selects the
             // weights precision (int4|fp16|fp32); empty falls back to the catalog's
             // default quant (int4). The engine treats `tts.voice` as the design prompt.
             Some(TtsEngineId::Qwen3Tts) => Arc::new(Qwen3TtsLocalEngine::new(
                 self.model_cache_dir(&model_id),
                 resolve_selected_quant(&model_id, &settings.tts.quantization),
+                qwen3_tts_voice_mode(&model_id),
             )),
             // Orpheus (3B Llama → SNAC) + Spark (Qwen0.5B → BiCodec): CPU-pinned LLM-codec
             // engines that load their ONNX from the per-model cache dir populated by the
@@ -588,6 +655,30 @@ impl TtsManager {
                 Arc::new(OrpheusLocalEngine::new(self.model_cache_dir(&model_id)))
             }
             Some(TtsEngineId::Spark) => Arc::new(SparkLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                settings.tts.clone_ref_text.clone(),
+            )),
+            // NeuTTS-2e (Qwen3 → NeuCodec): the persisted `tts.quantization` picks the rung
+            // (int8|fp32), which selects BOTH the backbone graph and the matching NeuCodec
+            // decoder. `tts.voice` is a `{speaker}-{emotion}` id.
+            Some(TtsEngineId::NeuTts) => Arc::new(NeuTtsLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                resolve_selected_quant(&model_id, &settings.tts.quantization),
+            )),
+            // OmniVoice: single fp32 rung, so no quant plumbing. `tts.voice` is either the
+            // "default" sentinel or a reference-clip path; `tts.clone_ref_text` carries that
+            // clip's transcript and is already part of the engine fingerprint, so editing the
+            // transcript rebuilds the engine.
+            Some(TtsEngineId::OmniVoice) => Arc::new(OmniVoiceLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                settings.tts.clone_ref_text.clone(),
+                settings.tts.voice_instruct.clone(),
+            )),
+            // Audio8: single int4 rung, so no quant plumbing. `tts.voice` is either the
+            // "default" sentinel or a reference-clip path; `tts.clone_ref_text` carries the
+            // clip's transcript (the DualAR prompt needs it) and is already part of the
+            // engine fingerprint, so editing the transcript rebuilds the engine.
+            Some(TtsEngineId::Audio8) => Arc::new(Audio8LocalEngine::new(
                 self.model_cache_dir(&model_id),
                 settings.tts.clone_ref_text.clone(),
             )),
@@ -741,8 +832,14 @@ impl TtsManager {
                 TtsSource::Cloud => {
                     let provider = effective_cloud_provider(settings);
                     match provider {
+                        // Trim to match `secret_tag`, which fingerprints the TRIMMED
+                        // key: otherwise a key pasted with stray whitespace builds an
+                        // engine whose header carries it, and deleting the whitespace
+                        // later leaves the fingerprint unchanged — no rebuild, broken
+                        // engine until restart. `effective_cloud_provider` already
+                        // decides "keyed" on the trimmed form.
                         TtsCloudProvider::Elevenlabs => Arc::new(ElevenLabsEngine::new(
-                            settings.integrations.elevenlabs.api_key.clone(),
+                            settings.integrations.elevenlabs.api_key.trim().to_string(),
                             settings.tts.cloud.model.clone(),
                             CloudVoiceSettings {
                                 stability: settings.tts.cloud.stability as f32,
@@ -753,7 +850,7 @@ impl TtsManager {
                             },
                         )),
                         TtsCloudProvider::Openrouter => Arc::new(OpenRouterTtsEngine::new(
-                            settings.llm.openrouter_api_key.clone(),
+                            settings.llm.openrouter_api_key.trim().to_string(),
                             settings.tts.cloud.openrouter_model.clone(),
                         )),
                     }
@@ -820,10 +917,20 @@ impl TtsManager {
             Some(TtsEngineId::Chatterbox) => CHATTERBOX_VOICES.to_vec(),
             // Voice Design has no preset voices — one "Default" entry; the real voice
             // comes from the prompt stored in `tts.voice` (the UI swaps the voice
-            // dropdown for a "Design voice" prompt affordance).
-            Some(TtsEngineId::Qwen3Tts) => QWEN3TTS_VOICES.to_vec(),
+            // dropdown for a "Design voice" prompt affordance). Custom Voice DOES ship a
+            // preset bank (9 timbres), so it renders a normal voice dropdown.
+            Some(TtsEngineId::Qwen3Tts) => match qwen3_tts_voice_mode(&model_id) {
+                Qwen3TtsVoiceMode::PresetSpeaker => QWEN3TTS_CUSTOMVOICE_VOICES.to_vec(),
+                Qwen3TtsVoiceMode::DesignPrompt => QWEN3TTS_VOICES.to_vec(),
+            },
             Some(TtsEngineId::Orpheus) => ORPHEUS_VOICE_INFOS.to_vec(),
             Some(TtsEngineId::Spark) => SPARK_VOICE_INFOS.to_vec(),
+            // 4 speakers x 7 emotions as flat `{speaker}-{emotion}` ids — see NEUTTS_VOICE_INFOS.
+            Some(TtsEngineId::NeuTts) => NEUTTS_VOICE_INFOS.to_vec(),
+            // No preset bank — one sentinel entry; the real voice comes from a reference
+            // clip, which the ZeroShotAudioText cloning facet surfaces in the dropdown.
+            Some(TtsEngineId::OmniVoice) => OMNIVOICE_VOICES.to_vec(),
+            Some(TtsEngineId::Audio8) => AUDIO8_VOICES.to_vec(),
             _ => KOKORO_VOICE_CATALOG.to_vec(),
         };
         let voices = voices_src
@@ -1175,6 +1282,33 @@ impl TtsManager {
 
     fn cancel_flag(&self, request_id: &str) -> CancellationToken {
         self.cancelled.cancel_token(request_id)
+    }
+
+    /// Register `request_id` as in-flight BEFORE synthesis starts, and hand back
+    /// its awaitable cancel token.
+    ///
+    /// `cancel_all` can only mark ids the registry already knows, and a read's id
+    /// is otherwise first tracked inside [`Self::read_aloud`]. Anything the caller
+    /// does between minting the id and calling `read_aloud` — the inline-tag LLM
+    /// round-trip, which can run for the full 60 s voice-LLM timeout — is
+    /// therefore uncancellable unless the caller reserves the id here first: Escape
+    /// would tear the pill down and the read would still start when the round-trip
+    /// finally returned. `select!`ing on the returned token also drops that
+    /// in-flight request instead of leaving it running.
+    pub fn track_request(&self, request_id: &str) -> CancellationToken {
+        self.cancel_flag(request_id)
+    }
+
+    /// Has `request_id` been cancelled? Fails SAFE (a poisoned lock reads as
+    /// cancelled) — the caller's next step is to start speaking.
+    pub fn is_cancelled(&self, request_id: &str) -> bool {
+        self.cancelled.is_cancelled(request_id, true)
+    }
+
+    /// Stop tracking a request that will never run (reserved with
+    /// [`Self::track_request`], then abandoned), so its id is not held forever.
+    pub fn release_request(&self, request_id: &str) {
+        self.drop_request(request_id);
     }
 
     /// Cancel one in-flight read. Fires the shared `CancellationToken` the active
@@ -1529,14 +1663,27 @@ impl TtsManager {
                 .general
                 .history_enabled
                 .then(TtsAudioCapture::new),
+            sentence: AtomicU64::new(0),
         };
         let sentences = split_sentences(text, DEFAULT_MAX_SENTENCE_LEN);
+        // Publish the script BEFORE the first sample is synthesized: the overlay
+        // island shows the text the moment the pill appears (during the synthesis
+        // wait), then highlights it word-by-word as the chunks for each sentence
+        // land. These are the FINAL sentences — post-modifiers, post-inline-tags —
+        // so what is displayed is exactly what is spoken.
+        self.emit_event(
+            "tts:script",
+            serde_json::json!({ "requestId": request_id, "sentences": sentences }),
+        );
         let mut result: TtsResult<()> = Ok(());
-        for sentence in sentences {
+        for (index, sentence) in sentences.iter().enumerate() {
             if cancel.is_cancelled() {
                 result = Err(TtsError::Cancelled);
                 break;
             }
+            // Every chunk this sentence produces is stamped with its script index
+            // (see `EmitChunkSink::sentence`).
+            sink.sentence.store(index as u64, Ordering::Relaxed);
             // Clamp to the ACTIVE engine's declared range: local engines expose
             // their own floor/ceiling (Supertonic 0.4..1.3, others 0.5..2.0) via
             // `speed_range()` — the generic 0.5 floor would otherwise pre-clip
@@ -1546,7 +1693,7 @@ impl TtsManager {
                 TtsSource::Local => clamp_speed_to_range(get_speed(), engine.speed_range()),
                 TtsSource::Cloud => clamp_cloud_speed(get_speed()),
             };
-            if let Err(e) = engine.synthesize_stream(&sentence, &eff_voice, &eff_lang, speed, &sink)
+            if let Err(e) = engine.synthesize_stream(sentence, &eff_voice, &eff_lang, speed, &sink)
             {
                 result = Err(e);
                 break;
@@ -1754,7 +1901,9 @@ impl TtsManager {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match result {
             Ok(bytes) if !was_cancelled && !bytes.is_empty() => {
-                let payload = chunk_payload(request_id, &SynthesisChunk::mp3(bytes, 0, true));
+                // Previews emit no `tts:script`, so the island shows no text for them — the
+                // sentence index is a placeholder the renderer never resolves.
+                let payload = chunk_payload(request_id, &SynthesisChunk::mp3(bytes, 0, true), 0);
                 let _ = self.app.emit("tts:chunk", payload);
                 self.emit_event(
                     "tts:completed",
@@ -1814,7 +1963,9 @@ impl TtsManager {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match result {
             Ok(bytes) if !was_cancelled && !bytes.is_empty() => {
-                let payload = chunk_payload(request_id, &SynthesisChunk::mp3(bytes, 0, true));
+                // Previews emit no `tts:script`, so the island shows no text for them — the
+                // sentence index is a placeholder the renderer never resolves.
+                let payload = chunk_payload(request_id, &SynthesisChunk::mp3(bytes, 0, true), 0);
                 let _ = self.app.emit("tts:chunk", payload);
                 self.emit_event(
                     "tts:completed",
@@ -2044,5 +2195,110 @@ mod tests {
             effective_cloud_provider(&settings_with_keys(TtsCloudProvider::Elevenlabs, "", "")),
             TtsCloudProvider::Elevenlabs
         );
+    }
+
+    const ELEVEN_TEST_KEY: &str = "sk_super_secret_value";
+    const OPENROUTER_TEST_KEY: &str = "sk-or-v1-super-secret-value";
+
+    fn cloud_fingerprint(
+        persisted: TtsCloudProvider,
+        eleven: &str,
+        openrouter: &str,
+    ) -> (TtsSource, String) {
+        let mut s = settings_with_keys(persisted, eleven, openrouter);
+        s.tts.source = SettingsTtsSource::Cloud;
+        TtsManager::engine_fingerprint_from(&s)
+    }
+
+    #[test]
+    fn cloud_fingerprint_never_carries_the_plaintext_api_key() {
+        // The fingerprint is logged at INFO on every engine swap and is copied
+        // verbatim into the shareable diagnostic bundle, so an opened key must
+        // not survive into it.
+        let (source, eleven) = cloud_fingerprint(TtsCloudProvider::Elevenlabs, ELEVEN_TEST_KEY, "");
+        assert_eq!(source, TtsSource::Cloud);
+        assert!(
+            !eleven.contains(ELEVEN_TEST_KEY),
+            "elevenlabs key leaked into fingerprint: {eleven}"
+        );
+        let (_, openrouter) =
+            cloud_fingerprint(TtsCloudProvider::Openrouter, "", OPENROUTER_TEST_KEY);
+        assert!(
+            !openrouter.contains(OPENROUTER_TEST_KEY),
+            "openrouter key leaked into fingerprint: {openrouter}"
+        );
+    }
+
+    #[test]
+    fn cloud_fingerprint_still_rebuilds_on_a_key_rotation() {
+        // Rebuild semantics are what the digest has to preserve: `ensure_engine_for`
+        // only compares fingerprints, so a rotated key must still force a rebuild
+        // while an unchanged key must not.
+        let (_, before) = cloud_fingerprint(TtsCloudProvider::Elevenlabs, ELEVEN_TEST_KEY, "");
+        let (_, again) = cloud_fingerprint(TtsCloudProvider::Elevenlabs, ELEVEN_TEST_KEY, "");
+        let (_, rotated) = cloud_fingerprint(TtsCloudProvider::Elevenlabs, "sk_rotated_value", "");
+        assert_eq!(before, again);
+        assert_ne!(before, rotated);
+
+        let (_, or_before) =
+            cloud_fingerprint(TtsCloudProvider::Openrouter, "", OPENROUTER_TEST_KEY);
+        let (_, or_again) =
+            cloud_fingerprint(TtsCloudProvider::Openrouter, "", OPENROUTER_TEST_KEY);
+        let (_, or_rotated) =
+            cloud_fingerprint(TtsCloudProvider::Openrouter, "", "sk-or-v1-rotated-value");
+        assert_eq!(or_before, or_again);
+        assert_ne!(or_before, or_rotated);
+    }
+
+    #[test]
+    fn elevenlabs_fingerprint_rebuilds_for_constructor_voice_settings() {
+        let mut base = settings_with_keys(TtsCloudProvider::Elevenlabs, ELEVEN_TEST_KEY, "");
+        base.tts.source = SettingsTtsSource::Cloud;
+        let (_, before) = TtsManager::engine_fingerprint_from(&base);
+
+        let mut stability = base.clone();
+        stability.tts.cloud.stability = 0.2;
+        assert_ne!(before, TtsManager::engine_fingerprint_from(&stability).1);
+
+        let mut similarity = base.clone();
+        similarity.tts.cloud.similarity = 0.4;
+        assert_ne!(before, TtsManager::engine_fingerprint_from(&similarity).1);
+
+        let mut style = base.clone();
+        style.tts.cloud.style = 0.3;
+        assert_ne!(before, TtsManager::engine_fingerprint_from(&style).1);
+
+        let mut boost = base;
+        boost.tts.cloud.speaker_boost = false;
+        assert_ne!(before, TtsManager::engine_fingerprint_from(&boost).1);
+    }
+
+    #[test]
+    fn configured_hotkey_speed_tracks_the_active_source() {
+        let mut settings = WinsttSettings::default();
+        settings.tts.source = SettingsTtsSource::Local;
+        settings.tts.speed = 0.4;
+        settings.tts.cloud.speed = 1.15;
+        assert_eq!(TtsManager::configured_speed_from(&settings), 0.4);
+
+        settings.tts.source = SettingsTtsSource::Cloud;
+        assert_eq!(TtsManager::configured_speed_from(&settings), 1.15);
+    }
+
+    #[test]
+    fn secret_tag_marks_an_absent_key_without_hashing_it() {
+        // An unset key is not a secret — keep it readable so the "no key yet"
+        // fingerprint stays diagnosable, and keep it distinct from any digest.
+        assert_eq!(TtsManager::secret_tag(""), "nokey");
+        assert_eq!(TtsManager::secret_tag("   "), "nokey");
+        // Truncated SHA-256: 8 bytes → 16 lowercase hex chars, and surrounding
+        // whitespace must not change the tag (the key itself is trimmed).
+        let tag = TtsManager::secret_tag(ELEVEN_TEST_KEY);
+        assert_eq!(tag.len(), 16);
+        assert!(
+            tag.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_eq!(tag, TtsManager::secret_tag("  sk_super_secret_value  "));
     }
 }

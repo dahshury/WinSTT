@@ -68,11 +68,6 @@ function subscribeBroadcasts(callbacks: {
 
 const PAGE_SIZE = 25;
 
-interface HistorySearchResult {
-	hasMore: boolean;
-	transcriptions: Array<{ row: HistoryEntry }>;
-}
-
 interface HistorySearchSnapshot {
 	entries: HistoryEntry[];
 	hasMore: boolean;
@@ -87,28 +82,11 @@ const EMPTY_SEARCH_SNAPSHOT: HistorySearchSnapshot = {
 	query: "",
 };
 
-type HistorySearchCommand = (
-	query: string,
-	limit: number,
-	offset: number,
-	kinds: string[],
-	dateFrom: number | null,
-	dateTo: number | null,
-) => Promise<
-	| { data: HistorySearchResult; status: "ok" }
-	| { error: string; status: "error" }
->;
-
 async function searchHistoryPage(
 	query: string,
 	offset: number,
 ): Promise<{ entries: HistoryEntry[]; hasMore: boolean }> {
-	const search = (
-		commands as unknown as {
-			historySearch: HistorySearchCommand;
-		}
-	).historySearch;
-	const response = await search(
+	const response = await commands.historySearch(
 		query,
 		PAGE_SIZE,
 		offset,

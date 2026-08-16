@@ -7,6 +7,7 @@ export {
 	type SelectOptionGroup,
 } from "./Select";
 export {
+	OPTION_DRAG_HANDLE_SIZE,
 	OptionDragHandle,
 	SortableOptionRows,
 	type SortableOptionLike,

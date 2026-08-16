@@ -58,7 +58,6 @@ impl AudioVisualiser {
                 end_bin = start_bin + 1;
             }
 
-            // Clamp to valid range
             let start_bin = start_bin.min(window_size / 2);
             let end_bin = end_bin.min(window_size / 2);
 
@@ -78,15 +77,12 @@ impl AudioVisualiser {
     }
 
     pub fn feed(&mut self, samples: &[f32]) -> Option<f32> {
-        // Add new samples to buffer
         self.buffer.extend_from_slice(samples);
 
-        // Only process if we have enough samples
         if self.buffer.len() < self.window_size {
             return None;
         }
 
-        // Take the required window of samples
         let window_samples = &self.buffer[..self.window_size];
 
         // Remove DC component
@@ -98,7 +94,6 @@ impl AudioVisualiser {
             self.fft_input[i] = Complex32::new(windowed_sample, 0.0);
         }
 
-        // Perform FFT
         self.fft.process(&mut self.fft_input);
 
         // Compute power spectrum and bucket levels
@@ -152,7 +147,6 @@ impl AudioVisualiser {
             .fold(0.0_f32, f32::max)
             .clamp(0.0, 1.0);
 
-        // Clear processed samples from buffer
         self.buffer.clear();
 
         Some(peak)
@@ -160,7 +154,6 @@ impl AudioVisualiser {
 
     pub fn reset(&mut self) {
         self.buffer.clear();
-        // Reset noise floor to initial values
         self.noise_floor.fill(-40.0);
     }
 }

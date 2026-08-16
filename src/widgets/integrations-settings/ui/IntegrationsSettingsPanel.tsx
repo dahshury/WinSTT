@@ -1,46 +1,51 @@
 import { ApiIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { SettingSection } from "@/entities/setting";
-import { ProviderIntegrationSection } from "@/features/verify-credentials";
-import { LlmIntegrationSection } from "./LlmIntegrationSection";
+import { KeyProviderCard } from "./KeyProviderCard";
+import { OllamaCard } from "./OllamaCard";
 
+/**
+ * The Integrations tab: one card per provider, in a single flat column.
+ *
+ * The previous layout split the same three providers across two capability
+ * sections ("Language Models" / "Cloud Speech-to-Text"), which forced OpenRouter
+ * — a provider that backs LLM cleanup, cloud transcription AND cloud voices — to
+ * live under one heading and silently gate surfaces belonging to the other. Each
+ * card now states its own capabilities, so the grouping has no work left to do.
+ *
+ * Order is local-first: Ollama needs no account at all, so it leads; the two
+ * hosted providers follow, widest reach first.
+ */
 export function IntegrationsSettingsPanel() {
 	const t = useTranslations("integrations");
+	const tLlm = useTranslations("llm");
 
 	return (
-		<div className="flex flex-col">
-			{/* ── Language Models (LLM) ───────────────────────────────────
-			 *  Powers dictation cleanup, context-aware edits and translation.
-			 *  Backed by a LOCAL Ollama server (endpoint) or a CLOUD OpenRouter
-			 *  key. NOTE: the OpenRouter key is dual-purpose — besides the LLM
-			 *  provider it ALSO unlocks OpenRouter cloud *transcription* models
-			 *  in the Model tab's Cloud source (it shares the single key). The
-			 *  STT-only providers (OpenAI / ElevenLabs) live in the section
-			 *  below. */}
-			<LlmIntegrationSection />
-
-			{/* ── Cloud Speech-to-Text ────────────────────────────────────
-			 *  STT-only provider key that unlocks the Local/Cloud Source switcher
-			 *  in the Transcription tab. ElevenLabs (Scribe) lives here; OpenRouter
-			 *  is the other cloud STT provider but reuses its LLM key above, so
-			 *  `hasAnyCloudKey` (MainModelSection / ModelPickerWindow) gates on the
-			 *  ElevenLabs key PLUS `llm.openrouterApiKey`. (OpenAI was removed — its
-			 *  Whisper / GPT-4o transcribe models are served via OpenRouter.) */}
-			<SettingSection
-				boxed
-				description={t("sttSectionCaption")}
-				icon={ApiIcon}
-				title={t("sttSectionTitle")}
-			>
-				<div className="flex flex-col">
-					<ProviderIntegrationSection
-						keyCaption={t("elevenlabsApiKeyCaption")}
-						keyLabel={t("elevenlabsApiKey")}
-						placeholder={t("elevenlabsApiKeyPlaceholder")}
-						provider="elevenlabs"
-					/>
-				</div>
-			</SettingSection>
-		</div>
+		<SettingSection
+			description={t("description")}
+			icon={ApiIcon}
+			title={t("title")}
+		>
+			<div className="flex flex-col gap-3 pt-2">
+				<OllamaCard />
+				{/* The OpenRouter key is deliberately dual-purpose: besides the LLM
+				    provider it unlocks OpenRouter cloud transcription (Model tab →
+				    Cloud) and OpenRouter cloud voices, all off the one key. That used
+				    to be discoverable only by reading a tooltip; it is now spelled out
+				    by the card's capability chips. */}
+				<KeyProviderCard
+					description={t("openrouterDescription")}
+					keyLabel={tLlm("openrouterApiKey")}
+					placeholder={tLlm("openrouterApiKeyPlaceholder")}
+					provider="openrouter"
+				/>
+				<KeyProviderCard
+					description={t("elevenlabsDescription")}
+					keyLabel={t("elevenlabsApiKey")}
+					placeholder={t("elevenlabsApiKeyPlaceholder")}
+					provider="elevenlabs"
+				/>
+			</div>
+		</SettingSection>
 	);
 }

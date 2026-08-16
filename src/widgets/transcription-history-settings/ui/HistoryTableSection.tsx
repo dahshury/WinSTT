@@ -7,16 +7,27 @@ import {
 	clearTranscriptionHistory,
 	clearTransformHistory,
 	clearTtsHistory,
+	deleteTranscriptionHistoryEntry,
+	deleteTransformHistoryEntry,
+	deleteTtsHistoryEntry,
 } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { Select, type SelectOption } from "@/shared/ui/select";
+
 import { CLEAR_ACTION_SEGMENT_CLASS } from "../lib/clear-action-segment";
+import {
+	type HistoryKind,
+	type HistoryKindOption,
+	matchesHistoryKind,
+} from "../lib/history-kinds";
 import { useHistorySearch } from "../api/use-history-search";
 import { useTranscriptionHistoryStore } from "../model/history-store";
-import type { HistoryTableItem } from "../model/history-table-types";
+import type {
+	HistoryTableEntryKind,
+	HistoryTableItem,
+} from "../model/history-table-types";
 import { HistoryTable } from "./HistoryTable";
 import { HistorySearchInput } from "./HistorySearchInput";
 import { LiveListenSessionCard } from "./LiveListenSessionCard";
@@ -24,118 +35,129 @@ import { LiveListenSessionCard } from "./LiveListenSessionCard";
 interface HistoryTableSectionProps {
 	/** The date-filtered combined rows (STT + transform + TTS) to display. */
 	combinedHistoryEntries: HistoryTableItem[];
+	/** Kind scope, picked in the tab's filters menu up in the dashboard header.
+	 *  It both narrows the rows and names what Clear acts on. */
+	historyKind: HistoryKind;
+	historyKindOptions: HistoryKindOption[];
 	selectedRange: DateRange | null;
 }
 
 /**
- * The combined history table plus its kind filter and clear controls. The
- * shared Select both filters the visible rows by kind (default "All") and names
- * the target of the single Clear button, which arms the matching confirm dialog.
+ * The combined history table plus its search and clear controls. The kind scope
+ * itself is picked in the tab's filters menu (dashboard header, alongside the
+ * date range); this section consumes it to narrow the rows and to decide which
+ * confirm dialog the single Clear button arms.
  */
 export function HistoryTableSection({
 	combinedHistoryEntries,
+	historyKind,
+	historyKindOptions,
 	selectedRange,
 }: HistoryTableSectionProps) {
 	const t = useTranslations("history");
-	const entries = useTranscriptionHistoryStore((s) => s.entries);
-	const transformEntries = useTranscriptionHistoryStore(
-		(s) => s.transformEntries,
-	);
-	const ttsEntries = useTranscriptionHistoryStore((s) => s.ttsEntries);
 	const clearLocal = useTranscriptionHistoryStore((s) => s.clear);
 	const clearTransformLocal = useTranscriptionHistoryStore(
 		(s) => s.clearTransforms,
 	);
 	const clearTtsLocal = useTranscriptionHistoryStore((s) => s.clearTts);
+	const removeEntry = useTranscriptionHistoryStore((s) => s.removeEntry);
+	const removeTransformEntry = useTranscriptionHistoryStore(
+		(s) => s.removeTransformEntry,
+	);
+	const removeTtsEntry = useTranscriptionHistoryStore((s) => s.removeTtsEntry);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [confirmTransformsOpen, setConfirmTransformsOpen] = useState(false);
 	const [confirmTtsOpen, setConfirmTtsOpen] = useState(false);
 	const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
-	// The combined history table's kind filter, doubling as the target of the
-	// single "Clear" action: the shared Select picks which history to show (and
-	// clear), with "All" as the default that shows everything and clears all
-	// three kinds at once.
-	const [historyKind, setHistoryKind] = useState<
-		"all" | "history" | "transforms" | "tts"
-	>("all");
+	const [actionError, setActionError] = useState<string | null>(null);
+	const [actionPending, setActionPending] = useState(false);
 	const [query, setQuery] = useState("");
 	const search = useHistorySearch(query, combinedHistoryEntries, selectedRange);
 
+	const runHistoryAction = (action: () => Promise<void>) => {
+		setActionError(null);
+		setActionPending(true);
+		void action()
+			.catch((error: unknown) => {
+				setActionError(error instanceof Error ? error.message : String(error));
+			})
+			.finally(() => {
+				setActionPending(false);
+			});
+	};
+
 	const handleClear = () => {
-		clearTranscriptionHistory().then(() => clearLocal());
+		runHistoryAction(async () => {
+			await clearTranscriptionHistory();
+			clearLocal();
+		});
 	};
 
 	const handleClearTransforms = () => {
-		clearTransformHistory().then(() => clearTransformLocal());
+		runHistoryAction(async () => {
+			await clearTransformHistory();
+			clearTransformLocal();
+		});
 	};
 
 	const handleClearTts = () => {
-		clearTtsHistory().then(() => clearTtsLocal());
+		runHistoryAction(async () => {
+			await clearTtsHistory();
+			clearTtsLocal();
+		});
 	};
 
 	const handleDeleteAll = () => {
-		Promise.all([
-			clearTranscriptionHistory(),
-			clearTransformHistory(),
-			clearTtsHistory(),
-		]).then(() => {
+		runHistoryAction(async () => {
+			await Promise.all([
+				clearTranscriptionHistory(),
+				clearTransformHistory(),
+				clearTtsHistory(),
+			]);
 			clearLocal();
 			clearTransformLocal();
 			clearTtsLocal();
 		});
 	};
 
-	// The history kinds the Select filters/clears by. `count` drives the Clear
-	// button's disabled state (nothing to clear) and `open` arms the matching
-	// confirm dialog — "All" clears everything via the delete-all dialog. Labels
-	// reuse the section nouns already localized in this namespace.
-	const allHistoryKind = {
-		count: entries.length + transformEntries.length + ttsEntries.length,
-		id: "all" as const,
-		label: t("filterAll"),
-		open: () => setConfirmDeleteAllOpen(true),
+	const handleDeleteEntry = (id: string, kind: HistoryTableEntryKind) => {
+		runHistoryAction(async () => {
+			const result =
+				kind === "transform"
+					? await deleteTransformHistoryEntry(id)
+					: kind === "tts"
+						? await deleteTtsHistoryEntry(id)
+						: await deleteTranscriptionHistoryEntry(id);
+			if (!result.deleted) {
+				throw new Error("The history entry could not be deleted.");
+			}
+			if (kind === "transform") {
+				removeTransformEntry(id);
+			} else if (kind === "tts") {
+				removeTtsEntry(id);
+			} else {
+				removeEntry(id);
+			}
+		});
 	};
-	const historyKinds = [
-		allHistoryKind,
-		{
-			count: entries.length,
-			id: "history" as const,
-			label: t("tableTitle"),
-			open: () => setConfirmOpen(true),
-		},
-		{
-			count: transformEntries.length,
-			id: "transforms" as const,
-			label: t("transformTableTitle"),
-			open: () => setConfirmTransformsOpen(true),
-		},
-		{
-			count: ttsEntries.length,
-			id: "tts" as const,
-			label: t("kindTextToSpeech"),
-			open: () => setConfirmTtsOpen(true),
-		},
-	];
-	const historyKindOptions: SelectOption[] = historyKinds.map((kind) => ({
-		id: kind.id,
-		label: kind.label,
-	}));
-	const activeHistoryKind =
-		historyKinds.find((kind) => kind.id === historyKind) ?? allHistoryKind;
-	// Kind filter applied to the (already date-filtered) combined rows. "All"
-	// passes everything through; the specific kinds map onto the row's `kind` tag.
-	const visibleHistoryEntries =
-		historyKind === "all"
-			? search.items
-			: search.items.filter((row) => {
-					if (historyKind === "history") {
-						return row.kind === "transcription";
-					}
-					if (historyKind === "transforms") {
-						return row.kind === "transform";
-					}
-					return row.kind === "tts";
-				});
+
+	// Which confirm dialog the single Clear button arms — "All" clears every
+	// kind at once through the delete-all dialog.
+	const armClearDialog: Record<HistoryKind, () => void> = {
+		all: () => setConfirmDeleteAllOpen(true),
+		history: () => setConfirmOpen(true),
+		transforms: () => setConfirmTransformsOpen(true),
+		tts: () => setConfirmTtsOpen(true),
+	};
+	const activeKind = historyKindOptions.find(
+		(option) => option.id === historyKind,
+	);
+	const activeKindCount = activeKind?.count ?? 0;
+	const activeKindLabel = activeKind?.label ?? "";
+	// Kind scope applied to the (already date-filtered) combined rows.
+	const visibleHistoryEntries = search.items.filter((row) =>
+		matchesHistoryKind(row, historyKind),
+	);
 
 	return (
 		<SettingSection
@@ -175,31 +197,22 @@ export function HistoryTableSection({
 						open={confirmDeleteAllOpen}
 						title={t("deleteAllTitle")}
 					/>
-					{/* One control: the shared Select filters the table by kind
-					    (default "All") and names the target of the single Clear
-					    button, which (wrapped in the app's connected group so it
-					    reads as the standard segmented chip) acts on the selection. */}
+					{/* Clear acts on whatever kind the tab's filters menu has scoped
+					    to, so its label names that kind — the control that picks it
+					    lives in the dashboard header, not beside this button. */}
 					<HistorySearchInput
 						count={search.totalLabelCount}
 						hasMore={search.hasMore}
 						onQueryChange={setQuery}
 					/>
-					<Select
-						className="h-7 w-44"
-						onChange={(v) =>
-							setHistoryKind(v as "all" | "history" | "transforms" | "tts")
-						}
-						options={historyKindOptions}
-						value={historyKind}
-					/>
 					<ButtonGroup connected>
 						<Button
 							className={CLEAR_ACTION_SEGMENT_CLASS}
-							disabled={activeHistoryKind.count === 0}
-							onClick={activeHistoryKind.open}
+							disabled={activeKindCount === 0 || actionPending}
+							onClick={armClearDialog[historyKind]}
 						>
 							<HugeiconsIcon icon={Delete02Icon} size={14} />
-							{t("clearConfirm")}
+							{t("clearKind", { kind: activeKindLabel })}
 						</Button>
 					</ButtonGroup>
 				</div>
@@ -209,6 +222,11 @@ export function HistoryTableSection({
 			title={t("combinedTableTitle")}
 		>
 			<div className="flex flex-col gap-2 py-2">
+				{actionError ? (
+					<p className="text-body-sm text-error" role="alert">
+						{actionError}
+					</p>
+				) : null}
 				{/* Ongoing listen session — live captions + finalize-now. Renders
 				    only while a session is active; the finalized entry drops into
 				    the table below through the standard history events. */}
@@ -228,6 +246,7 @@ export function HistoryTableSection({
 					{...(query.trim() ? { emptyLabel: t("searchNoResults") } : {})}
 					entries={visibleHistoryEntries}
 					highlights={search.highlights}
+					onDeleteEntry={handleDeleteEntry}
 					preserveOrder={Boolean(query.trim())}
 				/>
 			</div>

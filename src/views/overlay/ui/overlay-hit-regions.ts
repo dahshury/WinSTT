@@ -20,8 +20,16 @@ import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
  */
 export function reconcileOverlayRecordingSnapshot(
 	snapshot: SttRecordingSnapshot,
+	options?: { requireActiveRecording?: boolean },
 ): void {
 	if (!snapshot.pipelineActive) {
+		return;
+	}
+	// Post-terminal-event reconciles only act when a NEWER recording is already
+	// live (quick re-press): re-arming on a merely-active pipeline would flash
+	// the transcribing pill back after a session completed normally (the paste
+	// epilogue keeps the pipeline active for a moment after full_sentence).
+	if (options?.requireActiveRecording && !snapshot.isRecording) {
 		return;
 	}
 
@@ -64,8 +72,21 @@ const OVERLAY_LIFECYCLE_EVENTS = [
 	NATIVE_EVENTS.STT_PIPELINE_UNAVAILABLE,
 ] as const;
 
+// Terminal events can belong to the PREVIOUS session while a newer recording is
+// already live (quick re-press before the old final decode/LLM cleanup landed).
+// Their feed handlers disarm `isRecordingActive`, which would kill the pill in
+// the middle of the new take — so after they settle, read Rust's retained truth
+// back and re-arm if a recording is genuinely in progress.
+const OVERLAY_TERMINAL_EVENTS: ReadonlySet<string> = new Set<string>([
+	NATIVE_EVENTS.STT_FULL_SENTENCE,
+	NATIVE_EVENTS.STT_NO_AUDIO_DETECTED,
+	NATIVE_EVENTS.STT_TRANSCRIPTION_FAILED,
+	NATIVE_EVENTS.STT_SESSION_ABORTED,
+]);
+
 async function reconcileOverlayRecordingState(
 	observedEpoch = overlayLifecycleEpoch,
+	options?: { requireActiveRecording?: boolean },
 ): Promise<void> {
 	if (!hasTauriRuntime()) {
 		return;
@@ -75,7 +96,7 @@ async function reconcileOverlayRecordingState(
 		// Some browser/test bridge shims acknowledge unknown commands with
 		// `undefined`; a real generated Tauri invocation always returns the DTO.
 		if (snapshot && observedEpoch === overlayLifecycleEpoch) {
-			reconcileOverlayRecordingSnapshot(snapshot);
+			reconcileOverlayRecordingSnapshot(snapshot, options);
 		}
 	} catch (error) {
 		console.warn("[overlay] Failed to reconcile recording state:", error);
@@ -146,6 +167,19 @@ export function useResetOnOverlayShow(): void {
 			OVERLAY_LIFECYCLE_EVENTS.map((eventName) =>
 				ipcOnReady(eventName, () => {
 					overlayLifecycleEpoch += 1;
+					if (!OVERLAY_TERMINAL_EVENTS.has(eventName)) {
+						return;
+					}
+					// Run after every synchronous handler of this event (the feed's
+					// disarm included) so the snapshot reconciles the settled state.
+					// Captured post-bump: a later lifecycle event supersedes this
+					// reconcile via the epoch check inside.
+					const epoch = overlayLifecycleEpoch;
+					setTimeout(() => {
+						void reconcileOverlayRecordingState(epoch, {
+							requireActiveRecording: true,
+						});
+					}, 0);
 				}),
 			),
 		).then((results) => {

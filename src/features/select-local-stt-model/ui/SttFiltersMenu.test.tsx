@@ -24,9 +24,20 @@ function renderMenu(
 	return onFiltersChange;
 }
 
-async function openFilters() {
+/** Open the menu and drill into one of its rows — the menu's root is a list of
+ *  filter dimensions, so every control now lives one level down. */
+async function openSection(name: RegExp) {
 	fireEvent.click(screen.getByRole("button", { name: /Sort & filter/ }));
+	fireEvent.click(await screen.findByRole("button", { name }));
+}
+
+async function openLanguageSection() {
+	await openSection(/^Language/);
 	return screen.findByRole("combobox", { name: "Language filter" });
+}
+
+async function openFlagsSection() {
+	await openSection(/^Filters/);
 }
 
 async function openLanguageCombobox() {
@@ -49,7 +60,7 @@ describe("SttFiltersMenu", () => {
 	test("renders language filters as one combobox instead of a language grid", async () => {
 		renderMenu({ ...EMPTY_FILTER_STATE, languages: ["en"] });
 
-		const combobox = await openFilters();
+		const combobox = await openLanguageSection();
 
 		expect(combobox).not.toBeNull();
 		expect(screen.queryByRole("button", { name: "English" })).toBeNull();
@@ -62,7 +73,7 @@ describe("SttFiltersMenu", () => {
 			languages: ["en"],
 		});
 
-		await openFilters();
+		await openLanguageSection();
 		await openLanguageCombobox();
 		await act(async () => {
 			fireEvent.click(screen.getByRole("checkbox", { name: "French" }));
@@ -97,7 +108,7 @@ function renderMenuWithSuggested(
 describe("SttFiltersMenu suggested flag", () => {
 	test("hidden while the host has no Suggested verdict wired", async () => {
 		renderMenu();
-		await openFilters();
+		await openFlagsSection();
 		expect(screen.queryByRole("checkbox", { name: /Suggested/ })).toBeNull();
 	});
 
@@ -112,7 +123,7 @@ describe("SttFiltersMenu suggested flag", () => {
 
 	test("toggling the Suggested checkbox flips suggestedOnly", async () => {
 		const onFiltersChange = renderMenuWithSuggested();
-		await openFilters();
+		await openFlagsSection();
 		fireEvent.click(screen.getByRole("checkbox", { name: /Suggested/ }));
 		expect(onFiltersChange).toHaveBeenCalledWith({
 			...EMPTY_FILTER_STATE,
@@ -126,7 +137,7 @@ describe("SttFiltersMenu suggested flag", () => {
 			mock((_next: SttFilterState) => undefined),
 			["realtimeOnly"],
 		);
-		await openFilters();
+		await openFlagsSection();
 		fireEvent.click(screen.getByRole("checkbox", { name: /Suggested/ }));
 		expect(onFiltersChange).toHaveBeenCalledWith({
 			...EMPTY_FILTER_STATE,
@@ -141,7 +152,7 @@ describe("SttFiltersMenu suggested flag", () => {
 			mock((_next: SttFilterState) => undefined),
 			["suggestedOnly"],
 		);
-		await openFilters();
+		await openFlagsSection();
 		fireEvent.click(screen.getByRole("checkbox", { name: /Suggested/ }));
 		expect(onFiltersChange).not.toHaveBeenCalled();
 	});

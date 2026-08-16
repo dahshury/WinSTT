@@ -9,7 +9,6 @@ import {
 	CommandItem,
 	CommandList,
 	GripVertical,
-	ListFilter,
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
@@ -24,11 +23,8 @@ import {
 	SortableContent,
 	SortableItem,
 	SortableItemHandle,
-	SortableOverlay,
 	Trash2,
-	useDataGridMenuShortcut,
 	useDirection,
-	Badge,
 	Button,
 } from "@/shared/ui/data-grid/data-grid-menu-common";
 import * as React from "react";
@@ -47,7 +43,6 @@ import {
 import { cn } from "@/shared/lib/cn";
 import type { FilterOperator, FilterValue } from "@/shared/ui/data-grid/types";
 
-const FILTER_SHORTCUT_KEY = "f";
 const OPERATORS_WITHOUT_VALUE = new Set([
 	"isEmpty",
 	"isNotEmpty",
@@ -55,25 +50,25 @@ const OPERATORS_WITHOUT_VALUE = new Set([
 	"isFalse",
 ]);
 
-interface DataGridFilterMenuProps<TData>
-	extends React.ComponentProps<typeof PopoverContent> {
-	table: Table<TData>;
-	disabled?: boolean;
+/** Reset a grid's filters back to its initial state. Shared with the table
+ *  controls, whose "Filters" row clears the dimension with Backspace/Delete —
+ *  the affordance the standalone menu's trigger used to carry. */
+export function resetDataGridFilters<TData>(table: Table<TData>): void {
+	table.setColumnFilters(table.initialState.columnFilters ?? []);
 }
 
-export function DataGridFilterMenu<TData>({
-	table,
-	disabled,
-	className,
-	...props
-}: DataGridFilterMenuProps<TData>) {
+/**
+ * The filter-builder view of the shared table-controls popover: a reorderable
+ * list of "where <field> <operator> <value>" rules, plus add/reset. Previously
+ * this was its own popover with its own trigger; the surrounding popover and
+ * badge now live in `DataGridTableControls`.
+ */
+export function DataGridFilterPanel<TData>({ table }: { table: Table<TData> }) {
 	const t = useTranslations("dataGrid");
 	const dir = useDirection();
 	const id = React.useId();
 	const labelId = React.useId();
 	const descriptionId = React.useId();
-	const [open, setOpen] = React.useState(false);
-	const addButtonRef = React.useRef<HTMLButtonElement>(null);
 
 	const columnFilters = table.getState().columnFilters;
 
@@ -144,133 +139,85 @@ export function DataGridFilterMenu<TData>({
 		);
 	};
 
-	const onFiltersReset = () => {
-		table.setColumnFilters(table.initialState.columnFilters ?? []);
-	};
-
-	useDataGridMenuShortcut(FILTER_SHORTCUT_KEY, setOpen);
-
-	const onTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-		if (
-			REMOVE_MENU_ITEM_SHORTCUTS.has(event.key.toLowerCase()) &&
-			columnFilters.length > 0
-		) {
-			event.preventDefault();
-			onFiltersReset();
-		}
-	};
+	const onFiltersReset = () => resetDataGridFilters(table);
 
 	return (
+		// dnd-kit's context wraps only the rule list now that the popover is
+		// hoisted out — every draggable item is still inside it.
 		<Sortable
 			value={columnFilters}
 			onValueChange={table.setColumnFilters}
 			getItemValue={(item) => item.id}
 		>
-			<Popover open={open} onOpenChange={setOpen}>
-				<PopoverTrigger asChild>
-					<Button
-						dir={dir}
-						variant="outline"
-						className="font-normal"
-						onKeyDown={onTriggerKeyDown}
-						disabled={disabled}
-					>
-						<ListFilter className="text-muted-foreground" />
-						{t("filter")}
-						{columnFilters.length > 0 && (
-							<Badge
-								variant="secondary"
-								className="h-[18.24px] rounded-[3.2px] px-[5.12px] font-mono font-normal text-[10.4px]"
-							>
-								{columnFilters.length}
-							</Badge>
+			<div
+				aria-describedby={descriptionId}
+				aria-labelledby={labelId}
+				className="flex flex-col gap-3.5 p-3 pt-1"
+				dir={dir}
+			>
+				<div className="flex flex-col gap-1">
+					<h4 className="font-medium leading-none" id={labelId}>
+						{columnFilters.length > 0
+							? t("filterByTitle")
+							: t("noFiltersTitle")}
+					</h4>
+					<p
+						className={cn(
+							"text-muted-foreground text-sm",
+							columnFilters.length > 0 && "sr-only",
 						)}
-					</Button>
-				</PopoverTrigger>
-				<PopoverContent
-					aria-labelledby={labelId}
-					aria-describedby={descriptionId}
-					dir={dir}
-					className={cn(
-						"flex w-full max-w-(--radix-popover-content-available-width) flex-col gap-3.5 p-4 sm:min-w-[480px]",
-						className,
-					)}
-					{...props}
-				>
-					<div className="flex flex-col gap-1">
-						<h4 id={labelId} className="font-medium leading-none">
-							{columnFilters.length > 0
-								? t("filterByTitle")
-								: t("noFiltersTitle")}
-						</h4>
-						<p
-							id={descriptionId}
-							className={cn(
-								"text-muted-foreground text-sm",
-								columnFilters.length > 0 && "sr-only",
-							)}
+						id={descriptionId}
+					>
+						{columnFilters.length > 0
+							? t("modifyFiltersHint")
+							: t("addFiltersHint")}
+					</p>
+				</div>
+				{columnFilters.length > 0 && (
+					<SortableContent asChild>
+						<div
+							// eslint-disable-next-line react-doctor/prefer-tag-over-role -- list container for SortableContent (dnd-kit asChild); its items are interactive role="listitem" divs, so the matching role="list" is correct here
+							role="list"
+							className="flex max-h-[400px] flex-col gap-2 overflow-y-auto p-1"
 						>
-							{columnFilters.length > 0
-								? t("modifyFiltersHint")
-								: t("addFiltersHint")}
-						</p>
-					</div>
+							{columnFilters.map((filter, index) => (
+								<DataGridFilterItem
+									key={filter.id}
+									filter={filter}
+									index={index}
+									filterItemId={`${id}-filter-${filter.id}`}
+									dir={dir}
+									columns={columns}
+									columnLabels={columnLabels}
+									columnVariants={columnVariants}
+									table={table}
+									onFilterUpdate={onFilterUpdate}
+									onFilterRemove={onFilterRemove}
+								/>
+							))}
+						</div>
+					</SortableContent>
+				)}
+				<div className="flex w-full items-center gap-2">
+					<Button
+						className="rounded"
+						data-nav-initial-focus
+						disabled={columns.length === 0}
+						onClick={onFilterAdd}
+					>
+						{t("addFilter")}
+					</Button>
 					{columnFilters.length > 0 && (
-						<SortableContent asChild>
-							<div
-								// eslint-disable-next-line react-doctor/prefer-tag-over-role -- list container for SortableContent (dnd-kit asChild); its items are interactive role="listitem" divs, so the matching role="list" is correct here
-								role="list"
-								className="flex max-h-[400px] flex-col gap-2 overflow-y-auto p-1"
-							>
-								{columnFilters.map((filter, index) => (
-									<DataGridFilterItem
-										key={filter.id}
-										filter={filter}
-										index={index}
-										filterItemId={`${id}-filter-${filter.id}`}
-										dir={dir}
-										columns={columns}
-										columnLabels={columnLabels}
-										columnVariants={columnVariants}
-										table={table}
-										onFilterUpdate={onFilterUpdate}
-										onFilterRemove={onFilterRemove}
-									/>
-								))}
-							</div>
-						</SortableContent>
-					)}
-					<div className="flex w-full items-center gap-2">
 						<Button
 							className="rounded"
-							ref={addButtonRef}
-							onClick={onFilterAdd}
-							disabled={columns.length === 0}
+							onClick={onFiltersReset}
+							variant="outline"
 						>
-							{t("addFilter")}
+							{t("resetFilters")}
 						</Button>
-						{columnFilters.length > 0 && (
-							<Button
-								variant="outline"
-								className="rounded"
-								onClick={onFiltersReset}
-							>
-								{t("resetFilters")}
-							</Button>
-						)}
-					</div>
-				</PopoverContent>
-			</Popover>
-			<SortableOverlay>
-				<div dir={dir} className="flex items-center gap-2">
-					<div className="h-8 min-w-[72px] rounded-sm bg-primary/10" />
-					<div className="h-8 w-32 rounded-sm bg-primary/10" />
-					<div className="h-8 w-32 rounded-sm bg-primary/10" />
-					<div className="h-8 w-36 rounded-sm bg-primary/10" />
-					<div className="size-8 shrink-0 rounded-sm bg-primary/10" />
-					<div className="size-8 shrink-0 rounded-sm bg-primary/10" />
+					)}
 				</div>
-			</SortableOverlay>
+			</div>
 		</Sortable>
 	);
 }
@@ -369,7 +316,13 @@ function DataGridFilterItem<TData>({
 	};
 
 	return (
-		<SortableItem value={filter.id} asChild>
+		// Same lift as the sort rules: the row is the card, plated two steps
+		// above the popover's `bg-surface-5` while it is held.
+		<SortableItem
+			asChild
+			className="rounded-md data-dragging:bg-surface-7 data-dragging:shadow-surface-8"
+			value={filter.id}
+		>
 			<div
 				// eslint-disable-next-line react-doctor/prefer-tag-over-role -- element is interactive (onKeyDown/tabIndex); the ARIA role is correct, a semantic <li> tag would be non-interactive
 				role="listitem"

@@ -316,6 +316,19 @@ async winsttPatchSettings(request: RevisionedSettingsPatch) : Promise<Result<Set
 }
 },
 /**
+ * Reset every renderer-owned settings section through the trusted replacement
+ * path. The command broadcasts the canonical snapshot exactly like a normal
+ * save, but cannot be mistaken for an unhydrated renderer dumping defaults.
+ */
+async settingsResetDefaults() : Promise<Result<SettingsSnapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_reset_defaults") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `settings_export_full` — save a JSON backup of the complete settings tree.
  * API keys are represented only by the standard secret-present sentinel.
  */
@@ -356,14 +369,23 @@ async sttListModels() : Promise<CatalogModelInfo[]> {
     return await TAURI_INVOKE("stt_list_models");
 },
 /**
- * `tts_transcribe_reference` — validate a cloning reference clip's length and transcribe it with
- * the currently-loaded STT model. Used by the voice-cloning UI to (1) REJECT clips longer than
- * `max_secs` and (2) auto-fill the reference transcript (editable afterwards) for cloning models
- * that need it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+ * `tts_transcribe_reference` — transcribe a cloning reference clip with the currently-loaded STT
+ * model, to auto-fill the reference transcript (editable afterwards) for cloning models that need
+ * it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+ *
+ * It does NOT re-validate the clip's length. The only path it accepts is the managed
+ * `tts/reference-voices` folder, which nothing but `tts_prepare_reference_clip` writes into, and
+ * that command already hard-trims every clip to the selected model's cap — it is the single
+ * authority on that number. Re-measuring here compared two DIFFERENT measurements of the same
+ * audio: a trimmed clip is stored at exactly `cap` seconds @ 24 kHz, and re-decoding it to 16 kHz
+ * appends up to one frame of resampler zero-pad, so every trimmed clip measured ~`cap + 0.06 s`
+ * and was refused with the self-contradictory "Reference clip is 30s — please use one under 30s.",
+ * leaving Spark to clone with an empty transcript. The decode is bounded by TRUNCATING at the cap
+ * instead, which can never refuse a clip the preparer just accepted.
  */
-async ttsTranscribeReference(path: string, maxSecs: number) : Promise<Result<string, string>> {
+async ttsTranscribeReference(path: string) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("tts_transcribe_reference", { path, maxSecs }) };
+    return { status: "ok", data: await TAURI_INVOKE("tts_transcribe_reference", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return __commandError__(e);
@@ -614,6 +636,143 @@ async ttsDeleteModel(modelId: string, quantization: string) : Promise<Result<nul
 }
 },
 /**
+ * `tts_prepare_reference_clip` — normalize a picked/dropped audio file into the
+ * clip the cloning engines load: decode (wav/mp3/m4a/flac/ogg/aac) to mono f32
+ * @ 24 kHz, TRIM to the catalog's per-model cap rather than rejecting a long
+ * file, and persist it under the app data dir. Returns the stored path plus
+ * whether trimming happened, so the UI can say so.
+ *
+ * The path arrives from the renderer, so it is checked against the caller's
+ * asset-protocol scope exactly like `file_transcribe_enqueue` — dialog picks and
+ * drag-drops are both added to that scope by Tauri, anything else is not.
+ */
+async ttsPrepareReferenceClip(path: string) : Promise<Result<ReferenceClipInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prepare_reference_clip", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `tts_build_reference` — build ONE cloning reference clip out of N sources.
+ *
+ * Each source is decoded to 24 kHz mono and persisted on its own (so the card can
+ * list, drop and re-order the parts), then the parts are welded in the given
+ * order — separated by [`REFERENCE_GAP_SECS`] of silence — into the single
+ * combined clip that goes in `settings.tts.voice`. The model's cap applies to the
+ * CONCATENATION and trims rather than rejects, exactly as the single-clip path
+ * does; a one-path call is equivalent to `tts_prepare_reference_clip`, down to
+ * returning that same stored file.
+ *
+ * Sources arrive from the renderer, so each is checked against the caller's
+ * asset-protocol scope — or, for a part this command itself stored, against the
+ * managed folder, since a rebuild after removing a clip re-submits the survivors
+ * and those were never in any dialog's scope.
+ */
+async ttsBuildReference(paths: string[]) : Promise<Result<ReferenceBuild, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_build_reference", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `tts_delete_reference_clips` — remove stored clips from disk when the voice
+ * that owned them is deleted. Nothing else ever did, so the folder only grew.
+ *
+ * Deliberately total: only paths that resolve INSIDE the managed folder are
+ * touched, anything else is logged and skipped rather than raised, and a path
+ * that is already gone is a success. Deleting a voice is a UI action that must
+ * not half-fail — the record is going away either way, and an error the renderer
+ * has to handle would only strand it.
+ */
+async ttsDeleteReferenceClips(paths: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_delete_reference_clips", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `tts_read_voice_library` — the persisted named voices.
+ *
+ * Total by construction: no file (first run), an unreadable file, or JSON this
+ * build cannot parse all return an EMPTY library rather than an error. The
+ * renderer falls back to its localStorage mirror in that case, and a hard
+ * failure here would break the whole voice row over a file the user never
+ * edited.
+ */
+async ttsReadVoiceLibrary() : Promise<Result<StoredVoiceLibrary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_read_voice_library") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `tts_write_voice_library` — replace the persisted named voices.
+ *
+ * Whole-list writes, like the renderer's localStorage mirror: the list is short
+ * and every mutation already produces the complete next state, so a partial
+ * update API would only add a way for the two records to disagree.
+ *
+ * Written to a temp file and renamed, so a crash mid-write leaves the previous
+ * library intact instead of a truncated file the next launch would read as an
+ * empty one.
+ */
+async ttsWriteVoiceLibrary(library: StoredVoiceLibrary) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_write_voice_library", { library }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `generate_voice_design_prompt` — turn a loose character description ("a
+ * Batman-like voice") into a voice-design instruct ("A deep, gravelly
+ * middle-aged American man speaking in a low, controlled, menacing
+ * near-whisper."), using the configured post-processing LLM.
+ *
+ * The answer is sanitized to one line and hard-clipped to the selected model's
+ * `voiceDesignMaxChars` at a word boundary — the instructed limit in the prompt
+ * is a hint, this is the guarantee.
+ */
+async generateVoiceDesignPrompt(description: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_voice_design_prompt", { description }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
+ * `insert_paralinguistic_tags` — rewrite `text` so the selected model's inline
+ * tag vocabulary is used where the delivery calls for it, using the configured
+ * post-processing LLM.
+ *
+ * `allowed_tags` are BARE names (`laugh`, `sigh`) and `syntax` selects the
+ * engine's delimiters — both come from the model's catalog row
+ * (`tags` / `tagSyntax`), never from a hardcoded list, because the two shipped
+ * syntaxes are incompatible: Orpheus reads `<laugh>`, Chatterbox Turbo reads
+ * `[laugh]`, and the wrong one is spoken aloud rather than rejected.
+ *
+ * The answer is filtered against `allowed_tags` and checked to confirm the
+ * model only ADDED tags before it is returned.
+ */
+async insertParalinguisticTags(text: string, allowedTags: string[], syntax: TagSyntax) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("insert_paralinguistic_tags", { text, allowedTags, syntax }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `process_text` — dictation cleanup/compose. Composes the full system prompt
  * (presets + context + vocab) and runs it over the configured provider.
  * `context` is the formatted UIA fragment (may be empty).
@@ -811,6 +970,13 @@ async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
     return await TAURI_INVOKE("wakeword_cancel_model_download");
 },
 /**
+ * Current phase for a window that mounted (or was re-shown) mid-transition —
+ * events alone would leave it showing a live control during a switch.
+ */
+async recordingModeTransitionState() : Promise<ModeTransitionPayload> {
+    return await TAURI_INVOKE("recording_mode_transition_state");
+},
+/**
  * `start_listen` — begin loopback capture on `device_index` (the positional
  * ordinal from `loopback_list_devices`).
  *
@@ -818,6 +984,14 @@ async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
  * `useListenMode` shows the active device name in the listen pill. The native
  * WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
  * command owns the device-name resolution + the started event.
+ *
+ * Also SETTLES the recording-mode transition phase when this call is the one
+ * completing a switch INTO listen mode: the streaming model is loaded inside
+ * `LoopbackManager::start`, so this return is the first moment listen mode can
+ * actually transcribe. `settings/recording_mode.rs` opens that phase and hands it
+ * here rather than starting loopback itself, because the device + streaming-model
+ * choice is renderer policy. An in-mode restart (device or mic-mix change) finds
+ * no pending phase and settles nothing.
  */
 async startListen(deviceIndex: number, modelId: string, captureMicrophone: boolean) : Promise<Result<null, string>> {
     try {
@@ -1773,9 +1947,8 @@ async diagClearCloudMetrics() : Promise<number> {
     return await TAURI_INVOKE("diag_clear_cloud_metrics");
 },
 /**
- * `sound_library_add` is retained for older renderer code but intentionally
- * fails closed: renderer-supplied paths are not a trusted proof of user file
- * selection. Use `sound_library_pick_and_add`, which owns the native picker.
+ * Add a picker/drag-drop path that Tauri granted to this webview's asset scope.
+ * Scope is checked before metadata/decode so this cannot probe arbitrary paths.
  */
 async soundLibraryAdd(sourcePath: string, name: string | null) : Promise<SoundLibraryAddResult> {
     return await TAURI_INVOKE("sound_library_add", { sourcePath, name });
@@ -2140,7 +2313,8 @@ async hideTrayMenu() : Promise<Result<null, string>> {
 },
 /**
  * Show the tray-indicator pill anchored at the notification-area corner. Returns
- * `true` if it was actually shown, `false` when suppressed (settings focused).
+ * `true` if it was actually shown, `false` when suppressed (a WinSTT window is
+ * focused, so the switch is already visible).
  */
 async trayIndicatorShow() : Promise<Result<boolean, string>> {
     try {
@@ -2288,7 +2462,13 @@ model?: string;
  * `modelId` or `modelId@providerSlug`; `""` = Auto.
  */
 openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
-export type AppProfileRule = { id?: string; enabled?: boolean; appExe?: string; titlePattern?: string; urlPattern?: string; configurationId?: string; configurationName?: string; config?: AppProfileConfig }
+export type AppProfileRule = { id?: string; enabled?: boolean; appExe?: string; titlePattern?: string; urlPattern?: string;
+/**
+ * An app RULE is different from a feature assignment: an empty id means the
+ * rule carries a hand-edited config rather than pointing at a saved one, so
+ * it must NOT default to the shipped configuration.
+ */
+configurationId?: string; configurationName?: string; config?: AppProfileConfig }
 export type AppProfilesSettings = { rules?: AppProfileRule[] }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
@@ -2563,7 +2743,7 @@ export type EncoderDownloadStatus = {
 /**
  * "absent" | "downloading" | "paused" | "present"
  */
-state: string; progress: number; downloadedBytes: number; totalBytes: number; speedBps: number }
+state: string; progress: number; downloadedBytes: number; totalBytes: number; speedBps: number; error: string | null }
 /**
  * `general.fileTranscriptionSaveLocation`. `auto` = beside source, `ask` = dialog.
  */
@@ -2593,7 +2773,7 @@ minimizeToTray?: boolean;
 startMinimized?: boolean;
 /**
  * Duck system playback to `(100-v)%` while dictating; 0=off, 100=mute.
- * Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(0)`.
+ * Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(60)`.
  */
 systemAudioReductionWhileDictating?: number;
 /**
@@ -2722,7 +2902,8 @@ contextScreenOcr?: boolean;
  */
 speakerDiarization?: boolean;
 /**
- * Sentry crash-reporting opt-out. Persisted live; never prompts for restart.
+ * Deprecated compatibility leaf. Persisted for old settings-file round trips;
+ * there is no crash-report upload runtime or user-facing control.
  */
 sendCrashReports?: boolean;
 /**
@@ -2936,7 +3117,14 @@ openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: Th
  * Optional Ollama tool-calling dictionary suggestions. Backend execution
  * still requires the selected model to advertise the `tools` capability.
  */
-dictionaryAutoAddEnabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
+dictionaryAutoAddEnabled?: boolean;
+/**
+ * Id of the saved CONFIGURATION this feature is assigned to, or `""` when
+ * its stack was hand-edited away from every saved one. See the note on
+ * [`LlmSettings::local_model`] for why the resolved fields above still
+ * live here rather than being looked up from the id at runtime.
+ */
+configurationId?: string; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
 /**
  * Explicit LLM config the Playground runs against (mirrors `LlmPreviewConfig` /
  * the reference main `FeatureLlmConfig`). Connection values (endpoint, key) are
@@ -2947,6 +3135,31 @@ export type LlmPreviewConfig = { provider?: string; model?: string; openrouterMo
  * LLM provider for a per-feature config (`llm.dictation` / `llm.transforms`).
  */
 export type LlmProvider = "ollama" | "openrouter" | "apple-intelligence"
+/**
+ * Post-processing applied to text on its way to the SYNTHESIZER (read-aloud),
+ * as opposed to `LlmDictation`, which post-processes text on its way to the
+ * KEYBOARD. Deliberately its own preset/modifier set: "summarize what I just
+ * dictated" and "summarize what you are about to read to me" are different
+ * intents that happen to share one prompt vocabulary.
+ *
+ * Carries its own [`LlmFeatureBase`] like the other two consumers: a
+ * configuration chooses its PROVIDER (a cloud read-aloud pass alongside a local
+ * dictation pass is a supported, and cheap, combination). The one thing it
+ * cannot choose freely is the local model — see [`LlmSettings::local_model`].
+ */
+export type LlmReadAloud = ({ provider?: LlmProvider;
+/**
+ * Ollama model name.
+ */
+model?: string;
+/**
+ * `modelId` or `modelId@providerSlug`; `""` = Auto.
+ */
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean;
+/**
+ * Assigned configuration id; see [`LlmDictation::configuration_id`].
+ */
+configurationId?: string; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
 export type LlmSettings = {
 /**
  * Shared Ollama endpoint URL.
@@ -2959,11 +3172,44 @@ openrouterApiKey?: string;
 /**
  * Global shortcut that cycles through saved post-processing profiles.
  */
-profileSwapHotkey?: string; dictation?: LlmDictation; transforms?: LlmTransforms; appProfiles?: AppProfilesSettings;
+profileSwapHotkey?: string;
+/**
+ * THE local Ollama model, shared by every feature whose assigned
+ * configuration runs locally.
+ *
+ * Why one, and why here: local models are VRAM-resident. Ollama happily
+ * accepts several (`OLLAMA_MAX_LOADED_MODELS` defaults to 3), but when they
+ * do not all fit it does not fail — it queues the request and evicts an
+ * idle model to make room, so every switch between features silently pays a
+ * full reload. One model by default makes that impossible.
+ *
+ * Cloud configurations are unconstrained: they hold their own
+ * `openrouterModel` in their `LlmFeatureBase` and cost no memory here, so a
+ * cloud read-aloud pass alongside a local dictation pass is fine.
+ *
+ * This is the value the renderer writes into every locally-running
+ * feature's `base.model` when it resolves an assignment. The per-feature
+ * `base` stays the runtime source of truth (this side reads it verbatim and
+ * knows nothing about configurations); this field is what the UI resolves
+ * FROM, which keeps assignment a renderer concern.
+ */
+localModel?: string;
+/**
+ * Power-user escape hatch: let each configuration pick its own LOCAL model
+ * instead of sharing [`Self::local_model`]. Off by default because on a
+ * machine that cannot hold them all it converts every feature switch into
+ * an Ollama evict-and-reload (see above) — which reads as random multi-
+ * second stalls, not as an error.
+ */
+allowMultipleLocalModels?: boolean; dictation?: LlmDictation;
+/**
+ * Modifiers applied to read-aloud text before synthesis (see [`LlmReadAloud`]).
+ */
+readAloud?: LlmReadAloud; transforms?: LlmTransforms; appProfiles?: AppProfilesSettings;
 /**
  * Client request timeout (ms). Range 1000..30000. Applied (via
  * `llm::llm_request_timeout`) to every cloud LLM round-trip: the
- * dictation and transform OpenRouter attempts.
+ * dictation, transform/app-profile, and playground OpenRouter attempts.
  */
 timeout?: number }
 export type LlmTransforms = ({ provider?: LlmProvider;
@@ -2974,15 +3220,15 @@ model?: string;
 /**
  * `modelId` or `modelId@providerSlug`; `""` = Auto.
  */
-openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[];
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: ThinkingEffort; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean;
+/**
+ * Assigned configuration id; see [`LlmDictation::configuration_id`].
+ */
+configurationId?: string; presets?: PresetEntry[]; customModifiers?: CustomModifier[];
 /**
  * Always non-empty (Zod `.min(1).catch`). The transform's invoke hotkey.
  */
-hotkey?: string;
-/**
- * User-configurable text transforms (built-ins carry `builtin: true`).
- */
-prompts?: Transform[] }
+hotkey?: string }
 export type LlmWarmupModelStatus = { model: string; outcome: LlmWarmupOutcome; errorBody?: string | null }
 export type LlmWarmupOutcome = "ok" | "model-not-found" | "load-failed" | "unreachable" | "skipped" | "loading"
 export type LlmWarmupStatus = { endpoint: string; inProgress: boolean; models: LlmWarmupModelStatus[]; ollamaInstalled: boolean; reachable: boolean; timestamp: number }
@@ -3016,6 +3262,33 @@ export type MicrophoneLevelMonitorTarget = { id: string; deviceIndex: number | n
  * HOT-SWAP (audio manager reconfigures in place).
  */
 export type MicrophoneRelease = "always" | "immediate" | "sec_30" | "min_1" | "min_5"
+export type ModeTransitionPayload = {
+/**
+ * Monotonic id of the transition this phase belongs to. A late `Ready` from
+ * a superseded transition carries an older generation and is dropped.
+ */
+generation: number; from: RecordingMode; to: RecordingMode; phase: ModeTransitionPhase; error: string | null }
+/**
+ * Lifecycle of one mode change, as the renderer sees it.
+ */
+export type ModeTransitionPhase =
+/**
+ * No mode change is being prepared — controls are live.
+ */
+"idle" |
+/**
+ * A mode change is committed but its engine is not usable yet.
+ */
+"preparing" |
+/**
+ * The target mode's engine is loaded and ready to transcribe.
+ */
+"ready" |
+/**
+ * Preparation failed; `error` carries the reason. Controls unlock so the
+ * user can pick a different mode.
+ */
+"failed"
 /**
  * Per-precision cache snapshot, mirroring the renderer's `ModelCacheInfo`.
  */
@@ -3333,6 +3606,77 @@ export type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword"
  * historyMaxEntries; days3/weeks2/months3 = absolute age cutoff.
  */
 export type RecordingRetention = "never" | "cap" | "days3" | "weeks2" | "months3"
+/**
+ * What the voice card needs after clips are added, reordered or dropped: the
+ * combined clip the engines load, plus the parts it was welded from so the card
+ * can list them and hand them back on the next rebuild.
+ */
+export type ReferenceBuild = {
+/**
+ * Length of the COMBINED stored clip (already trimmed), seconds.
+ */
+seconds: number;
+/**
+ * True when the concatenation ran past `max_secs` and its tail was dropped,
+ * or when any single source did.
+ */
+trimmed: boolean;
+/**
+ * The combined 24 kHz mono WAV. Persist THIS in `settings.tts.voice` — the
+ * engines take one path and cannot tell a welded clip from a picked one,
+ * which is the whole point: multi-clip lives here, not in the engines.
+ */
+storedPath: string;
+/**
+ * The cap that was applied — echoed so the UI never re-types the number.
+ */
+maxSecs: number;
+/**
+ * The parts, in the order they were welded.
+ */
+parts: ReferencePart[] }
+/**
+ * What the cloning UI needs after a clip is picked or dropped.
+ */
+export type ReferenceClipInfo = {
+/**
+ * Length of the STORED clip (already trimmed), seconds.
+ */
+seconds: number;
+/**
+ * True when the source ran past `max_secs` and its tail was dropped.
+ */
+trimmed: boolean;
+/**
+ * The normalized 24 kHz mono WAV the engine loads. Persist THIS in
+ * `settings.tts.voice`, not the user's original file: it survives the
+ * original being moved, and it is the form both engines read fastest.
+ */
+storedPath: string;
+/**
+ * The cap that was applied — echoed so the UI never re-types the number.
+ */
+maxSecs: number }
+/**
+ * One source clip inside a multi-clip voice, as it was stored.
+ */
+export type ReferencePart = {
+/**
+ * The normalized 24 kHz mono WAV this part was persisted as. Re-submitting
+ * exactly this path to `tts_build_reference` rebuilds the voice without the
+ * user's original file — which is how removing one clip from a voice works.
+ */
+storedPath: string;
+/**
+ * Label for the clip row: the source's file stem, with the storage hash
+ * stripped so a rebuilt part still reads as the file the user picked.
+ */
+name: string;
+/**
+ * Length of THIS part alone, seconds. The card sums these against
+ * [`ReferenceBuild::max_secs`] to draw the capacity meter.
+ */
+seconds: number }
 export type RemoveApplicationDataResult = { scheduled: boolean; portable: boolean; deletePortableAppDir: boolean; deletedOllamaModels: string[]; ollamaErrors: string[] }
 export type RemoveDownloadedModelsResult = { deletedModelCaches: number; disabledFeatures: string[]; deletedOllamaModels: string[]; ollamaErrors: string[]; errors: string[] }
 export type RevisionedSettingsPatch = { baseRevision: number; settings: PartialWinsttSettings }
@@ -3415,6 +3759,59 @@ export type SoundLibraryRemoveResult = { ok: boolean; error?: string | null }
  * `ipc-client.ts` (`{ requestId }`).
  */
 export type SpeakResult = { requestId: string }
+/**
+ * One named voice, exactly as the renderer's library holds it.
+ *
+ * Deliberately a DUMB record: the backend stores and returns it without
+ * interpreting `kind` or resolving any path. The renderer owns the schema (it
+ * re-validates with zod on the way in), and a field it adds later round-trips
+ * through here as long as this struct carries it.
+ */
+export type StoredVoice = { id: string; name: string;
+/**
+ * `"clip"` (a reference-clip voice) or `"design"` (a written prompt).
+ */
+kind: string;
+/**
+ * The combined clip path, or the design prompt.
+ */
+value: string;
+/**
+ * Transcript of the reference clip, for the engines whose cloning needs one.
+ * Persisted HERE rather than only in `settings.tts.clone_ref_text`, which
+ * holds the transcript of whichever voice is live right now — one field
+ * cannot remember the transcripts of ten voices.
+ */
+refText: string;
+/**
+ * Total length of `value`, seconds; `0` = unknown.
+ */
+seconds: number;
+/**
+ * Which model cap `value` was welded under. A voice is shared across models
+ * with different budgets, so this is what tells the renderer whether the
+ * cached combined clip still suits the selected model or has to be rebuilt
+ * from `clips` — see `combined_clip_name`.
+ */
+maxSecs: number; clips: StoredVoiceClip[] }
+/**
+ * One source clip inside a stored voice — the ingest history that makes a
+ * rebuild possible after one of the parts is dropped.
+ */
+export type StoredVoiceClip = {
+/**
+ * Display label, normally the source file's stem.
+ */
+name: string;
+/**
+ * Absolute path to the normalized part in the managed folder.
+ */
+path: string;
+/**
+ * Length of THIS part alone, seconds; `0` = never measured.
+ */
+seconds: number }
+export type StoredVoiceLibrary = { version: number; voices: StoredVoice[] }
 export type SttModelLifecyclePhase = "queued" | "downloading" | "paused" | "verifying" | "installing" |
 /**
  * Artifact is fully installed and loadable, but is not necessarily the resident warm model.
@@ -3451,6 +3848,27 @@ export type SystemInfoEntry = { total_ram_bytes: number; gpus: SystemInfoGpu[] }
  * One GPU as the renderer's `SystemInfoEntry.gpus` expects it.
  */
 export type SystemInfoGpu = { name: string; total_vram_bytes: number }
+/**
+ * Inline paralinguistic-tag syntax. TWO INCOMPATIBLE SYNTAXES ship in this
+ * catalog — `orpheus-3b` emits `<laugh>`, `chatterbox-turbo` emits `[laugh]` —
+ * so no call site may hardcode brackets: read the syntax off the row and wrap
+ * with [`TagSyntax::wrap`]. A third style is then a one-variant addition.
+ *
+ * Wire form (`snake_case`, via serde + specta): `"none" | "angle" | "square"`.
+ */
+export type TagSyntax =
+/**
+ * The model has no inline tag vocabulary; tags would be read aloud literally.
+ */
+"none" |
+/**
+ * `<laugh>` — Orpheus.
+ */
+"angle" |
+/**
+ * `[laugh]` — Chatterbox Turbo.
+ */
+"square"
 /**
  * Off/Low/Medium/High effort scale, shared by Ollama's thinking budget AND
  * OpenRouter's reasoning effort. `off` disables the thinking pass entirely:
@@ -3524,11 +3942,6 @@ export type TranscriptionHistorySearchHit = { entry: TranscriptionHistoryEntry;
  * seconds for its existing controls.
  */
 row: HistoryRow; tier: number }
-/**
- * `transformSchema` — a single user-configurable text transform.
- * `builtin: true` entries show a Reset action instead of Delete in the UI.
- */
-export type Transform = { id: string; name?: string; prompt?: string; hotkey?: string; builtin?: boolean }
 /**
  * Returned by `apply_transform` and mirrored on the `transforms:applied` event.
  * Field shape matches the renderer's `TransformApplyResult` exactly so the
@@ -3638,10 +4051,45 @@ export type TtsInitResult = { ready: boolean }
  */
 export type TtsModelInfoDto = { id: string; engine: string; display_name: string; maker: string; languages: string[]; num_voices: number; cloning: string;
 /**
+ * The row ERRORS instead of synthesizing until a reference clip (and, when
+ * `cloning == "zero_shot_audio_transcript"`, its transcript) is supplied →
+ * `requiresReferenceClip`. Drives the "not usable yet" warning on the clone
+ * field. NOT derivable from `num_voices` + `cloning`: OmniVoice and Audio8
+ * agree on both and disagree on this.
+ */
+requires_reference_clip: boolean;
+/**
  * Voice-design capability: the voice is chosen by a text prompt (→ `voiceDesign`
  * on the frontend). Drives the picker's VoiceDesign badge + prompt dialog.
  */
-voice_design: boolean; sample_rate: number; param_count_m: number; size_label: string; available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; quality_score: number; speed_score: number; description: string; available: boolean }
+voice_design: boolean;
+/**
+ * Character budget for the design prompt, `0` when the row takes neither a
+ * design prompt nor an instruct. The UI must read the cap from here rather
+ * than re-typing the number.
+ */
+voice_design_max_chars: number;
+/**
+ * The row takes a style instruction ALONGSIDE its voice (→ `voiceInstruct`),
+ * stored in `tts.voice_instruct`. Unlike `voice_design` — where the prompt IS
+ * the voice and overloads `tts.voice` — this renders as an EXTRA field, because
+ * these rows also clone and need `tts.voice` for the reference-clip path.
+ */
+voice_instruct: boolean;
+/**
+ * Longest cloning reference clip in seconds, `0` when the row does not
+ * clone. Longer clips are trimmed by `tts_prepare_reference_clip`.
+ */
+max_ref_clip_secs: number;
+/**
+ * `"none" | "angle" | "square"` — the delimiter style for `tags`. Angle and
+ * square are NOT interchangeable; render tags from this, never hardcoded.
+ */
+tag_syntax: TagSyntax;
+/**
+ * BARE inline paralinguistic tag names (no delimiters), empty when unsupported.
+ */
+tags: string[]; sample_rate: number; param_count_m: number; size_label: string; available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; quality_score: number; speed_score: number; description: string; available: boolean }
 /**
  * Per-model cache state, camelCase (matches the renderer's `TtsModelStateEntry`).
  */
@@ -3672,7 +4120,28 @@ voice?: string;
  * reference clip with the selected STT model, then user-editable. Empty otherwise.
  * HOT-SWAP (the Spark engine is rebuilt when this changes).
  */
-cloneRefText?: string; lang?: string;
+cloneRefText?: string;
+/**
+ * Natural-language style instruction for models whose prompt carries a dedicated
+ * instruct span ALONGSIDE the voice (`voice_instruct` in the catalog, e.g.
+ * OmniVoice). Voice-DESIGN models are different: there the prompt IS the voice and
+ * lives in the overloaded `voice` field above, which a cloning row cannot use
+ * because it holds the reference-clip path. Empty = no instruction.
+ * HOT-SWAP (the engine is rebuilt when this changes).
+ */
+voiceInstruct?: string; lang?: string;
+/**
+ * Run the read-aloud text through the post-processing LLM first so it can
+ * insert the SELECTED MODEL's inline paralinguistic tags (`<laugh>`,
+ * `[sigh]`, …) where the delivery calls for them.
+ *
+ * This flag only says "annotate"; the vocabulary AND the delimiters come
+ * from the model's catalog row (`tags` / `tag_syntax`), because the two
+ * shipped syntaxes are incompatible — Orpheus reads `<laugh>`, Chatterbox
+ * Turbo reads `[laugh]`, and the wrong one is SPOKEN rather than rejected.
+ * Off by default: it costs one LLM round-trip before the first word.
+ */
+inlineTags?: boolean;
 /**
  * 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
  */

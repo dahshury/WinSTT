@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useSettingsStore } from "@/entities/setting";
+import { useModeTransitionStore } from "@/features/recording-mode-transition";
 import { onRecordingModeCycle, settingsSave } from "@/shared/api/ipc-client";
 import { recordingModePatch } from "../lib/recording-settings-helpers";
 
@@ -32,6 +33,13 @@ export function useRecordingModeCycle(): void {
 	useEffect(
 		() =>
 			onRecordingModeCycle(() => {
+				// The gesture is the one mode control with no visible disabled state,
+				// so it has to check the phase itself: advancing again while the
+				// previous mode's model is still loading would abandon that load and
+				// leave the user two modes away from where the spinner says they are.
+				if (useModeTransitionStore.getState().isPreparing) {
+					return;
+				}
 				const store = useSettingsStore.getState();
 				const general = store.settings.general;
 				const next = nextRecordingMode(general?.recordingMode ?? "ptt");

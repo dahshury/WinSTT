@@ -2,8 +2,6 @@ import type { ContextDebugReport } from "@/shared/api/context-debug-types";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip } from "@/shared/ui/tooltip";
 
-// --- Summary chips ------------------------------------------------------
-
 export function Summary({ report }: { report: ContextDebugReport }) {
 	const s = report.rawSnapshot;
 	return (

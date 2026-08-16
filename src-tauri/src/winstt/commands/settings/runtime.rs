@@ -234,12 +234,12 @@ pub(super) fn apply_tts_runtime_settings(
     next: &WinsttSettings,
 ) {
     sync_tts_idle_unload_timeout(app, next.global.model_unload_timeout);
+    sync_tts_live_speed(app, next);
     // Disabling TTS (or moving it to a cloud voice) should free the local ONNX
     // voice from VRAM right away — not leave it pinned until the idle timer fires
     // (up to 15 min, or never under "never unload").
     if local_tts_engine_wanted(previous) && !local_tts_engine_wanted(next) {
         unload_local_tts_async(app);
-        return;
     }
     if tts_warm_inputs_changed(previous, next) {
         warm_tts_async(app);
@@ -341,18 +341,55 @@ fn sync_tts_idle_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTimeo
 }
 
 fn tts_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
-    if !should_warm_tts(next) {
-        return false;
+    match next.tts.source {
+        TtsSource::Local => {
+            should_warm_tts(next)
+                && (!should_warm_tts(previous)
+                    || previous.tts.source != next.tts.source
+                    || previous.tts.model != next.tts.model
+                    // A precision change (e.g. Qwen3-TTS int4→fp16) moves the engine
+                    // fingerprint, so proactively rebuild+warm the resident voice at
+                    // the new quant instead of waiting for the next read-aloud.
+                    || previous.tts.quantization != next.tts.quantization
+                    || previous.model.device != next.model.device)
+        }
+        TtsSource::Cloud => cloud_tts_engine_inputs_changed(previous, next),
     }
-    !should_warm_tts(previous)
-        || previous.tts.source != next.tts.source
-        || previous.tts.model != next.tts.model
-        // A precision change (e.g. Qwen3-TTS int4→fp16) moves the engine
-        // fingerprint, so proactively rebuild+warm the resident voice at the new
-        // quant instead of waiting for the next read-aloud (mirrors STT's
-        // `same_model_load_inputs_changed` observing `onnx_quantization`).
-        || previous.tts.quantization != next.tts.quantization
-        || previous.model.device != next.model.device
+}
+
+fn cloud_tts_engine_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
+    next.tts.enabled
+        && (!previous.tts.enabled
+            || !matches!(previous.tts.source, TtsSource::Cloud)
+            || previous.tts.cloud.provider != next.tts.cloud.provider
+            || previous.tts.cloud.model != next.tts.cloud.model
+            || previous.tts.cloud.openrouter_model != next.tts.cloud.openrouter_model
+            || previous.integrations.elevenlabs.api_key
+                != next.integrations.elevenlabs.api_key
+            || previous.llm.openrouter_api_key != next.llm.openrouter_api_key
+            // ElevenLabs captures these four voice settings at construction.
+            // Fingerprinting + proactive warm makes a slider change effective on
+            // the next playback without requiring an app restart.
+            || previous.tts.cloud.stability != next.tts.cloud.stability
+            || previous.tts.cloud.similarity != next.tts.cloud.similarity
+            || previous.tts.cloud.style != next.tts.cloud.style
+            || previous.tts.cloud.speaker_boost != next.tts.cloud.speaker_boost)
+}
+
+#[cfg(test)]
+fn tts_live_speed_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
+    crate::winstt::managers::TtsManager::configured_speed_from(previous)
+        != crate::winstt::managers::TtsManager::configured_speed_from(next)
+}
+
+fn sync_tts_live_speed(app: &AppHandle, settings: &WinsttSettings) {
+    let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() else {
+        return;
+    };
+    tts.inner()
+        .set_speed(crate::winstt::managers::TtsManager::configured_speed_from(
+            settings,
+        ));
 }
 
 pub(crate) fn warm_tts_async(app: &AppHandle) {
@@ -470,8 +507,13 @@ pub(super) fn apply_audio_runtime_settings(
     let microphone_release_changed =
         previous.audio.microphone_release != next.audio.microphone_release;
     let input_device_changed = previous.audio.input_device_index != next.audio.input_device_index
+        || previous.audio.input_device_priority != next.audio.input_device_priority
         || previous.audio.clamshell_microphone != next.audio.clamshell_microphone;
-    if !microphone_release_changed && !input_device_changed {
+    let vad_changed = previous.audio.silero_deactivity_detection
+        != next.audio.silero_deactivity_detection
+        || previous.audio.silero_sensitivity != next.audio.silero_sensitivity
+        || previous.audio.webrtc_sensitivity != next.audio.webrtc_sensitivity;
+    if !microphone_release_changed && !input_device_changed && !vad_changed {
         return;
     }
 
@@ -485,6 +527,10 @@ pub(super) fn apply_audio_runtime_settings(
         if let Err(err) = audio_manager.update_mode(mode) {
             log::warn!("[settings] failed to apply microphone release policy: {err}");
         }
+    }
+
+    if vad_changed {
+        audio_manager.apply_vad_settings(next);
     }
 
     if input_device_changed && let Err(err) = audio_manager.update_selected_device() {
@@ -879,6 +925,53 @@ mod tests {
     }
 
     #[test]
+    fn cloud_tts_refresh_reacts_to_elevenlabs_voice_parameters() {
+        use crate::winstt::settings_schema::TtsSource;
+
+        let mut base = WinsttSettings::default();
+        base.tts.enabled = true;
+        base.tts.source = TtsSource::Cloud;
+
+        let mut stability = base.clone();
+        stability.tts.cloud.stability = 0.2;
+        assert!(tts_warm_inputs_changed(&base, &stability));
+
+        let mut similarity = base.clone();
+        similarity.tts.cloud.similarity = 0.4;
+        assert!(tts_warm_inputs_changed(&base, &similarity));
+
+        let mut style = base.clone();
+        style.tts.cloud.style = 0.3;
+        assert!(tts_warm_inputs_changed(&base, &style));
+
+        let mut boost = base.clone();
+        boost.tts.cloud.speaker_boost = false;
+        assert!(tts_warm_inputs_changed(&base, &boost));
+    }
+
+    #[test]
+    fn live_tts_speed_diff_uses_the_active_source() {
+        use crate::winstt::settings_schema::TtsSource;
+
+        let mut local = WinsttSettings::default();
+        let mut local_changed = local.clone();
+        local_changed.tts.speed = 1.25;
+        assert!(tts_live_speed_changed(&local, &local_changed));
+
+        local.tts.source = TtsSource::Cloud;
+        let mut inactive_local_change = local.clone();
+        inactive_local_change.tts.speed = 1.25;
+        assert!(!tts_live_speed_changed(&local, &inactive_local_change));
+
+        let mut cloud_changed = local;
+        cloud_changed.tts.cloud.speed = 1.1;
+        assert!(tts_live_speed_changed(
+            &inactive_local_change,
+            &cloud_changed
+        ));
+    }
+
+    #[test]
     fn enabled_ollama_models_are_deduped_across_dictation_and_transforms() {
         use crate::winstt::settings_schema::LlmProvider;
 
@@ -940,6 +1033,7 @@ mod tests {
             || realtime_language_changed(previous, next)
             // tts — apply_tts_runtime_settings
             || tts_warm_inputs_changed(previous, next)
+            || tts_live_speed_changed(previous, next)
             || local_tts_engine_wanted(previous) != local_tts_engine_wanted(next)
             || previous.global.model_unload_timeout != next.global.model_unload_timeout
             // encoder dictionary — apply_encoder_dict_runtime_settings
@@ -955,7 +1049,11 @@ mod tests {
             // audio — apply_audio_runtime_settings
             || previous.audio.microphone_release != next.audio.microphone_release
             || previous.audio.input_device_index != next.audio.input_device_index
+            || previous.audio.input_device_priority != next.audio.input_device_priority
             || previous.audio.clamshell_microphone != next.audio.clamshell_microphone
+            || previous.audio.silero_deactivity_detection != next.audio.silero_deactivity_detection
+            || previous.audio.silero_sensitivity != next.audio.silero_sensitivity
+            || previous.audio.webrtc_sensitivity != next.audio.webrtc_sensitivity
             // autostart — apply_autostart_setting
             || previous.general.auto_start != next.general.auto_start
             // wakeword — apply_wakeword_runtime_settings
@@ -988,6 +1086,7 @@ mod tests {
                 s.global.model_unload_timeout = ModelUnloadTimeout::Immediately
             }),
             ("tts.enabled", |s| s.tts.enabled = true),
+            ("tts.speed", |s| s.tts.speed = 1.25),
             ("general.encoderDictionaryEnabled", |s| {
                 s.general.encoder_dictionary_enabled = false
             }),
@@ -1007,8 +1106,20 @@ mod tests {
             ("audio.inputDeviceIndex", |s| {
                 s.audio.input_device_index = Some(3)
             }),
+            ("audio.inputDevicePriority", |s| {
+                s.audio.input_device_priority = vec!["USB microphone".into()]
+            }),
             ("audio.clamshellMicrophone", |s| {
                 s.audio.clamshell_microphone = Some(1)
+            }),
+            ("audio.sileroDeactivityDetection", |s| {
+                s.audio.silero_deactivity_detection = false
+            }),
+            ("audio.sileroSensitivity", |s| {
+                s.audio.silero_sensitivity = 0.4
+            }),
+            ("audio.webrtcSensitivity", |s| {
+                s.audio.webrtc_sensitivity = 1
             }),
             ("general.autoStart", |s| s.general.auto_start = true),
             ("general.recordingMode", |s| {

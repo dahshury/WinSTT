@@ -1,6 +1,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useTranslations } from "use-intl";
 import type { SnippetEntry } from "@/bindings";
+import {
+	fitsRustShortText,
+	fitsRustText,
+	VOCABULARY_LIMITS,
+} from "@/shared/config/vocabulary-limits";
 import { generateId } from "@/shared/lib/generate-id";
 import {
 	EditableRecordsGrid,
@@ -22,6 +27,21 @@ function newSnippet(): SnippetEntry {
 	return { expansion: "", id: generateId(), trigger: "" };
 }
 
+function acceptSnippetData(newData: readonly SnippetEntry[]): boolean {
+	return (
+		newData.length <= VOCABULARY_LIMITS.snippets &&
+		newData.every(
+			(entry) =>
+				fitsRustShortText(entry.id, VOCABULARY_LIMITS.idBytes) &&
+				fitsRustShortText(
+					entry.trigger,
+					VOCABULARY_LIMITS.termOrTriggerBytes,
+				) &&
+				fitsRustText(entry.expansion, VOCABULARY_LIMITS.snippetExpansionBytes),
+		)
+	);
+}
+
 export function SnippetsTable({ entries, onChange }: SnippetsTableProps) {
 	const t = useTranslations("snippets");
 
@@ -41,19 +61,21 @@ export function SnippetsTable({ entries, onChange }: SnippetsTableProps) {
 			filterFn,
 			header: t("expansion"),
 			id: "expansion",
-			meta: { cell: { variant: "short-text" }, label: t("expansion") },
+			meta: { cell: { variant: "long-text" }, label: t("expansion") },
 			minSize: 260,
 		},
 	];
 
 	return (
 		<EditableRecordsGrid
+			acceptData={acceptSnippetData}
 			columns={columns}
 			createRow={newSnippet}
 			data={entries}
 			editableColumnIds={EDITABLE_COLUMNS}
 			focusColumnId="trigger"
 			isEmptyRow={isBlankSnippet}
+			maxRows={VOCABULARY_LIMITS.snippets}
 			onChange={onChange}
 		/>
 	);

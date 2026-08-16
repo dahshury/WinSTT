@@ -236,6 +236,68 @@ fn resolved_from_snapshot_dir(
             )?;
             insert_existing(&mut files, "config", dir.join("config.json"))?;
         }
+        // ARK-ASR: point `STT_BENCH_SNAPSHOT_DIR` at a checkout of `Audio8/ark-asr-*-int8-onnx`
+        // (flat root, single published precision).
+        EngineKind::ArkAsr => {
+            insert_existing(
+                &mut files,
+                "audio_encoder",
+                dir.join("audio_encoder_whisper_int8.onnx"),
+            )?;
+            insert_existing(
+                &mut files,
+                "audio_adapter",
+                dir.join("audio_encoder_adapter_int8.onnx"),
+            )?;
+            // Mirror the resolver: int4 selects the MatMulNBits LM, everything else the int8 one.
+            let lm = match effective_quant {
+                Quantization::Int4 => "llm_kv_cpu_fp32_int4.onnx",
+                Quantization::Int8g => "llm_kv_growing_int8.onnx",
+                _ => "llm_kv_cpu_fp32_int8.onnx",
+            };
+            insert_existing(&mut files, "lm", dir.join(lm))?;
+            // A bundle ships ONE embedding spelling; prefer fp16 when present.
+            let fp16 = dir.join("embedding_fp16.data");
+            if fp16.exists() {
+                insert_existing(&mut files, "embed_tokens_fp16", fp16)?;
+            } else {
+                insert_existing(&mut files, "embed_tokens", dir.join("embedding_fp32.data"))?;
+            }
+            insert_existing(
+                &mut files,
+                "runtime_manifest",
+                dir.join("runtime_manifest.json"),
+            )?;
+            insert_existing(&mut files, "tokenizer", dir.join("tokenizer.json"))?;
+        }
+        // Audio8-ASR: point `STT_BENCH_SNAPSHOT_DIR` at a `model_bundle/` directory (the upstream
+        // layout, `_`-separated quant suffixes, host-side NumPy weights under `weights/`). Lets the
+        // engine be exercised against a hand-downloaded bundle without going through the resolver.
+        EngineKind::Audio8Asr => {
+            let tower = match effective_quant {
+                Quantization::Default => "audio_hidden.onnx".to_string(),
+                _ => "audio_hidden_int8.onnx".to_string(),
+            };
+            let lm = |stem: &str| match effective_quant {
+                Quantization::Default => dir.join(format!("{stem}.onnx")),
+                quant => dir.join(format!("{stem}_{}.onnx", quant.suffix())),
+            };
+            insert_existing(&mut files, "audio_tower", dir.join(tower))?;
+            insert_existing(&mut files, "lm_prefill", lm("lm_cache_prefill"))?;
+            insert_existing(&mut files, "lm_decode", lm("lm_cache_decode"))?;
+            insert_existing(
+                &mut files,
+                "embed_tokens",
+                dir.join("weights/token_embedding.npy"),
+            )?;
+            insert_existing(
+                &mut files,
+                "audio_projector",
+                dir.join("weights/audio_projector.npz"),
+            )?;
+            insert_existing(&mut files, "tokenizer", dir.join("tokenizer.json"))?;
+            insert_existing(&mut files, "bundle_metadata", dir.join("metadata.json"))?;
+        }
         _ => {
             return Err(format!(
                 "STT_BENCH_SNAPSHOT_DIR override is not wired for {kind:?}; use the resolver path"
@@ -250,22 +312,12 @@ fn resolved_from_snapshot_dir(
 }
 
 /// Catalog `Family` → the policy slug the engine helpers key on.
+///
+/// Delegates to `Family::as_str` rather than re-listing the variants: the hand-written copy that
+/// used to live here silently went non-exhaustive every time a family was added (it was already
+/// missing `VibeVoice` before `Audio8` landed), breaking `cargo clippy --all-targets`.
 fn family_slug_of(family: winstt_app_lib::winstt::catalog::Family) -> &'static str {
-    use winstt_app_lib::winstt::catalog::Family;
-    match family {
-        Family::Whisper => "whisper",
-        Family::Moonshine => "moonshine",
-        Family::Cohere => "cohere",
-        Family::Granite => "granite",
-        Family::Nemo => "nemo",
-        Family::SenseVoice => "sense_voice",
-        Family::GigaAm => "gigaam",
-        Family::Kaldi => "kaldi",
-        Family::TOne => "t-one",
-        Family::Dolphin => "dolphin",
-        Family::Qwen3 => "qwen3",
-        Family::Custom => "custom",
-    }
+    family.as_str()
 }
 
 /// Catalog mode — exercises the EXACT path `TranscriptionManager::load_winstt_model` uses:
@@ -306,6 +358,8 @@ fn run_catalog_mode(cat_id: &str) {
         "q4f16" => Quantization::Q4f16,
         "bnb4" => Quantization::Bnb4,
         "uint8" => Quantization::Uint8,
+        "int4" => Quantization::Int4,
+        "int8g" => Quantization::Int8g,
         _ => Quantization::Default,
     };
     eprintln!("quant      : {effective_quant:?} (STT_BENCH_QUANT env)");

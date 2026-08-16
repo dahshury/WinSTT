@@ -24,8 +24,14 @@ static PERIOD_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bperiod\b"));
 static COLON_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bcolon\b"));
 static SEMICOLON_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bsemicolon\b"));
 
-static FILLER_RE: Lazy<Regex> =
-    Lazy::new(|| static_regex(r"(?i)\b(?:um+|uh+|erm+|ah+|you know|i mean)\b[,\s]*"));
+// The bracketed alternation covers CrisperWhisper 2.0's verbatim event tokens
+// ([UM]/[UH] fillers + vocal events like [laughter]), which decode as literal
+// bracketed text; plain-word fillers cover every other verbatim model.
+static FILLER_RE: Lazy<Regex> = Lazy::new(|| {
+    static_regex(
+        r"(?i)(?:\[(?:um|uh|laughter|sniff|throatclearing|cough|sigh|breath|lipsmack|yawn|noise|crying|fart|scream|sneeze)\]|\b(?:um+|uh+|erm+|ah+|you know|i mean)\b)[,\s]*",
+    )
+});
 static FLAG_LONG_RE: Lazy<Regex> =
     Lazy::new(|| static_regex(r"(?i)\bdash dash\s+([a-z][a-z0-9_-]*)\b"));
 static FLAG_SHORT_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"(?i)\bdash\s+([a-z])\b"));
@@ -64,7 +70,7 @@ pub(crate) fn model_has_native_basic_formatting(model_id: &str) -> bool {
         return false;
     };
     match entry.family {
-        Family::Whisper | Family::Cohere | Family::Granite => true,
+        Family::Whisper | Family::Cohere | Family::Granite | Family::VibeVoice => true,
         Family::Nemo => model_id.to_lowercase().contains("canary"),
         _ => false,
     }
@@ -294,6 +300,24 @@ mod tests {
         assert_eq!(
             apply_deterministic_formatting("um the the draft is is ready", &ws),
             "the draft is ready"
+        );
+    }
+
+    #[test]
+    fn filler_cleanup_removes_crisper_bracketed_event_markers() {
+        let mut ws = settings_for("dolphin-base-ctc");
+        ws.quality.format_filler_repeat_cleanup = true;
+        // CrisperWhisper 2.0 verbatim output keeps [UM]/[laughter]-style event tokens;
+        // the cleanup toggle strips them like plain-word fillers.
+        assert_eq!(
+            apply_deterministic_formatting("[UM] the draft [laughter] is ready [breath]", &ws),
+            "the draft is ready"
+        );
+        // Cleanup OFF leaves the verbatim markers untouched.
+        ws.quality.format_filler_repeat_cleanup = false;
+        assert_eq!(
+            apply_deterministic_formatting("[UM] the draft is ready", &ws),
+            "[UM] the draft is ready"
         );
     }
 

@@ -4,5 +4,5 @@ set -eu
 [ "${HUSKY:-1}" = "0" ] && exit 0
 [ "${WINSTT_SKIP_GIT_HOOKS:-0}" = "1" ] && exit 0
 
-echo "winstt pre-commit: checking lockfile, lint, and types"
+echo "winstt pre-commit: checking lockfile, lint, types, and import cycles"
 bun run precommit

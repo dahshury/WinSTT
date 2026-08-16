@@ -91,6 +91,14 @@ impl Drop for FinishGuard {
         if crate::transcription_coordinator::is_current_dictation_session(self.session_id) {
             crate::transcription_coordinator::finish_dictation_session(self.session_id);
             utils::unregister_cancel_shortcut_if_idle(&self.app);
+            // Backstop for a pipeline that unwound past its terminal event: a panic
+            // anywhere in the decode/paste task skips `full_sentence` /
+            // `no_audio_detected` / `transcription_failed`, and this guard is the only
+            // thing that still runs — so without it the tray animated "thinking"
+            // forever. Guarded on the session still being CURRENT, so it can never
+            // stomp a newer take that already re-armed the icon. On the normal path
+            // the terminal has already painted idle and this is an inert repaint.
+            change_tray_icon(&self.app, TrayIconState::Idle);
         }
         if let Some(c) = self.app.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished(self.session_id);
@@ -98,13 +106,11 @@ impl Drop for FinishGuard {
     }
 }
 
-// Shortcut Action Trait
 pub trait ShortcutAction: Send + Sync {
     fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
     fn stop(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
 }
 
-// Static Action Map
 pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert(

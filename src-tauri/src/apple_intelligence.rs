@@ -15,7 +15,6 @@ unsafe extern "C" {
     pub fn free_apple_llm_response(response: *mut AppleLLMResponse);
 }
 
-// Safe wrapper functions
 pub fn check_apple_intelligence_availability() -> bool {
     // SAFETY: the Swift bridge exposes a nullary availability probe with no
     // ownership transfer or pointer arguments.

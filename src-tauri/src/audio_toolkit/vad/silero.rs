@@ -35,6 +35,12 @@ impl SileroVad {
     pub fn reset(&mut self) {
         self.engine.reset();
     }
+
+    /// Update the probability threshold without rebuilding the ONNX session.
+    /// Settings hot-swap this value while the recorder is open.
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold.clamp(0.0, 1.0);
+    }
 }
 
 impl VoiceActivityDetector for SileroVad {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, renderHook } from "@testing-library/react";
+import { useConnectionStore } from "@/entities/connection";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { useSettingsStore } from "@/entities/setting";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
@@ -42,15 +43,26 @@ function model(
 	};
 }
 
-function stateEntry(estimatedBytes: number, cached: boolean): ModelStateEntry {
+function cacheInfo(cached: boolean) {
+	return { state: cached ? "cached" : "not_cached", progress: cached ? 1 : 0 };
+}
+
+/**
+ * `overrides` models the per-precision reality the backend reports: `cache` is
+ * the AUTO recommendation's state while `cache_by_quantization` carries the
+ * real per-precision breakdown. The two legitimately disagree.
+ */
+function stateEntry(
+	estimatedBytes: number,
+	cached: boolean,
+	overrides: Partial<ModelStateEntry> = {},
+): ModelStateEntry {
 	return {
-		cache: {
-			state: cached ? "cached" : "not_cached",
-			progress: cached ? 1 : 0,
-		},
+		cache: cacheInfo(cached),
 		estimated_bytes: estimatedBytes,
 		comfortable_on_cpu: true,
 		comfortable_on_gpu: true,
+		...overrides,
 	} as unknown as ModelStateEntry;
 }
 
@@ -59,6 +71,7 @@ interface HookArgs {
 	catalogModels: ModelInfo[];
 	currentMainModel: string | undefined;
 	currentRealtimeModel: string | undefined;
+	currentQuant?: string;
 	cloudFallbackModel?: string | null;
 	statesById: StatesById;
 	statesLoaded?: boolean;
@@ -76,6 +89,7 @@ function renderFallback(args: HookArgs) {
 				p.statesLoaded ?? true,
 				p.currentMainModel,
 				p.currentRealtimeModel,
+				p.currentQuant ?? "",
 				undefined,
 				p.cloudFallbackModel ?? null,
 			),
@@ -108,11 +122,13 @@ describe("useStaleModelFallback", () => {
 	beforeEach(() => {
 		cleanup();
 		_setStaleModelFallbackPatchApplierForTests(null);
+		useConnectionStore.setState({ runtimeInfo: null } as never);
 	});
 
 	afterEach(() => {
 		cleanup();
 		_setStaleModelFallbackPatchApplierForTests(null);
+		useConnectionStore.setState({ runtimeInfo: null } as never);
 	});
 
 	test("skips entirely while the catalog is still loading (both effects)", () => {
@@ -561,5 +577,112 @@ describe("useStaleModelFallback", () => {
 		expect(update).toHaveBeenCalledTimes(2);
 		expect(update).toHaveBeenCalledWith({ model: "tiny" });
 		expect(update).toHaveBeenCalledWith({ realtimeModel: "tiny" });
+	});
+
+	// The model's flat `cache` is the AUTO recommendation's state, which is
+	// computed independently of the user's explicit `onnxQuantization`. Reading
+	// it here declared a fully-downloaded selection "not downloaded" and swapped
+	// the user's working model out from under them (audio8-asr-0.1b: cached and
+	// loaded at int8, recommended — and reported — at an uncached fp32).
+	test("keeps a selection cached at the SELECTED precision even when the recommended precision is not", () => {
+		const update = mock<Update>(() => undefined);
+		const catalog = [
+			model({ id: "tiny", previewCapable: true, nativeStreaming: true }),
+			model({
+				id: "audio8-asr-0.1b",
+				availableQuantizations: ["", "int8", "int4"],
+				nativeStreaming: true,
+			}),
+		];
+		renderFallback({
+			catalogLoaded: true,
+			catalogModels: catalog,
+			statesById: {
+				tiny: stateEntry(100, true),
+				"audio8-asr-0.1b": stateEntry(300, false, {
+					effective_quantization: "",
+					cache_by_quantization: {
+						"": cacheInfo(false),
+						int8: cacheInfo(true),
+						int4: cacheInfo(true),
+					},
+				} as unknown as Partial<ModelStateEntry>),
+			},
+			currentMainModel: "audio8-asr-0.1b",
+			currentRealtimeModel: "audio8-asr-0.1b",
+			currentQuant: "int8",
+			update,
+		});
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	// A fallback that moves `model` while leaving a precision the incoming model
+	// does not publish posts an invalid `{ model, onnxQuantization }` couple,
+	// which the backend rejects WHOLESALE — the fallback never reaches disk and
+	// every later save of the model section fails the same way.
+	test("resets an unavailable precision when the main fallback changes the model", () => {
+		const update = mock<Update>(() => undefined);
+		const catalog = [
+			// The factory default publishes no int8 tier.
+			model({
+				id: "tiny",
+				previewCapable: true,
+				nativeStreaming: true,
+				availableQuantizations: ["", "fp16", "q4", "bnb4"],
+			}),
+			model({
+				id: "audio8-asr-0.1b",
+				availableQuantizations: ["", "int8", "int4"],
+				nativeStreaming: true,
+			}),
+		];
+		renderFallback({
+			catalogLoaded: true,
+			catalogModels: catalog,
+			statesById: {
+				tiny: stateEntry(100, true),
+				// Genuinely absent at every precision → a real fallback.
+				"audio8-asr-0.1b": stateEntry(300, false, {
+					cache_by_quantization: {
+						"": cacheInfo(false),
+						int8: cacheInfo(false),
+					},
+				} as unknown as Partial<ModelStateEntry>),
+			},
+			currentMainModel: "audio8-asr-0.1b",
+			currentRealtimeModel: "tiny",
+			currentQuant: "int8",
+			update,
+		});
+		expect(update).toHaveBeenCalledWith({
+			model: "tiny",
+			onnxQuantization: "",
+		});
+	});
+
+	// `useSyncActiveModel` runs in this same window and re-adopts the runtime
+	// model on every settings change, so rewriting the loaded model here is an
+	// infinite setState ping-pong ("Maximum update depth exceeded").
+	test("never rewrites the model the backend currently has LOADED", () => {
+		const update = mock<Update>(() => undefined);
+		// Reset by the shared beforeEach/afterEach, which unmounts first.
+		useConnectionStore.setState({
+			runtimeInfo: { model: "audio8-asr-0.1b" },
+		} as never);
+		renderFallback({
+			catalogLoaded: true,
+			catalogModels: CATALOG.concat(
+				model({ id: "audio8-asr-0.1b", nativeStreaming: true }),
+			),
+			statesById: {
+				...STATES,
+				// The cache snapshot claims it is gone; the runtime says otherwise.
+				"audio8-asr-0.1b": stateEntry(300, false),
+			},
+			currentMainModel: "audio8-asr-0.1b",
+			currentRealtimeModel: "tiny",
+			update,
+		});
+		expect(update).not.toHaveBeenCalledWith({ model: "tiny" });
 	});
 });

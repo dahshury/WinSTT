@@ -627,9 +627,9 @@ mod windows_impl {
     use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use wasapi::{Direction, SampleType, StreamMode, deinitialize, initialize_mta};
-    use windows::Win32::Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows::Win32::System::Threading::{
-        CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+        CreateEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
     };
     use windows::core::PCWSTR;
 
@@ -638,6 +638,17 @@ mod windows_impl {
     /// Resampler frame size (matches the recorder's 30 ms emit cadence so the
     /// downstream Silero VAD receives whole 30 ms / 480-sample frames).
     const RESAMPLER_FRAME_MS: u64 = 30;
+
+    /// Upper bound on one buffer-ready wait. The WASAPI event is AUTO-RESET, so
+    /// signals raised while this thread is busy COALESCE into a single wake — and
+    /// a loopback stream's event stops firing entirely whenever the render
+    /// endpoint's audio engine idles. Waiting `INFINITE` on it therefore lets a
+    /// backlog sit in the capture buffer until WASAPI overruns the 200 ms
+    /// allocation and silently discards frames. A bounded wait makes every
+    /// iteration a poll as well as an event wait, so the drain below always gets
+    /// to run. Well under `BUFFER_DURATION_HNS` so a full buffer is never the
+    /// deadline.
+    const BUFFER_WAIT_TIMEOUT_MS: u32 = 50;
 
     /// Manual-reset event used to wake the capture thread on shutdown.
     pub(super) struct StopEvent(OwnedHandle);
@@ -871,22 +882,57 @@ mod windows_impl {
         const MAX_ERRORS: u32 = 5;
 
         let result = (|| -> anyhow::Result<()> {
+            let mut dropped_packets = 0u64;
             loop {
-                // Drain all currently-available bytes into `raw`.
-                match capture.read_from_device_to_deque(&mut raw) {
-                    Ok(_) => consecutive_errors = 0,
-                    Err(e) => {
-                        if stop.is_signaled() {
+                // Drain EVERY queued packet, not just one. `read_from_device_to_deque`
+                // wraps a single `IAudioCaptureClient::GetBuffer`, which returns ONE
+                // packet — so the old single call per wake could only keep up while
+                // wakes and packets stayed 1:1. They do not: the buffer-ready event is
+                // auto-reset and coalesces, so any wake this thread misses left a packet
+                // behind permanently, and the arrears grew until WASAPI overran its
+                // 200 ms buffer and discarded audio. That discard is exactly the
+                // "listen mode goes quiet for a few seconds and never transcribes what
+                // was said" report: the samples are gone before the pipeline sees them.
+                loop {
+                    let queued = capture.get_next_packet_size().unwrap_or(None);
+                    if queued == Some(0) {
+                        break;
+                    }
+                    match capture.read_from_device_to_deque(&mut raw) {
+                        Ok(info) => {
+                            consecutive_errors = 0;
+                            // WASAPI sets this on the first packet AFTER it dropped
+                            // audio. Nothing used to look at it, which is why the loss
+                            // was invisible; log it so a recurrence is diagnosable.
+                            if info.flags.data_discontinuity {
+                                dropped_packets += 1;
+                                log::warn!(
+                                    "[loopback] WASAPI reported a capture discontinuity (audio was dropped before the pipeline saw it); total={dropped_packets}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if stop.is_signaled() {
+                                break;
+                            }
+                            consecutive_errors += 1;
+                            log::warn!(
+                                "[loopback] read error ({consecutive_errors}/{MAX_ERRORS}): {e:?}"
+                            );
+                            if consecutive_errors >= MAX_ERRORS {
+                                anyhow::bail!("too many consecutive capture errors");
+                            }
                             break;
                         }
-                        consecutive_errors += 1;
-                        log::warn!(
-                            "[loopback] read error ({consecutive_errors}/{MAX_ERRORS}): {e:?}"
-                        );
-                        if consecutive_errors >= MAX_ERRORS {
-                            anyhow::bail!("too many consecutive capture errors");
-                        }
                     }
+                    // Exclusive mode reports no packet size; one read per wake is all
+                    // that path ever had, so don't spin on it.
+                    if queued.is_none() {
+                        break;
+                    }
+                }
+                if stop.is_signaled() {
+                    break;
                 }
 
                 // Convert whole frames out of the byte deque.
@@ -917,16 +963,20 @@ mod windows_impl {
                     }
                 }
 
-                // Sleep until either shutdown or WASAPI reports a ready buffer.
+                // Sleep until shutdown, a ready buffer, or the poll deadline.
                 // The stop event is first so shutdown wins if both are signaled.
                 let wait_handles = [stop.handle(), buffer_ready_event];
                 // SAFETY: both handles remain owned for the entire wait; the
                 // stop event is held by `stop` and `h_event` owns the WASAPI event.
-                let wait_result = unsafe { WaitForMultipleObjects(&wait_handles, false, INFINITE) };
+                let wait_result =
+                    unsafe { WaitForMultipleObjects(&wait_handles, false, BUFFER_WAIT_TIMEOUT_MS) };
                 if wait_result == WAIT_OBJECT_0 {
                     break;
                 }
-                if wait_result.0 == WAIT_OBJECT_0.0 + 1 {
+                // Buffer-ready, or the timeout expired — either way, go drain.
+                // Treating the timeout as a plain wake is what makes this loop
+                // resilient to an idle/unsignaled loopback event.
+                if wait_result.0 == WAIT_OBJECT_0.0 + 1 || wait_result == WAIT_TIMEOUT {
                     continue;
                 }
                 if wait_result == WAIT_FAILED {

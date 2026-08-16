@@ -13,9 +13,6 @@ import { formatErrorForLog } from "./errors";
  * identical (the rejection is swallowed) while making every swallowed failure
  * observable in one place: in dev builds the error is logged with an optional
  * context label so the cause is discoverable.
- *
- * @param promise - The promise to detach from the current control flow.
- * @param context - Optional label identifying the call site in dev logs.
  */
 export function fireAndForget(
 	promise: Promise<unknown>,

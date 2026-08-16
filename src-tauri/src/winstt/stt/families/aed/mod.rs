@@ -21,16 +21,21 @@ pub(super) use super::super::{
 };
 pub(super) use super::{frontend, support::*};
 
+mod ark_asr;
+mod audio8;
 mod canary;
 mod cohere;
 mod granite_ar;
 mod granite_nar;
 mod qwen3;
 mod tone;
+mod vibevoice;
 
 // `canary_prompt_tokens` / `COHERE_LANGUAGES` are consumed only by the `#[cfg(test)]` pure-logic
 // tests in `families.rs`; gate the re-exports to the same builds so the lib build has no unused
 // import (the originals were `pub(super)` definitions, which the dead-code lint already exempts).
+pub(super) use ark_asr::ArkAsrEngine;
+pub(super) use audio8::Audio8AsrEngine;
 pub use canary::CanaryEngine;
 #[cfg(test)]
 pub(super) use canary::canary_prompt_tokens;
@@ -41,3 +46,4 @@ pub(super) use granite_ar::GraniteArEngine;
 pub(super) use granite_nar::GraniteNarEngine;
 pub(super) use qwen3::Qwen3AsrEngine;
 pub use tone::ToneEngine;
+pub(super) use vibevoice::VibeVoiceEngine;

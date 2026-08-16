@@ -80,6 +80,9 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
         EngineKind::GraniteSpeechAr => Box::new(aed::GraniteArEngine::load(&cfg)?),
         EngineKind::GraniteSpeechNar => Box::new(aed::GraniteNarEngine::load(&cfg)?),
         EngineKind::Qwen3Asr => Box::new(aed::Qwen3AsrEngine::load(&cfg)?),
+        EngineKind::VibeVoiceAsr => Box::new(aed::VibeVoiceEngine::load(&cfg)?),
+        EngineKind::Audio8Asr => Box::new(aed::Audio8AsrEngine::load(&cfg)?),
+        EngineKind::ArkAsr => Box::new(aed::ArkAsrEngine::load(&cfg)?),
         EngineKind::NemoAed => Box::new(aed::CanaryEngine::load(&cfg)?),
         EngineKind::ToneCtc => Box::new(aed::ToneEngine::load(&cfg)?),
         EngineKind::NemoCtcStreaming
@@ -99,9 +102,19 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
                 &cfg,
             )?)
         }
+        // icefall zipformer2 streaming CTC (single stateful graph + tokens.txt): the published
+        // graph IS the streaming graph, so the native streaming engine is the only loader.
+        EngineKind::KaldiCtc
+            if native_streaming::NativeZipformerCtcStreamingEngine::supports(&cfg) =>
+        {
+            Box::new(native_streaming::NativeZipformerCtcStreamingEngine::load(
+                &cfg,
+            )?)
+        }
         EngineKind::NemoCtcStreaming
         | EngineKind::NemoRnntStreaming
-        | EngineKind::KaldiTransducerStreaming => {
+        | EngineKind::KaldiTransducerStreaming
+        | EngineKind::KaldiCtc => {
             return Err(SttError::Resolve(
                 "resolved streaming model is missing the expected native ORT graph files".into(),
             ));

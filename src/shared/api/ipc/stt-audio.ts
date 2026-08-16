@@ -2,6 +2,7 @@ import {
 	type AppDataUsageEntry,
 	commands,
 	type MicrophoneLevelMonitorTarget,
+	type ModeTransitionPayload,
 	type Result,
 } from "@/bindings";
 import { decodeSettingsPayload } from "@/shared/config/settings-codec";
@@ -165,6 +166,14 @@ export const audioGetOutputDevices = () =>
 		async () => (await commands.getAudioOutputDevices()) as AudioOutputDevice[],
 		[],
 	);
+export const audioSetSelectedOutputDevice = async (
+	deviceName: string,
+): Promise<void> => {
+	if (!hasTauriRuntime()) {
+		return;
+	}
+	unwrapResult(await commands.setSelectedOutputDevice(deviceName));
+};
 export const audioRefreshOutputDevices = () =>
 	commandOrDefault(
 		"refresh_audio_output_devices",
@@ -272,9 +281,7 @@ export const settingsLoadSnapshotStrict =
 
 function canUseDevSettingsBridge(): boolean {
 	return (
-		typeof window !== "undefined" &&
-		window.location.port === "1420" &&
-		!hasTauriRuntime()
+		import.meta.env.DEV && typeof window !== "undefined" && !hasTauriRuntime()
 	);
 }
 
@@ -566,7 +573,6 @@ function realtimeTextPayload(d: {
 }
 
 // Event subscriptions
-// Note: preload strips the IpcRendererEvent, so callbacks receive only the data args
 export const onRealtimeText = (cb: (payload: RealtimeTextPayload) => void) =>
 	onTyped(IPC.STT_REALTIME_TEXT, realtimeTextPayload, cb);
 
@@ -648,6 +654,35 @@ export const onPostProcessingProfileSwap = (cb: () => void) =>
 
 export const onRecordingModeCycle = (cb: () => void) =>
 	on(IPC.RECORDING_MODE_CYCLE, () => cb());
+
+/**
+ * A recording-mode change is loading the new mode's model (`preparing`) or has
+ * settled (`ready` / `failed`). Emitted for EVERY mode change, including the
+ * free ptt↔toggle ones, which go straight to `ready` — so a listener can treat
+ * "phase === preparing" as the single source of truth for locking mode controls.
+ */
+export const onRecordingModeTransition = (
+	cb: (payload: ModeTransitionPayload) => void,
+) => onCast<ModeTransitionPayload>(IPC.RECORDING_MODE_TRANSITION, cb);
+
+export type { ModeTransitionPayload };
+
+const IDLE_MODE_TRANSITION: ModeTransitionPayload = {
+	error: null,
+	from: "ptt",
+	generation: 0,
+	phase: "idle",
+	to: "ptt",
+};
+
+/** Pull the current phase — a window that mounts (or is re-shown) mid-switch
+ *  missed the `preparing` event and would otherwise render a live control. */
+export const recordingModeTransitionState = () =>
+	commandOrDefault(
+		"recording_mode_transition_state",
+		commands.recordingModeTransitionState,
+		IDLE_MODE_TRANSITION,
+	);
 
 export const onHotkeyRecordingUpdate = (cb: (keys: string[]) => void) =>
 	onTyped(IPC.HOTKEY_RECORDING_UPDATE, (d: { keys: string[] }) => d.keys, cb);

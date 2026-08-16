@@ -132,9 +132,6 @@ const ROUTE_EVENTS_WITHOUT_BACKEND_EMITTER = new Set<string>([
 	"file:transcription-progress",
 	"file:transcription-complete",
 	"file:transcription-error",
-	// Clamshell lid open/close is handled internally (mic-swap); never pushed.
-	"lid:closed",
-	"lid:opened",
 	// The STT catalog is pulled via invoke commands, not pushed as an event.
 	// (`llm:catalog` left this list 2026-07: `ollama_refresh_models` now
 	// broadcasts it so every window converges after a scan/delete/pull.)

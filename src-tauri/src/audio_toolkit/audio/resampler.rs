@@ -1,7 +1,6 @@
 use rubato::{Fft, FixedSync, Resampler, audioadapter_buffers::direct::InterleavedSlice};
 use std::time::Duration;
 
-// Make this a constant you can tweak
 const RESAMPLER_CHUNK_SIZE: usize = 1024;
 
 pub struct FrameResampler {

@@ -13,6 +13,7 @@ import {
 	type TransientNotificationMeta,
 } from "@/shared/lib/create-transient-notification-store";
 import { generateId } from "@/shared/lib/generate-id";
+import { displaySecretValue } from "@/shared/config/settings-schema";
 import {
 	isStringArray,
 	readPersistedSelectorState,
@@ -209,7 +210,10 @@ export function withAvailableLlmProvider(
 	config: LlmConfiguration,
 	openrouterApiKey: string,
 ): LlmConfiguration {
-	if (config.provider === "openrouter" && openrouterApiKey.trim() === "") {
+	if (
+		config.provider === "openrouter" &&
+		displaySecretValue(openrouterApiKey).trim() === ""
+	) {
 		return { ...config, provider: "ollama" };
 	}
 	return config;
@@ -236,29 +240,68 @@ const llmProviderSchema = z.enum([
 	"apple-intelligence",
 ]);
 
-const builtinPresetEntrySchema = z.object({
-	key: presetKeySchema,
-	level: presetLevelSchema.optional(),
-	targetLang: z.string().optional(),
-});
+const KEYS_WITH_LEVELS = new Set<string>(["summarize", "concise"]);
+const TONE_KEYS = new Set<string>(TONE_GROUP);
+
+const builtinPresetEntrySchema = z
+	.object({
+		key: presetKeySchema,
+		level: presetLevelSchema.optional(),
+		targetLang: z.string().optional(),
+	})
+	.refine(
+		(entry) => entry.level === undefined || KEYS_WITH_LEVELS.has(entry.key),
+		{ path: ["level"] },
+	)
+	.refine((entry) => entry.level !== "caveman" || entry.key === "concise", {
+		path: ["level"],
+	})
+	.refine(
+		(entry) => entry.targetLang === undefined || entry.key === "translate",
+		{ path: ["targetLang"] },
+	);
+
+const presetsSchema = z
+	.array(builtinPresetEntrySchema)
+	.refine(
+		(entries) =>
+			new Set(entries.map((entry) => entry.key)).size === entries.length,
+	)
+	.refine(
+		(entries) =>
+			entries.filter((entry) => TONE_KEYS.has(entry.key)).length <= 1,
+	);
 
 const customModifierSchema = z.object({
 	enabled: z.boolean().default(false),
-	id: z.string(),
+	id: z.string().trim().min(1),
 	level: standardPresetLevelSchema.optional(),
 	levelsEnabled: z.boolean().default(false),
 	name: z.string().default(""),
 	prompt: z.string().default(""),
 });
 
+const customModifiersSchema = z
+	.array(customModifierSchema)
+	.refine(
+		(entries) =>
+			new Set(entries.map((entry) => entry.id)).size === entries.length,
+	);
+
 const llmConfigurationSchema = z.object({
-	customModifiers: z.array(customModifierSchema).default([]),
+	customModifiers: customModifiersSchema.default([]),
 	enabled: z.boolean().default(false),
-	maxOutputTokens: z.number().int().min(1).nullable().default(null),
+	maxOutputTokens: z
+		.number()
+		.int()
+		.min(1)
+		.max(200_000)
+		.nullable()
+		.default(null),
 	model: z.string().default(""),
 	openrouterFallbackModel: z.string().default(""),
 	openrouterModel: z.string().default(""),
-	presets: z.array(builtinPresetEntrySchema).default([{ key: "neutral" }]),
+	presets: presetsSchema.default([{ key: "neutral" }]),
 	provider: llmProviderSchema.default("ollama"),
 	reasoningEffort: thinkingEffortSchema.default("medium"),
 	thinkingEffort: thinkingEffortSchema.default("off"),
@@ -274,8 +317,8 @@ const SAVED_CONFIGURATION_VERSION = 1;
 // fields are ignored by zod and missing convenience fields receive the same
 // defaults as a fresh LLM feature draft.
 const savedConfigurationSchema = z.object({
-	id: z.string(),
-	name: z.string(),
+	id: z.string().trim().min(1),
+	name: z.string().trim().min(1),
 	config: llmConfigurationSchema,
 	// Optional so pre-versioning entries still parse; defaulted on the way in.
 	version: z.number().int().optional().default(SAVED_CONFIGURATION_VERSION),
@@ -306,18 +349,41 @@ function salvageSavedConfiguration(entry: unknown): SavedConfiguration | null {
 			: {};
 	const rawPresets = rawConfig["presets"];
 	if (Array.isArray(rawPresets)) {
-		const presets = rawPresets.filter(
-			(p) => builtinPresetEntrySchema.safeParse(p).success,
-		);
+		const seen = new Set<string>();
+		let hasTone = false;
+		const presets: BuiltinPresetEntry[] = [];
+		for (const rawPreset of rawPresets) {
+			const parsed = builtinPresetEntrySchema.safeParse(rawPreset);
+			if (!parsed.success || seen.has(parsed.data.key)) {
+				continue;
+			}
+			const isTone = TONE_KEYS.has(parsed.data.key);
+			if (isTone && hasTone) {
+				continue;
+			}
+			seen.add(parsed.data.key);
+			hasTone ||= isTone;
+			presets.push(parsed.data);
+		}
 		// A stack that lost its tone / every preset falls back to the neutral
 		// default so the entry still renders instead of a tone-less config.
-		rawConfig["presets"] = presets.length > 0 ? presets : [{ key: "neutral" }];
+		rawConfig["presets"] = hasTone ? presets : [{ key: "neutral" }, ...presets];
+	} else if (rawPresets !== undefined) {
+		rawConfig["presets"] = [{ key: "neutral" }];
 	}
 	const rawModifiers = rawConfig["customModifiers"];
 	if (Array.isArray(rawModifiers)) {
-		rawConfig["customModifiers"] = rawModifiers.filter(
-			(m) => customModifierSchema.safeParse(m).success,
-		);
+		const seen = new Set<string>();
+		rawConfig["customModifiers"] = rawModifiers.flatMap((modifier) => {
+			const parsed = customModifierSchema.safeParse(modifier);
+			if (!parsed.success || seen.has(parsed.data.id)) {
+				return [];
+			}
+			seen.add(parsed.data.id);
+			return [parsed.data];
+		});
+	} else if (rawModifiers !== undefined) {
+		rawConfig["customModifiers"] = [];
 	}
 	const result = savedConfigurationSchema.safeParse({
 		...record,
@@ -333,16 +399,19 @@ function parseConfigArray(value: unknown): ParsedConfigurations {
 		return { configs: [], repaired: value != null };
 	}
 	const configs: SavedConfiguration[] = [];
+	const seenIds = new Set<string>();
 	let repaired = false;
 	for (const entry of value) {
 		const strict = savedConfigurationSchema.safeParse(entry);
-		if (strict.success) {
+		if (strict.success && !seenIds.has(strict.data.id)) {
+			seenIds.add(strict.data.id);
 			configs.push(strict.data);
 			continue;
 		}
 		const salvaged = salvageSavedConfiguration(entry);
 		repaired = true;
-		if (salvaged) {
+		if (salvaged && !seenIds.has(salvaged.id)) {
+			seenIds.add(salvaged.id);
 			configs.push(salvaged);
 			console.warn(
 				"[llm-configurations] repaired a saved configuration entry with invalid fields",
@@ -356,7 +425,9 @@ function parseConfigArray(value: unknown): ParsedConfigurations {
 	return { configs, repaired };
 }
 
-function parseSavedConfigurations(raw: string | null): ParsedConfigurations {
+export function parseSavedConfigurations(
+	raw: string | null,
+): ParsedConfigurations {
 	if (!raw) {
 		return { configs: [], repaired: false };
 	}
@@ -460,7 +531,25 @@ function builtinConfiguration(
 /** Configurations shipped with the app, offered in every Configuration combobox
  *  once seeded. Append future presets here — each new id is seeded on the next
  *  load without disturbing configs the user already reordered or deleted. */
+/**
+ * The configuration every consumer is assigned out of the box (see the
+ * `configurationId` defaults in the settings schema).
+ *
+ * It is deliberately the PLAINEST possible stack — the neutral tone and nothing
+ * else, i.e. just the base cleanup pass. A feature must never be enableable
+ * without a configuration (there would be no prompt to run), so there has to be
+ * one that is always a safe answer, and "clean up the text and change nothing
+ * else" is that answer.
+ */
+export const DEFAULT_CONFIGURATION_ID = "builtin:default";
+
 export const BUILTIN_CONFIGURATIONS: readonly SavedConfiguration[] = [
+	// The default assignment for every feature: the Polish base cleanup with no
+	// tone restyling and no modifiers on top. Listed first so a fresh install
+	// finds it at the head of the picker.
+	builtinConfiguration(DEFAULT_CONFIGURATION_ID, "Default", [
+		{ key: "neutral" },
+	]),
 	// Dictating a prompt to an AI assistant: the Polish base cleans the speech,
 	// then Concise (high) + Reorder + Restructure + Reword for Clarity turn a
 	// rambling spoken request into a tight, well-ordered, unambiguous prompt.
@@ -579,8 +668,13 @@ function parseStoredPrimary(raw: string | null): {
 		const record = parsed as Record<string, unknown>;
 		const { configs, repaired } = parseConfigArray(record["configurations"]);
 		const rawSeeded = record["seededBuiltinIds"];
-		const seededBuiltinIds = isStringArray(rawSeeded) ? rawSeeded : [];
-		return { configs, seededBuiltinIds, repaired };
+		const seededIdsValid = isStringArray(rawSeeded);
+		const seededBuiltinIds = seededIdsValid ? rawSeeded : [];
+		return {
+			configs,
+			seededBuiltinIds,
+			repaired: repaired || !seededIdsValid,
+		};
 	}
 	return { configs: [], seededBuiltinIds: null, repaired: true };
 }
@@ -767,6 +861,56 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 	}),
 );
 
+/**
+ * Reconcile an external localStorage write into this webview's cache. Repairs
+ * malformed entries, re-seeds only genuinely unseeded built-ins, invalidates a
+ * now-missing active id, and refreshes app-profile snapshots that reference an
+ * edited/renamed saved configuration.
+ */
+export function syncConfigurationsFromStorage(raw: string | null): void {
+	const current = useLlmConfigurationsStore.getState();
+	const primary =
+		raw === null
+			? {
+					configs: [] as SavedConfiguration[],
+					repaired: false,
+					seededBuiltinIds: [] as string[],
+				}
+			: parseStoredPrimary(raw);
+	const priorSeeded = primary.seededBuiltinIds ?? current.seededBuiltinIds;
+	const seeded = seedBuiltinConfigurations(
+		primary.configs,
+		new Set(priorSeeded),
+	);
+	const ids = new Set(seeded.configurations.map((entry) => entry.id));
+	useLlmConfigurationsStore.setState({
+		activeConfigurationId:
+			current.activeConfigurationId && ids.has(current.activeConfigurationId)
+				? current.activeConfigurationId
+				: null,
+		configurations: seeded.configurations,
+		seededBuiltinIds: seeded.seededIds,
+	});
+
+	if (
+		raw === null ||
+		primary.repaired ||
+		primary.seededBuiltinIds === null ||
+		seeded.changed
+	) {
+		persistCombined(seeded.configurations, seeded.seededIds);
+	}
+
+	const settings = useSettingsStore.getState();
+	const synced = syncRuleSnapshots(
+		settings.settings.llm.appProfiles.rules,
+		seeded.configurations,
+	);
+	if (synced.changed) {
+		settings.updateLlmAppProfiles(synced.rules);
+	}
+}
+
 // Cross-window live sync: the saved-configuration list is shared by every
 // WinSTT window (same origin ⇒ same localStorage). When another window
 // saves/edits/deletes/reorders, mirror the freshly-written value here so open
@@ -775,16 +919,10 @@ export const useLlmConfigurationsStore = create<ConfigurationsState>()(
 // re-persists, so there's no write loop.
 if (typeof window !== "undefined") {
 	window.addEventListener("storage", (event) => {
-		if (event.key !== STORAGE_KEY || event.newValue == null) {
+		if (event.key !== STORAGE_KEY) {
 			return;
 		}
-		const primary = parseStoredPrimary(event.newValue);
-		useLlmConfigurationsStore.setState({
-			configurations: primary.configs,
-			seededBuiltinIds:
-				primary.seededBuiltinIds ??
-				useLlmConfigurationsStore.getState().seededBuiltinIds,
-		});
+		syncConfigurationsFromStorage(event.newValue);
 	});
 }
 

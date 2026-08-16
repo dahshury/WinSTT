@@ -8,13 +8,16 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::AppHandle;
 
+use crate::command_auth;
 use crate::winstt::catalog::{self, Accelerator as CatalogAccelerator};
 
 use super::catalog_data::{self, CatalogModelInfo};
 use super::settings::read_settings;
+use super::tts_voice;
 
 /// One GPU as the renderer's `LiveResourcesEntry.gpus` (ipc-client.ts `LiveGpuEntry`) expects it.
 /// snake_case on the wire — the renderer reads `total_vram_bytes` / `free_vram_bytes` directly.
@@ -84,33 +87,88 @@ pub fn stt_list_models(app: AppHandle) -> Vec<CatalogModelInfo> {
     catalog_data::catalog_rows(accel)
 }
 
-/// `tts_transcribe_reference` — validate a cloning reference clip's length and transcribe it with
-/// the currently-loaded STT model. Used by the voice-cloning UI to (1) REJECT clips longer than
-/// `max_secs` and (2) auto-fill the reference transcript (editable afterwards) for cloning models
-/// that need it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+/// The ONE refusal every containment failure below collapses to. A verbatim
+/// `std::io::Error` would make this command an existence/permission oracle for
+/// arbitrary absolute paths, so missing / unreadable / outside-the-folder must be
+/// indistinguishable to the caller (same rationale as `tts_prepare_reference_clip`).
+const REFERENCE_CLIP_DENIED: &str = "That file is not accessible to this window";
+
+/// True when `path` resolves to a real entry strictly inside `root`. Both sides are
+/// canonicalized, so the Windows `\\?\` verbatim prefix is symmetric and `..` or a
+/// UNC path cannot escape; `starts_with` compares whole components, so a sibling
+/// `reference-voices-evil` is not a match. Mirrors
+/// `sound::canonical_existing_path_inside_dir`.
+fn canonical_path_inside_dir(path: &Path, root: &Path) -> Option<PathBuf> {
+    let root = root.canonicalize().ok()?;
+    let resolved = path.canonicalize().ok()?;
+    resolved.starts_with(&root).then_some(resolved)
+}
+
+/// `tts_transcribe_reference` — transcribe a cloning reference clip with the currently-loaded STT
+/// model, to auto-fill the reference transcript (editable afterwards) for cloning models that need
+/// it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+///
+/// It does NOT re-validate the clip's length. The only path it accepts is the managed
+/// `tts/reference-voices` folder, which nothing but `tts_prepare_reference_clip` writes into, and
+/// that command already hard-trims every clip to the selected model's cap — it is the single
+/// authority on that number. Re-measuring here compared two DIFFERENT measurements of the same
+/// audio: a trimmed clip is stored at exactly `cap` seconds @ 24 kHz, and re-decoding it to 16 kHz
+/// appends up to one frame of resampler zero-pad, so every trimmed clip measured ~`cap + 0.06 s`
+/// and was refused with the self-contradictory "Reference clip is 30s — please use one under 30s.",
+/// leaving Spark to clone with an empty transcript. The decode is bounded by TRUNCATING at the cap
+/// instead, which can never refuse a clip the preparer just accepted.
 #[tauri::command]
 #[specta::specta]
 pub fn tts_transcribe_reference(
+    app: AppHandle,
+    webview: tauri::WebviewWindow,
     transcription: tauri::State<
         '_,
         std::sync::Arc<crate::managers::transcription::TranscriptionManager>,
     >,
     path: String,
-    max_secs: f64,
 ) -> Result<String, String> {
-    let audio =
-        crate::winstt::managers::transcode::decode_audio_to_pcm(std::path::Path::new(&path))?;
-    let secs = audio.len() as f64 / 16_000.0;
-    if max_secs > 0.0 && secs > max_secs {
-        return Err(format!(
-            "Reference clip is {secs:.0}s — please use one under {max_secs:.0}s."
-        ));
-    }
-    if secs < 1.0 {
-        return Err("Reference clip is too short — use at least ~1 second of clear speech.".into());
-    }
+    command_auth::authorize_webview(
+        &webview,
+        "tts",
+        "transcribe a voice reference clip",
+        tts_voice::TTS_VOICE_ALLOWED_WINDOWS,
+        "",
+    )?;
+
+    // Confine to the managed clip folder `tts_prepare_reference_clip` writes into —
+    // the only place the legitimate caller's `storedPath` can live, and it always
+    // exists by the time we get here because that command created it. Resolve the
+    // folder BEFORE touching the file, and never report which step failed: this
+    // command returns the transcript itself, so an unconfined path would read out
+    // the contents of any media the user can open.
+    let root = crate::portable::app_data_dir(&app)
+        .map_err(|_| REFERENCE_CLIP_DENIED.to_string())?
+        .join("tts")
+        .join("reference-voices");
+    let Some(source) = canonical_path_inside_dir(Path::new(path.trim()), &root) else {
+        log::warn!("[tts] blocked reference transcription outside the managed clip folder");
+        return Err(REFERENCE_CLIP_DENIED.to_string());
+    };
+
+    // One second of headroom over the cap: the preparer stores a trimmed clip at
+    // EXACTLY the cap, and this second resample appends a frame of zero-pad, so a
+    // budget of exactly the cap would cut real audio off the end of every trimmed
+    // clip. Truncating (never erroring) keeps the decode bounded for a clip that
+    // somehow predates the cap without ever refusing to transcribe it.
+    let budget = tts_voice::reference_clip_budget(&read_settings(&app)).saturating_add(1);
+    let clip = crate::winstt::managers::transcode::decode_reference_clip(
+        &source,
+        crate::winstt::managers::transcode::TARGET_SAMPLE_RATE as u32,
+        budget,
+    )
+    .map_err(|e| {
+        log::debug!("[tts] reference decode failed: {e}");
+        "That reference clip could not be decoded".to_string()
+    })?;
+    crate::winstt::tts::catalog::reject_short_reference(clip.seconds())?;
     transcription
-        .transcribe(&audio)
+        .transcribe(&clip.samples)
         .map_err(|e| format!("transcribe reference: {e}"))
 }
 
@@ -278,6 +336,27 @@ pub fn set_custom_model(_app: AppHandle, path: String) -> Result<CatalogModelInf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reference_transcription_authorization_matches_the_clip_preparer() {
+        // Both halves of the cloning flow read the SAME list, so this pins that they
+        // stay in step: whoever may prepare a reference clip may transcribe it, and
+        // nobody else. The blocked labels are the low-privilege windows that would
+        // otherwise get a read primitive over the managed clip folder.
+        command_auth::assert_label_rules(
+            &["settings", "model-picker"],
+            &[
+                "main",
+                "overlay",
+                "tray-menu",
+                "tray-indicator",
+                "history",
+                "onboarding",
+                "context-playground",
+            ],
+            |caller| command_auth::label_in(caller, tts_voice::TTS_VOICE_ALLOWED_WINDOWS),
+        );
+    }
 
     #[test]
     fn catalog_accelerator_maps_stt_variants() {

@@ -49,7 +49,7 @@ describe("ModelFiltersMenu", () => {
 		expect(screen.getByText("6")).not.toBeNull();
 	});
 
-	test("opens a flat accordion filter surface", async () => {
+	test("lists every filter dimension on the menu's root view", async () => {
 		render(
 			<TooltipProvider.Provider>
 				<ModelFiltersMenu

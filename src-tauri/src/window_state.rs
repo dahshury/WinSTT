@@ -3,7 +3,7 @@
 
 use tauri::{AppHandle, Manager};
 
-use crate::splash;
+use crate::{splash, winstt};
 
 /// Dedicated store for window geometry persisted across runs. Kept separate from
 /// the settings store so it never collides with a user-facing setting and can be
@@ -129,6 +129,13 @@ fn show_main_window_with_restore(app: &AppHandle, restore_from_tray: bool) {
                 log::error!("Failed to set activation policy to Regular: {}", e);
             }
         }
+        // Visible launches warm the tray-menu webview here, once the pill is up,
+        // so the first tray right-click never creates the webview cold (start-
+        // hidden launches warm from lib.rs instead). Idempotent one-shot.
+        winstt::commands::tray_menu::schedule_tray_menu_warmup(app);
+        // Ditto for the always-warm secondary surfaces (overlay /
+        // model-footprint / tray-indicator) — see the label list's doc comment.
+        winstt::commands::windows::schedule_secondary_window_warmup(app);
         return;
     }
 

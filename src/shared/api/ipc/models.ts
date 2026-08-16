@@ -174,8 +174,7 @@ export interface ModelSwapPayload {
 }
 
 /** Stable category codes mirroring the server's ``SwapErrorCategory``.
- * Adding a value here is a wire-format extension — keep in sync with
- * ``server/src/recorder/domain/swap_errors.py``. */
+ * Adding a value here is a wire-format extension. */
 export type ModelSwapFailedCategory =
 	| "cancelled"
 	| "network"
@@ -322,7 +321,6 @@ export const fetchModelsWithState = () =>
 
 // ── Resource-aware fitness ─────────────────────────────────────────────
 // Live host snapshot + server-authoritative fit assessments.
-// Spec source of truth: spec/openapi.yaml LiveResources / *FitAssessment.
 
 interface LiveGpuEntry {
 	free_vram_bytes: number;

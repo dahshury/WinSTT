@@ -76,15 +76,6 @@ function defaultNeutralPresets() {
 	return [{ key: "neutral" as const }];
 }
 
-function defaultDictationPresets() {
-	return [
-		{ key: "neutral" as const },
-		{ key: "reorder" as const },
-		{ key: "restructure" as const },
-		{ key: "rewordForClarity" as const },
-	];
-}
-
 // User-authored cleanup modifiers layered on top of the built-in tone /
 // independent presets. Unlike `presetsSchema` (which holds only *active*
 // built-in keys), this array persists the full definition even while
@@ -130,7 +121,13 @@ const llmFeatureBaseShape = {
 	// (the same off/low/medium/high scale as Ollama's `thinkingEffort`).
 	reasoningEffort: z.enum(["off", "low", "medium", "high"]).default("medium"),
 	verbosity: z.enum(["low", "medium", "high"]).default("medium"),
-	maxOutputTokens: z.number().int().min(1).nullable().default(null),
+	maxOutputTokens: z
+		.number()
+		.int()
+		.min(1)
+		.max(200_000)
+		.nullable()
+		.default(null),
 	// Thinking budget for Ollama models that advertise the `thinking`
 	// capability via `/api/show`. Mirrors Ollama's `ThinkValue`:
 	//   - `"off"` → `think: false` (force-disable for thinking models)
@@ -140,31 +137,53 @@ const llmFeatureBaseShape = {
 	thinkingEffort: z.enum(["off", "low", "medium", "high"]).default("off"),
 };
 
+// Id of the saved CONFIGURATION a feature is assigned to, or "" when its stack
+// was hand-edited away from every saved one. The resolved provider/model/tone/
+// modifiers still live on the feature itself: the backend reads those verbatim
+// and knows nothing about configurations, so assignment stays a renderer concern
+// (the same denormalized shape `llm.appProfiles.rules[].config` already uses).
+//
+// Defaults to the shipped "Default" configuration (`DEFAULT_CONFIGURATION_ID`)
+// because a feature must not be enableable without one — there would be no
+// prompt to run. That configuration is the plainest possible stack: base cleanup,
+// neutral tone, no modifiers.
+const configurationIdSchema = z.string().default("builtin:default");
+
 const llmDictationSchema = z.object({
 	enabled: z.boolean().default(false),
 	dictionaryAutoAddEnabled: z.boolean().default(false),
 	...llmFeatureBaseShape,
-	presets: presetsSchema.default(defaultDictationPresets),
+	configurationId: configurationIdSchema,
+	presets: presetsSchema.default(defaultNeutralPresets),
 	// Empty by default; rows are appended from the Modifiers UI. Folded into
 	// the runtime presets array at processing time via
 	// `mergePresetsWithCustomModifiers` — never persisted into `presets`.
 	customModifiers: z.array(customModifierSchema).default([]),
 });
 
-// Single user-configurable text transform. Mirrors the OpenAPI `Transform`
-// schema (see `spec/openapi.yaml`). Built-in entries flag `builtin: true`
-// so the UI can show a Reset action instead of Delete.
-const transformSchema = z.object({
-	id: z.string().min(1),
-	name: z.string().default(""),
-	prompt: z.string().default(""),
-	hotkey: z.string().default(""),
-	builtin: z.boolean().default(false),
+// Post-processing applied to text on its way to the SYNTHESIZER (read-aloud),
+// as opposed to `llmDictationSchema`, which post-processes text on its way to
+// the KEYBOARD. Its own preset/modifier set on purpose: "summarize what I just
+// dictated" and "summarize what you are about to read to me" are different
+// intents that happen to share one prompt vocabulary.
+//
+// Carries its own provider/model like the other two consumers: a configuration
+// chooses its PROVIDER, and a cloud read-aloud pass alongside a local dictation
+// pass is a supported (and cheap) combination. The one thing it cannot choose
+// freely is the LOCAL model — see `localModel` below. Mirrors the Rust
+// `LlmReadAloud` defaults for the parity gate.
+const llmReadAloudSchema = z.object({
+	enabled: z.boolean().default(false),
+	...llmFeatureBaseShape,
+	configurationId: configurationIdSchema,
+	presets: presetsSchema.default(defaultNeutralPresets),
+	customModifiers: z.array(customModifierSchema).default([]),
 });
 
 const llmTransformsSchema = z.object({
 	enabled: z.boolean().default(false),
 	...llmFeatureBaseShape,
+	configurationId: configurationIdSchema,
 	// Same composition shape as dictation: ordered preset list + custom modifiers.
 	// At runtime, mergePresetsWithCustomModifiers folds them into a single prompt
 	// applied to the currently-selected text.
@@ -175,10 +194,6 @@ const llmTransformsSchema = z.object({
 	// conflict checker can compare against it and the recorder UI never renders
 	// an empty chip. The transform can still be invoked from the UI.
 	hotkey: z.string().min(1).default("LCtrl+LShift+T").catch("LCtrl+LShift+T"),
-	// User-configurable text transforms. Each entry carries its own prompt
-	// and optional hotkey. Built-in entries (see `BUILTIN_TRANSFORMS`) carry
-	// `builtin: true` so the UI can show a Reset action instead of Delete.
-	prompts: z.array(transformSchema).default([]),
 });
 
 const appProfileConfigSchema = z.object({
@@ -221,16 +236,32 @@ export const llmSettingsSchema = z.object({
 		.min(1)
 		.default("LCtrl+LShift+P")
 		.catch("LCtrl+LShift+P"),
+	// THE local Ollama model, shared by every feature whose assigned
+	// configuration runs locally.
+	//
+	// Why one: local models are VRAM-resident. Ollama accepts several
+	// (`OLLAMA_MAX_LOADED_MODELS` defaults to 3), but when they don't all fit it
+	// does NOT fail — it queues the request and evicts an idle model, so every
+	// switch between features silently pays a full reload. One model by default
+	// makes that impossible. Cloud configurations are unconstrained: they carry
+	// their own `openrouterModel` and cost no memory here.
+	localModel: z.string().default(""),
+	// Power-user escape hatch: let each configuration pick its own LOCAL model
+	// instead of sharing `localModel`. Off by default — on a machine that can't
+	// hold them all it turns every feature switch into an Ollama evict-and-reload,
+	// which reads as random multi-second stalls rather than as an error.
+	allowMultipleLocalModels: z.boolean().default(false),
 	// Per-feature config — each independently picks provider + model.
 	// The feature runs iff its own `enabled` is true AND a model is configured;
 	// there is no master switch (the IPC layer treats "no model" as off).
 	dictation: llmDictationSchema.prefault({}),
+	// Modifiers applied to read-aloud text before synthesis (see above).
+	readAloud: llmReadAloudSchema.prefault({}),
 	transforms: llmTransformsSchema.prefault({}),
 	appProfiles: appProfilesSchema.prefault({}),
-	// Client-side request timeout (ms). Wired through but currently NOT applied
-	// at the network layer — local LLMs (Ollama cold start) routinely exceed any
-	// finite cap, and a silent abort + un-processed-text paste is misleading.
-	// Kept here so the persisted setting / IPC plumbing / tests stay stable.
+	// Cloud LLM request timeout (ms). Applied to every OpenRouter LLM attempt:
+	// dictation cleanup, transforms/hotkeys, app profiles, and playground
+	// previews. Local Ollama inference is intentionally outside this deadline.
 	// `.catch(5000)`: a persisted out-of-range value (for example, a hand edit)
 	// would otherwise reject and drag the whole `llm` section to defaults.
 	timeout: z.number().int().min(1000).max(30_000).default(5000).catch(5000),

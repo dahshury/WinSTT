@@ -4,6 +4,11 @@ import { ttsModelToOpenrouterPickerModel } from "./openrouter-tts-picker-model";
 
 export type CloudTtsProvider = "elevenlabs" | "openrouter";
 
+export interface OpenRouterTtsFallbackSelection {
+	modelId: string;
+	voiceId: string;
+}
+
 /** The shared picker groups models by `maker`; all ElevenLabs engine models sit
  *  under one author rail. Lowercase to match the OpenRouter maker convention
  *  (`hexgrad`, `google`, …). */
@@ -90,4 +95,25 @@ export function resolveActiveCloudProvider(
 		return "elevenlabs";
 	}
 	return persisted;
+}
+
+/** Resolve a persisted OpenRouter model/voice pair against the live catalog.
+ * A missing or retired model falls back to the first returned speech model;
+ * an unsupported voice falls back to that model's first advertised voice. */
+export function resolveOpenRouterTtsFallback(
+	models: readonly OpenRouterTtsModel[],
+	persistedModelId: string,
+	persistedVoiceId: string,
+): OpenRouterTtsFallbackSelection | null {
+	const model =
+		models.find((candidate) => candidate.id === persistedModelId) ?? models[0];
+	if (!model) {
+		return null;
+	}
+	return {
+		modelId: model.id,
+		voiceId: model.supported_voices.includes(persistedVoiceId)
+			? persistedVoiceId
+			: (model.supported_voices[0] ?? ""),
+	};
 }

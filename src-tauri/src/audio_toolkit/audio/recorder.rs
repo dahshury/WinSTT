@@ -1484,6 +1484,49 @@ mod tests {
     }
 
     #[test]
+    fn seed_preroll_trims_leading_noise_frames() {
+        // Pre-hotkey room noise before the onset must not enter the take: the realtime
+        // preview decodes the raw buffer (no mask compaction), so seeded noise made the
+        // live pill hallucinate phantom text at the start of every recording. Frames:
+        // noise, noise, onset(retro=1 flips frame 2), speech → frame 1 is trimmed,
+        // frames 2..4 (the retro pre-roll + the utterance) are kept.
+        let vad = boxed_vad([
+            label(false, 0),
+            label(false, 0),
+            label(true, 1),
+            label(true, 0),
+        ]);
+        let mut ring: VecDeque<Vec<f32>> = VecDeque::new();
+        ring.push_back(vec![1.0; FR]);
+        ring.push_back(vec![2.0; FR]);
+        ring.push_back(vec![3.0; FR]);
+        ring.push_back(vec![4.0; FR]);
+        let mut out = Vec::new();
+        let mut mask = Vec::new();
+        let speaking = seed_preroll(&mut ring, &vad, &mut out, &mut mask);
+        assert_eq!(mask, vec![true, true, true], "leading noise entry trimmed");
+        assert_eq!(out.len(), 3 * FR);
+        assert_eq!(out[0], 2.0, "buffer now starts at the retro-flipped frame");
+        assert!(speaking);
+    }
+
+    #[test]
+    fn seed_preroll_all_noise_seeds_nothing() {
+        // A ring holding only silence/noise (the common idle case) seeds an empty take —
+        // nothing for the realtime preview to hallucinate on.
+        let vad = boxed_vad([label(false, 0), label(false, 0)]);
+        let mut ring: VecDeque<Vec<f32>> = VecDeque::new();
+        ring.push_back(vec![0.1; FR]);
+        ring.push_back(vec![0.2; FR]);
+        let mut out = Vec::new();
+        let mut mask = Vec::new();
+        let speaking = seed_preroll(&mut ring, &vad, &mut out, &mut mask);
+        assert!(out.is_empty());
+        assert!(mask.is_empty());
+        assert!(!speaking);
+    }
+
+    #[test]
     fn seeded_onset_signals_only_with_vad_and_seeded_speech() {
         // A recording that begins mid-speech must surface one speech_cb(true) so the manager's
         // no-speech watchdog does not discard a valid gap-free utterance.
@@ -2005,15 +2048,39 @@ fn push_preroll_frame(ring: &mut VecDeque<Vec<f32>>, frame: &[f32]) {
 /// honest) and drain the ring. Returns the final smoothed speech verdict so the caller can
 /// keep `vad_speaking` continuous. Deliberately takes NO `speech_cb` — pre-hotkey audio must
 /// not fire UI transitions.
+///
+/// LEADING NON-SPEECH IS TRIMMED (when a VAD is configured): after all frames are labeled
+/// (retro onset flips applied), seeded frames BEFORE the first speech-labeled frame are
+/// dropped from both the buffer and the mask. The batch path would cut them anyway via
+/// mask compaction, but the realtime live preview decodes the raw buffer — up to ~1 s of
+/// pre-hotkey room noise/breath made Whisper hallucinate phantom text into the pill at the
+/// start of every take (and the stabilizer's monotonic prefix then pinned it there). Only
+/// the ring's actual purpose survives: speech begun before the press. Ring frames are
+/// uniform-length (the FrameResampler emits fixed 480-sample frames), so samples-per-frame
+/// is derived from the seeded totals.
 fn seed_preroll(
     ring: &mut VecDeque<Vec<f32>>,
     vad: &Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     out_buf: &mut Vec<f32>,
     mask: &mut Vec<bool>,
 ) -> bool {
+    let seed_start_frame = mask.len();
+    let seed_start_sample = out_buf.len();
     let mut speaking = false;
     for frame in ring.drain(..) {
         speaking = handle_frame(&frame, true, vad, out_buf, mask);
+    }
+    if vad.is_some() {
+        let seeded_frames = mask.len() - seed_start_frame;
+        let lead = mask[seed_start_frame..]
+            .iter()
+            .take_while(|labeled_speech| !**labeled_speech)
+            .count();
+        if lead > 0 {
+            let samples_per_frame = (out_buf.len() - seed_start_sample) / seeded_frames;
+            out_buf.drain(seed_start_sample..seed_start_sample + lead * samples_per_frame);
+            mask.drain(seed_start_frame..seed_start_frame + lead);
+        }
     }
     speaking
 }

@@ -11,11 +11,13 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
-import { surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { useSurface } from "@/shared/lib/surface";
+import { AutoTextarea } from "@/shared/ui/auto-textarea";
 import {
 	DialogActionButton,
+	DialogBody,
 	DialogFooter,
-	DialogTitle,
+	DialogHeader,
 } from "@/shared/ui/dialog";
 import { FormControl } from "@/shared/ui/form-control";
 import { Modal } from "@/shared/ui/modal";
@@ -27,6 +29,11 @@ import {
 	LISTEN_POST_PROCESS_PRESETS,
 	resolveInstructions,
 } from "../lib/presets";
+
+/** Resting height of the custom-instructions editor, in rows. Five lines
+ *  reproduces the 120px floor it used to be pinned to; longer instructions now
+ *  grow the box instead of hiding behind a resize grip. */
+const INSTRUCTIONS_MIN_ROWS = 5;
 
 const PRESET_ICONS: Record<string, IconSvgElement> = {
 	actionItems: Task01Icon,
@@ -112,9 +119,14 @@ export function ListenPostProcessDialog({
 
 	return (
 		<Modal isOpen={isOpen} onClose={handleClose}>
-			<div className="flex w-[28rem] max-w-[90vw] flex-col p-6">
-				<DialogTitle>{t("listenPostProcessTitle")}</DialogTitle>
-				<div className="flex flex-col divide-y divide-divider">
+			<div className="flex max-h-[86vh] w-[28rem] max-w-[90vw] flex-col">
+				<DialogHeader
+					closeLabel={tc("close")}
+					onClose={handleClose}
+					rail
+					title={t("listenPostProcessTitle")}
+				/>
+				<DialogBody className="flex flex-col divide-y divide-divider">
 					<FormControl label={t("listenPostProcessPreset")} layout="row">
 						<Select
 							aria-label={t("listenPostProcessPreset")}
@@ -126,31 +138,36 @@ export function ListenPostProcessDialog({
 					</FormControl>
 					{presetId === CUSTOM_PRESET_ID ? (
 						<FormControl label={t("listenPostProcessCustomLabel")}>
-							<textarea
+							<AutoTextarea
 								aria-label={t("listenPostProcessCustomLabel")}
-								className={`min-h-[120px] w-full resize-y rounded-lg p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${surfaceClasses(inputLevel)}`}
 								id="listen-post-process-custom-input"
+								minRows={INSTRUCTIONS_MIN_ROWS}
 								onChange={(e) => setCustomInstructions(e.target.value)}
 								placeholder={t("listenPostProcessCustomPlaceholder")}
+								// Resolved here, outside the popup's SurfaceProvider — pass it
+								// through so the input keeps the exact step it painted on.
+								surfaceLevel={inputLevel}
 								value={customInstructions}
 							/>
 						</FormControl>
 					) : null}
-				</div>
-				{postProcessingEnabled ? null : (
-					<p className="mt-2 text-body-sm text-warning">
-						{t("listenPostProcessDisabled")}
-					</p>
-				)}
-				{error ? (
-					<p className="mt-2 break-words text-body-sm text-error">{error}</p>
-				) : null}
-				{running ? (
-					<p className="mt-2 text-body-sm text-foreground-muted">
-						{t("listenPostProcessRunning")}
-					</p>
-				) : null}
-				<DialogFooter>
+					{postProcessingEnabled ? null : (
+						<p className="border-none pt-2 text-body-sm text-warning">
+							{t("listenPostProcessDisabled")}
+						</p>
+					)}
+					{error ? (
+						<p className="break-words border-none pt-2 text-body-sm text-error">
+							{error}
+						</p>
+					) : null}
+					{running ? (
+						<p className="border-none pt-2 text-body-sm text-foreground-muted">
+							{t("listenPostProcessRunning")}
+						</p>
+					) : null}
+				</DialogBody>
+				<DialogFooter bar>
 					<DialogActionButton
 						disabled={running}
 						onClick={handleClose}

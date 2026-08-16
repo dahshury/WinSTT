@@ -67,7 +67,6 @@ export function TitleBar() {
 			<header
 				className={`titlebar-drag relative flex h-8 shrink-0 items-stretch ${surfaceClasses(barLevel, 1)}`}
 			>
-				{/* Left: Branding */}
 				<div className="flex items-center pl-3">
 					<img
 						alt=""
@@ -98,7 +97,6 @@ export function TitleBar() {
 					</div>
 				</div>
 
-				{/* Right: Settings gear + window controls */}
 				<div className="titlebar-no-drag flex items-center">
 					<Tooltip content={t("settings")}>
 						<TitleBarActionButton

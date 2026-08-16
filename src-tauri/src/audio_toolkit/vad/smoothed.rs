@@ -158,6 +158,7 @@ impl VoiceActivityDetector for SmoothedVad {
     }
 
     fn reset(&mut self) {
+        self.inner_vad.reset();
         self.frame_buffer.clear();
         self.hangover_counter = 0;
         self.onset_counter = 0;
@@ -170,6 +171,10 @@ impl VoiceActivityDetector for SmoothedVad {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     /// A VAD whose voiced/unvoiced decision follows a fixed script — lets us drive
     /// the SmoothedVad state machine deterministically. Only `push_frame` is needed;
@@ -193,6 +198,28 @@ mod tests {
                 VadFrame::Noise
             })
         }
+    }
+
+    struct ResetTrackingVad(Arc<AtomicBool>);
+
+    impl VoiceActivityDetector for ResetTrackingVad {
+        fn push_frame<'a>(&'a mut self, _frame: &'a [f32]) -> Result<VadFrame<'a>> {
+            Ok(VadFrame::Noise)
+        }
+
+        fn reset(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn reset_propagates_to_the_inner_detector() {
+        let reset = Arc::new(AtomicBool::new(false));
+        let mut vad = SmoothedVad::new(Box::new(ResetTrackingVad(Arc::clone(&reset))), 1, 1, 1);
+
+        vad.reset();
+
+        assert!(reset.load(Ordering::SeqCst));
     }
 
     fn smoothed(

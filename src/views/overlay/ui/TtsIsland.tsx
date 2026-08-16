@@ -1,6 +1,12 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { domMax, LazyMotion, m, type Variants } from "motion/react";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
+import {
+	Fragment,
+	useEffect,
+	useEffectEvent,
+	useLayoutEffect,
+	useRef,
+} from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	AudioVisualizer,
@@ -20,6 +26,12 @@ import {
 } from "@/shared/ui/dynamic-island";
 import { MediaSeekBar } from "@/shared/ui/media-seek-bar";
 import { Spinner } from "@/shared/ui/spinner";
+import {
+	activeTokenIndex,
+	buildScriptTokens,
+	type ScriptToken,
+} from "../lib/script-timing";
+import { useTtsScriptStore } from "../model/tts-script-store";
 import {
 	discardTts,
 	getTtsLevel,
@@ -184,6 +196,93 @@ function fmt(seconds: number): string {
 }
 
 /**
+ * Karaoke state for one script token, mirroring the History tab's playback
+ * highlight so a read-aloud and a recording replay read the same way: upcoming
+ * words sit faded, the word under the playhead wears a highlight pill, and
+ * already-spoken words stay at full presence. One shared transition means the
+ * sweep animates during playback AND when a seek re-evaluates every token at
+ * once.
+ *
+ * A token that has no timing yet (its sentence is still synthesizing) is treated
+ * as upcoming — which is exactly what it is.
+ */
+function scriptTokenClass(token: ScriptToken, activeIndex: number): string {
+	const base = token.tag ? "italic" : "";
+	if (activeIndex < 0 || token.index > activeIndex) {
+		return `${base} opacity-35`;
+	}
+	if (token.index === activeIndex) {
+		return `${base} rounded-[3px] bg-overlay-foreground/20 opacity-100`;
+	}
+	return `${base} opacity-100`;
+}
+
+// Roughly three lines of the 11px body below; past that the script scrolls under
+// the highlight instead of growing the island to the height of the selection.
+const SCRIPT_MAX_HEIGHT = "4.75rem";
+
+/**
+ * The text being read, swept word-by-word as it is spoken.
+ *
+ * Shows the FINAL script — after read-aloud modifiers and after inline-tag
+ * annotation — because that is what the synthesizer was actually handed. It
+ * appears as soon as `tts:script` lands (before the first sample exists), so the
+ * synthesis wait is spent reading rather than staring at a spinner.
+ *
+ * Renders nothing at all when there is no script: voice previews and cloud
+ * preview clips carry no user text, and an empty text row would just add a
+ * permanent gap to the pill.
+ */
+function TtsScriptBody() {
+	const sentences = useTtsScriptStore((s) => s.sentences);
+	const spans = useTtsScriptStore((s) => s.spans);
+	const tokens = buildScriptTokens(sentences, spans);
+	// Select the ACTIVE INDEX, not the raw position: the overlay's rAF writes
+	// `currentTime` 60 times a second, and re-rendering a paragraph of spans at
+	// that rate to move one highlight is pure waste. Resolving the index inside
+	// the selector means zustand only wakes this component when the spoken word
+	// actually changes — a few times a second — while the binary search itself
+	// runs per tick and costs nothing.
+	const activeIndex = useTtsPlaybackStore((s) =>
+		activeTokenIndex(tokens, s.currentTime),
+	);
+	const activeRef = useRef<HTMLSpanElement | null>(null);
+
+	// Keep the spoken word on screen once the script outgrows the clamp above.
+	// `block: "nearest"` scrolls the script box only when the highlight would
+	// otherwise leave it — a word already in view never moves the text.
+	useEffect(() => {
+		activeRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+	}, [activeIndex]);
+
+	if (tokens.length === 0) {
+		return null;
+	}
+	return (
+		<div
+			className="overflow-y-auto text-[11px] text-overlay-foreground leading-[1.55]"
+			dir="auto"
+			style={{ maxHeight: SCRIPT_MAX_HEIGHT }}
+		>
+			{tokens.map((token) => (
+				<Fragment key={token.index}>
+					{token.index > 0 ? " " : null}
+					{/* The separating space lives OUTSIDE the span so the highlight pill
+					    hugs the word instead of trailing a gap behind it (the same
+					    render-spacing fix the History transcript needed). */}
+					<span
+						className={`transition-[background-color,opacity] duration-200 ${scriptTokenClass(token, activeIndex)}`}
+						ref={token.index === activeIndex ? activeRef : null}
+					>
+						{token.text}
+					</span>
+				</Fragment>
+			))}
+		</div>
+	);
+}
+
+/**
  * Forced dynamic-island pill for a TTS read-aloud — a compact media player:
  *   - Row 1: play / pause, a live visualiser of the spoken audio (fed via the
  *     shared visualiser store by `useTtsIslandBridge`), speed, volume, and stop.
@@ -260,7 +359,9 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 						/>
 					</div>
 				</div>
-				{/* Row 2 — seek */}
+				{/* Row 2 — the script, swept word-by-word */}
+				<TtsScriptBody />
+				{/* Row 3 — seek */}
 				{showSeek ? (
 					<div className="flex items-center gap-2 text-[10px] text-overlay-foreground/55">
 						<span className="w-8 shrink-0 text-right font-mono tabular-nums">

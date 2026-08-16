@@ -8,21 +8,18 @@ import {
 	CopyCheckIcon,
 	CpuIcon,
 	Delete02Icon,
-	FileZipIcon,
 	FingerPrintIcon,
-	Folder01Icon,
 	RefreshIcon,
 	StopWatchIcon,
 	Tag01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import { SettingSection } from "@/entities/setting";
 import {
 	diagClearObservabilityTimeline,
 	diagObservabilityTimeline,
-	diagOpenLogsFolder,
-	diagSaveBundle,
 	type ObservabilityIssue,
 } from "@/shared/api/ipc-client";
 import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
@@ -46,36 +43,22 @@ import {
 } from "@/shared/lib/surface";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { AboutActionRow } from "./AboutActionRow";
 import { LiveDebugLogViewer } from "./LiveDebugLogViewer";
 import type { AboutT } from "./types";
-
-const OBSERVABILITY_COPY = {
-	backgroundOnly: "Background only",
-	clearAll: "Clear all",
-	clearAllTitle: "Clear all operational issues",
-	copied: "Copied",
-	copy: "Copy issue",
-	empty: "No recent operational issues recorded.",
-	loading: "Loading recent issues...",
-	recentSummary:
-		"Latest startup, model, provider, download, and inference failures captured locally.",
-	recentTitle: "Recent Operational Issues",
-	refresh: "Refresh",
-	remediationLabel: "Suggested action: ",
-	showLess: "Show less",
-	showMore: "Show more",
-	shownToUser: "Shown to user",
-};
 
 // Pull a generous slice of the backend ring buffer (capped at 200) so the list
 // is meaningfully scrollable rather than a fixed inline dump.
 const ISSUE_FETCH_LIMIT = 50;
 // Bound the scroll region so the issue list stays a contained, paginated box
-// under the diagnostics actions instead of growing the whole section.
+// under the log console instead of growing the whole section.
 const ISSUES_BODY_MAX_HEIGHT_PX = 420;
 const ISSUE_DETAIL_COLLAPSE_LENGTH = 360;
 const ISSUE_DETAIL_COLLAPSE_LINES = 4;
+
+// The clipboard dump is a stable English bug-report format — it sits alongside
+// the `Time:` / `Request:` / `Detail:` lines below and is deliberately NOT
+// localized, so a pasted issue reads the same for maintainers in every locale.
+const CLIPBOARD_REMEDIATION_LABEL = "Suggested action";
 
 const ISSUE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 	day: "2-digit",
@@ -84,13 +67,9 @@ const ISSUE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
 	month: "short",
 });
 
-const handleOpenLogsFolder = async () => {
-	await diagOpenLogsFolder();
-};
-
-const handleSaveDiagnosticBundle = async () => {
-	await diagSaveBundle();
-};
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
 
 function formatIssueTime(timestampMs: number): string {
 	return ISSUE_TIME_FORMATTER.format(new Date(timestampMs));
@@ -126,18 +105,21 @@ function issueMeta(issue: ObservabilityIssue): string {
  * counterpart to the transcription row's meta strip: where it happened, which
  * provider/model, how long it took, and a request id for cross-referencing logs.
  */
-function issueFooterParts(issue: ObservabilityIssue): EntryCardMetaPart[] {
+function issueFooterParts(
+	issue: ObservabilityIssue,
+	t: AboutT,
+): EntryCardMetaPart[] {
 	const parts: EntryCardMetaPart[] = [
 		{
 			icon: Clock01Icon,
 			key: "time",
-			title: "Time",
+			title: t("issuesMetaTime"),
 			value: formatIssueTime(issue.timestampMs),
 		},
 		{
 			icon: Tag01Icon,
 			key: "scope",
-			title: "Area / operation / kind",
+			title: t("issuesMetaArea"),
 			truncate: true,
 			value: `${issue.area} / ${issue.operation} / ${issue.kind}`,
 		},
@@ -146,7 +128,7 @@ function issueFooterParts(issue: ObservabilityIssue): EntryCardMetaPart[] {
 		parts.push({
 			icon: CloudIcon,
 			key: "provider",
-			title: "Provider",
+			title: t("issuesMetaProvider"),
 			value: issue.provider,
 		});
 	}
@@ -155,7 +137,7 @@ function issueFooterParts(issue: ObservabilityIssue): EntryCardMetaPart[] {
 			icon: CpuIcon,
 			key: "model",
 			logo: resolveProviderIcon(makerFromModelId(issue.modelId)),
-			title: "Model",
+			title: t("issuesMetaModel"),
 			truncate: true,
 			value: issue.modelId,
 		});
@@ -164,7 +146,7 @@ function issueFooterParts(issue: ObservabilityIssue): EntryCardMetaPart[] {
 		parts.push({
 			icon: StopWatchIcon,
 			key: "duration",
-			title: "Duration",
+			title: t("issuesMetaDuration"),
 			value: `${issue.durationMs}ms`,
 		});
 	}
@@ -172,7 +154,7 @@ function issueFooterParts(issue: ObservabilityIssue): EntryCardMetaPart[] {
 		parts.push({
 			icon: FingerPrintIcon,
 			key: "request",
-			title: "Request id",
+			title: t("issuesMetaRequestId"),
 			truncate: true,
 			value: issue.requestId,
 		});
@@ -204,12 +186,13 @@ function buildIssueClipboardText(issue: ObservabilityIssue): string {
 		}
 	}
 	if (issue.remediation) {
-		lines.push(`${OBSERVABILITY_COPY.remediationLabel}${issue.remediation}`);
+		lines.push(`${CLIPBOARD_REMEDIATION_LABEL}: ${issue.remediation}`);
 	}
 	return lines.filter(Boolean).join("\n");
 }
 
 function IssueCopyButton({ issue }: { issue: ObservabilityIssue }): ReactNode {
+	const t = useTranslations("about");
 	const [copied, setCopied] = useState(false);
 	const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -234,7 +217,7 @@ function IssueCopyButton({ issue }: { issue: ObservabilityIssue }): ReactNode {
 		);
 	};
 
-	const label = copied ? OBSERVABILITY_COPY.copied : OBSERVABILITY_COPY.copy;
+	const label = copied ? t("issuesCopied") : t("issuesCopy");
 
 	// Icon-swap copy control matched to the history row's CopyButton: a contained
 	// size-7 glyph that cross-fades copy → check. Sitting inside the ButtonGroup
@@ -269,11 +252,13 @@ function IssueCopyButton({ issue }: { issue: ObservabilityIssue }): ReactNode {
 }
 
 interface ObservabilityTimelineState {
+	error: string | null;
 	issues: ObservabilityIssue[];
 	loading: boolean;
 }
 
 const INITIAL_OBSERVABILITY_TIMELINE: ObservabilityTimelineState = {
+	error: null,
 	issues: [],
 	loading: true,
 };
@@ -317,6 +302,7 @@ function ObservabilityActionGroupButtons({
 	onClear: () => void;
 	onRefresh: () => void;
 }): ReactNode {
+	const t = useTranslations("about");
 	const substrate = useSurface();
 	const level = Math.min(substrate + 1, 8);
 	const hoverLevel = Math.min(substrate + 2, 8);
@@ -324,7 +310,7 @@ function ObservabilityActionGroupButtons({
 
 	return (
 		<div
-			aria-label="Operational issue actions"
+			aria-label={t("issuesActionsLabel")}
 			className={cn(
 				"flex h-8 w-full overflow-hidden rounded-lg",
 				surfaceClasses(level),
@@ -345,15 +331,18 @@ function ObservabilityActionGroupButtons({
 					icon={RefreshIcon}
 					size={14}
 				/>
-				<span className="min-w-0 truncate">{OBSERVABILITY_COPY.refresh}</span>
+				<span className="min-w-0 truncate">{t("issuesRefresh")}</span>
 			</Button>
 			<span
 				aria-hidden="true"
 				className="my-1.5 w-px shrink-0 self-stretch bg-divider-strong"
 				data-slot="observability-action-separator"
 			/>
+			{/* Named explicitly: the visible text is just "Clear all", and the log
+			    console in this same section has its own "Clear". Without this the two
+			    are only distinguishable by their enclosing group. */}
 			<Button
-				aria-label={OBSERVABILITY_COPY.clearAllTitle}
+				aria-label={t("issuesClearAllTitle")}
 				className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 px-2 font-medium text-body text-error leading-normal transition-colors duration-150 hover:bg-error-dim/40 disabled:cursor-not-allowed disabled:opacity-50"
 				disabled={busy || !canClear}
 				onClick={onClear}
@@ -364,7 +353,7 @@ function ObservabilityActionGroupButtons({
 					icon={Delete02Icon}
 					size={14}
 				/>
-				<span className="min-w-0 truncate">{OBSERVABILITY_COPY.clearAll}</span>
+				<span className="min-w-0 truncate">{t("issuesClearAll")}</span>
 			</Button>
 		</div>
 	);
@@ -378,11 +367,10 @@ function isLongIssueDetail(detail: string): boolean {
 }
 
 function IssueDetail({ detail }: { detail: string }): ReactNode {
+	const t = useTranslations("about");
 	const [expanded, setExpanded] = useState(false);
 	const canCollapse = isLongIssueDetail(detail);
-	const label = expanded
-		? OBSERVABILITY_COPY.showLess
-		: OBSERVABILITY_COPY.showMore;
+	const label = expanded ? t("issuesShowLess") : t("issuesShowMore");
 
 	return (
 		<div className="flex min-w-0 flex-col items-start gap-1">
@@ -414,8 +402,10 @@ function IssueDetail({ detail }: { detail: string }): ReactNode {
 }
 
 function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
+	const t = useTranslations("about");
+
 	return (
-		<EntryCard footer={issueFooterParts(issue)}>
+		<EntryCard footer={issueFooterParts(issue, t)}>
 			<div className="flex items-start gap-3">
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
 					<span className="font-medium text-body-sm text-foreground leading-snug">
@@ -424,9 +414,12 @@ function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
 					{issue.detail ? <IssueDetail detail={issue.detail} /> : null}
 					{issue.remediation ? (
 						<span className="text-body-sm text-foreground-muted leading-snug">
+							{/* Each locale carries its own punctuation in the label — ja/zh
+							    use a fullwidth colon, fr spaces before it — so nothing here
+							    concatenates a hardcoded separator onto a translated string. */}
 							<span className="font-medium text-foreground">
-								{OBSERVABILITY_COPY.remediationLabel}
-							</span>
+								{t("issuesRemediation")}
+							</span>{" "}
 							<span>{issue.remediation}</span>
 						</span>
 					) : null}
@@ -443,12 +436,12 @@ function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
 						</span>
 						<Badge variant="outline">
 							{issue.userVisible
-								? OBSERVABILITY_COPY.shownToUser
-								: OBSERVABILITY_COPY.backgroundOnly}
+								? t("issuesShownToUser")
+								: t("issuesBackgroundOnly")}
 						</Badge>
 					</div>
 					<ButtonGroup
-						aria-label={OBSERVABILITY_COPY.copy}
+						aria-label={t("issuesCopy")}
 						className="shrink-0"
 						connected
 						orientation="vertical"
@@ -463,6 +456,7 @@ function IssueCard({ issue }: { issue: ObservabilityIssue }): ReactNode {
 }
 
 function ObservabilityTimeline(): ReactNode {
+	const t = useTranslations("about");
 	const [timeline, setTimeline] = useState<ObservabilityTimelineState>(
 		INITIAL_OBSERVABILITY_TIMELINE,
 	);
@@ -470,13 +464,17 @@ function ObservabilityTimeline(): ReactNode {
 	const { issues, loading } = timeline;
 
 	const refresh = () => {
-		setTimeline((current) => ({ ...current, loading: true }));
+		setTimeline((current) => ({ ...current, error: null, loading: true }));
 		diagObservabilityTimeline(ISSUE_FETCH_LIMIT)
 			.then((issues) => {
-				setTimeline({ issues, loading: false });
+				setTimeline({ error: null, issues, loading: false });
 			})
-			.catch(() => {
-				setTimeline((current) => ({ ...current, loading: false }));
+			.catch((error: unknown) => {
+				setTimeline((current) => ({
+					...current,
+					error: errorMessage(error),
+					loading: false,
+				}));
 			});
 	};
 
@@ -484,10 +482,14 @@ function ObservabilityTimeline(): ReactNode {
 		setClearing(true);
 		diagClearObservabilityTimeline()
 			.then(() => {
-				setTimeline({ issues: [], loading: false });
+				setTimeline({ error: null, issues: [], loading: false });
 			})
-			.catch(() => {
-				setTimeline((current) => ({ ...current, loading: false }));
+			.catch((error: unknown) => {
+				setTimeline((current) => ({
+					...current,
+					error: errorMessage(error),
+					loading: false,
+				}));
 			})
 			.finally(() => {
 				setClearing(false);
@@ -499,12 +501,16 @@ function ObservabilityTimeline(): ReactNode {
 		diagObservabilityTimeline(ISSUE_FETCH_LIMIT)
 			.then((issues) => {
 				if (active) {
-					setTimeline({ issues, loading: false });
+					setTimeline({ error: null, issues, loading: false });
 				}
 			})
-			.catch(() => {
+			.catch((error: unknown) => {
 				if (active) {
-					setTimeline((current) => ({ ...current, loading: false }));
+					setTimeline((current) => ({
+						...current,
+						error: errorMessage(error),
+						loading: false,
+					}));
 				}
 			});
 		return () => {
@@ -516,13 +522,13 @@ function ObservabilityTimeline(): ReactNode {
 	if (loading && issues.length === 0) {
 		body = (
 			<div className="px-3 py-6 text-center text-body-sm text-foreground-muted">
-				{OBSERVABILITY_COPY.loading}
+				{t("issuesLoading")}
 			</div>
 		);
 	} else if (issues.length === 0) {
 		body = (
 			<div className="px-3 py-6 text-center text-body-sm text-foreground-muted">
-				{OBSERVABILITY_COPY.empty}
+				{t("issuesEmpty")}
 			</div>
 		);
 	} else {
@@ -548,10 +554,10 @@ function ObservabilityTimeline(): ReactNode {
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
 					<span className="font-medium text-body text-foreground leading-tight">
-						{OBSERVABILITY_COPY.recentTitle}
+						{t("issuesTitle")}
 					</span>
 					<span className="text-body-sm text-foreground-muted leading-snug">
-						{OBSERVABILITY_COPY.recentSummary}
+						{t("issuesSummary")}
 					</span>
 				</div>
 				<ObservabilityActionGroup
@@ -563,6 +569,11 @@ function ObservabilityTimeline(): ReactNode {
 				/>
 			</div>
 			<div className="mt-3">
+				{timeline.error ? (
+					<p className="mb-2 text-body-sm text-error" role="alert">
+						{timeline.error}
+					</p>
+				) : null}
 				<EntryCardShell bare>{body}</EntryCardShell>
 			</div>
 		</div>
@@ -570,6 +581,9 @@ function ObservabilityTimeline(): ReactNode {
 }
 
 export function DiagnosticsSection({ t }: { t: AboutT }): ReactNode {
+	// One subject, one presentation: the log console owns every log action
+	// (stream, copy/clear, open folder, save bundle) in its own toolbar, so the
+	// section no longer stacks separate rows for the same files.
 	return (
 		<SettingSection
 			boxed
@@ -578,20 +592,6 @@ export function DiagnosticsSection({ t }: { t: AboutT }): ReactNode {
 			icon={Bug01Icon}
 			title={t("diagnosticsTitle")}
 		>
-			<AboutActionRow
-				buttonLabel={t("openLogsFolder")}
-				icon={Folder01Icon}
-				onClick={handleOpenLogsFolder}
-				summary={t("openLogsFolderSummary")}
-				title={t("openLogsFolder")}
-			/>
-			<AboutActionRow
-				buttonLabel={t("saveDiagnosticBundleButton")}
-				icon={FileZipIcon}
-				onClick={handleSaveDiagnosticBundle}
-				summary={t("saveDiagnosticBundleSummary")}
-				title={t("saveDiagnosticBundle")}
-			/>
 			<LiveDebugLogViewer />
 			<ObservabilityTimeline />
 		</SettingSection>

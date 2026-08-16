@@ -76,12 +76,23 @@ export interface MenuHighlightLayerProps {
 	 * rendered as one of its children.
 	 */
 	containerRef: RefObject<HTMLElement | null>;
+	/**
+	 * Fades both pills out while something else owns the popup's motion — set
+	 * by the reorderable pickers during a drag-sort. Rows are only re-measured
+	 * on `data-highlighted`/childList changes (deliberately: re-measuring per
+	 * frame would make the pills chase a moving target and lag behind it), so a
+	 * drag would otherwise leave a pill stranded on the slot its row just glided
+	 * out of. Fading out hands the frame to the lifted card; on drop the pills
+	 * fade back in, already re-measured onto the settled order.
+	 */
+	suppressed?: boolean;
 	/** The currently-selected option id (`""` for none). */
 	value: string;
 }
 
 export function MenuHighlightLayer({
 	containerRef,
+	suppressed,
 	value,
 }: MenuHighlightLayerProps) {
 	const substrate = useSurface();
@@ -151,14 +162,17 @@ export function MenuHighlightLayer({
 	// True while the highlight rests on a non-selected row: dims the selected pill
 	// and shows the hover pill. Suppressed on the selected row (the selected pill
 	// already marks it) so the hover pill only appears when gliding elsewhere.
-	const isHoveringOther = highlightedRect !== null && !highlightedIsSelected;
+	const isHoveringOther =
+		highlightedRect !== null && !highlightedIsSelected && !suppressed;
 
 	return (
 		<LazyMotion features={domAnimation} strict={true}>
 			<AnimatePresence>
 				{selectedRect ? (
 					<motion.div
-						animate={{ opacity: isHoveringOther ? 0.8 : 1 }}
+						animate={{
+							opacity: suppressed ? 0 : isHoveringOther ? 0.8 : 1,
+						}}
 						aria-hidden="true"
 						className={cn(
 							"pointer-events-none absolute rounded-lg ring-1 ring-foreground/[0.06] ring-inset",

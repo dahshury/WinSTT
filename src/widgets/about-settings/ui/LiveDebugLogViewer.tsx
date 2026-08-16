@@ -1,6 +1,8 @@
 import {
 	Copy01Icon,
 	Delete02Icon,
+	FileZipIcon,
+	Folder01Icon,
 	PauseIcon,
 	PlayIcon,
 	StopIcon,
@@ -15,6 +17,7 @@ import {
 } from "react";
 import { useTranslations } from "use-intl";
 import { commands } from "@/bindings";
+import { diagOpenLogsFolder, diagSaveBundle } from "@/shared/api/ipc-client";
 import { onTyped } from "@/shared/api/native-boundary";
 import { NATIVE_EVENTS } from "@/shared/api/native-events";
 import { COPY_FEEDBACK_MS, copyToClipboard } from "@/shared/lib/clipboard";
@@ -46,6 +49,20 @@ type StreamState =
 
 const INITIAL_STREAM_STATE: StreamState = { status: "stopped" };
 
+/**
+ * The two on-disk log commands that share the toolbar's trailing group. Tracking
+ * WHICH one is in flight (instead of a single boolean) keeps the other button
+ * clickable — only the invoking button disables while its own command runs.
+ */
+type LogFileAction = "bundle" | "logs";
+
+/** The shape both `diagOpenLogsFolder` and `diagSaveBundle` resolve to. */
+interface LogFileActionResult {
+	cancelled?: boolean | null;
+	error?: string | null;
+	ok: boolean;
+}
+
 const LEVEL_CLASS: Record<string, string> = {
 	debug: "text-activity",
 	error: "text-error",
@@ -53,6 +70,10 @@ const LEVEL_CLASS: Record<string, string> = {
 	trace: "text-foreground-muted",
 	warn: "text-warning",
 };
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
 
 function formatLogTime(timestampMs: number): string {
 	const date = new Date(timestampMs);
@@ -90,11 +111,29 @@ function LogViewerButton({
 	);
 }
 
+/** Group divider inside the log toolbar — the same hairline the observability
+ *  action group below uses, so both toolbars in this section read as one system. */
+function LogToolbarSeparator(): ReactNode {
+	return (
+		<span
+			aria-hidden="true"
+			className="my-1 w-px shrink-0 self-stretch bg-divider-strong"
+			data-slot="log-toolbar-separator"
+		/>
+	);
+}
+
 export function LiveDebugLogViewer(): ReactNode {
 	const t = useTranslations("about");
+	// Generic fallback for a backend failure that carries no message of its own;
+	// the log commands are the only place in this widget that can fail silently.
+	const tErrors = useTranslations("errors");
 	const [lines, setLines] = useState<LiveLogLine[]>([]);
 	const [stream, setStream] = useState<StreamState>(INITIAL_STREAM_STATE);
 	const [copied, setCopied] = useState(false);
+	const [fileActionError, setFileActionError] = useState<string | null>(null);
+	const [pendingFileAction, setPendingFileAction] =
+		useState<LogFileAction | null>(null);
 	const pendingRef = useRef<LiveLogLine[]>([]);
 	const nextIdRef = useRef(0);
 	const backendEnabledRef = useRef(false);
@@ -251,6 +290,37 @@ export function LiveDebugLogViewer(): ReactNode {
 		);
 	};
 
+	// Shared pending/error handling for the two on-disk log commands that used to
+	// sit in their own rows above the console.
+	const runFileAction = (
+		action: LogFileAction,
+		invoke: () => Promise<LogFileActionResult>,
+	) => {
+		setFileActionError(null);
+		setPendingFileAction(action);
+		void invoke()
+			.then((result) => {
+				// A dismissed save dialog is the user's own decision, not a failure —
+				// leave the console silent rather than raising an alert.
+				if (result.cancelled) {
+					return;
+				}
+				if (!result.ok) {
+					throw new Error(result.error ?? tErrors("somethingWentWrong"));
+				}
+			})
+			.catch((error: unknown) => {
+				if (mountedRef.current) {
+					setFileActionError(errorMessage(error));
+				}
+			})
+			.finally(() => {
+				if (mountedRef.current) {
+					setPendingFileAction(null);
+				}
+			});
+	};
+
 	const handleScroll = () => {
 		const element = scrollRef.current;
 		if (!element) {
@@ -286,17 +356,37 @@ export function LiveDebugLogViewer(): ReactNode {
 	})();
 
 	return (
-		<div className="border-border border-t py-4">
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex min-w-0 flex-1 flex-col gap-1">
-					<span className="font-medium text-body text-foreground leading-tight">
-						{t("liveLogsTitle")}
-					</span>
-					<span className="text-body-sm text-foreground-muted leading-snug">
-						{t("liveLogsDescription")}
-					</span>
-				</div>
-				<div className="flex shrink-0 flex-wrap gap-2">
+		// The console is now the FIRST row of the boxed Diagnostics group, so it
+		// carries no top hairline of its own — `SettingSection divided` supplies
+		// the divider between it and the issues list below.
+		<div className="py-4">
+			<div className="flex min-w-0 flex-col gap-1">
+				<span className="font-medium text-body text-foreground leading-tight">
+					{t("liveLogsTitle")}
+				</span>
+				<span className="text-body-sm text-foreground-muted leading-snug">
+					{t("liveLogsSubtitle")}
+				</span>
+				<span className="text-body-sm text-foreground-muted leading-snug">
+					{t("liveLogsDescription")}
+				</span>
+			</div>
+
+			{fileActionError ? (
+				<p className="mt-2 text-body-sm text-error" role="alert">
+					{fileActionError}
+				</p>
+			) : null}
+
+			<div className="mt-3 overflow-hidden rounded-lg border border-border bg-surface-1">
+				{/* One toolbar for the whole subject: stream control, buffer actions,
+				    then the on-disk log files — the console prior art (Railway, Vercel,
+				    Modal) keeps all of them in a single strip above the output. */}
+				<div
+					aria-label={t("logsToolbarLabel")}
+					className="flex flex-wrap items-center gap-2 border-divider border-b px-3 py-2"
+					role="toolbar"
+				>
 					{stream.status === "stopped" || stream.status === "error" ? (
 						<LogViewerButton
 							disabled={transitioning}
@@ -337,10 +427,22 @@ export function LiveDebugLogViewer(): ReactNode {
 					>
 						{t("liveLogsClear")}
 					</LogViewerButton>
+					<LogToolbarSeparator />
+					<LogViewerButton
+						disabled={pendingFileAction === "logs"}
+						icon={Folder01Icon}
+						onClick={() => runFileAction("logs", diagOpenLogsFolder)}
+					>
+						{t("openLogsFolderShort")}
+					</LogViewerButton>
+					<LogViewerButton
+						disabled={pendingFileAction === "bundle"}
+						icon={FileZipIcon}
+						onClick={() => runFileAction("bundle", diagSaveBundle)}
+					>
+						{t("saveDiagnosticBundleButton")}
+					</LogViewerButton>
 				</div>
-			</div>
-
-			<div className="mt-3 overflow-hidden rounded-lg border border-border bg-surface-1">
 				<div className="flex items-center gap-2 border-divider border-b px-3 py-2 text-body-sm text-foreground-muted">
 					<span
 						aria-hidden="true"

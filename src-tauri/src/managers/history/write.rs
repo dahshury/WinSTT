@@ -421,7 +421,6 @@ impl HistoryManager {
     pub async fn toggle_saved_status(&self, id: i64) -> Result<()> {
         let conn = self.get_connection()?;
 
-        // Get current saved status
         let current_saved: bool = conn.query_row(
             "SELECT saved FROM transcription_history WHERE id = ?1",
             params![id],
@@ -437,7 +436,6 @@ impl HistoryManager {
 
         debug!("Toggled saved status for entry {}: {}", id, new_saved);
 
-        // Emit history updated event
         if let Err(e) = (HistoryUpdatePayload::Toggled { id }).emit(&self.app_handle) {
             error!("Failed to emit history-updated event: {}", e);
         }
@@ -484,7 +482,6 @@ impl HistoryManager {
 
         debug!("Deleted history entry with id: {}", id);
 
-        // Emit history updated event
         if let Err(e) = (HistoryUpdatePayload::Deleted { id }).emit(&self.app_handle) {
             error!("Failed to emit history-updated event: {}", e);
         }
@@ -503,7 +500,6 @@ impl HistoryManager {
 
     fn format_timestamp_title(&self, timestamp: i64) -> String {
         if let Some(utc_datetime) = DateTime::from_timestamp(timestamp, 0) {
-            // Convert UTC to local timezone
             let local_datetime = utc_datetime.with_timezone(&Local);
             local_datetime.format("%B %e, %Y - %l:%M%p").to_string()
         } else {

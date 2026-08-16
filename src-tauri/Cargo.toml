@@ -14,6 +14,9 @@ path = "src/main.rs"
 
 [workspace]
 members = ["context-sidecar"]
+# vendor/vad-rs is its own root (it declares an empty [workspace] so its default
+# features stay off) — exclude it here or cargo sees two roots in one tree.
+exclude = ["vendor/vad-rs"]
 default-members = ["."]
 resolver = "3"
 
@@ -111,7 +114,9 @@ tokio = "1.43.0"
 # (cloud LLM/STT/TTS abort). Already in the tree transitively; `rt` gates the
 # `sync::CancellationToken` we use. Dropping the raced future aborts the request.
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
-vad-rs = { git = "https://github.com/cjpais/vad-rs", rev = "2a412ed858695b9251f3f5a1a20d95b59fa7c498", default-features = false }
+# Vendored (see vendor/vad-rs/Cargo.toml): upstream pins ort =rc.12 exactly, which
+# deadlocks the lockfile against our =rc.13; the vendor copy relaxes only that pin.
+vad-rs = { path = "vendor/vad-rs", default-features = false }
 enigo = "0.6.1"
 # Chime/recording-sound playback only (audio_feedback.rs). Default features pull the
 # FULL symphonia 0.5 decoder suite (flac/mp4+aac/vorbis) — a second copy next to our
@@ -138,7 +143,7 @@ flate2 = "1.0"
 bzip2 = "0.4.4"
 sha2 = "0.10"
 # WinSTT unified ONNX STT engine.
-ort = { version = "=2.0.0-rc.12", features = ["ndarray", "half"] }
+ort = { version = "=2.0.0-rc.13", features = ["ndarray", "half"] }
 ndarray = "0.17.2"
 num_cpus = "1"  # physical-core count for the STT intra-op thread pick (matches onnx-asr's default)
 rayon = "1"     # parallel per-frame fbank/mel feature extraction (long-audio throughput)
@@ -182,7 +187,7 @@ tauri-plugin-single-instance = "2.3.2"
 tauri-plugin-updater = "2.10.0"
 
 [target.'cfg(windows)'.dependencies]
-ort = { version = "=2.0.0-rc.12", features = ["directml"] }
+ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
 windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
@@ -243,7 +248,7 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "da9c9a
 objc2-core-audio = { version = "0.3.1", default-features = false, features = ["std", "AudioHardware"] }
 # macOS GPU execution provider for the ONNX STT engine (CoreML), mirroring the
 # Windows DirectML EP above. Non-default features are additive with the base `ort`.
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "half", "coreml"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["ndarray", "half", "coreml"] }
 # Typed objc2 framework bindings for the native macOS integration:
 #  - objc2 / objc2-foundation / objc2-app-kit: base runtime + Foundation + AppKit
 #    (NSPanel styling alongside tauri-nspanel).

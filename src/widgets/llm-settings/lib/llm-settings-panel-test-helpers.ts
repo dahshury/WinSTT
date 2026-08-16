@@ -794,6 +794,13 @@ export async function performFeatureToggle(
 		await tryEnableOllamaForFeature(deps);
 		return;
 	}
+	// Apple Intelligence is a no-config on-device provider: it has no Ollama
+	// model id and no OpenRouter key. The native command remains the runtime
+	// availability gate, so enabling here only commits the user's intent.
+	if (deps.provider === "apple-intelligence") {
+		deps.apply({ enabled: true });
+		return;
+	}
 	tryEnableOpenRouterForFeature(deps);
 }
 

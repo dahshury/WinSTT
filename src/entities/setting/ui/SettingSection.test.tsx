@@ -84,7 +84,7 @@ describe("SettingSection", () => {
 		expect(container.querySelector(".divide-y.divide-divider")).not.toBeNull();
 	});
 
-	test("dims content when section has a toggle that is off (pointer-events disabled)", () => {
+	test("dims and inerts content when its toggle is off", () => {
 		const { container } = render(
 			<SettingSection onToggle={() => undefined} title="LLM" toggled={false}>
 				<div data-testid="content">x</div>
@@ -95,6 +95,8 @@ describe("SettingSection", () => {
 		const contentParent = screen.getByTestId("content")
 			.parentElement as HTMLElement;
 		expect(contentParent.className).toContain("pointer-events-none");
+		expect(contentParent.hasAttribute("inert")).toBe(true);
+		expect(contentParent.getAttribute("aria-disabled")).toBe("true");
 		expect(wrappers.length).toBeGreaterThan(0);
 	});
 });

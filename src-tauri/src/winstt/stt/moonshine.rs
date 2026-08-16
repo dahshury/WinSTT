@@ -223,7 +223,7 @@ impl MoonshineEngine {
 
     /// Device `MemoryInfo` for binding the encoder output + KV-cache resident on the session's
     /// device (CPU today; Moonshine is CPU-forced). Cheap to build; one per encode + one per step.
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -334,8 +334,8 @@ impl MoonshineEngine {
         encoder_out: &DynValue,
         prompt: &[i64],
         enc_frames: usize,
-        dev_mem: &MemoryInfo,
-        cpu_mem: &MemoryInfo,
+        dev_mem: &MemoryInfo<'_>,
+        cpu_mem: &MemoryInfo<'_>,
     ) -> SttResult<(i64, Vec<Option<DynValue>>)> {
         let input_ids =
             Tensor::from_array(([1usize, prompt.len()], prompt.to_vec().into_boxed_slice()))
@@ -412,8 +412,8 @@ impl MoonshineEngine {
         next_token: i64,
         past: &mut [Option<DynValue>],
         enc_frames: usize,
-        dev_mem: &MemoryInfo,
-        cpu_mem: &MemoryInfo,
+        dev_mem: &MemoryInfo<'_>,
+        cpu_mem: &MemoryInfo<'_>,
     ) -> SttResult<i64> {
         let input_ids = Tensor::from_array(([1usize, 1usize], vec![next_token].into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("past input_ids: {e}")))?;

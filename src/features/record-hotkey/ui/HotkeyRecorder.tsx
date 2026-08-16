@@ -8,6 +8,7 @@ import {
 } from "motion/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
+import { commands } from "@/bindings";
 import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -28,6 +29,10 @@ import { useKeyRecorder } from "../model/use-key-recorder";
 
 export interface HotkeyRecorderProps {
 	currentKey: string;
+	/** Backend binding id. When present, the recorder claims the candidate with
+	 * the OS before the parent persists it and surfaces any registration failure
+	 * inline. */
+	hotkeyId?: string;
 	/**
 	 * Combos this recorder must NOT collide with. A recording that ends up equal
 	 * to, a subset of, or a superset of any entry here is rejected: the parent
@@ -189,6 +194,7 @@ export function HotkeyRecorder({
 	currentKey,
 	onKeyRecorded,
 	forbiddenCombos,
+	hotkeyId,
 }: HotkeyRecorderProps) {
 	const t = useTranslations("hotkey");
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
@@ -205,6 +211,28 @@ export function HotkeyRecorder({
 					combo: formatCombo(conflict.combo),
 				}),
 			);
+			return;
+		}
+		if (hotkeyId) {
+			void commands
+				.changeBinding(hotkeyId, combo)
+				.then((result) => {
+					if (result.status === "error") {
+						setConflictMessage(result.error);
+						return;
+					}
+					if (!result.data.success) {
+						setConflictMessage(result.data.error ?? combo);
+						return;
+					}
+					setConflictMessage(null);
+					onKeyRecorded(combo);
+				})
+				.catch((error: unknown) => {
+					setConflictMessage(
+						error instanceof Error ? error.message : String(error),
+					);
+				});
 			return;
 		}
 		setConflictMessage(null);

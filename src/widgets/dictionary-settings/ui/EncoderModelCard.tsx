@@ -51,6 +51,8 @@ function DeleteModelButton({
 interface EncoderModelCardProps {
 	/** Master on/off for the on-device dictionary feature. */
 	enabled: boolean;
+	/** Explains why an enabled/downloaded model is configured but not active in the current mode. */
+	inactiveReason?: string | undefined;
 	model: EncoderModel;
 	/** Enable/disable the feature. Does NOT touch the download — the model stays on disk so
 	 *  re-enabling is instant. Deleting the model is a separate, explicit action (the trash button). */
@@ -71,6 +73,7 @@ interface EncoderModelCardProps {
 export function EncoderModelCard({
 	model: m,
 	enabled,
+	inactiveReason,
 	onToggle,
 }: EncoderModelCardProps): ReactNode {
 	const t = useTranslations("dictionary");
@@ -122,8 +125,14 @@ export function EncoderModelCard({
 		// Present -> status + an explicit delete (available even when the feature is off, so the disk
 		// can be reclaimed without re-enabling).
 		body = (
-			<div className="flex items-center justify-between gap-2">
-				{enabled ? (
+			<div
+				className={
+					m.error
+						? "flex items-center justify-end gap-2"
+						: "flex items-center justify-between gap-2"
+				}
+			>
+				{m.error ? null : enabled && !inactiveReason ? (
 					<span className="flex items-center gap-1.5 text-foreground-muted text-xs">
 						<span
 							className="size-1.5 rounded-full bg-success"
@@ -133,7 +142,7 @@ export function EncoderModelCard({
 					</span>
 				) : (
 					<span className="text-foreground-muted text-xs">
-						{t("encoderDownloadedOff")}
+						{inactiveReason ?? t("encoderDownloadedOff")}
 					</span>
 				)}
 				<DeleteModelButton label={common("delete")} onClick={m.remove} />
@@ -189,7 +198,7 @@ export function EncoderModelCard({
 					onCheckedChange={onToggle}
 				/>
 			</div>
-			{enabled ? (
+			{enabled && !inactiveReason ? (
 				<div className="flex items-start gap-1.5 text-warning text-xs leading-5">
 					<HugeiconsIcon
 						className="mt-px shrink-0"
@@ -198,6 +207,31 @@ export function EncoderModelCard({
 						aria-hidden="true"
 					/>
 					<span>{t("encoderLatencyWarning")}</span>
+				</div>
+			) : null}
+			{inactiveReason ? (
+				<div className="flex items-start gap-1.5 text-foreground-muted text-xs leading-5">
+					<HugeiconsIcon
+						className="mt-px shrink-0"
+						icon={AlertCircleIcon}
+						size={13}
+						aria-hidden="true"
+					/>
+					<span>{inactiveReason}</span>
+				</div>
+			) : null}
+			{m.error ? (
+				<div
+					className="flex items-start gap-1.5 text-error text-xs leading-5"
+					role="alert"
+				>
+					<HugeiconsIcon
+						className="mt-px shrink-0"
+						icon={AlertCircleIcon}
+						size={13}
+						aria-hidden="true"
+					/>
+					<span>{m.error}</span>
 				</div>
 			) : null}
 			{body}

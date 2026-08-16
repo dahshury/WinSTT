@@ -6,6 +6,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { commands } from "@/bindings";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@test/mocks/legacy-ipc";
 import {
@@ -18,8 +19,14 @@ import { HotkeyRecorder } from "./HotkeyRecorder";
 
 const startCalls: number[] = [];
 const stopCalls: number[] = [];
+const changeBindingCalls: Array<{ id: string; binding: string }> = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 let savedApi: typeof window.nativeBridge;
+let changeBindingResult: {
+	success: boolean;
+	binding: null;
+	error: string | null;
+};
 
 type TauriInternals = {
 	invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
@@ -33,6 +40,7 @@ function tauriInternals(): TauriInternals {
 		.__TAURI_INTERNALS__;
 }
 let savedTauriInvoke: TauriInternals["invoke"];
+let savedChangeBinding: typeof commands.changeBinding;
 
 function fireListener(channel: string, ...args: unknown[]): void {
 	for (const cb of listeners.get(channel) ?? []) {
@@ -43,8 +51,20 @@ function fireListener(channel: string, ...args: unknown[]): void {
 beforeEach(() => {
 	savedApi = window.nativeBridge;
 	savedTauriInvoke = tauriInternals().invoke;
+	savedChangeBinding = commands.changeBinding;
 	startCalls.length = 0;
 	stopCalls.length = 0;
+	changeBindingCalls.length = 0;
+	changeBindingResult = { success: true, binding: null, error: null };
+	// Bun's module mocks are process-global, so another feature test that
+	// partially mocks `@/bindings` can otherwise replace this generated command
+	// when the whole feature suite runs. Stub only the command under test here;
+	// this keeps the recorder test order-independent while preserving the exact
+	// tauri-specta Result contract consumed by HotkeyRecorder.
+	commands.changeBinding = async (id: string, binding: string) => {
+		changeBindingCalls.push({ id, binding });
+		return { status: "ok", data: changeBindingResult };
+	};
 	listeners.clear();
 	window.nativeBridge = {
 		getPathForFile: () => "",
@@ -96,25 +116,29 @@ beforeEach(() => {
 afterEach(() => {
 	window.nativeBridge = savedApi;
 	tauriInternals().invoke = savedTauriInvoke;
+	commands.changeBinding = savedChangeBinding;
 });
 
 function renderIt(
 	currentKey = "LCtrl+LMeta",
 	forbiddenCombos?: readonly ForbiddenCombo[],
+	hotkeyId?: string,
 ) {
 	const onKeyRecorded = mock((_key: string) => undefined);
 	// `exactOptionalPropertyTypes: true` distinguishes "absent" from "undefined".
 	// Only pass `forbiddenCombos` when actually present so the absent-case test
 	// exercises the recorder's default-empty behaviour.
-	const recorder = forbiddenCombos ? (
-		<HotkeyRecorder
-			currentKey={currentKey}
-			forbiddenCombos={forbiddenCombos}
-			onKeyRecorded={onKeyRecorded}
-		/>
-	) : (
-		<HotkeyRecorder currentKey={currentKey} onKeyRecorded={onKeyRecorded} />
-	);
+	const recorder =
+		forbiddenCombos || hotkeyId ? (
+			<HotkeyRecorder
+				currentKey={currentKey}
+				{...(forbiddenCombos ? { forbiddenCombos } : {})}
+				{...(hotkeyId ? { hotkeyId } : {})}
+				onKeyRecorded={onKeyRecorded}
+			/>
+		) : (
+			<HotkeyRecorder currentKey={currentKey} onKeyRecorded={onKeyRecorded} />
+		);
 	return {
 		...render(<IntlProvider>{recorder}</IntlProvider>),
 		onKeyRecorded,
@@ -321,5 +345,30 @@ describe("HotkeyRecorder conflict gating", () => {
 		await waitFor(() => {
 			expect(onKeyRecorded).toHaveBeenCalledWith("LCtrl+LShift+V");
 		});
+	});
+
+	test("claims a candidate with Windows before accepting it", async () => {
+		const { onKeyRecorded } = renderIt("LCtrl+LMeta", undefined, "transcribe");
+		startThenRecord("LCtrl+LAlt+R");
+		await waitFor(() => {
+			expect(changeBindingCalls).toEqual([
+				{ id: "transcribe", binding: "LCtrl+LAlt+R" },
+			]);
+			expect(onKeyRecorded).toHaveBeenCalledWith("LCtrl+LAlt+R");
+		});
+	});
+
+	test("keeps the old setting and shows the backend error when Windows rejects a candidate", async () => {
+		changeBindingResult = {
+			success: false,
+			binding: null,
+			error: "Shortcut is already in use",
+		};
+		const { onKeyRecorded } = renderIt("LCtrl+LMeta", undefined, "transcribe");
+		startThenRecord("LCtrl+LAlt+R");
+		await waitFor(() => {
+			expect(screen.getByRole("alert").textContent).toContain("already in use");
+		});
+		expect(onKeyRecorded).not.toHaveBeenCalled();
 	});
 });

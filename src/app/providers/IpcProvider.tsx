@@ -45,7 +45,6 @@ function signalRendererStartupReady(): Promise<void> {
 
 export function IpcProvider({ children }: { children: ReactNode }) {
 	const afterFirstPaint = useAfterFirstPaint();
-	// Initialize all IPC subscriptions
 	useConnectionListener();
 	useTranscriptionFeed();
 	// Populates this renderer's LLM-processing store from the broadcast

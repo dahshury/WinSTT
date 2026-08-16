@@ -7,7 +7,6 @@ export type AgentState =
 	| "thinking"
 	| "speaking";
 
-/** Available visualizer types. */
 export const VISUALIZER_TYPES = [
 	"bar",
 	"grid",

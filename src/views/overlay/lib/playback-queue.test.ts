@@ -263,6 +263,7 @@ function makeF32leChunk(
 	samples: number[],
 	channels = 1,
 	sampleRate = 24_000,
+	sentenceIndex = 0,
 ): ChunkInput {
 	const arr = new Float32Array(samples);
 	return {
@@ -271,6 +272,7 @@ function makeF32leChunk(
 		channels,
 		format: "f32le",
 		pcm: arr.buffer,
+		sentenceIndex,
 	};
 }
 
@@ -1043,6 +1045,42 @@ describe("TtsPlaybackQueue position + duration", () => {
 		expect(queue.getDuration()).toBe(0);
 		expect(queue.getCurrentTime()).toBe(0);
 		expect(queue.isComplete).toBe(false);
+	});
+});
+
+describe("TtsPlaybackQueue.getSentenceSpans", () => {
+	test("reports nothing before any audio has been decoded", () => {
+		expect(new TtsPlaybackQueue().getSentenceSpans()).toEqual([]);
+	});
+
+	test("maps each sentence onto its window in the playback timeline", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0), 1, 24_000, 0));
+		queue.enqueue(makeF32leChunk("r", new Array(24_000).fill(0), 1, 24_000, 1));
+		expect(queue.getSentenceSpans()).toEqual([
+			{ index: 0, start: 0, end: 0.5 },
+			{ index: 1, start: 0.5, end: 1.5 },
+		]);
+	});
+
+	test("unions every chunk an engine emits for the same sentence", () => {
+		// Engines that stream sub-sentence audio push several chunks under one
+		// script index; the span has to cover all of them, not just the first.
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0), 1, 24_000, 0));
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0), 1, 24_000, 0));
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0), 1, 24_000, 1));
+		expect(queue.getSentenceSpans()).toEqual([
+			{ index: 0, start: 0, end: 1 },
+			{ index: 1, start: 1, end: 1.5 },
+		]);
+	});
+
+	test("clears with the timeline when the read stops", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", new Array(12_000).fill(0), 1, 24_000, 0));
+		queue.stop();
+		expect(queue.getSentenceSpans()).toEqual([]);
 	});
 });
 

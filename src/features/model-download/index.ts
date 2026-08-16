@@ -19,7 +19,6 @@ export {
 	useDownloadStore,
 } from "./model/download-store";
 export {
-	canDeleteSttQuant,
 	resolveSttDeleteRecovery,
 	type SttDeleteRecovery,
 	type SttSwitchTarget,

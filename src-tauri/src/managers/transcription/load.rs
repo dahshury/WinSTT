@@ -60,7 +60,6 @@ impl TranscriptionManager {
         self.clear_warmed_model();
         self.idle_watcher_signal.notify();
 
-        // Emit unloaded event
         let _ = self.app_handle.emit(
             crate::winstt::commands::events::names::MODEL_STATE_CHANGED,
             ModelStateEvent {
@@ -242,6 +241,22 @@ impl TranscriptionManager {
     /// Runs on the swap orchestrator's own thread, so it never blocks the Tauri command thread.
     pub fn load_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
         self.load_model_blocking_inner(model_id, false, None, None, None)
+    }
+
+    /// Reconcile the resident engine to the user's SELECTED model and block until it is usable.
+    ///
+    /// The blocking counterpart of [`Self::initiate_model_load`]: the fire-and-forget version can
+    /// only be observed by waiting for the next decode, which is exactly the stall a recording-mode
+    /// transition needs to move OFF the user's first utterance. Listen mode loads its
+    /// native-streaming model into this same shared engine, so leaving Listen must reload the main
+    /// model before dictation is possible at all. A cloud selection resolves through the same
+    /// dispatch (no local engine to build), so this returns almost immediately for it.
+    pub fn ensure_selected_model_loaded(&self) -> std::result::Result<(), String> {
+        let desired = self.desired_model_id();
+        if desired.trim().is_empty() {
+            return Ok(());
+        }
+        self.load_model_blocking(&desired)
     }
 
     pub fn load_model_blocking_with_quantization(

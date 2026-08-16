@@ -23,12 +23,18 @@ function makeModel(overrides: Partial<TtsModelInfo> = {}): TtsModelInfo {
 		languages: ["en-us"],
 		numVoices: 54,
 		cloning: "none",
+		maxRefClipSecs: 0,
+		tagSyntax: "none",
+		tags: [],
 		voiceDesign: false,
+		voiceDesignMaxChars: 0,
+		voiceInstruct: false,
 		sampleRate: 24_000,
 		paramCountM: 82,
 		availableQuantizations: ["fp16"],
 		sizeBytesByQuantization: { fp16: 169_869_312 },
 		sizeLabel: "82M",
+		requiresReferenceClip: false,
 		qualityScore: 0.9,
 		speedScore: 0.85,
 		description:
@@ -100,6 +106,74 @@ describe("TtsModelCard description", () => {
 		expect(
 			screen.getByText("Warm multilingual voices for everyday read-aloud."),
 		).toBeDefined();
+	});
+});
+
+describe("TtsModelCard voice-capability badges", () => {
+	test("a preset-voice model carries no capability badge", () => {
+		renderCard({});
+		expect(screen.queryByText("Voice cloning")).toBeNull();
+		expect(screen.queryByText("Voice design")).toBeNull();
+		expect(screen.queryByText("Inline tags")).toBeNull();
+	});
+
+	test("a clip-only cloner badges 'Voice cloning'", () => {
+		renderCard({
+			model: makeModel({ cloning: "zero_shot_audio", maxRefClipSecs: 30 }),
+		});
+		expect(screen.getByText("Voice cloning")).toBeDefined();
+		expect(screen.queryByText("Cloning + transcript")).toBeNull();
+	});
+
+	test("Spark's clip+transcript cloning is badged apart from clip-only cloning", () => {
+		// The distinction is load-bearing: this tier makes the user supply the
+		// exact transcript of the clip, not just the clip.
+		renderCard({
+			model: makeModel({
+				cloning: "zero_shot_audio_transcript",
+				maxRefClipSecs: 30,
+			}),
+		});
+		expect(screen.getByText("Cloning + transcript")).toBeDefined();
+		expect(screen.queryByText("Voice cloning")).toBeNull();
+	});
+
+	test("a voice-design model badges 'Voice design'", () => {
+		renderCard({
+			model: makeModel({ voiceDesign: true, voiceDesignMaxChars: 300 }),
+		});
+		expect(screen.getByText("Voice design")).toBeDefined();
+	});
+
+	test("inline-tag support badges icon-only, with the label kept for screen readers", () => {
+		renderCard({
+			model: makeModel({
+				tagSyntax: "square",
+				tags: ["laugh", "cough", "chuckle"],
+			}),
+		});
+		// Icon-only so the chip costs a glyph's width on the one line it shares
+		// with the meta strip — the label survives as sr-only text.
+		const label = screen.getByText("Inline tags");
+		expect(label.className).toContain("sr-only");
+	});
+
+	test("a model with no tag vocabulary renders no tag badge", () => {
+		renderCard({ model: makeModel({ tagSyntax: "none", tags: [] }) });
+		expect(screen.queryByText("Inline tags")).toBeNull();
+	});
+
+	test("cloning and inline tags coexist (Chatterbox Turbo)", () => {
+		renderCard({
+			model: makeModel({
+				cloning: "zero_shot_audio",
+				maxRefClipSecs: 30,
+				tagSyntax: "square",
+				tags: ["laugh"],
+			}),
+		});
+		expect(screen.getByText("Voice cloning")).toBeDefined();
+		expect(screen.getByText("Inline tags")).toBeDefined();
 	});
 });
 

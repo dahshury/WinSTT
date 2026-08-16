@@ -27,8 +27,9 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      // fonttrio "startup" trio — Nunito (headings), Nunito Sans (body),
-      // Fira Code (mono). Loaded from Google Fonts; CSS vars in app.css.
+      // Type system — Inter (UI + prose, optical-size axis so display sizes
+      // tighten automatically) and JetBrains Mono (code, eyebrows, metrics).
+      // A technical-register pairing; CSS vars live in app.css.
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       {
         rel: "preconnect",
@@ -37,7 +38,7 @@ export const Route = createRootRoute({
       },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Nunito:wght@400;600;700;800;900&family=Nunito+Sans:wght@400;600;700&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400..600&display=swap",
       },
     ],
   }),

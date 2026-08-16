@@ -3,6 +3,11 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useTranslations } from "use-intl";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
+import {
+	fitsRustShortText,
+	fitsRustText,
+	VOCABULARY_LIMITS,
+} from "@/shared/config/vocabulary-limits";
 import { generateId } from "@/shared/lib/generate-id";
 import { Badge } from "@/shared/ui/badge";
 import {
@@ -23,8 +28,18 @@ const newDictionaryEntry = (): DictionaryEntry => ({
 });
 
 const acceptDictionaryData = (newData: readonly DictionaryEntry[]) => {
+	if (newData.length > VOCABULARY_LIMITS.dictionaryEntries) {
+		return false;
+	}
 	const seen = new Set<string>();
 	for (const row of newData) {
+		const hasValidFields =
+			fitsRustShortText(row.id, VOCABULARY_LIMITS.idBytes) &&
+			fitsRustShortText(row.term, VOCABULARY_LIMITS.termOrTriggerBytes) &&
+			fitsRustText(row.replacement ?? "", VOCABULARY_LIMITS.replacementBytes);
+		if (!hasValidFields) {
+			return false;
+		}
 		const key = normalizeDictionaryTerm(row.term);
 		if (!key) {
 			continue;
@@ -109,6 +124,7 @@ export function DictionaryTable({ entries, onChange }: DictionaryTableProps) {
 			editableColumnIds={EDITABLE_COLUMNS}
 			focusColumnId="term"
 			isEmptyRow={isBlankDictionaryEntry}
+			maxRows={VOCABULARY_LIMITS.dictionaryEntries}
 			onChange={onChange}
 		/>
 	);

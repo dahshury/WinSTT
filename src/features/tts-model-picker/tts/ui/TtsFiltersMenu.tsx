@@ -1,9 +1,11 @@
 "use client";
 
 import {
+	ArrowUpDownIcon,
 	BinaryCodeIcon,
 	CheckmarkCircle02Icon,
 	Copy01Icon,
+	FilterIcon,
 	FlashIcon,
 	GlobeIcon,
 	HardDriveIcon,
@@ -15,13 +17,14 @@ import {
 	VoiceIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import { LanguageMultiCombobox } from "@/shared/ui/language-multi-combobox";
+import { FilterCheckboxSection } from "@/shared/ui/model-picker/ui/FilterCheckboxSection";
+import { FilterMultiSelectView } from "@/shared/ui/model-picker/ui/FilterMultiSelectView";
 import {
-	FilterMenu,
-	SectionDivider,
-	SectionHeader,
-	type FilterFlagConfig,
-} from "@/shared/ui/model-picker/ui/FilterPopoverParts";
+	FilterNavMenu,
+	type FilterNavSection,
+} from "@/shared/ui/model-picker/ui/FilterNavMenu";
+import { SortChipsSection } from "@/shared/ui/model-picker/ui/FilterSortChipsSection";
+import type { FilterFlagConfig } from "@/shared/ui/model-picker/ui/filter-menu-types";
 import { languageLabel } from "@/shared/ui/model-picker/lib/language-names";
 import {
 	activeTtsFilterCount,
@@ -77,51 +80,6 @@ const SORT_ICON: Record<TtsSortKey, IconSvgElement> = {
 	name: TextFontIcon,
 };
 
-function MultiSelectSection({
-	ariaLabel,
-	emptyLabel,
-	hint,
-	icon,
-	label,
-	onChange,
-	options,
-	placeholder,
-	selected,
-	selectedHeading,
-}: {
-	ariaLabel: string;
-	emptyLabel: string;
-	hint: string;
-	icon: IconSvgElement;
-	label: string;
-	onChange: (next: string[]) => void;
-	options: Array<{ badge: string; id: string; label: string }>;
-	placeholder: string;
-	selected: string[];
-	selectedHeading: string;
-}) {
-	if (options.length === 0) {
-		return null;
-	}
-	return (
-		<div className="flex flex-col gap-1.5 p-2">
-			<SectionHeader icon={icon} label={label} />
-			<p className="text-[11px] text-foreground-muted leading-snug">{hint}</p>
-			<LanguageMultiCombobox
-				ariaLabel={ariaLabel}
-				emptyLabel={emptyLabel}
-				onChange={onChange}
-				options={options}
-				placeholder={placeholder}
-				removeLabel={(value) => `Remove ${value}`}
-				selectedCountLabel={(count) => `${count} selected`}
-				selectedHeading={selectedHeading}
-				value={selected}
-			/>
-		</div>
-	);
-}
-
 export function TtsFiltersMenu({
 	availableLanguages,
 	availableQuantizations,
@@ -151,62 +109,103 @@ export function TtsFiltersMenu({
 		label:
 			quantization === "" ? "Default precision" : quantization.toUpperCase(),
 	}));
-	const clear = () => {
-		onFiltersChange(EMPTY_TTS_FILTER_STATE);
-		onSortChange(null);
-	};
+	const activeFilters = activeTtsFilterCount(filters);
+
+	const sections: FilterNavSection[] = [
+		{
+			icon: ArrowUpDownIcon,
+			id: "sort",
+			label: "Sort by",
+			render: () => (
+				<SortChipsSection
+					hint="Show all makers in one ordered list."
+					icons={SORT_ICON}
+					keys={TTS_SORT_KEYS}
+					labels={TTS_SORT_CHIP_LABEL}
+					onChange={onSortChange}
+					value={sort}
+				/>
+			),
+			value: sort === null ? null : TTS_SORT_CHIP_LABEL[sort],
+		},
+		{
+			badge: flags.filter((flag) => filters[flag.key]).length,
+			icon: FilterIcon,
+			id: "flags",
+			label: "Filters",
+			render: () => (
+				<FilterCheckboxSection
+					filters={filters}
+					flags={flags}
+					onToggle={(flag) =>
+						onFiltersChange({ ...filters, [flag]: !filters[flag] })
+					}
+				/>
+			),
+		},
+	];
+
+	if (languageOptions.length > 0) {
+		sections.push({
+			badge: filters.languages.length,
+			icon: LanguageSkillIcon,
+			id: "language",
+			label: "Language",
+			render: () => (
+				<FilterMultiSelectView
+					ariaLabel="Filter by language"
+					emptyLabel="No languages found"
+					hint="Show models that support any selected language."
+					onChange={(languages) => onFiltersChange({ ...filters, languages })}
+					options={languageOptions}
+					placeholder="Select languages"
+					removeLabel={(value) => `Remove ${value}`}
+					selected={filters.languages}
+					selectedCountLabel={(count) => `${count} selected`}
+					selectedHeading="Selected languages"
+				/>
+			),
+		});
+	}
+
+	if (quantizationOptions.length > 0) {
+		sections.push({
+			badge: filters.quantizations.length,
+			icon: BinaryCodeIcon,
+			id: "precision",
+			label: "Precision",
+			render: () => (
+				<FilterMultiSelectView
+					ariaLabel="Filter by quantization"
+					emptyLabel="No precisions found"
+					hint="Show models offering any selected precision."
+					onChange={(quantizations) =>
+						onFiltersChange({ ...filters, quantizations })
+					}
+					options={quantizationOptions}
+					placeholder="Select precisions"
+					removeLabel={(value) => `Remove ${value}`}
+					selected={filters.quantizations}
+					selectedCountLabel={(count) => `${count} selected`}
+					selectedHeading="Selected precisions"
+				/>
+			),
+		});
+	}
 
 	return (
-		<FilterMenu
-			activeFilterCount={activeTtsFilterCount(filters)}
+		<FilterNavMenu
+			activeFilterCount={activeFilters + (sort === null ? 0 : 1)}
+			canClear={activeFilters > 0 || sort !== null}
 			clearLabel="Clear all"
 			dataSlot="tts-filters-menu-content"
-			filters={filters}
-			flags={flags}
 			label="Sort & filter"
-			onClearAll={clear}
-			onToggleFlag={(flag) =>
-				onFiltersChange({ ...filters, [flag]: !filters[flag] })
-			}
-			sort={{
-				hint: "Show all makers in one ordered list.",
-				icons: SORT_ICON,
-				keys: TTS_SORT_KEYS,
-				labels: TTS_SORT_CHIP_LABEL,
-				onChange: onSortChange,
-				sortByLabel: "Sort by",
-				value: sort,
+			onClearAll={() => {
+				onFiltersChange(EMPTY_TTS_FILTER_STATE);
+				onSortChange(null);
 			}}
-			widthClass="w-[320px]"
-		>
-			<SectionDivider />
-			<MultiSelectSection
-				ariaLabel="Filter by language"
-				emptyLabel="No languages found"
-				hint="Show models that support any selected language."
-				icon={LanguageSkillIcon}
-				label="Language"
-				onChange={(languages) => onFiltersChange({ ...filters, languages })}
-				options={languageOptions}
-				placeholder="Select languages"
-				selected={filters.languages}
-				selectedHeading="Selected languages"
-			/>
-			<SectionDivider />
-			<MultiSelectSection
-				ariaLabel="Filter by quantization"
-				emptyLabel="No precisions found"
-				hint="Show models offering any selected precision."
-				icon={BinaryCodeIcon}
-				label="Precision"
-				onChange={(quantizations) =>
-					onFiltersChange({ ...filters, quantizations })
-				}
-				options={quantizationOptions}
-				placeholder="Select precisions"
-				selected={filters.quantizations}
-				selectedHeading="Selected precisions"
-			/>
-		</FilterMenu>
+			sections={sections}
+			widthPx={320}
+		/>
 	);
 }

@@ -2,15 +2,14 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { type AboutAppInfo, aboutGetAppInfo } from "@/shared/api/ipc-client";
+import { AppSection } from "./AppSection";
 import { DiagnosticsSection } from "./DiagnosticsSection";
 import { ResetSection } from "./ResetSection";
 import { SettingsTransferSection } from "./SettingsTransferSection";
-import { StartupSection } from "./StartupSection";
-import { UpdatesSection } from "./UpdatesSection";
 
 // Fallback app metadata shown while the real values are fetched from the
 // backend; the app name / version / copyright are rendered inline by
-// UpdatesSection once the real values arrive.
+// AppSection once the real values arrive.
 const EMPTY_APP_INFO: AboutAppInfo = {
 	copyright: "",
 	version: "",
@@ -40,10 +39,12 @@ export function AboutSettingsPanel() {
 		};
 	}, []);
 
+	// Ordered by how often the rows are reached and how dangerous they are:
+	// the product itself, then the settings-file round trip, then diagnostics,
+	// and finally the application-data / destructive group.
 	return (
 		<div className="flex flex-col">
-			<UpdatesSection info={info} t={t} />
-			<StartupSection general={general} t={tg} update={update} />
+			<AppSection general={general} info={info} t={t} tg={tg} update={update} />
 			<SettingsTransferSection />
 			<DiagnosticsSection t={t} />
 			<ResetSection />

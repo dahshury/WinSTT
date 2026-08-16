@@ -1,16 +1,11 @@
 import { AiVoiceGeneratorIcon } from "@hugeicons/core-free-icons";
-import {
-	DEFAULT_SETTINGS,
-	SettingField,
-	SettingSection,
-} from "@/entities/setting";
+import { SettingField, SettingSection } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { Switcher } from "@/shared/ui/switcher";
 import { TtsModelSelector } from "@/features/tts-model-picker";
 import { OUT_OF_CREDITS_NOTE } from "../lib/cloud-gate";
 import {
 	SUPERTONIC_DEFAULT_LANG,
-	SUPERTONIC_DEFAULT_VOICE,
 	SUPERTONIC_SPEED_MAX,
 	SUPERTONIC_SPEED_MIN,
 } from "../lib/voice-groups";
@@ -36,6 +31,7 @@ export function TtsModelSection() {
 		enabled,
 		model,
 		voice,
+		voiceDefault,
 		supertonicLanguage,
 		effectiveSpeed,
 		ttsModels,
@@ -45,8 +41,22 @@ export function TtsModelSection() {
 		onTtsDownloadAction,
 		openDetachedTtsPicker,
 		isSupertonicModel,
+		isCloningModel,
 		isVoiceDesignModel,
+		inlineTags,
+		voiceDesignMaxChars,
+		maxRefClipSecs,
+		referenceClip,
+		clonePresetOptions,
+		liveSavedVoice,
+		applySavedVoice,
+		overwriteSavedVoice,
+		handleSetReferenceClips,
+		handleBrowseReferenceClips,
+		discardVoice,
+		generateVoiceDesignPrompt,
 		needsRefText,
+		requiresReferenceClip,
 		cloneRefText,
 		cloneBusy,
 		cloneError,
@@ -66,6 +76,9 @@ export function TtsModelSection() {
 		handleModelChange,
 		handleVoiceChange,
 		handleVoiceDesignPromptChange,
+		isVoiceInstructModel,
+		voiceInstruct,
+		handleVoiceInstructChange,
 		handleLanguageChange,
 		handleSpeedChange,
 		handleSpeedReset,
@@ -167,6 +180,21 @@ export function TtsModelSection() {
 							</SettingField>
 							<TtsControls
 								activeRequestId={playback.requestId}
+								clone={{
+									busy: cloneBusy,
+									error: cloneError,
+									maxSecs: maxRefClipSecs,
+									needsRefText,
+									onBrowse: handleBrowseReferenceClips,
+									onRefTextChange: handleCloneRefTextChange,
+									onSetClips: handleSetReferenceClips,
+									presets: clonePresetOptions,
+									refText: cloneRefText,
+									requiresClip: requiresReferenceClip,
+									trimmed: referenceClip.trimmed,
+								}}
+								cloning={isCloningModel}
+								inlineTags={inlineTags}
 								isLoading={isLoading}
 								isSpeaking={isSpeaking}
 								language={isSupertonicModel ? supertonicLanguage : undefined}
@@ -174,6 +202,7 @@ export function TtsModelSection() {
 								languageGroups={languageGroups}
 								languagePlaceholder={t("language")}
 								langForVoice={langForVoice}
+								onGenerateVoiceDesignPrompt={generateVoiceDesignPrompt}
 								onLanguageChange={
 									isSupertonicModel ? handleLanguageChange : undefined
 								}
@@ -181,6 +210,9 @@ export function TtsModelSection() {
 								onSpeedReset={handleSpeedReset}
 								onVoiceChange={handleVoiceChange}
 								onVoiceDesignPromptChange={handleVoiceDesignPromptChange}
+								onVoiceInstructChange={handleVoiceInstructChange}
+								voiceInstruct={voiceInstruct}
+								voiceInstructSupported={isVoiceInstructModel}
 								previewVoice={previewVoice}
 								previewVoiceId={previewVoiceId}
 								speed={effectiveSpeed}
@@ -188,47 +220,25 @@ export function TtsModelSection() {
 								speedMin={isSupertonicModel ? SUPERTONIC_SPEED_MIN : undefined}
 								t={t}
 								voice={voice}
-								voiceDefault={
-									isSupertonicModel
-										? SUPERTONIC_DEFAULT_VOICE
-										: DEFAULT_SETTINGS.tts.voice
-								}
+								voiceDefault={voiceDefault}
 								voiceDesign={isVoiceDesignModel}
+								voiceDesignMaxChars={voiceDesignMaxChars}
 								voiceGroups={voiceGroups}
+								voiceLibrary={
+									// Only the two engines whose voice is a user-authored
+									// artifact get a named library; a preset-bank model's
+									// dropdown already IS its list of voices.
+									isCloningModel || isVoiceDesignModel
+										? {
+												live: liveSavedVoice,
+												onApply: applySavedVoice,
+												onDiscard: discardVoice,
+												onOverwrite: overwriteSavedVoice,
+											}
+										: undefined
+								}
 								voicePlaceholder={voicePlaceholder}
 							/>
-							{needsRefText &&
-							voice !== "" &&
-							voice !== "female" &&
-							voice !== "male" ? (
-								<div className="flex flex-col gap-1.5">
-									<label
-										className="text-xs font-medium text-foreground-muted"
-										htmlFor="tts-clone-ref-text"
-									>
-										{t("cloneRefLabel")}
-									</label>
-									<textarea
-										className="min-h-[4.5rem] w-full resize-y rounded-md border border-border bg-surface-1 px-2.5 py-2 text-sm text-foreground outline-none focus:border-accent"
-										disabled={cloneBusy}
-										id="tts-clone-ref-text"
-										onChange={(e) => handleCloneRefTextChange(e.target.value)}
-										placeholder={
-											cloneBusy
-												? t("cloneRefTranscribing")
-												: t("cloneRefPlaceholder")
-										}
-										value={cloneRefText}
-									/>
-									{cloneError ? (
-										<span className="text-xs text-danger">{cloneError}</span>
-									) : (
-										<span className="text-xs text-foreground-muted">
-											{t("cloneRefHint")}
-										</span>
-									)}
-								</div>
-							) : null}
 						</>
 					)}
 				</div>

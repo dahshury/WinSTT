@@ -26,7 +26,6 @@ import {
 	FileImageIcon,
 	FileVideoIcon,
 	FileZipIcon,
-	FilterHorizontalIcon,
 	HashIcon,
 	Link01Icon,
 	ListViewIcon,
@@ -38,8 +37,6 @@ import {
 	Remove01Icon,
 	Scissor01Icon,
 	Search01Icon,
-	Settings02Icon,
-	SortingAZ02Icon,
 	TaskDone01Icon,
 	TextFontIcon,
 	Tick02Icon,
@@ -72,7 +69,6 @@ export const ChevronUp = makeIcon(ArrowUp01Icon);
 export const ChevronUpIcon = makeIcon(ArrowUp01Icon);
 export const ChevronsDownUpIcon = makeIcon(UnfoldLessIcon);
 export const ChevronsUpDown = makeIcon(UnfoldMoreIcon);
-export const ArrowDownUp = makeIcon(SortingAZ02Icon);
 
 // Actions
 export const Plus = makeIcon(PlusSignIcon);
@@ -83,7 +79,6 @@ export const Trash2 = makeIcon(Delete02Icon);
 export const Trash2Icon = makeIcon(Delete02Icon);
 export const Upload = makeIcon(Upload01Icon);
 export const SearchIcon = makeIcon(Search01Icon);
-export const Settings2 = makeIcon(Settings02Icon);
 export const X = makeIcon(Cancel01Icon);
 export const XIcon = makeIcon(Cancel01Icon);
 export const MinusIcon = makeIcon(Remove01Icon);
@@ -94,7 +89,6 @@ export const GripVertical = makeIcon(DragDropVerticalIcon);
 export const PinIcon = makeIcon(Pin02Icon);
 export const PinOffIcon = makeIcon(PinOffGlyph);
 export const EyeOffIcon = makeIcon(ViewOffSlashIcon);
-export const ListFilter = makeIcon(FilterHorizontalIcon);
 export const ListIcon = makeIcon(ListViewIcon);
 export const ListChecksIcon = makeIcon(TaskDone01Icon);
 export const AlignVerticalSpaceAroundIcon = makeIcon(Menu01Icon);

@@ -13,6 +13,48 @@ const SUPERTONIC_DEFAULT_VOICE = "M3";
 const SUPERTONIC_DEFAULT_LANG = "en";
 const SUPERTONIC_SPEED_RANGE = ttsSpeedRange(SUPERTONIC_TTS_MODEL_ID);
 
+/** Canonical first usable voice for each local engine. Keep this aligned with
+ * the backend voice catalogs: it is used both when switching models and by the
+ * Settings reset button, so neither path can write a voice owned by a different
+ * engine (for example Kokoro's `af_heart` into Piper). */
+export function defaultVoiceForTtsModel(
+	info: TtsModelInfo | undefined,
+	modelId = info?.id ?? "",
+): string {
+	if (info?.voiceDesign) {
+		return "";
+	}
+	switch (info?.engine) {
+		case "kokoro":
+			return "af_heart";
+		case "kitten":
+			return "expr-voice-5-m";
+		case "piper":
+			return "en_US-lessac-medium";
+		case "supertonic":
+			return SUPERTONIC_DEFAULT_VOICE;
+		case "chatterbox":
+			return "default";
+		case "qwen3tts":
+		case "qwen3-tts":
+			return "vivian";
+		case "orpheus":
+			return "tara";
+		case "spark":
+			return "female";
+		case "neutts":
+			return "emily-neutral";
+		case "omnivoice":
+			return "default";
+		case "audio8":
+			return "default";
+		default:
+			return modelId === SUPERTONIC_TTS_MODEL_ID
+				? SUPERTONIC_DEFAULT_VOICE
+				: DEFAULT_SETTINGS.tts.voice;
+	}
+}
+
 function clampSupertonicSpeed(speed: number): number {
 	if (!Number.isFinite(speed)) {
 		return DEFAULT_SETTINGS.tts.speed;
@@ -37,8 +79,8 @@ export interface TtsModelSelectionPatch {
 
 /**
  * Resolve the settings patch for selecting a TTS voice model. Selecting a
- * Supertonic model also resets the voice/lang to its defaults and clamps the
- * speed into its supported range; any other model just changes `model`. An
+ * model resets the voice to that engine's usable default. Supertonic also
+ * resets its independent language and clamps speed into its supported range. An
  * explicit `quantization` (a precision picked from the model's quant shelf) is
  * threaded onto the patch so the backend can hot-swap the engine's precision.
  * Shared by the inline Settings selector (`TtsModelSection`) and the detached
@@ -52,17 +94,21 @@ export function resolveTtsModelSelectionPatch(
 ): TtsModelSelectionPatch {
 	const nextInfo = models.find((candidate) => candidate.id === nextModel);
 	const quantPatch = quantization === undefined ? {} : { quantization };
+	const voicePatch =
+		nextInfo === undefined && nextModel !== SUPERTONIC_TTS_MODEL_ID
+			? {}
+			: { voice: defaultVoiceForTtsModel(nextInfo, nextModel) };
 	if (
 		nextInfo?.engine === "supertonic" ||
 		nextModel === SUPERTONIC_TTS_MODEL_ID
 	) {
 		return {
 			model: nextModel,
-			voice: SUPERTONIC_DEFAULT_VOICE,
+			...voicePatch,
 			lang: SUPERTONIC_DEFAULT_LANG,
 			speed: clampSupertonicSpeed(currentSpeed),
 			...quantPatch,
 		};
 	}
-	return { model: nextModel, ...quantPatch };
+	return { model: nextModel, ...voicePatch, ...quantPatch };
 }

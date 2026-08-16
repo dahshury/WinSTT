@@ -11,6 +11,7 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { isFavoritesGroupValue } from "@/shared/ui/model-picker/core/favorites";
 import { GROUP_HEADER_CLASSES } from "@/shared/ui/model-picker/core/model-card/card-constants";
 import { FavoritesGroupLabel } from "@/shared/ui/model-picker/core/model-card/FavoritesGroupLabel";
+import type { QuantDownloadCallbacks } from "@/shared/ui/model-picker/core/model-card/QuantShelf";
 import {
 	type TtsEngineKey,
 	type TtsListGroup,
@@ -20,25 +21,11 @@ import {
 } from "@/entities/tts-catalog";
 import { TTS_SORT_HEADER_LABEL, type TtsSortValue } from "../lib/sort-state";
 import { TtsMakerLogo } from "./TtsMakerLogo";
-import {
-	type QuantDownloadAction,
-	type QuantDownloadSnapshot,
-	TtsModelCard,
-} from "./TtsModelCard";
+import { TtsModelCard } from "./TtsModelCard";
 
-export interface TtsModelListProps {
+export interface TtsModelListProps
+	extends Omit<QuantDownloadCallbacks, "canDeleteQuant"> {
 	currentQuantization: string;
-	getDownloadSnapshot?:
-		| ((
-				modelId: string,
-				quantization: string,
-		  ) => QuantDownloadSnapshot | undefined)
-		| undefined;
-	/** Per-quant Suggested gating (only while the flag is ON): the fitting
-	 *  quant set per model id, `null` = no verdict for that model. */
-	getFittingQuants?:
-		| ((modelId: string) => ReadonlySet<string> | null)
-		| undefined;
 	hasActiveFilters: boolean;
 	/** Whether a text query is active. Base UI's `Combobox.Empty` only renders
 	 *  for an empty SEARCH result, so the query-less "Suggested hid everything"
@@ -52,21 +39,6 @@ export interface TtsModelListProps {
 	/** How many models the Suggested flag alone hides (empty-state hint). */
 	suggestedHiddenCount?: number | undefined;
 	isFavorite: (modelId: string) => boolean;
-	onDownloadAction?:
-		| ((
-				action: QuantDownloadAction,
-				modelId: string,
-				quantization: string,
-		  ) => void)
-		| undefined;
-	onRequestDeleteQuant?:
-		| ((
-				modelId: string,
-				quantization: string,
-				displayName: string,
-				quantLabel: string,
-		  ) => void)
-		| undefined;
 	onSelect: (modelId: string, quantization?: string) => void;
 	onToggleFavorite: (modelId: string) => void;
 	selectedId: string | undefined;

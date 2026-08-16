@@ -7,6 +7,7 @@ import {
 } from "@/entities/setting";
 import {
 	hasSettingsBackend,
+	hasNativeRuntime,
 	onSettingsChangedSnapshot,
 	onSettingsSaveError,
 	settingsLoadSnapshotStrict,
@@ -245,6 +246,7 @@ export function useSyncSettings(): void {
 	// `sttSetParameter("model", stale)` and the server swaps to the wrong model.
 	useEffect(() => {
 		if (
+			hasNativeRuntime() &&
 			shouldSyncOnConnect(
 				serverStatus,
 				isLoaded,
@@ -299,8 +301,12 @@ export function useSyncSettings(): void {
 			return;
 		}
 
-		// Sync changed parameters to STT server and system settings (immediate)
-		syncToServer(DEPS, settings, prev);
+		// The Vite bridge persists settings for browser/E2E previews but
+		// is not a native runtime. Keep persistence active there while suppressing
+		// generated STT/system commands that can only run inside a Tauri webview.
+		if (hasNativeRuntime()) {
+			syncToServer(DEPS, settings, prev);
+		}
 
 		// Save to persisted store: flush immediately for recording mode changes
 		// so the broadcast reaches other windows without delay.
@@ -494,11 +500,6 @@ function cancelPendingSave(debounceRef: {
 	}
 }
 
-/**
- * Build a partial settings patch containing only the top-level sections that
- * differ from `lastSaved`. When `lastSaved` is undefined (first save in the
- * session), send everything so the canonical disk snapshot is established.
- */
 export function sectionsDiffer(a: unknown, b: unknown): boolean {
 	return !settingsSectionsEqual(a, b);
 }

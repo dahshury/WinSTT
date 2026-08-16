@@ -217,6 +217,8 @@ function useModelSettingsPanelRender() {
 		? defaultCloudModelId(keyedCloudProvider)
 		: null;
 	const languageAutoDetect = languageAutoDetectEnabled(settings);
+	const currentQuantization = (settings?.onnxQuantization ??
+		"") as OnnxQuantization;
 	useStaleModelFallback(
 		catalogLoaded,
 		catalogModels,
@@ -224,6 +226,7 @@ function useModelSettingsPanelRender() {
 		modelStatesLoaded && statesFreshSinceMount,
 		settings?.model,
 		settings?.realtimeModel,
+		currentQuantization,
 		settings,
 		cloudFallbackModel,
 	);
@@ -255,8 +258,6 @@ function useModelSettingsPanelRender() {
 		translateSupported && (settings?.translateTargetLanguage ?? "") !== "",
 		llmTranslateEnabled,
 	);
-	const currentQuantization = (settings?.onnxQuantization ??
-		"") as OnnxQuantization;
 	const getFitAssessment = useModelFitAssessment({
 		currentQuantization,
 		deviceValue,
@@ -280,7 +281,7 @@ function useModelSettingsPanelRender() {
 		resolveModelControlVisibility(
 			selectedIsCloud,
 			languageControlMode,
-			isLocalTtsActive(tts, elevenlabs),
+			isLocalTtsActive(tts, elevenlabs, openrouterKey),
 		);
 
 	useEffect(() => {
@@ -341,9 +342,12 @@ function useModelSettingsPanelRender() {
 	const selectedRealtimeInfo = settings?.realtimeModel
 		? getModel(settings.realtimeModel)
 		: undefined;
-	const effectiveRealtimeInfo = mainModelCanNativeStream
+	const effectiveRealtimeInfo = realtimeSlotLockedToMain
 		? selectedInfo
 		: selectedRealtimeInfo;
+	const realtimeLangOpts = buildLanguageOptions(
+		effectiveRealtimeInfo?.languages,
+	);
 	const updateIntervalApplies =
 		isListenMode || effectiveRealtimeInfo?.nativeStreaming !== true;
 	const handleRealtimePick = (v: string, quantization?: OnnxQuantization) => {
@@ -474,7 +478,7 @@ function useModelSettingsPanelRender() {
 				onDownloadSnapshot={handleDownloadSnapshot}
 				quality={quality}
 				sourceLanguageSelection={settings}
-				langOpts={langOpts}
+				langOpts={realtimeLangOpts}
 				realtimeLanguage={settings?.realtimeLanguage ?? ""}
 				onRealtimeLanguageChange={(realtimeLanguage) =>
 					update({ realtimeLanguage })

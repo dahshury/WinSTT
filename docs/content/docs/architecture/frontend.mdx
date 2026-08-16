@@ -11,14 +11,14 @@ renderer holds no model or socket code — it reaches the Rust backend through T
 <StatGrid>
   <Stat value="8" label="Tauri windows" />
   <Stat value="6" label="Feature-Sliced layers" />
-  <Stat value="~67" label="typed IPC channels" />
+  <Stat value="~200" label="typed Tauri commands" />
   <Stat value="20" label="interface locales" />
 </StatGrid>
 
-<Callout type="info" title="A single native-bridge contract">
-  The renderer reaches Rust through one `window.nativeBridge` contract. A single adapter
-  implements that bridge on top of Tauri, so every renderer call site goes through the same
-  uniform entry point.
+<Callout type="info" title="One generated, typed boundary">
+  The renderer reaches Rust through the `tauri-specta`-generated client in `src/bindings.ts`.
+  Every call site calls `commands.*` directly, so a Rust signature change breaks the
+  TypeScript build.
 </Callout>
 
 ## Process Architecture
@@ -29,13 +29,13 @@ All of the application's work lives in Rust (`src-tauri/`): audio capture, VAD, 
 inference, the LLM and cloud integrations, global hotkey, system tray, window management, and
 settings/history persistence. See the [backend architecture](/docs/architecture/backend).
 
-### The native-bridge adapter
+### The native boundary
 
-`src/shared/api/native-bridge-adapter.ts` installs a `window.nativeBridge` polyfill — a ROUTE
-table mapping each IPC channel to a Tauri `command`, `event`, `window` op, `plugin`, or `noop`.
-`app/providers/IpcProvider` calls `install()` once before React mounts. The typed
-`COMMAND_INVOKERS` map in `ipc-client.ts` shadows ~67 of those channels through the generated
-`bindings.ts` for compile-time safety.
+Renderer → Rust calls go through the generated `commands.*` client in `src/bindings.ts`.
+Rust → renderer pushes go the other way as events: their names live once as Rust consts and
+are mirrored for the renderer in `src/shared/api/native-events.ts`, with
+`src/shared/api/native-boundary.ts` owning the Tauri listen/invoke boundary itself.
+`src/shared/api/ipc-client.ts` is a re-export barrel over those modules.
 
 ### Renderer (multi-window Vite)
 

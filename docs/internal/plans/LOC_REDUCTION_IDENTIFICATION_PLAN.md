@@ -62,29 +62,26 @@ These items were kept from the old plan and executed because they were reference
 
 These remain in the plan, but they must be done in small patches with proof before deletion.
 
-### 1. IPC Surface Reduction
+### 1. IPC Surface Reduction — ✅ DONE (`720890c6`, 2026-07-15)
 
-Partially executed in this pass. Keep the remaining work because it is still the largest proven frontend bloat cluster:
+Completed. `native-bridge-adapter.ts` (−640), `ipc-channels.ts` (−850) and
+`ipc-transport.ts` (−762) were deleted outright, along with their guards
+(`ipc-channels.test.ts`, `ipc-client.test.ts`, `route-coverage.test.ts`). The whole
+string-channel/`COMMAND_INVOKERS`/ROUTE layer is gone: the renderer now calls generated
+`commands.*` from `@/bindings` directly, `src/shared/api/native-events.ts` holds
+renderer-facing event names, `native-boundary.ts` owns the Tauri listen/invoke boundary,
+and `ipc-client.ts` is a re-export barrel.
 
-- `src/bindings.ts`
-- `src/shared/api/native-bridge-adapter.ts`
-- `src/shared/api/ipc-channels.ts`
-- `src/shared/api/ipc-transport.ts`
-- `src/shared/api/ipc/*`
+Regression guard: `src/shared/api/native-boundary.test.ts` scans every non-test file
+under `src/` and fails on an `ipc-channels` import, a `COMMAND_INVOKERS` symbol, or a
+`native-bridge-adapter` mention.
 
-Execution rule:
-
-1. Add or keep route coverage that classifies channels as generated command, compatibility route, event, plugin/window route, or retired.
-2. Remove compatibility wrappers only after production `rg` finds no caller.
-3. Prefer generated commands plus small domain wrappers.
-4. Do not delete event/channel constants until listener and emitter scans are clean.
-
-Remaining concrete targets:
-
-- Identify `COMMAND_INVOKERS` entries that simply call generated commands with no translation.
-- Collapse repeated `invokeOrDefault(IPC.X, fallback, args)` wrappers only when the wrapper has no domain-specific decoding.
-- Retire remaining domain routes one group at a time: audio, model download, LLM/TTS, updater/window.
-- Keep the small compatibility wrappers that normalize fallback values, event payloads, or legacy parity shapes.
+Only residue left, deliberately not taken (see AGENTS.md): `native-boundary.ts` keeps a
+few `window.nativeBridge` branches marked "Unit-test compatibility only" because the bun
+harness still models the old funnel (`test/mocks/legacy-ipc.ts`, the 1254-line
+`test/mocks/ipc-client.ts` dispatch table, `test/preload.ts`). Retiring those branches
+means converting ~30 test files to `commands.*` assertions first — a test-infrastructure
+project, not a cleanup.
 
 ### 2. Legacy History Retirement
 

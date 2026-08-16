@@ -1,14 +1,14 @@
 ---
 title: Other Families
-description: Moonshine, Cohere, Granite, Qwen3-ASR, SenseVoice, Dolphin, GigaAM, Vosk/Kaldi, and T-One — the low-latency, multilingual, and Russian-focused models beyond Whisper and NeMo.
+description: Moonshine, Cohere, Granite, Qwen3-ASR, Audio8-ASR, SenseVoice, Dolphin, GigaAM, Vosk/Kaldi, and T-One — the low-latency, multilingual, and Russian-focused models beyond Whisper and NeMo.
 ---
 
-Beyond Whisper and NeMo, WinSTT ships nine more model families on the same ONNX engine — covering ultra-low-latency English dictation, leaderboard-topping multilingual ASR, LLM-decoder ASR, East-Asian and Eastern-language coverage, and three Russian-specialist engines. Pick by language coverage first, then by the accuracy/speed trade-off.
+Beyond Whisper and NeMo, WinSTT ships ten more model families on the same ONNX engine — covering ultra-low-latency English dictation, leaderboard-topping multilingual ASR, LLM-decoder ASR, East-Asian and Eastern-language coverage, and three Russian-specialist engines. Pick by language coverage first, then by the accuracy/speed trade-off.
 
 Every model on this page runs through the single `onnx-asr` ONNX engine, supports the live realtime preview, and is hot-swappable from the [Model](/docs/settings/model) tab — no restart, no backend to choose. Precision is set per-model via `onnxQuantization`; see [Compute Types](/docs/models/compute-types).
 
 <StatGrid>
-  <Stat value="9" label="model families on this page" />
+  <Stat value="10" label="model families on this page" />
   <Stat value="4.9" label="lowest WER (Granite Speech 4.1 2B Plus)" />
   <Stat value="3733" label="fastest RTFx (Moonshine Tiny)" />
   <Stat value="30" label="Qwen3-ASR languages" />
@@ -109,6 +109,49 @@ int4 exports because the full precision graphs are too large for normal desktop 
   int4 LLM-decoder graph on the safest execution path while the engine matures.
 </Callout>
 
+## Audio8-ASR and ARK-ASR
+
+Audio8 ships two `arkasr` models. **Audio8-ASR 0.1B** is the smallest LLM-decoder model in the
+catalog: the same Qwen3-ASR audio tower, but feeding an 8-layer Qwen-style decoder of only 0.1B
+parameters (0.32B end-to-end). That makes it the one LLM-decoder option that fits comfortably on a
+CPU-only machine — the int4 download is under 700 MB, where Qwen3-ASR starts at 2.0 GB.
+**ARK-ASR 0.6B** trades that footprint for accuracy: a Whisper-large encoder over a 0.6B decoder
+(~1.3B end-to-end), 19 languages, and 5.53 WER on the Open ASR Leaderboard. **ARK-ASR 3B**
+pushes the same design to a 3B decoder and posts **4.76 WER** — the most accurate model in the
+catalog — at the cost of a 4.4 GB download and noticeably slower CPU decoding.
+
+<ModelTable
+  head={["Model", "Params", "Languages", "Quant", "Download"]}
+  numeric={[1]}
+  rows={[
+    ["Audio8-ASR 0.1B", "0.32B", "7 + auto-detect", "fp32 · int8 · int4", "0.67 – 2.0 GB"],
+    ["ARK-ASR 0.6B", "1.3B", "19 + auto-detect", "int8 only", "1.8 GB"],
+    ["ARK-ASR 3B", "4.06B", "19 + auto-detect", "int8 · int4", "2.9 – 4.4 GB"],
+  ]}
+  caption="Audio8-ASR covers English, Chinese, Cantonese, French, Japanese, German, and Korean; its int4 tier pairs the int8 audio tower with the int4 decoder (the bundle ships no int4 tower). ARK-ASR 0.6B is the larger sibling — a Whisper-large encoder over a 0.6B decoder, 19 languages, WER 5.53 — and is Apache-2.0, so the non-commercial note below applies to the 0.1B only."
+/>
+
+<Callout type="info" title="On ARK-ASR 3B, int4 is smaller — not faster">
+  Unlike the 0.1B (where int4 is the fastest tier), the 3B's int4 weights are **~50% slower** than
+  its int8 ones on CPU: 4-bit weights are dequantized on the fly, and at this size that costs more
+  than the narrower weights save. Pick `int8` for speed and `int4` only when you need the 1.5 GB
+  back.
+</Callout>
+
+<Callout type="warn" title="Non-commercial licence">
+  Audio8-ASR is released under **CC BY-NC 4.0** — commercial use is not permitted under that
+  licence. Check the [model card](https://huggingface.co/Audio8/Audio8-ASR-0.1B) before using it
+  for anything beyond personal or research work. Cohere Transcribe carries the same restriction;
+  every other family on this page is permissively licensed.
+</Callout>
+
+<Callout type="info" title="Decodes in 24-second chunks">
+  The decoder's key/value cache is a fixed 512 positions shared between the audio prompt and the
+  transcript, so WinSTT segments longer recordings on silence at 24 s. This is automatic — long
+  recordings transcribe in full — but it means Audio8 re-encodes per chunk rather than holding a
+  whole take in one pass.
+</Callout>
+
 ## SenseVoice
 
 FunAudioLLM SenseVoice Small is a 234M Conformer encoder focused on **East-Asian languages**: Chinese, English, Japanese, Korean, and Cantonese, with automatic language detection. It ships as a single-pass `int8` graph — there is no fp32 variant — so the download is a compact 159 MB and the only available precision is `int8`.
@@ -197,6 +240,7 @@ Use this to narrow the list before weighing accuracy and speed:
     ["Fastest English realtime / dictation", "Moonshine Tiny or Base"],
     ["Top accuracy, 14 languages", "Cohere Transcribe"],
     ["LLM-decoder multilingual ASR", "Qwen3-ASR 0.6B or 1.7B"],
+    ["LLM-decoder ASR on a CPU-only machine", "Audio8-ASR 0.1B"],
     ["Written-form punctuation in five languages", "Granite Speech 4.1"],
     ["Chinese / Japanese / Korean / Cantonese", "SenseVoice Small (or a Moonshine fine-tune)"],
     ["Eastern-language CTC coverage", "Dolphin Base CTC"],
@@ -210,7 +254,7 @@ Use this to narrow the list before weighing accuracy and speed:
 <Callout type="info" title="Single-language models hide the language picker">
   The Moonshine fine-tunes and every Russian model are single-language — the **Language**
   control in the Model tab disappears for them, since there is nothing to detect or pin.
-  Cohere, Qwen3-ASR, and SenseVoice support auto-detect, so they keep it.
+  Cohere, Qwen3-ASR, Audio8-ASR, and SenseVoice support auto-detect, so they keep it.
 </Callout>
 
 <Callout type="info" title="Hot-swapping vs. family switches">

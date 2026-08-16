@@ -5,8 +5,6 @@ import type {
 	TtsHistoryEntry,
 } from "../model/history-store";
 
-// ── Public shapes ────────────────────────────────────────────────────────────
-
 /** One donut/pie slice: a cost bucket with its share and display color. */
 export interface CostSlice {
 	/** Stable React key. */

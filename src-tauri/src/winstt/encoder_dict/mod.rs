@@ -27,11 +27,18 @@ use std::sync::{Arc, Condvar, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, MutexGuard};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 pub use engine::DEFAULT_RANK_K;
 use engine::{DEFAULT_CONTEXT_BYTES, EncoderDict};
 use index::DictIndex;
+
+fn emit_model_error(app: &AppHandle, error: &str) {
+    let _ = app.emit(
+        crate::winstt::commands::events::names::ENCODER_DICT_MODEL_ERROR,
+        serde_json::json!({ "error": error }),
+    );
+}
 
 /// Widest the user may set the context window (bytes each side); mirrors the zod/Rust validation.
 const MAX_CONTEXT_BYTES: i64 = 1000;
@@ -279,7 +286,11 @@ pub fn preload_blocking(app: &AppHandle) {
                 *guard = Some(e);
                 log::debug!("[encoder-dict] model preloaded and warmed");
             }
-            Err(e) => log::warn!("[encoder-dict] preload failed, skipping: {e}"),
+            Err(e) => {
+                let message = format!("Encoder model failed to load: {e}");
+                log::warn!("[encoder-dict] preload failed, skipping: {e}");
+                emit_model_error(app, &message);
+            }
         }
     } else if let Some(e) = guard.as_mut() {
         e.warm();
@@ -334,6 +345,7 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
     let correction_started = Instant::now();
     let cancelled = Arc::new(AtomicBool::new(false));
     let worker_cancelled = Arc::clone(&cancelled);
+    let worker_app = app.clone();
     let mut task = tokio::task::spawn_blocking(move || {
         let blocking_started = Instant::now();
         if worker_cancelled.load(Ordering::Acquire) {
@@ -359,6 +371,7 @@ pub async fn correct_vocabulary(app: &AppHandle, text: &str, terms: &[String]) -
                 }
                 Err(e) => {
                     log::warn!("[encoder-dict] load failed, skipping: {e}");
+                    emit_model_error(&worker_app, &format!("Encoder model failed to load: {e}"));
                     return text_owned;
                 }
             }

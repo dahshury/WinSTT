@@ -26,6 +26,7 @@ export type {
 	QuantCacheSnapshot,
 	QuantCacheState,
 	QuantDownloadAction,
+	QuantDownloadCallbacks,
 	QuantDownloadSnapshot,
 	QuantShelfEntry,
 	QuantShelfProps,
@@ -70,19 +71,23 @@ function BadgeIconButton({
 	onClick,
 	tone = "neutral",
 	tooltip,
+	compact = false,
 }: {
 	ariaLabel: string;
 	icon: IconSvgElement;
 	onClick: () => void;
 	tone?: BadgeIconButtonTone;
 	tooltip: string;
+	compact?: boolean;
 }) {
+	const iconClass = compact ? "size-2.5" : "size-3";
 	return (
 		<Tooltip content={tooltip} side="top">
 			<BaseButton
 				aria-label={ariaLabel}
 				className={cn(
-					"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
+					"inline-flex cursor-pointer items-center justify-center border-border border-l leading-none transition-colors",
+					compact ? "h-5 px-1" : "h-6 px-1.5",
 					"last:rounded-r-[5px]",
 					toneClassName(tone),
 				)}
@@ -99,7 +104,7 @@ function BadgeIconButton({
 				onPointerDown={(e) => e.stopPropagation()}
 				type="button"
 			>
-				<HugeiconsIcon className="size-3" icon={icon} />
+				<HugeiconsIcon className={iconClass} icon={icon} />
 			</BaseButton>
 		</Tooltip>
 	);
@@ -189,12 +194,14 @@ function QuantActionButtons({
 	modelId,
 	onDownloadAction,
 	onRequestDeleteQuant,
+	compact = false,
 }: {
 	entry: QuantShelfEntry;
 	modelDisplayName: string;
 	modelId: string;
 	onDownloadAction: QuantShelfProps["onDownloadAction"];
 	onRequestDeleteQuant: QuantShelfProps["onRequestDeleteQuant"];
+	compact?: boolean;
 }) {
 	const { actionQuant, cacheState, download, label } = entry;
 	const actionModelId = entry.modelId ?? modelId;
@@ -212,6 +219,7 @@ function QuantActionButtons({
 					icon={PlayIcon}
 					onClick={() => onDownloadAction("resume", actionModelId, actionQuant)}
 					tone="primary"
+					compact={compact}
 					tooltip="Resume download"
 				/>
 			) : null}
@@ -220,6 +228,7 @@ function QuantActionButtons({
 					ariaLabel={`Pause ${label} download`}
 					icon={PauseIcon}
 					onClick={() => onDownloadAction("pause", actionModelId, actionQuant)}
+					compact={compact}
 					tooltip="Pause download (resumable mid-file)"
 				/>
 			) : null}
@@ -229,6 +238,7 @@ function QuantActionButtons({
 					icon={CancelCircleIcon}
 					onClick={() => onDownloadAction("cancel", actionModelId, actionQuant)}
 					tone="danger"
+					compact={compact}
 					tooltip="Cancel download"
 				/>
 			) : null}
@@ -238,6 +248,7 @@ function QuantActionButtons({
 					icon={PlayIcon}
 					onClick={() => onDownloadAction("resume", actionModelId, actionQuant)}
 					tone="primary"
+					compact={compact}
 					tooltip="Resume download"
 				/>
 			) : null}
@@ -247,6 +258,7 @@ function QuantActionButtons({
 					icon={CancelCircleIcon}
 					onClick={() => onDownloadAction("cancel", actionModelId, actionQuant)}
 					tone="danger"
+					compact={compact}
 					tooltip="Cancel download"
 				/>
 			) : null}
@@ -263,6 +275,7 @@ function QuantActionButtons({
 						)
 					}
 					tone="danger"
+					compact={compact}
 					tooltip={deleteTooltip}
 				/>
 			) : null}
@@ -280,6 +293,7 @@ function QuantBadge({
 	onDownloadAction,
 	onRequestDeleteQuant,
 	onSelect,
+	compact = false,
 }: {
 	dimmed: boolean;
 	entry: QuantShelfEntry;
@@ -288,6 +302,7 @@ function QuantBadge({
 	onDownloadAction: QuantShelfProps["onDownloadAction"];
 	onRequestDeleteQuant: QuantShelfProps["onRequestDeleteQuant"];
 	onSelect: QuantShelfProps["onSelect"];
+	compact?: boolean;
 }) {
 	const {
 		canResumeDownload,
@@ -356,7 +371,8 @@ function QuantBadge({
 					aria-disabled={isDownloading || disabled === true}
 					aria-label={badgeAriaLabel}
 					className={cn(
-						"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
+						"group/badge relative inline-flex items-center gap-1.5 overflow-hidden px-2 font-medium leading-none transition-colors",
+						compact ? "h-5 text-[10px]" : "h-6 text-[10.5px]",
 						isDownloading || disabled === true
 							? "cursor-default"
 							: "cursor-pointer",
@@ -393,7 +409,11 @@ function QuantBadge({
 					{isRecommended ? (
 						<HugeiconsIcon
 							aria-hidden="true"
-							className="size-3 shrink-0 text-accent"
+							className={
+								compact
+									? "size-2.5 shrink-0 text-accent"
+									: "size-3 shrink-0 text-accent"
+							}
 							icon={SparklesIcon}
 						/>
 					) : null}
@@ -413,6 +433,7 @@ function QuantBadge({
 				modelId={modelId}
 				onDownloadAction={onDownloadAction}
 				onRequestDeleteQuant={onRequestDeleteQuant}
+				compact={compact}
 			/>
 		</ButtonGroup>
 	);
@@ -432,20 +453,29 @@ export function QuantShelf({
 	onRequestDeleteQuant,
 	onSelect,
 	showIcon = true,
+	compact = false,
 }: QuantShelfProps) {
 	if (entries.length === 0) {
 		return null;
 	}
 	const hasSelection = entries.some((entry) => entry.isActive);
 	return (
-		<div className="flex flex-wrap items-center gap-2">
+		<div
+			className={cn(
+				"flex flex-wrap items-center",
+				compact ? "gap-1.5" : "gap-2",
+			)}
+		>
 			{showIcon ? (
 				<Tooltip
 					content="Precision — the numeric format of the model's weights. Lower precision (q4 / int8) loads + runs faster and takes less disk/RAM, at a small quality cost. Higher precision (fp32 / fp16) is the most faithful but heaviest."
 					side="top"
 				>
 					<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
-						<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
+						<HugeiconsIcon
+							className={compact ? "size-2.5" : "size-3"}
+							icon={BinaryCodeIcon}
+						/>
 					</span>
 				</Tooltip>
 			) : null}
@@ -463,6 +493,7 @@ export function QuantShelf({
 					onDownloadAction={onDownloadAction}
 					onRequestDeleteQuant={onRequestDeleteQuant}
 					onSelect={onSelect}
+					compact={compact}
 				/>
 			))}
 		</div>

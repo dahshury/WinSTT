@@ -5,11 +5,10 @@
  *   - Is this macOS at all?
  *   - If yes, is it Apple Silicon (arm64) vs Intel (x86_64)?
  *
- * The native main process knows this from `process.platform` /
- * `process.arch` natively, but the renderer can't read those directly
- * (they're undefined in a sandboxed renderer). We classify from
- * `navigator.userAgent` / `navigator.platform` instead — the same data
- * any web app would use.
+ * Tauri exposes the compiled host OS and architecture synchronously through
+ * `@tauri-apps/plugin-os`. Prefer that ground truth: Chromium intentionally
+ * reports `MacIntel` on Apple Silicon for compatibility, so navigator-only
+ * sniffing falsely classifies real M-series Macs as Intel.
  *
  * This is a UI-only signal — the actual runtime gate lives in the main
  * process (which uses `process.platform` / `process.arch` for ground truth).
@@ -19,9 +18,12 @@
  * layer rejects the call cleanly.
  */
 
+import { arch, platform as osPlatform } from "@tauri-apps/plugin-os";
+
 export type AppleIntelligencePlatform = "apple-silicon" | "intel-mac" | "other";
 
 interface ClassifyOpts {
+	architecture?: string;
 	platform?: string;
 	userAgent?: string;
 }
@@ -48,9 +50,17 @@ function detectMac(platform: string, userAgent: string): boolean {
  * `navigator.userAgentData` (Client Hints) if the caller passes a
  * pre-flattened hint string. Both inputs are expected pre-lowercased.
  */
-function detectAppleSilicon(platform: string, userAgent: string): boolean {
-	const archSignal = `${platform} ${userAgent}`;
-	return archSignal.includes("arm") || archSignal.includes("apple silicon");
+function detectAppleSilicon(
+	architecture: string,
+	platform: string,
+	userAgent: string,
+): boolean {
+	const archSignal = `${architecture} ${platform} ${userAgent}`;
+	return (
+		archSignal.includes("arm") ||
+		archSignal.includes("aarch64") ||
+		archSignal.includes("apple silicon")
+	);
 }
 
 /**
@@ -62,10 +72,11 @@ export function classifyAppleIntelligencePlatform(
 ): AppleIntelligencePlatform {
 	const platform = (opts.platform ?? "").toLowerCase();
 	const userAgent = (opts.userAgent ?? "").toLowerCase();
+	const architecture = (opts.architecture ?? "").toLowerCase();
 	if (!detectMac(platform, userAgent)) {
 		return "other";
 	}
-	return detectAppleSilicon(platform, userAgent)
+	return detectAppleSilicon(architecture, platform, userAgent)
 		? "apple-silicon"
 		: "intel-mac";
 }
@@ -76,6 +87,15 @@ export function classifyAppleIntelligencePlatform(
  * default to hiding the option safely.
  */
 export function detectAppleIntelligencePlatform(): AppleIntelligencePlatform {
+	try {
+		return classifyAppleIntelligencePlatform({
+			architecture: arch(),
+			platform: osPlatform(),
+		});
+	} catch {
+		// Plain-browser/test fallback. A Tauri renderer always takes the branch
+		// above; this keeps the pure helper usable without injected plugin globals.
+	}
 	if (typeof navigator === "undefined") {
 		return "other";
 	}

@@ -1,4 +1,4 @@
-// The static STT catalog: the `ModelEntry` row shape + the verbatim 67-row `STT_CATALOG`
+// The static STT catalog: the `ModelEntry` row shape + the verbatim 70-row `STT_CATALOG`
 // const ported from `catalog.json`. Pure data, no policy. The precision/EP resolution policy
 // that consumes these rows lives in the sibling `policy` module.
 
@@ -29,11 +29,11 @@ pub struct ModelEntry {
     pub supports_realtime: bool,
 }
 
-/// The full STT catalog: 67 shipped models. Verbatim from `catalog.json` (id / display_name /
+/// The full STT catalog: 75 shipped models. Verbatim from `catalog.json` (id / display_name /
 /// family / onnx_model_name / available_quantizations / param_count / supports_realtime).
 ///
-/// Counts (asserted in tests): whisper 15, moonshine 10, nemo 27, kaldi 4, gigaam 2,
-/// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2.
+/// Counts (asserted in tests): whisper 16, moonshine 10, nemo 29, kaldi 5, gigaam 2,
+/// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2, vibevoice 1, audio8 3.
 pub const STT_CATALOG: &[ModelEntry] = &[
     // ── Whisper family (15) ──────────────────────────────────────────────────────────────
     ModelEntry {
@@ -137,11 +137,25 @@ pub const STT_CATALOG: &[ModelEntry] = &[
     },
     ModelEntry {
         id: "crisper-whisper",
-        display_name: "CrisperWhisper",
+        display_name: "CrisperWhisper 2.0",
         family: Family::Whisper,
-        onnx_model_name: "onnx-community/CrisperWhisper-ONNX",
-        available_quantizations: &["", "fp16", "q4", "bnb4"],
-        param_count: 1_543_304_960,
+        // nyralabs/CrisperWhisper2.0_large converted to ONNX (Masterx re-export, Nyra
+        // non-commercial research license carried in-repo). Replaces the v1
+        // onnx-community/CrisperWhisper-ONNX export (truncated vocab, en+de only).
+        onnx_model_name: "Masterx/CrisperWhisper2.0-large-ONNX",
+        available_quantizations: &["", "fp16", "q4"],
+        param_count: 1_543_344_640,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "crisper-whisper-turbo",
+        display_name: "CrisperWhisper 2.0 Turbo",
+        family: Family::Whisper,
+        // nyralabs/CrisperWhisper2.0_turbo (large-v3-turbo family: 128 mel, 4 decoder
+        // layers) converted to ONNX — same Masterx re-export + Nyra license as the large.
+        onnx_model_name: "Masterx/CrisperWhisper2.0-turbo-ONNX",
+        available_quantizations: &["", "fp16", "q4"],
+        param_count: 808_917_760,
         supports_realtime: true,
     },
     ModelEntry {
@@ -339,6 +353,72 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         onnx_model_name: "andrewleech/qwen3-asr-1.7b-onnx",
         available_quantizations: &["int4"],
         param_count: 1_700_000_000,
+        supports_realtime: true,
+    },
+    // ── VibeVoice family (1) ─────────────────────────────────────────────────────────────
+    // Microsoft VibeVoice-ASR-BitNet: dual ConvNeXt tokenizer (raw 24 kHz) + QAT-ternary
+    // Qwen2.5-1.5B decoder. The int4 tier stores the deployed ternary weights EXACTLY
+    // (surgical MatMulNBits: q = w/s + 8 ∈ {7,8,9}, validated token-EXACT vs the transformers
+    // reference), so it is the native/default precision; fp16 is the same weights unpacked
+    // (also token-EXACT), fp32 the parity-reference tier. NO int8 tier: dynamic-activation int8
+    // measurably degraded transcripts while being LARGER than the exact int4 — shipping it
+    // would only bait the auto-quant picker into a strictly-worse choice.
+    ModelEntry {
+        id: "vibevoice-asr-bitnet",
+        display_name: "VibeVoice-ASR BitNet",
+        family: Family::VibeVoice,
+        onnx_model_name: "Masterx/vibevoice-asr-bitnet-onnx",
+        available_quantizations: &["", "fp16", "int4"],
+        param_count: 2_300_000_000,
+        supports_realtime: true,
+    },
+    // ── Audio8 family (1) ────────────────────────────────────────────────────────────────
+    // Audio8-ASR-0.1B (`arkasr`): Qwen3-ASR audio tower + MLP adapter over a 0.1 B 8-layer
+    // Qwen-style decoder — 0.32 B end-to-end, one of the smallest usable LLM-era ASR models.
+    // The bundle quantizes the tower and the LM independently: `""` is the all-fp32 tier, `int8`
+    // pairs the int8 tower with the int8 LM, and `int4` keeps that same int8 tower (the bundle
+    // ships no int4 tower) with the int4 LM. LICENSE: CC-BY-NC-4.0 — non-commercial only, same
+    // posture as the Cohere ASR rows (see THIRD_PARTY_NOTICES.md).
+    ModelEntry {
+        id: "audio8-asr-0.1b",
+        display_name: "Audio8-ASR 0.1B",
+        family: Family::Audio8,
+        onnx_model_name: "Audio8/Audio8-ASR-0.1B-onnx-runtime",
+        available_quantizations: &["", "int8", "int4"],
+        param_count: 323_990_528,
+        supports_realtime: true,
+    },
+    // ARK-ASR 0.6B — the same `arkasr` architecture scaled up (Whisper-large encoder + 0.6 B Qwen
+    // decoder, ~1.3 B end-to-end) and the same maker, but a DIFFERENT ONNX packaging, so it runs on
+    // `EngineKind::ArkAsr` rather than `Audio8Asr` (the id, not the family, selects the engine —
+    // see `cache_probe::engine_kind_for`). Apache-2.0, unlike the NC 0.1 B. The published export
+    // ships exactly one precision: int8 graphs with an fp32 embedding blob.
+    ModelEntry {
+        id: "ark-asr-0.6b",
+        display_name: "ARK-ASR 0.6B",
+        family: Family::Audio8,
+        onnx_model_name: "Audio8/ark-asr-0.6b-int8-onnx",
+        available_quantizations: &["int8"],
+        param_count: 1_299_510_340,
+        supports_realtime: true,
+    },
+    // ARK-ASR 3B — the same `arkasr` architecture again (Whisper-large encoder + 3 B Qwen decoder,
+    // ~4.06 B end-to-end) and the same `EngineKind::ArkAsr` graph contract. Upstream publishes
+    // safetensors only, so this row points at OUR int8 ONNX export; it was produced to be a
+    // byte-compatible clone of the 0.6 B layout, which is why it needs no engine change. Its
+    // static cache is 1024 positions (not the 0.6 B's 2048) — 36 layers make a longer cache
+    // expensive to re-feed per token. Apache-2.0, inherited from the source checkpoint.
+    ModelEntry {
+        id: "ark-asr-3b",
+        display_name: "ARK-ASR 3B",
+        family: Family::Audio8,
+        onnx_model_name: "Masterx/ark-asr-3b-onnx",
+        // TWO tiers, and int4 is NOT the fast one: measured on CPU, int4 (MatMulNBits, dequantized
+        // on the fly) runs ~50% SLOWER than int8 (MatMulInteger GEMM) at this size — the opposite
+        // of the 0.1B, where int4 wins. So int8 is the speed tier and int4 is purely the
+        // small-disk tier (2.95 GB vs 4.40 GB).
+        available_quantizations: &["int8", "int4"],
+        param_count: 4_063_494_332,
         supports_realtime: true,
     },
     // ── SenseVoice family (1) ────────────────────────────────────────────────────────────
@@ -679,7 +759,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         param_count: 243_000_000,
         supports_realtime: true,
     },
-    // ── Kaldi family (3) — Vosk + Zipformer ──────────────────────────────────────────────
+    // ── Kaldi family (4 offline) — Vosk + Zipformer ──────────────────────────────────────
     // NOTE: Kaldi/Vosk uses the `.` quant separator (`encoder.int8.onnx`) vs onnx-community's
     // `_` separator — handled in the model-cache / file-resolution slice, NOT here.
     ModelEntry {
@@ -707,6 +787,19 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         onnx_model_name: "zipformer-en",
         available_quantizations: &["", "int8"],
         param_count: 70_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "zipformer-ar-ctc",
+        display_name: "Zipformer Arabic Phonemes",
+        family: Family::Kaldi,
+        // icefall zipformer CTC single-graph export (NOT the transducer layout): the id's "ctc"
+        // routes `engine_kind_for` to `KaldiCtc`. GATED repo (free-non-commercial license) —
+        // downloads need an HF token (`HF_TOKEN` env or `$HF_HOME/token`, picked up by hf-hub).
+        // Emits Quranic-Arabic PHONEME units (tajweed grading), not orthographic text.
+        onnx_model_name: "Muno459/zipformer_p-arabic-v2",
+        available_quantizations: &["", "int8"],
+        param_count: 65_700_000,
         supports_realtime: true,
     },
     // ── T-One family (1) ─────────────────────────────────────────────────────────────────

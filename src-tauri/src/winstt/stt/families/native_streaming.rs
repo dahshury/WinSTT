@@ -51,7 +51,7 @@ fn bind_state_input<T: ValueTypeMarker + ?Sized>(
 }
 
 /// Host `MemoryInfo` for outputs that must come back to the CPU decode loop (logits).
-fn cpu_output_mem() -> SttResult<MemoryInfo> {
+fn cpu_output_mem() -> SttResult<MemoryInfo<'static>> {
     MemoryInfo::new(
         AllocationDevice::CPU,
         0,
@@ -174,7 +174,7 @@ impl NativeNemoCtcStreamingEngine {
     }
 
     /// Device `MemoryInfo` for binding the carried encoder cache resident (CPU when no GPU EP).
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -615,7 +615,7 @@ impl NativeZipformerStreamingEngine {
     }
 
     /// Device `MemoryInfo` for binding the carried encoder state resident (CPU when no GPU EP).
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -904,9 +904,353 @@ impl Transcriber for NativeZipformerStreamingEngine {
     }
 }
 
+/// icefall Zipformer2 streaming **CTC** engine (`EngineKind::KaldiCtc`): a single stateful graph
+/// whose output slot 0 is `log_probs` (the CTC head is baked in — no decoder/joiner sessions).
+/// State handling mirrors `NativeZipformerStreamingEngine` (variadic `cached_*` tensors carried
+/// device-resident, chunking from the `T`/`decode_chunk_len` metadata, zipformer kaldi fbank);
+/// decode mirrors `NativeNemoCtcStreamingEngine`'s greedy CTC, with the blank id read from
+/// `tokens.txt` (`<blank>` — 250 for zipformer_p-arabic-v2, NOT 0; id 0 is a real token there).
+pub struct NativeZipformerCtcStreamingEngine {
+    session: Session,
+    vocab: Vocab,
+    model_name: String,
+    providers: Vec<String>,
+    mel_fb: Array2<f32>,
+    chunk_size: usize,
+    chunk_shift: usize,
+    blank_id: i64,
+    input_names: Vec<String>,
+    output_names: Vec<String>,
+    state_input_names: Vec<String>,
+    state_output_names: Vec<String>,
+    /// Per-state initial (empty) shapes + i64-ness, resolved once at load (same contract as the
+    /// transducer zipformer engine — a fresh stream's first chunk binds host zero-tensors).
+    state_shapes: BTreeMap<String, Vec<usize>>,
+    state_is_i64: BTreeMap<String, bool>,
+    device: AllocationDevice,
+    device_id: i32,
+    stream: ZipformerStreamState,
+}
+
+impl NativeZipformerCtcStreamingEngine {
+    pub fn load(cfg: &EngineConfig) -> SttResult<Self> {
+        let session = build_session(file(&cfg.resolved, "model")?, &cfg.providers)?;
+        let metadata = read_custom_metadata(&session)?;
+        let chunk_size = streaming::meta_usize(&metadata, "T", "streaming")?;
+        let chunk_shift = streaming::meta_usize(&metadata, "decode_chunk_len", "streaming")?;
+
+        let input_names = node_input_names(&session);
+        let output_names = node_output_names(&session);
+        let state_input_names = input_names.iter().skip(1).cloned().collect::<Vec<_>>();
+        let state_output_names = output_names.iter().skip(1).cloned().collect::<Vec<_>>();
+        if state_input_names.len() != state_output_names.len() {
+            return Err(SttError::SessionCreate(format!(
+                "zipformer CTC streaming state input/output mismatch: {} inputs, {} outputs",
+                state_input_names.len(),
+                state_output_names.len()
+            )));
+        }
+
+        let mut state_shapes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut state_is_i64: BTreeMap<String, bool> = BTreeMap::new();
+        for name in &state_input_names {
+            let shape = input_shape_or(&session, name, 1)
+                .ok_or_else(|| SttError::SessionCreate(format!("missing state input {name}")))?;
+            let is_i64 = input_is_i64(&session, name) || name == "processed_lens";
+            state_shapes.insert(name.clone(), shape);
+            state_is_i64.insert(name.clone(), is_i64);
+        }
+
+        let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
+        let blank_id = vocab.blank_idx;
+        let (device, device_id) = native_stream_device(&cfg.providers);
+        Ok(Self {
+            session,
+            vocab,
+            model_name: cfg.model_name.clone(),
+            providers: providers_to_strings(&cfg.providers),
+            mel_fb: frontend::build_zipformer_mel_filterbank(),
+            chunk_size,
+            chunk_shift,
+            blank_id,
+            input_names,
+            output_names,
+            state_input_names,
+            state_output_names,
+            state_shapes,
+            state_is_i64,
+            device,
+            device_id,
+            stream: ZipformerStreamState::empty(),
+        })
+    }
+
+    pub fn supports(cfg: &EngineConfig) -> bool {
+        cfg.kind == EngineKind::KaldiCtc
+            && cfg.resolved.files.contains_key("model")
+            && cfg.resolved.files.contains_key("vocab")
+    }
+
+    fn fresh_stream_state(&self) -> ZipformerStreamState {
+        ZipformerStreamState::empty()
+    }
+
+    /// Device `MemoryInfo` for binding the carried state resident (CPU when no GPU EP).
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
+        MemoryInfo::new(
+            self.device,
+            self.device_id,
+            AllocatorType::Device,
+            MemoryType::Default,
+        )
+        .map_err(|e| SttError::Inference(format!("zipformer CTC device mem info: {e}")))
+    }
+
+    fn process_available_chunks(&mut self, finalize: bool) -> SttResult<bool> {
+        let features = frontend::compute_kaldi_fbank(&self.stream.cursor.pcm, &self.mel_fb);
+        let mut processed_any = false;
+        loop {
+            let rel_start = self.stream.cursor.rel_start();
+            if !streaming::chunk_ready(rel_start, self.chunk_size, features.nrows(), finalize) {
+                break;
+            }
+            let chunk = features
+                .slice(s![rel_start..rel_start + self.chunk_size, ..])
+                .to_owned();
+            let log_probs = self.run_chunk(&chunk)?;
+            self.decode_ctc_logits(&log_probs);
+            self.stream.cursor.next_chunk_frame += self.chunk_shift;
+            processed_any = true;
+        }
+        if processed_any {
+            self.stream.cursor.trim_pcm(frontend::KALDI_HOP);
+        }
+        Ok(processed_any)
+    }
+
+    /// Run one feature chunk, carrying the variadic state tensors DEVICE-RESIDENT via IoBinding —
+    /// same carry contract as `NativeZipformerStreamingEngine::run_encoder`, but output slot 0 is
+    /// the host-side `log_probs (1, T', vocab)` the CTC decode consumes directly.
+    fn run_chunk(&mut self, chunk: &Array2<f32>) -> SttResult<Array2<f32>> {
+        let x_tensor = Tensor::from_array(
+            chunk
+                .clone()
+                .into_shape_with_order((1, chunk.nrows(), chunk.ncols()))
+                .map_err(|e| SttError::Inference(format!("zipformer CTC x reshape: {e}")))?,
+        )
+        .map_err(|e| SttError::Inference(format!("zipformer CTC x tensor: {e}")))?;
+        let x_name = self
+            .input_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "x".into());
+
+        // Empty host zero-tensors for a fresh stream's first chunk (dtype-matched per state); held
+        // here so they outlive the binding through `run_binding`. From chunk 2 on `stream.states`
+        // holds the device values. Parallel `Vec`s indexed alongside `state_input_names`.
+        let mut empty_f32: Vec<Option<Tensor<f32>>> =
+            Vec::with_capacity(self.state_input_names.len());
+        let mut empty_i64: Vec<Option<Tensor<i64>>> =
+            Vec::with_capacity(self.state_input_names.len());
+        for name in &self.state_input_names {
+            if self.stream.states.contains_key(name) {
+                empty_f32.push(None);
+                empty_i64.push(None);
+                continue;
+            }
+            let shape = self
+                .state_shapes
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| vec![1]);
+            if *self.state_is_i64.get(name).unwrap_or(&false) {
+                empty_f32.push(None);
+                empty_i64.push(Some(
+                    Tensor::from_array(ArrayD::<i64>::zeros(IxDyn(&shape))).map_err(|e| {
+                        SttError::Inference(format!("zipformer CTC state {name}: {e}"))
+                    })?,
+                ));
+            } else {
+                empty_i64.push(None);
+                empty_f32.push(Some(
+                    Tensor::from_array(ArrayD::<f32>::zeros(IxDyn(&shape))).map_err(|e| {
+                        SttError::Inference(format!("zipformer CTC state {name}: {e}"))
+                    })?,
+                ));
+            }
+        }
+
+        let dev_mem = self.device_mem()?;
+        let cpu_mem = cpu_output_mem()?;
+
+        let mut binding = self
+            .session
+            .create_binding()
+            .map_err(|e| SttError::Inference(format!("zipformer CTC binding: {e}")))?;
+        binding
+            .bind_input(x_name.as_str(), &x_tensor)
+            .map_err(|e| SttError::Inference(format!("bind {x_name}: {e}")))?;
+        for (i, name) in self.state_input_names.iter().enumerate() {
+            match self.stream.states.get(name) {
+                Some(v) => binding
+                    .bind_input(name.as_str(), v)
+                    .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
+                None => {
+                    if let Some(t) = &empty_f32[i] {
+                        binding
+                            .bind_input(name.as_str(), t)
+                            .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+                    } else if let Some(t) = &empty_i64[i] {
+                        binding
+                            .bind_input(name.as_str(), t)
+                            .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+                    } else {
+                        return Err(SttError::Inference(format!(
+                            "missing zipformer CTC state input {name}"
+                        )));
+                    }
+                }
+            }
+        }
+        // Bind EVERY declared output: log_probs (slot 0) → host; state outputs → device (carried).
+        let probs_name = self
+            .output_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "log_probs".into());
+        binding
+            .bind_output_to_device(probs_name.as_str(), &cpu_mem)
+            .map_err(|e| SttError::Inference(format!("bind {probs_name}: {e}")))?;
+        for name in &self.state_output_names {
+            binding
+                .bind_output_to_device(name.as_str(), &dev_mem)
+                .map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+        }
+
+        let mut outputs = self
+            .session
+            .run_binding(&binding)
+            .map_err(|e| SttError::Inference(format!("zipformer CTC run: {e}")))?;
+        binding
+            .synchronize_outputs()
+            .map_err(|e| SttError::Inference(format!("zipformer CTC synchronize: {e}")))?;
+
+        // log_probs → host (scoped so the borrow ends before the state `remove`s take `outputs`).
+        let log_probs = {
+            let v = outputs
+                .get(probs_name.as_str())
+                .ok_or_else(|| SttError::Inference("zipformer CTC produced no log_probs".into()))?;
+            out_to_f32(v)?
+        };
+        // Carry each state output → device, keyed by the matching state INPUT name.
+        for (input_name, output_name) in self.state_input_names.iter().zip(&self.state_output_names)
+        {
+            let v = outputs.remove(output_name.as_str()).ok_or_else(|| {
+                SttError::Inference(format!(
+                    "zipformer CTC produced no state output {output_name}"
+                ))
+            })?;
+            self.stream.states.insert(input_name.clone(), v);
+        }
+        drop(outputs);
+        drop(binding);
+
+        let probs3 = log_probs
+            .into_dimensionality::<ndarray::Ix3>()
+            .map_err(|e| SttError::Inference(format!("zipformer CTC log_probs dim: {e}")))?;
+        Ok(probs3.index_axis_move(Axis(0), 0).to_owned())
+    }
+
+    /// Greedy CTC over one chunk's frames, carrying the collapse across chunk boundaries —
+    /// identical control flow to `NativeNemoCtcStreamingEngine::decode_ctc_logits`.
+    fn decode_ctc_logits(&mut self, log_probs: &Array2<f32>) {
+        let mut prev_id = if self.stream.cursor.tokens.is_empty() {
+            -1
+        } else if self.stream.cursor.num_trailing_blanks > 0 {
+            self.blank_id
+        } else {
+            *self.stream.cursor.tokens.last().unwrap_or(&self.blank_id)
+        };
+
+        for row in log_probs.rows() {
+            let (best, _) = argmax_iter(row.iter().copied());
+            let y = best as i64;
+            if y == self.blank_id {
+                self.stream.cursor.num_trailing_blanks += 1;
+            } else {
+                self.stream.cursor.num_trailing_blanks = 0;
+            }
+            if y != self.blank_id && y != prev_id {
+                self.stream.cursor.tokens.push(y);
+            }
+            prev_id = y;
+        }
+        self.stream.cursor.frame_offset += log_probs.nrows();
+    }
+
+    fn current_text(&self) -> String {
+        self.stream
+            .cursor
+            .decode_text(&self.vocab, |_id, sym| !is_special_token(sym))
+    }
+}
+
+impl Transcriber for NativeZipformerCtcStreamingEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::KaldiCtc
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    fn is_ready(&self) -> bool {
+        true
+    }
+
+    fn active_providers(&self) -> &[String] {
+        &self.providers
+    }
+
+    fn transcribe(&mut self, audio: &[f32], _opts: &TranscribeOptions) -> SttResult<Transcription> {
+        self.stream_reset();
+        self.stream_accept(audio)?;
+        let text = self.stream_finalize()?;
+        Ok(Transcription {
+            text,
+            ..Default::default()
+        })
+    }
+
+    fn supports_native_streaming(&self) -> bool {
+        true
+    }
+
+    fn stream_accept(&mut self, pcm: &[f32]) -> SttResult<NativeStreamUpdate> {
+        if !pcm.is_empty() {
+            self.stream.cursor.pcm.extend_from_slice(pcm);
+            self.process_available_chunks(false)?;
+        }
+        Ok(NativeStreamUpdate::interim(self.current_text()))
+    }
+
+    fn stream_finalize(&mut self) -> SttResult<String> {
+        streaming::append_final_silence_pad(&mut self.stream.cursor.pcm);
+        self.process_available_chunks(true)?;
+        Ok(self.current_text())
+    }
+
+    fn stream_reset(&mut self) {
+        self.stream = self.fresh_stream_state();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{NativeNemoCtcStreamingEngine, NativeZipformerStreamingEngine};
+    use super::{
+        NativeNemoCtcStreamingEngine, NativeZipformerCtcStreamingEngine,
+        NativeZipformerStreamingEngine,
+    };
     use crate::winstt::stt::{Accelerator, EngineConfig, EngineKind, Quantization, ResolvedModel};
 
     fn make_cfg(kind: EngineKind, keys: &[&str]) -> EngineConfig {
@@ -938,6 +1282,16 @@ mod tests {
         assert!(NativeNemoCtcStreamingEngine::supports(&cfg));
         let missing = make_cfg(EngineKind::NemoCtcStreaming, &["model"]);
         assert!(!NativeNemoCtcStreamingEngine::supports(&missing));
+    }
+
+    #[test]
+    fn zipformer_ctc_supports_single_graph_bundle() {
+        let cfg = make_cfg(EngineKind::KaldiCtc, &["model", "vocab"]);
+        assert!(NativeZipformerCtcStreamingEngine::supports(&cfg));
+        let missing = make_cfg(EngineKind::KaldiCtc, &["model"]);
+        assert!(!NativeZipformerCtcStreamingEngine::supports(&missing));
+        let wrong_kind = make_cfg(EngineKind::KaldiTransducer, &["model", "vocab"]);
+        assert!(!NativeZipformerCtcStreamingEngine::supports(&wrong_kind));
     }
 
     #[test]

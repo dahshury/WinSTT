@@ -147,7 +147,8 @@ fn dictation_llm_model(settings: &WinsttSettings) -> String {
     let base = &settings.llm.dictation.base;
     match base.provider {
         LlmProvider::Openrouter => base.openrouter_model.trim().to_string(),
-        LlmProvider::AppleIntelligence | LlmProvider::Ollama => base.model.trim().to_string(),
+        LlmProvider::AppleIntelligence => "apple-intelligence".to_string(),
+        LlmProvider::Ollama => base.model.trim().to_string(),
     }
 }
 
@@ -155,7 +156,10 @@ fn has_winstt_dictation_model(settings: &WinsttSettings) -> bool {
     let base = &settings.llm.dictation.base;
     match base.provider {
         LlmProvider::Openrouter => !settings.llm.openrouter_api_key.trim().is_empty(),
-        LlmProvider::AppleIntelligence | LlmProvider::Ollama => !base.model.trim().is_empty(),
+        // FoundationModels is selected by the OS; there is no user model id.
+        // The bridge performs the authoritative device/OS availability check.
+        LlmProvider::AppleIntelligence => true,
+        LlmProvider::Ollama => !base.model.trim().is_empty(),
     }
 }
 
@@ -1009,5 +1013,16 @@ mod tests {
 
         assert!(dictation_post_processing_enabled(&settings));
         assert!(!should_run_winstt_dictation_llm(&settings));
+    }
+
+    #[test]
+    fn apple_intelligence_needs_no_model_id() {
+        let mut settings = WinsttSettings::default();
+        settings.llm.dictation.enabled = true;
+        settings.llm.dictation.base.provider = LlmProvider::AppleIntelligence;
+        settings.llm.dictation.base.model.clear();
+
+        assert!(should_run_winstt_dictation_llm(&settings));
+        assert_eq!(dictation_llm_model(&settings), "apple-intelligence");
     }
 }

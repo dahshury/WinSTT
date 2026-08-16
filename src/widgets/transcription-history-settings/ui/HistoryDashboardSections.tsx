@@ -14,6 +14,7 @@ import {
 	resolveProviderIcon,
 } from "@/shared/lib/provider-icons";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
+import type { HistoryKind, HistoryKindOption } from "../lib/history-kinds";
 // Deep-import the lightweight family logo/maker resolvers (NOT the heavy
 // `@/widgets/model-picker` barrel) so the settings chunk stays lean — same guard
 // `useRuntimeModelBreakdown` uses.
@@ -30,7 +31,7 @@ import type {
 	TtsHistoryEntry,
 } from "../model/history-store";
 import { ContributionGraph } from "./ContributionGraph";
-import { DateRangeFilter } from "./DateRangeFilter";
+import { HistoryFiltersMenu } from "./HistoryFiltersMenu";
 import { HistoryHero } from "./HistoryHero";
 import { ModelAuthorRadar } from "./ModelAuthorRadar";
 import { SpendingSection } from "./SpendingSection";
@@ -161,13 +162,16 @@ interface HistoryDashboardSectionsProps {
 	filteredEntries: TranscriptionHistoryEntry[];
 	/** Date-filtered read-aloud runs, for the cloud-spend analytics. */
 	filteredTtsEntries: TtsHistoryEntry[];
+	historyKind: HistoryKind;
+	historyKindOptions: HistoryKindOption[];
+	onHistoryKindChange: (kind: HistoryKind) => void;
 	onRangeChange: (range: DateRange | null) => void;
 	selectedRange: DateRange | null;
 }
 
 /**
  * The History panel's read-only analytics dashboard: the summary hero (with the
- * date-range filter in its header), the voice profile + all-time habit pulse,
+ * tab's filters menu in its header), the voice profile + all-time habit pulse,
  * the model/category usage breakdowns, and the cloud-spend analytics. Every
  * windowed section reads the date-filtered entries the parent passes down, so
  * the calendar picker scopes them all.
@@ -176,6 +180,9 @@ export function HistoryDashboardSections({
 	entries,
 	filteredEntries,
 	filteredTtsEntries,
+	historyKind,
+	historyKindOptions,
+	onHistoryKindChange,
 	onRangeChange,
 	selectedRange,
 }: HistoryDashboardSectionsProps) {
@@ -232,13 +239,16 @@ export function HistoryDashboardSections({
 
 	return (
 		<>
-			{/* Everything from here down follows the date-range filter in this
-			    section's header. The interactive calendar lives inside that
-			    popover chip — it's a filter control, not a dashboard view. */}
+			{/* Everything from here down follows the date range picked in this
+			    section's header. The calendar and the kind filter live inside that
+			    drill-down chip — they are filter controls, not dashboard views. */}
 			<SettingSection
 				headerAction={
-					<DateRangeFilter
+					<HistoryFiltersMenu
 						entries={entries}
+						historyKind={historyKind}
+						historyKindOptions={historyKindOptions}
+						onHistoryKindChange={onHistoryKindChange}
 						onRangeChange={onRangeChange}
 						selectedRange={selectedRange}
 					/>

@@ -504,8 +504,11 @@ fn reveal_overlay_if_current_locked(window: &tauri::WebviewWindow, generation: u
 /// `reason` ("recording" | "tts") is forwarded to the renderer's `overlay:show`
 /// event (informational; the OverlayPage paints from its Zustand stores either way).
 fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>, reason: &str) {
-    // The overlay is normally prewarmed shortly after the main pill paints. Keep
-    // this idempotent ensure as a fallback for a recording that beats the prewarm.
+    // The overlay is normally warmed shortly after startup
+    // (windows::schedule_secondary_window_warmup). Keep this idempotent ensure
+    // as a fallback for a recording that beats the warmup; on a cold create the
+    // page-load-gated reveal below keeps the not-yet-painted window invisible
+    // (opacity 0 + empty native hit region) instead of flashing a blank box.
     let Some(window) = ensure_overlay_window(app) else {
         return;
     };

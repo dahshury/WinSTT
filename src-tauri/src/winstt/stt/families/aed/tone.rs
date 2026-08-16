@@ -131,8 +131,8 @@ fn tone_run_chunk(
     signal_input: &str,
     state_input: &str,
     state_size: usize,
-    dev_mem: &MemoryInfo,
-    cpu_mem: &MemoryInfo,
+    dev_mem: &MemoryInfo<'_>,
+    cpu_mem: &MemoryInfo<'_>,
     blank_idx: i64,
     st: &mut ToneStreamingState,
     chunk8: &[f32],
@@ -311,7 +311,7 @@ impl ToneEngine {
 
     /// Device `MemoryInfo` (state_next) + host `MemoryInfo` (logprobs) for one chunk's IoBinding.
     /// Device is CPU when no GPU EP, so the bind is correct + ~free there too.
-    fn chunk_mem(&self) -> SttResult<(MemoryInfo, MemoryInfo)> {
+    fn chunk_mem(&self) -> SttResult<(MemoryInfo<'static>, MemoryInfo<'static>)> {
         let dev_mem = MemoryInfo::new(
             self.device,
             self.device_id,

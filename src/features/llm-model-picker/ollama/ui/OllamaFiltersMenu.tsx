@@ -1,19 +1,24 @@
 "use client";
 
 import {
+	ArrowUpDownIcon,
 	Atom01Icon,
 	CheckmarkCircle02Icon,
 	CpuIcon,
+	FilterIcon,
 	HardDriveIcon,
 	SparklesIcon,
 	TextFontIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
+import { FilterCheckboxSection } from "@/shared/ui/model-picker/ui/FilterCheckboxSection";
 import {
-	FilterMenu,
-	type FilterFlagConfig,
-} from "@/shared/ui/model-picker/ui/FilterPopoverParts";
+	FilterNavMenu,
+	type FilterNavSection,
+} from "@/shared/ui/model-picker/ui/FilterNavMenu";
+import { SortChipsSection } from "@/shared/ui/model-picker/ui/FilterSortChipsSection";
+import type { FilterFlagConfig } from "@/shared/ui/model-picker/ui/filter-menu-types";
 import {
 	EMPTY_OLLAMA_FILTER_STATE,
 	type OllamaFilterFlag,
@@ -61,11 +66,10 @@ const FILTER_FLAGS: readonly FilterFlagConfig<OllamaFilterFlag>[] = [
 ];
 
 /**
- * Sort + filter menu for the Ollama picker — a count-badged button opening a
- * Popover with the Sort chips and the boolean catalog filters. Ports the
- * {@link import("@/features/select-local-stt-model/ui/SttFiltersMenu").SttFiltersMenu}
- * shape; the
- * trigger badge folds the active filters and the active sort into one count.
+ * Sort + filter menu for the Ollama picker — the shared drill-down menu with
+ * two rows: Sort by, and the boolean catalog filters. The leanest of the four
+ * menus, and the reason the root list is worth having anyway: it presents the
+ * same way as the nine-dimension TTS menu next to it.
  */
 export function OllamaFiltersMenu({
 	filters,
@@ -91,31 +95,53 @@ export function OllamaFiltersMenu({
 		flags.map((flag) => flag.key),
 	);
 
+	const sections: FilterNavSection[] = [
+		{
+			icon: ArrowUpDownIcon,
+			id: "sort",
+			label: t("sortBy"),
+			render: () => (
+				<SortChipsSection
+					hint={t("flattenInstalled")}
+					icons={SORT_ICON}
+					keys={OLLAMA_SORT_KEYS}
+					labels={OLLAMA_SORT_CHIP_LABEL}
+					onChange={onSortChange}
+					value={sort}
+				/>
+			),
+			value: sort === null ? null : OLLAMA_SORT_CHIP_LABEL[sort],
+		},
+		{
+			badge: flags.filter((flag) => filters[flag.key]).length,
+			icon: FilterIcon,
+			id: "flags",
+			label: t("filters"),
+			render: () => (
+				<FilterCheckboxSection
+					filters={filters}
+					flags={flags}
+					onToggle={(flag) =>
+						onFiltersChange({ ...filters, [flag]: !filters[flag] })
+					}
+				/>
+			),
+		},
+	];
+
 	return (
-		<FilterMenu
-			activeFilterCount={activeFilters}
+		<FilterNavMenu
+			activeFilterCount={activeFilters + (sort === null ? 0 : 1)}
+			canClear={activeFilters > 0 || sort !== null}
 			clearLabel={t("clearAll")}
 			dataSlot="ollama-filters-menu-content"
-			filters={filters}
-			flags={flags}
 			label={t("sortAndFilter")}
 			onClearAll={() => {
 				onFiltersChange(EMPTY_OLLAMA_FILTER_STATE);
 				onSortChange(null);
 			}}
-			onToggleFlag={(flag) =>
-				onFiltersChange({ ...filters, [flag]: !filters[flag] })
-			}
-			sort={{
-				hint: t("flattenInstalled"),
-				icons: SORT_ICON,
-				keys: OLLAMA_SORT_KEYS,
-				labels: OLLAMA_SORT_CHIP_LABEL,
-				onChange: onSortChange,
-				sortByLabel: t("sortBy"),
-				value: sort,
-			}}
-			widthClass="w-[260px]"
+			sections={sections}
+			widthPx={280}
 		/>
 	);
 }

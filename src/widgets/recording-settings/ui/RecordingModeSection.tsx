@@ -6,12 +6,14 @@ import {
 	SettingResetButton,
 	SettingSection,
 } from "@/entities/setting";
+import { useModeTransitionPending } from "@/features/recording-mode-transition";
 import {
 	settingsSave,
 	type WakewordModelStatusPayload,
 } from "@/shared/api/ipc-client";
 import { listenModeSupport } from "@/shared/lib/host-platform";
 import { CreatableCombobox } from "@/shared/ui/creatable-combobox";
+import { PendingBadge } from "@/shared/ui/pending";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
@@ -379,10 +381,20 @@ export function RecordingModeSection({
 	// the backend can't feed it — reflect that as a locked, unselectable option
 	// with an explanatory badge rather than a mode that silently never records.
 	const listenSupport = listenModeSupport();
+	// A committed mode change whose model is still loading. Every segment locks —
+	// not just the one being switched to: re-picking the previous mode mid-load
+	// would tear down a load the next press is about to need again, and the
+	// backend is already ignoring the transcribe hotkey for the same window. The
+	// spinner badge (the same primitive the post-processing preset toggles use) is
+	// what says the control is briefly inert rather than broken.
+	const modeTransition = useModeTransitionPending();
 	const recordingModeOptions: readonly SwitcherOption<
 		"ptt" | "toggle" | "listen" | "wakeword"
-	>[] = buildRecordingModeOptions(t).map((opt) =>
-		opt.value === "listen" && !listenSupport.supported
+	>[] = buildRecordingModeOptions(t).map((opt) => {
+		if (modeTransition.isPending) {
+			return { ...opt, disabled: true };
+		}
+		return opt.value === "listen" && !listenSupport.supported
 			? {
 					...opt,
 					disabled: true,
@@ -391,8 +403,8 @@ export function RecordingModeSection({
 						? { badgeTooltip: listenSupport.reason }
 						: {}),
 				}
-			: opt,
-	);
+			: opt;
+	});
 	const manualToggleStop = general?.manualToggleStop ?? false;
 	const wakewordControlsLocked =
 		!wakewordStatus.available &&
@@ -406,6 +418,11 @@ export function RecordingModeSection({
 	const handleRecordingModeChange = (
 		value: "ptt" | "toggle" | "listen" | "wakeword",
 	) => {
+		// Belt-and-braces next to the disabled options: a keyboard or programmatic
+		// select must not queue a second switch behind the one still loading.
+		if (modeTransition.isPending) {
+			return;
+		}
 		if (
 			value === "wakeword" &&
 			!wakewordStatus.available &&
@@ -429,6 +446,9 @@ export function RecordingModeSection({
 		}
 	};
 	const handleRecordingModeReset = () => {
+		if (modeTransition.isPending) {
+			return;
+		}
 		const patch = recordingModePatch(
 			DEFAULT_SETTINGS.general.recordingMode,
 			general?.wakeWord,
@@ -459,12 +479,14 @@ export function RecordingModeSection({
 			    page title already says "Recording", so a second in-body
 			    label row would just repeat it). */}
 			<div className="py-3.5">
-				<Switcher
-					fullWidth
-					onChange={handleRecordingModeChange}
-					options={recordingModeOptions}
-					value={recordingMode}
-				/>
+				<PendingBadge className="w-full" pending={modeTransition.isPending}>
+					<Switcher
+						fullWidth
+						onChange={handleRecordingModeChange}
+						options={recordingModeOptions}
+						value={recordingMode}
+					/>
+				</PendingBadge>
 			</div>
 			{contentMode !== "wakeword" && showWakewordDownloadProgress ? (
 				<WakewordDownloadProgress status={wakewordStatus} />

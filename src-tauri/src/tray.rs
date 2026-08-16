@@ -23,7 +23,6 @@ pub enum AppTheme {
 /// Gets the current app theme, with Linux defaulting to Colored theme
 pub fn get_current_theme(app: &AppHandle) -> AppTheme {
     if cfg!(target_os = "linux") {
-        // On Linux, always use the colored theme
         AppTheme::Colored
     } else {
         // The Windows tray icon is rendered on the taskbar, whose theme can differ
@@ -68,7 +67,6 @@ fn windows_taskbar_theme() -> Option<AppTheme> {
     taskbar_theme_from_registry_value(system_uses_light)
 }
 
-/// Gets the appropriate icon path for the given theme and state
 pub fn get_icon_path(theme: AppTheme, state: TrayIconState) -> &'static str {
     match (theme, state) {
         // Dark theme uses light icons
@@ -111,7 +109,6 @@ pub(crate) fn paint_static_tray_icon(app: &AppHandle, icon: TrayIconState) {
         }
     }
 
-    // Update menu based on state
     update_tray_menu(app, &icon, None);
 }
 
@@ -195,9 +192,27 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
     let _ = state;
     let _ = locale;
 
-    let tray = app.state::<TrayIcon>();
-    let _ = tray.set_icon_as_template(true);
-    let _ = tray.set_tooltip(Some(version_label()));
+    // `set_icon_as_template` / `set_tooltip` post to the event loop and BLOCK on the
+    // reply. Most callers here are worker threads (the coordinator's start/stop, the
+    // async decode task, the LLM guards), so calling them inline parked those threads
+    // on the main thread — and a main thread busy inside a blocking `#[tauri::command]`
+    // wedged the caller permanently, which for `on_tray_recording_start` means the
+    // recording that just armed the tray can never be stopped. Hand the native calls
+    // to the main thread WITHOUT waiting, exactly as `tray_indicator`'s paint path
+    // does (`run_on_main_thread` runs inline when the caller already IS the main
+    // thread, so the paint_static path keeps its ordering).
+    let _ = app.run_on_main_thread({
+        let app = app.clone();
+        move || {
+            // try_state, not state: this runs after the tray is managed in the normal
+            // case, but a paint scheduled around teardown must not panic the loop.
+            let Some(tray) = app.try_state::<TrayIcon>() else {
+                return;
+            };
+            let _ = tray.set_icon_as_template(true);
+            let _ = tray.set_tooltip(Some(version_label()));
+        }
+    });
 }
 
 // The post-processed text wins over the raw transcription when present (matches

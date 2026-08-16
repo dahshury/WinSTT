@@ -134,7 +134,17 @@ export function useTranscriptionFeed(): void {
 			// A cold overlay may have already recovered this same session from
 			// `stt_recording_snapshot`. If the earlier fire-and-forget start event
 			// is delivered afterward, do not reset the recovered VAD-seen latch.
+			// BUT a start can also arrive while the PREVIOUS session is still
+			// winding down — a quick re-press before its full_sentence/no_audio
+			// terminal event lands (final decode or LLM cleanup still running).
+			// The two cases are indistinguishable here, and both must not carry
+			// the previous take's text into the new one: keep the session id and
+			// the speech latch, wipe the stale realtime/ephemeral/processing
+			// state so the pill can only ever reveal with THIS take's words.
 			if (useTranscriptionStore.getState().isRecordingActive) {
+				setRealtimeText("");
+				clearEphemeral();
+				setTranscribing(false);
 				return;
 			}
 			beginRecordingSession();
@@ -147,10 +157,15 @@ export function useTranscriptionFeed(): void {
 		// recording_stop before the backend can classify samples, and should wait
 		// for no_audio_detected instead of flashing processing UI.
 		const unsubStop = onRecordingStop(() => {
-			if (
-				useTranscriptionStore.getState().isRecordingActive &&
-				useTranscriptionStore.getState().hasDetectedSpeech
-			) {
+			const state = useTranscriptionStore.getState();
+			if (recordingModeRef.current !== "listen") {
+				// The recording boundary invalidates the live preview: from here
+				// until a terminal event the pill shows the processing spinner (or
+				// nothing), so whatever the realtime worker last painted must not
+				// survive to resurface in the next press's pill.
+				setRealtimeText("");
+			}
+			if (state.isRecordingActive && state.hasDetectedSpeech) {
 				setTranscribing(true, "uploading");
 			}
 		});

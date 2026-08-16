@@ -1,5 +1,6 @@
 import {
 	AudioWave02Icon,
+	BracketsIcon,
 	Copy01Icon,
 	DashboardSpeed02Icon,
 	GlobeIcon,
@@ -25,11 +26,19 @@ import {
 	getEngineConfig,
 	getEngineLogoSrc,
 	getEngineMaker,
+	inlineTagsLabel,
 	ttsLanguageMeta,
+	voiceDesignLabel,
 } from "@/entities/tts-catalog";
+import type { ModelPickerTranslateFn } from "@/shared/i18n/translation-types";
 
-/** Build the hover-card spec for a TTS voice model from its catalog row. */
-export function buildTtsSpec(model: TtsModelInfo): ModelSpec {
+/** Build the hover-card spec for a TTS voice model from its catalog row. The
+ *  voice-capability copy is shared with the card's badges (same builders), so
+ *  the popover and the badge can never disagree. */
+export function buildTtsSpec(
+	model: TtsModelInfo,
+	t: ModelPickerTranslateFn,
+): ModelSpec {
 	const config = getEngineConfig(model.engine);
 	const logo = getEngineLogoSrc(model.engine);
 
@@ -42,7 +51,7 @@ export function buildTtsSpec(model: TtsModelInfo): ModelSpec {
 			description: ttsLanguageMeta(model.languages).tooltip,
 		});
 	}
-	const cloning = cloningLabel(model.cloning);
+	const cloning = cloningLabel(model, t);
 	if (cloning) {
 		features.push({
 			key: "cloning",
@@ -52,11 +61,21 @@ export function buildTtsSpec(model: TtsModelInfo): ModelSpec {
 		});
 	}
 	if (model.voiceDesign) {
+		const design = voiceDesignLabel(t);
 		features.push({
 			key: "voice-design",
 			icon: SparklesIcon,
-			label: "Voice design",
-			description: "The voice is described with a free-text prompt.",
+			label: design.label,
+			description: design.tooltip,
+		});
+	}
+	const inlineTags = inlineTagsLabel(model, t);
+	if (inlineTags) {
+		features.push({
+			key: "inline-tags",
+			icon: BracketsIcon,
+			label: inlineTags.label,
+			description: inlineTags.tooltip,
 		});
 	}
 

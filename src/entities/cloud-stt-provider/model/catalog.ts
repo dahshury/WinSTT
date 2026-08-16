@@ -136,6 +136,25 @@ export function getApiKeyUrl(provider: CloudSttProvider): string {
 	}
 }
 
+/**
+ * The literal opening characters of a provider's API key, used as the visible
+ * scaffold around the sealed display (`sk-or-v1-********4f2a`).
+ *
+ * It lives here, beside {@link getApiKeyUrl}, rather than being derived from the
+ * key-shape placeholder in `messages/*.json`: a placeholder is an ordinary
+ * catalog entry that a translation pass may rewrite, and this string is a claim
+ * about what the user's stored key actually starts with. Provider facts belong
+ * in the provider catalog, not in a translatable string.
+ */
+export function getApiKeyPrefix(provider: CloudSttProvider): string {
+	switch (provider) {
+		case "elevenlabs":
+			return "el-";
+		case "openrouter":
+			return "sk-or-v1-";
+	}
+}
+
 export function providerDisplayName(provider: CloudSttProvider): string {
 	switch (provider) {
 		case "elevenlabs":

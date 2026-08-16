@@ -7,7 +7,7 @@ import {
 	Radio01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import type { ModelInfo } from "@/entities/model-catalog";
+import type { ModelInfo } from "../model/catalog-store";
 
 export type FamilyKey = ModelInfo["family"];
 
@@ -103,6 +103,21 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		chip: "bg-model-family-qwen3/15 text-model-family-qwen3",
 		logoSrc: "/provider-icons/qwen.svg",
 	},
+	vibevoice: {
+		icon: AiChipIcon,
+		label: "VibeVoice",
+		chip: "bg-model-family-vibevoice/15 text-model-family-vibevoice",
+		logoSrc: "/provider-icons/microsoft.svg",
+	},
+	audio8: {
+		icon: AiChipIcon,
+		label: "Audio8-ASR",
+		chip: "bg-model-family-audio8/15 text-model-family-audio8",
+		// Traced SVG, not the vendor's HF avatar: that avatar is a full-bleed opaque black tile,
+		// so at chip size it read as a solid rectangle with the mark invisible (same trap as
+		// `gigaam` above).
+		logoSrc: "/provider-icons/audio8.svg",
+	},
 	custom: {
 		icon: FolderLibraryIcon,
 		label: "Custom",
@@ -129,6 +144,8 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	sense_voice: "FunAudioLLM",
 	dolphin: "DataoceanAI",
 	qwen3: "Alibaba Qwen",
+	vibevoice: "Microsoft",
+	audio8: "Audio8",
 	custom: "Your Models",
 };
 
@@ -176,6 +193,8 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 	],
 	dolphin: ["dataocean", "dataoceanai", "tsinghua"],
 	qwen3: ["alibaba", "tongyi", "dashscope", "qwen"],
+	vibevoice: ["vibevoice", "vibe voice", "bitnet", "microsoft"],
+	audio8: ["audio8", "audio 8", "arkasr", "ark-asr", "autoark"],
 	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 

@@ -16,6 +16,7 @@ import {
 	type ReactNode,
 	useState,
 } from "react";
+import { useTranslations } from "use-intl";
 import type { ModelSuggestion } from "@/entities/model-suggestion";
 import {
 	type TtsModelInfo,
@@ -23,6 +24,7 @@ import {
 	type TtsSwapTransition,
 	useTtsSwapStore,
 } from "@/entities/tts-catalog";
+import type { ModelPickerTranslateFn } from "@/shared/i18n/translation-types";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
@@ -195,6 +197,7 @@ function selectedTtsMeta(
 	model: TtsModelInfo,
 	currentQuantization: string,
 	state: TtsModelState | undefined,
+	t: ModelPickerTranslateFn,
 ): SelectedModelMetaItem[] {
 	const effectiveQuant =
 		currentQuantization === ""
@@ -217,7 +220,7 @@ function selectedTtsMeta(
 			description: ttsLanguageMeta(model.languages).tooltip,
 		});
 	}
-	const cloning = cloningLabel(model.cloning);
+	const cloning = cloningLabel(model, t);
 	if (cloning) {
 		items.push({
 			key: "cloning",
@@ -418,6 +421,7 @@ function TtsTriggerBody({
 	selectedModel: TtsModelInfo | undefined;
 	state: TtsModelState | undefined;
 }) {
+	const t = useTranslations("modelPicker");
 	if (!selectedModel) {
 		return (
 			<span className="font-medium text-body text-foreground-muted italic tracking-tight">
@@ -427,7 +431,7 @@ function TtsTriggerBody({
 	}
 	const engineLogo = getEngineLogoSrc(selectedModel.engine);
 	return (
-		<ModelSpecHoverCard spec={buildTtsSpec(selectedModel)}>
+		<ModelSpecHoverCard spec={buildTtsSpec(selectedModel, t)}>
 			<div className="flex min-w-0 flex-1">
 				<SelectedModelSummary
 					leading={
@@ -437,7 +441,7 @@ function TtsTriggerBody({
 							logoSrc={engineLogo ? publicAsset(engineLogo) : null}
 						/>
 					}
-					meta={selectedTtsMeta(selectedModel, currentQuantization, state)}
+					meta={selectedTtsMeta(selectedModel, currentQuantization, state, t)}
 					metaPlacement="right"
 					name={{
 						full: selectedModel.displayName,

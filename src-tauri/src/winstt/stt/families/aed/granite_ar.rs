@@ -176,7 +176,7 @@ impl GraniteArEngine {
 
     /// Device `MemoryInfo` for binding the carried KV resident on the session's device (CPU when no
     /// GPU EP). Cheap to build; one per run_prompt + one per decode step.
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -187,7 +187,7 @@ impl GraniteArEngine {
     }
 
     /// Host `MemoryInfo` for the logits (argmax reads them on the CPU).
-    fn cpu_mem() -> SttResult<MemoryInfo> {
+    fn cpu_mem() -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             AllocationDevice::CPU,
             0,
@@ -384,6 +384,12 @@ impl Transcriber for GraniteArEngine {
                 break;
             }
             generated.push(current);
+            // Phrase-loop guard (shared with the other maskless AED decodes): keep one occurrence
+            // of a verbatim-repeated cycle and stop — see `phrase_loop_truncation`.
+            if let Some(keep) = phrase_loop_truncation(&generated) {
+                generated.truncate(keep);
+                break;
+            }
             let (next, next_state) = self.run_decode_step(current, past_len, &state)?;
             state = next_state;
             current = next;

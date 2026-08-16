@@ -202,6 +202,9 @@ const OutputTab = lazy(async () => {
 // leaving only the encoder card interactive. Snippets follow the same split: the LLM expands them
 // contextually unless the user offloads them to the deterministic fuzzy expander.
 function VocabularyTab(): ReactNode {
+	const recordingMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode ?? "ptt",
+	);
 	const llmCleanupEnabled = useSettingsStore(
 		(s) => s.settings.llm?.dictation?.enabled ?? false,
 	);
@@ -242,18 +245,30 @@ function VocabularyTab(): ReactNode {
 	};
 	const t = useTranslations("dictionary");
 	const tModel = useTranslations("model");
+	const isListenMode = recordingMode === "listen";
 	// The non-LLM path can act only when the feature is on AND the model is present.
-	const encoderActive = encoderEnabled && model.state === "present";
+	const encoderActive =
+		!isListenMode && encoderEnabled && model.state === "present";
 	// The LLM owns a section only when cleanup is on AND its per-section toggle keeps it there;
 	// offloading a section routes it back to its deterministic path (encoder model / fuzzy expander).
-	const llmOwnsDictionary = llmCleanupEnabled && llmHandlesDictionary;
+	const llmOwnsDictionary =
+		!isListenMode && llmCleanupEnabled && llmHandlesDictionary;
 	const dictionaryDisabled =
-		!(llmOwnsDictionary || encoderActive) && model.state !== "loading";
+		isListenMode ||
+		(!(llmOwnsDictionary || encoderActive) && model.state !== "loading");
 	// Deterministic snippet expansion also runs inside the cleanup pass, so snippets are inert
 	// (whichever path expands them) until dictation cleanup is on.
-	const snippetsDisabled = !llmCleanupEnabled;
+	const snippetsDisabled = isListenMode || !llmCleanupEnabled;
 	return (
 		<>
+			{isListenMode ? (
+				<div
+					className="mt-8 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2.5 text-foreground-secondary text-sm leading-5"
+					role="note"
+				>
+					{t("unavailableInListen")}
+				</div>
+			) : null}
 			{llmCleanupEnabled ? (
 				<Suspense fallback={null}>
 					<AiHandlingSection
@@ -267,9 +282,14 @@ function VocabularyTab(): ReactNode {
 				<>
 					{/* Without cleanup, matches a section's own top gap so the encoder card sits
 					    the same distance below the page header as any first section does. */}
-					<div className={llmCleanupEnabled ? undefined : "pt-8"}>
+					<div
+						className={llmCleanupEnabled || isListenMode ? undefined : "pt-8"}
+					>
 						<EncoderModelCard
 							enabled={encoderEnabled}
+							inactiveReason={
+								isListenMode ? t("unavailableInListen") : undefined
+							}
 							model={model}
 							onToggle={handleEncoderToggle}
 						/>
@@ -279,7 +299,13 @@ function VocabularyTab(): ReactNode {
 					    since it only affects the non-LLM encoder path. */}
 					<DictionaryContextControl
 						disabled={!encoderActive}
-						disabledTooltip={encoderActive ? undefined : t("contextDisabled")}
+						disabledTooltip={
+							encoderActive
+								? undefined
+								: isListenMode
+									? t("unavailableInListen")
+									: t("contextDisabled")
+						}
 					/>
 				</>
 			)}
@@ -367,11 +393,14 @@ function LlmModelPickerHost() {
 	const feature = useLlmModelPickerStore((s) => s.feature);
 	const close = useLlmModelPickerStore((s) => s.close);
 	const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
-	const currentModel = useSettingsStore((s) =>
-		feature === "transforms"
-			? s.settings.llm.transforms.model
-			: s.settings.llm.dictation.model,
-	);
+	const currentModel = useSettingsStore((s) => {
+		if (feature === "transforms") {
+			return s.settings.llm.transforms.model;
+		}
+		return feature === "readAloud"
+			? s.settings.llm.readAloud.model
+			: s.settings.llm.dictation.model;
+	});
 	if (!open) {
 		return null;
 	}
@@ -452,13 +481,14 @@ const SHOWN_REPLAY_SUPPRESS_MS = 500;
 const REVEAL_FAILSAFE_MS = 1500;
 
 // An enter animation that started less than this long ago is "in flight": the
-// shown-event replay must yield to it instead of restarting it. This is the
-// FIRST-OPEN case: WebView2 freezes rAFs while the prewarmed window is hidden,
-// so the prewarm-time reveal's rAF chain thaws exactly at show and plays the
-// enter animation at the right moment — replaying on top of it snapped the
-// half-faded card back to invisible and faded it in again (a visible double
-// animation / flicker). Comfortably longer than --modal-open-dur (240ms) plus
-// the show→event latency, and far shorter than any real prewarm-to-open gap.
+// shown-event replay must yield to it instead of restarting it. This covers
+// the FIRST open of the lazily-created window: the mount-time visibility check
+// below starts the reveal (the backend's shown event fired before this
+// renderer had subscribed), and a late-delivered or re-invoked shown event
+// arriving on top of that fresh enter would snap the half-faded card back to
+// invisible and fade it in again (a visible double animation / flicker).
+// Comfortably longer than --modal-open-dur (240ms) plus the show→event
+// latency, and far shorter than the gap to any real user-driven re-open.
 const ENTER_ANIMATION_FRESH_MS = 600;
 
 function modalCloseDurationMs(): number {
@@ -599,19 +629,22 @@ function useSettingsWindowMotion(
 
 	useEffect(() => {
 		// Reveal on mount ONLY if the OS window is already on screen. That is the
-		// cold-open case: Rust show()+emit(SETTINGS_WINDOW_SHOWN) fired before this
-		// renderer had mounted and subscribed, so the event was missed and the
-		// mount-time reveal is the fallback.
+		// normal COLD-OPEN case for this lazily-created window: Rust builds the
+		// webview inside open_window and show()+emit(SETTINGS_WINDOW_SHOWN) fire
+		// before this renderer has mounted and subscribed, so the event is always
+		// missed on the first open and the mount-time reveal is what plays it.
 		//
-		// While PREWARMED (window created hidden and never shown), the webview
-		// still reports document.visibilityState="visible" and its rAFs are NOT
-		// frozen — so an unconditional reveal here plays the ENTIRE enter animation
-		// into the void: the shell finishes at opacity 1 while the OS window is
-		// still hidden. The first real show then paints that fully-opaque card,
-		// and the SHOWN handler (seeing a now-stale enter) snaps it back to 0 and
-		// re-animates — the first-open flicker. So while hidden we do nothing and
-		// let SETTINGS_WINDOW_SHOWN (which fires on every real open) drive the
-		// reveal from a clean opacity-0 shell.
+		// The window can still be HIDDEN at mount — e.g. the open was dismissed
+		// again before the page finished loading (the keep-alive close hides the
+		// native window while the renderer is still booting). A webview hidden
+		// that way still reports document.visibilityState="visible" and its rAFs
+		// are NOT frozen — so an unconditional reveal here would play the ENTIRE
+		// enter animation into the void: the shell finishes at opacity 1 while
+		// the OS window is still hidden, the next real show paints that
+		// fully-opaque card, and the SHOWN handler (seeing a now-stale enter)
+		// snaps it back to 0 and re-animates — a first-open flicker. So while
+		// hidden we do nothing and let SETTINGS_WINDOW_SHOWN (which fires on
+		// every real open) drive the reveal from a clean opacity-0 shell.
 		let cancelled = false;
 		void loadTauriWindowApi()
 			.then(({ getCurrentWindow }) => getCurrentWindow().isVisible())
@@ -658,13 +691,13 @@ function useSettingsWindowMotion(
 					return;
 				}
 				// An enter animation is already pending or just started — leave it
-				// alone. This is the FIRST open: the prewarm reveal's rAF chain was
-				// frozen while the window was hidden and thaws exactly at show,
-				// playing the enter animation at the right moment; replaying on top
-				// of it restarts the fade mid-flight (a visible double-animation
-				// flicker). A completed enter older than the freshness window (e.g.
-				// prewarm finished while the webview kept rendering, or a stale
-				// `is-open` after a native-only close) still replays.
+				// alone. On the FIRST open the mount-time visibility check already
+				// started the reveal (the shown event that accompanied the show was
+				// emitted before this renderer subscribed); a shown event landing on
+				// top of that fresh enter would restart the fade mid-flight (a
+				// visible double-animation flicker). A completed enter older than
+				// the freshness window (e.g. a stale `is-open` after a native-only
+				// close) still replays.
 				const enterInFlight =
 					openFrameRef.current !== null ||
 					(phaseRef.current === "open" &&

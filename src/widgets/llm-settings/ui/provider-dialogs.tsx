@@ -2,9 +2,10 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { detectOllama, startOllama } from "@/shared/api/ipc-client";
 import {
 	DialogActionButton,
+	DialogBody,
 	DialogDescription,
 	DialogFooter,
-	DialogTitle,
+	DialogHeader,
 } from "@/shared/ui/dialog";
 import { Modal } from "@/shared/ui/modal";
 import { PasswordField } from "@/shared/ui/text-field";
@@ -243,11 +244,18 @@ export function OllamaDialog({
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex w-[28rem] max-w-[90vw] flex-col gap-4 p-6">
-				<DialogTitle>{title}</DialogTitle>
-				<DialogDescription>{description}</DialogDescription>
-				<OllamaStartErrorBanner message={startError} />
-				<DialogFooter>
+			<div className="flex w-[28rem] max-w-[90vw] flex-col">
+				<DialogHeader
+					closeLabel={tc("close")}
+					onClose={onClose}
+					rail
+					title={title}
+				/>
+				<DialogBody className="flex flex-col gap-3">
+					<DialogDescription>{description}</DialogDescription>
+					<OllamaStartErrorBanner message={startError} />
+				</DialogBody>
+				<DialogFooter bar>
 					<DialogActionButton
 						disabled={starting}
 						onClick={onClose}
@@ -308,26 +316,40 @@ function ApiKeyDialogBody({
 	};
 
 	return (
-		<div className="flex w-[30rem] max-w-[90vw] flex-col gap-4 p-6">
-			<DialogTitle>{t("apiKeyRequired")}</DialogTitle>
-			<DialogDescription>{t("apiKeyRequiredDescription")}</DialogDescription>
-			<PasswordField
-				hideLabel={tc("hidePassword")}
-				onChange={(e) => setValue(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === "Enter") {
-						submit();
-					}
-				}}
-				placeholder={t("openrouterApiKeyPlaceholder")}
-				ref={inputRef}
-				revealLabel={tc("showPassword")}
-				value={value}
+		<div className="flex w-[30rem] max-w-[90vw] flex-col">
+			<DialogHeader
+				closeLabel={tc("close")}
+				onClose={onClose}
+				rail
+				title={t("apiKeyRequired")}
 			/>
-			<DialogFooter>
-				<DialogActionButton onClick={openSignup} variant="neutral">
-					{t("getApiKey")}
-				</DialogActionButton>
+			<DialogBody className="flex flex-col gap-3">
+				<DialogDescription>{t("apiKeyRequiredDescription")}</DialogDescription>
+				<PasswordField
+					hideLabel={tc("hidePassword")}
+					onChange={(e) => setValue(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							submit();
+						}
+					}}
+					placeholder={t("openrouterApiKeyPlaceholder")}
+					ref={inputRef}
+					revealLabel={tc("showPassword")}
+					value={value}
+				/>
+			</DialogBody>
+			{/* "Get an API key" leaves the app to a signup page — it is a side
+			    door, not a peer of Cancel/Save, so it sits on the leading edge
+			    rather than in the action group. */}
+			<DialogFooter
+				bar
+				leading={
+					<DialogActionButton onClick={openSignup} variant="neutral">
+						{t("getApiKey")}
+					</DialogActionButton>
+				}
+			>
 				<DialogActionButton onClick={onClose} variant="neutral">
 					{tc("cancel")}
 				</DialogActionButton>

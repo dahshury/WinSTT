@@ -10,7 +10,7 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type DragEvent, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
-import { surfaceClasses } from "@/shared/lib/surface";
+import { surfaceBg, surfaceClasses } from "@/shared/lib/surface";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
 import {
 	COMBOBOX_EMPTY_CLASS,
@@ -29,6 +29,10 @@ import "@/shared/ui/searchable-select/searchable-select.css";
 export interface CreatableComboboxItem {
 	/** When true the row shows an inline delete button (wired to `onDelete`). */
 	deletable?: boolean;
+	/** Which `CreatableComboboxGroup` this row belongs under. Ignored unless the
+	 *  consumer passes `groups`; a row naming no known group is dropped from the
+	 *  list rather than shown headerless in an arbitrary section. */
+	group?: string | undefined;
 	/** Optional leading glyph shown before the label (after the reorder handle). */
 	icon?: IconSvgElement | undefined;
 	id: string;
@@ -37,7 +41,20 @@ export interface CreatableComboboxItem {
 	/** When true this row is "dirty" (live state diverged from what it stores)
 	 *  and reveals the save/reset actions — wired to `onSave` / `onReset`. */
 	modified?: boolean;
+	/** Opt this row OUT of drag-reordering while `onReorder` is wired for the
+	 *  others. Defaults to reorderable. A list mixing rows the user owns with rows
+	 *  supplied by the app needs this: dragging a fixed row is a gesture that can
+	 *  only ever be refused, and the handle promising it is the bug. */
+	reorderable?: boolean | undefined;
 }
+
+/** One titled section of the popup. Order here is the order on screen. */
+export interface CreatableComboboxGroup {
+	label: string;
+	/** Matched against `CreatableComboboxItem.group`. */
+	value: string;
+}
+
 interface Row {
 	deletable: boolean;
 	icon?: IconSvgElement | undefined;
@@ -46,6 +63,14 @@ interface Row {
 	label: string;
 	meta?: string | undefined;
 	modified: boolean;
+	reorderable: boolean;
+}
+interface RowGroup {
+	items: Row[];
+	/** Header text; `""` renders the section with no header at all — used for the
+	 *  synthesized create row, which is an action rather than a category. */
+	label: string;
+	value: string;
 }
 type DropPlacement = "before" | "after";
 
@@ -56,49 +81,75 @@ interface CreatableComboboxProps {
 	 *  surface can't be stripped after the fact via `inputClassName` because
 	 *  twMerge doesn't know the custom `shadow-surface-N` scale, so appending
 	 *  `shadow-none` leaves the elevation shadow intact. */
-	bareInput?: boolean;
+	bareInput?: boolean | undefined;
 	/** Wrapper width/placement classes (e.g. "ml-auto w-56"). */
-	className?: string;
+	className?: string | undefined;
 	/** Row label for the synthesized "create" affordance. */
 	createLabel: (name: string) => string;
-	deleteAriaLabel?: string;
-	disabled?: boolean;
+	deleteAriaLabel?: string | undefined;
+	disabled?: boolean | undefined;
 	emptyLabel: string;
 	/** Drop the selected-row checkmark column to reclaim horizontal space. The
 	 *  selection is still shown by the row's background highlight. */
-	hideSelectedCheck?: boolean;
+	hideSelectedCheck?: boolean | undefined;
 	/** Extra classes merged onto the text input. Use to strip the input's own
 	 *  rounding/surface (e.g. `rounded-none bg-transparent shadow-none`) when the
 	 *  combobox is the middle segment of a joined control group. */
-	inputClassName?: string;
+	inputClassName?: string | undefined;
 	items: readonly CreatableComboboxItem[];
 	/** Render the drag-reorder handle before the label (leading) instead of in
 	 *  the trailing action cluster. */
-	leadingReorderHandle?: boolean;
+	leadingReorderHandle?: boolean | undefined;
+	/** A row pinned to the BOTTOM of the popup, below the list and independent of
+	 *  what is typed — e.g. "+ New profile", which hands authoring off to a
+	 *  dedicated editor instead of creating a bare named entry inline. */
+	footerAction?: { label: string; onSelect: () => void } | undefined;
+	/** Render the list in titled sections instead of one flat run. Groups that
+	 *  end up empty after filtering are dropped, so a search never leaves a
+	 *  header standing over nothing. */
+	groups?: readonly CreatableComboboxGroup[] | undefined;
 	/** Shown when the typed text doesn't match an existing item. Omit to make
 	 *  the combobox select-only (no create row). */
-	onCreate?: (name: string) => void;
-	onDelete?: (id: string) => void;
-	onReorder?: (
-		draggedId: string,
-		targetId: string,
-		placement: DropPlacement,
-	) => void;
+	onCreate?: ((name: string) => void) | undefined;
+	onDelete?: ((id: string) => void) | undefined;
+	onReorder?:
+		| ((draggedId: string, targetId: string, placement: DropPlacement) => void)
+		| undefined;
 	/** Revert a `modified` row's live state back to what it stores. */
-	onReset?: (id: string) => void;
+	onReset?: ((id: string) => void) | undefined;
 	/** Overwrite a `modified` row's stored state with the current live state. */
-	onSave?: (id: string) => void;
+	onSave?: ((id: string) => void) | undefined;
 	onSelect: (id: string) => void;
 	placeholder: string;
-	reorderAriaLabel?: (item: CreatableComboboxItem) => string;
-	resetAriaLabel?: string;
-	saveAriaLabel?: string;
+	reorderAriaLabel?: ((item: CreatableComboboxItem) => string) | undefined;
+	resetAriaLabel?: string | undefined;
+	saveAriaLabel?: string | undefined;
 	/** The selected item's id ("" = none). Drives the checkmark and the closed
 	 *  display value. */
 	value: string;
 }
 
 const CREATE_ID = "__create__";
+const CREATE_GROUP = "__create_group__";
+
+/**
+ * Sticky section header for grouped mode — the same treatment
+ * `SearchableSelect` gives its groups, so a list split into sections reads the
+ * same wherever it appears.
+ *
+ * `z-overlay` (not `z-raised`): each row is `relative z-raised`, so an equal-z
+ * sticky header would be painted OVER by the rows scrolling under it (later DOM,
+ * same z), making the opaque header look transparent.
+ */
+function GroupHeader({ label, level }: { label: string; level: number }) {
+	return (
+		<Combobox.GroupLabel
+			className={`sticky top-0 z-overlay flex h-7 shrink-0 items-center border-divider/60 border-b px-2.5 font-medium text-2xs text-foreground-muted uppercase tracking-wide ${surfaceBg(level)}`}
+		>
+			{label}
+		</Combobox.GroupLabel>
+	);
+}
 
 /**
  * Single-select creatable combobox (Base UI). Type to filter; when the text
@@ -123,6 +174,8 @@ export function CreatableCombobox({
 	deleteAriaLabel,
 	disabled = false,
 	emptyLabel,
+	footerAction,
+	groups,
 	hideSelectedCheck = false,
 	inputClassName,
 	items,
@@ -166,6 +219,7 @@ export function CreatableCombobox({
 			deletable: Boolean(i.deletable),
 			modified: Boolean(i.modified),
 			isCreate: false,
+			reorderable: i.reorderable !== false,
 		})),
 		...(canCreate
 			? [
@@ -175,6 +229,7 @@ export function CreatableCombobox({
 						deletable: false,
 						modified: false,
 						isCreate: true,
+						reorderable: false,
 					},
 				]
 			: []),
@@ -188,8 +243,45 @@ export function CreatableCombobox({
 				deletable: Boolean(selected.deletable),
 				modified: Boolean(selected.modified),
 				isCreate: false,
+				reorderable: selected.reorderable !== false,
 			}
 		: null;
+	// Grouped mode reuses the SAME `rows` — filtering, the create row and the
+	// selected-value contract are identical, only the popup body differs. Rows are
+	// bucketed in the order the caller listed the groups, and a group left empty
+	// by the query is dropped so a search never leaves a header over nothing.
+	const rowGroups: RowGroup[] = groups
+		? [
+				...groups
+					.map((group) => ({
+						items: rows.filter(
+							(row) =>
+								!row.isCreate &&
+								items.find((item) => item.id === row.id)?.group === group.value,
+						),
+						label: group.label,
+						value: group.value,
+					}))
+					.filter((group) => group.items.length > 0),
+				// The create row is an ACTION, not a category, so it gets a headerless
+				// section of its own rather than being tucked under whichever group
+				// happened to come last.
+				...(rows.some((row) => row.isCreate)
+					? [
+							{
+								items: rows.filter((row) => row.isCreate),
+								label: "",
+								value: CREATE_GROUP,
+							},
+						]
+					: []),
+			]
+		: [];
+	// A query that matches nothing leaves EVERY group empty. Base UI's grouped
+	// collection cannot represent that — handing it an empty group list wedges the
+	// popup — and there is nothing to title anyway, so the empty state renders
+	// through the flat path.
+	const grouped = Boolean(groups) && rowGroups.length > 0;
 
 	const handleValue = (row: Row | null) => {
 		if (!row) {
@@ -217,7 +309,12 @@ export function CreatableCombobox({
 		setDraggedId(row.id);
 	};
 	const handleDragOver = (event: DragEvent<HTMLElement>, row: Row) => {
-		if (!onReorder || row.isCreate || !draggedId || draggedId === row.id) {
+		if (
+			!onReorder ||
+			row.isCreate ||
+			!(row.reorderable && draggedId) ||
+			draggedId === row.id
+		) {
 			return;
 		}
 		event.preventDefault();
@@ -228,7 +325,12 @@ export function CreatableCombobox({
 		setDropTarget({ id: row.id, placement });
 	};
 	const handleDrop = (event: DragEvent<HTMLElement>, row: Row) => {
-		if (!onReorder || row.isCreate || !draggedId || draggedId === row.id) {
+		if (
+			!onReorder ||
+			row.isCreate ||
+			!(row.reorderable && draggedId) ||
+			draggedId === row.id
+		) {
 			clearDragState();
 			return;
 		}
@@ -246,6 +348,53 @@ export function CreatableCombobox({
 	} = usePopupSurfaceLevels({ selfElevate: false });
 	const popupRef = useRef<HTMLDivElement | null>(null);
 
+	// One row renderer for both list bodies: grouped mode changes only where a row
+	// sits, never what it is, so the drag wiring and the action cluster stay in
+	// exactly one place.
+	const renderRow = (row: Row) => (
+		<Combobox.Item
+			className={`relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs border-y py-[6px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none ${
+				dropTarget?.id === row.id
+					? dropTarget.placement === "before"
+						? "border-t-accent border-b-transparent"
+						: "border-t-transparent border-b-accent"
+					: "border-transparent"
+			} ${draggedId === row.id ? "opacity-50" : ""}`}
+			data-menu-option={row.id}
+			key={row.id}
+			onDragLeave={(event) => {
+				const nextTarget = event.relatedTarget as Node | null;
+				if (event.currentTarget.contains(nextTarget)) {
+					return;
+				}
+				if (dropTarget?.id === row.id) {
+					setDropTarget(null);
+				}
+			}}
+			onDragOver={(event) => handleDragOver(event, row)}
+			onDrop={(event) => handleDrop(event, row)}
+			value={row}
+		>
+			<RowContent
+				createLabel={createLabel}
+				deleteAriaLabel={deleteAriaLabel}
+				hideSelectedCheck={hideSelectedCheck}
+				leadingReorderHandle={leadingReorderHandle}
+				listReorderable={Boolean(onReorder)}
+				onDelete={onDelete}
+				onDragEnd={clearDragState}
+				onDragStart={(event) => handleDragStart(event, row)}
+				onReset={onReset}
+				onSave={onSave}
+				reorderAriaLabel={reorderAriaLabel}
+				reorderable={Boolean(onReorder) && row.reorderable}
+				resetAriaLabel={resetAriaLabel}
+				row={row}
+				saveAriaLabel={saveAriaLabel}
+			/>
+		</Combobox.Item>
+	);
+
 	return (
 		<div className={className ?? "w-full"}>
 			<Combobox.Root
@@ -254,7 +403,9 @@ export function CreatableCombobox({
 				filter={null}
 				inputValue={open ? query : (selectedRow?.label ?? "")}
 				isItemEqualToValue={(a: Row | null, b: Row | null) => a?.id === b?.id}
-				items={rows}
+				// Base UI auto-detects the grouped collection shape (`{ value, items }[]`)
+				// from the nested `items` key; the leaf type is the same `Row` either way.
+				items={grouped ? rowGroups : rows}
 				itemToStringLabel={(row: Row) => row.label}
 				onInputValueChange={setQuery}
 				onOpenChange={(next) => {
@@ -302,49 +453,51 @@ export function CreatableCombobox({
 							{emptyLabel}
 						</Combobox.Empty>
 						<Combobox.List className="outline-none">
-							{(row: Row) => (
-								<Combobox.Item
-									className={`relative z-raised mx-1 flex cursor-pointer select-none items-center gap-1.5 rounded-xs border-y py-[6px] ps-2.5 pe-1.5 text-body text-foreground leading-normal outline-none ${
-										dropTarget?.id === row.id
-											? dropTarget.placement === "before"
-												? "border-t-accent border-b-transparent"
-												: "border-t-transparent border-b-accent"
-											: "border-transparent"
-									} ${draggedId === row.id ? "opacity-50" : ""}`}
-									data-menu-option={row.id}
-									key={row.id}
-									onDragLeave={(event) => {
-										const nextTarget = event.relatedTarget as Node | null;
-										if (event.currentTarget.contains(nextTarget)) {
-											return;
-										}
-										if (dropTarget?.id === row.id) {
-											setDropTarget(null);
-										}
-									}}
-									onDragOver={(event) => handleDragOver(event, row)}
-									onDrop={(event) => handleDrop(event, row)}
-									value={row}
-								>
-									<RowContent
-										createLabel={createLabel}
-										deleteAriaLabel={deleteAriaLabel}
-										hideSelectedCheck={hideSelectedCheck}
-										leadingReorderHandle={leadingReorderHandle}
-										onDelete={onDelete}
-										onDragEnd={clearDragState}
-										onDragStart={(event) => handleDragStart(event, row)}
-										onReset={onReset}
-										onSave={onSave}
-										reorderAriaLabel={reorderAriaLabel}
-										reorderable={Boolean(onReorder)}
-										resetAriaLabel={resetAriaLabel}
-										row={row}
-										saveAriaLabel={saveAriaLabel}
-									/>
-								</Combobox.Item>
-							)}
+							{grouped
+								? (group: RowGroup) => (
+										<Combobox.Group
+											className="flex flex-col"
+											items={group.items}
+											key={group.value}
+										>
+											{group.label ? (
+												<GroupHeader label={group.label} level={popupLevel} />
+											) : null}
+											{group.items.map((row) => renderRow(row))}
+										</Combobox.Group>
+									)
+								: (row: Row) => renderRow(row)}
 						</Combobox.List>
+						{footerAction ? (
+							// Outside `Combobox.List` on purpose: it is an ACTION, not a
+							// selectable value, so it must not be filtered away by the typed
+							// query or reachable as a selection.
+							//
+							// `sticky` rather than a flex footer: the POPUP is the scroll
+							// container (the highlight layer measures against it), so a
+							// plain sibling scrolled out of sight the moment the list was
+							// longer than the 14rem cap — which is exactly when "is there a
+							// way to add one?" gets asked. Sticky keeps the popup as the
+							// scroller and still pins the row. The opaque fill is required:
+							// rows scroll UNDER it. `-mb-1` eats the popup's own py-1 so it
+							// sits flush on the bottom edge.
+							<button
+								className={`sticky bottom-0 z-raised -mb-1 mt-1 flex w-full items-center gap-1.5 border-divider border-t px-2 py-2 text-left text-body-sm text-foreground-secondary transition-colors hover:text-foreground ${surfaceBg(popupLevel)}`}
+								onClick={() => {
+									setOpen(false);
+									footerAction.onSelect();
+								}}
+								type="button"
+							>
+								<HugeiconsIcon
+									aria-hidden="true"
+									className="shrink-0"
+									icon={PlusSignIcon}
+									size={13}
+								/>
+								{footerAction.label}
+							</button>
+						) : null}
 					</Combobox.Popup>
 				</ComboboxPopupShell>
 			</Combobox.Root>
@@ -357,6 +510,7 @@ function RowContent({
 	deleteAriaLabel,
 	hideSelectedCheck,
 	leadingReorderHandle,
+	listReorderable,
 	onDelete,
 	onDragEnd,
 	onDragStart,
@@ -372,6 +526,9 @@ function RowContent({
 	deleteAriaLabel?: string | undefined;
 	hideSelectedCheck: boolean;
 	leadingReorderHandle: boolean;
+	/** Reordering is wired for the LIST — used to keep a fixed row's leading
+	 *  column the same width as a draggable one. */
+	listReorderable: boolean;
 	onDelete?: ((id: string) => void) | undefined;
 	onDragEnd: () => void;
 	onDragStart: (event: DragEvent<HTMLElement>) => void;
@@ -428,6 +585,11 @@ function RowContent({
 				<StopBubble className="flex shrink-0 items-center">
 					{reorderHandle}
 				</StopBubble>
+			) : leadingReorderHandle && hideSelectedCheck && listReorderable ? (
+				// A row that cannot be dragged in a list where others can (a fixed
+				// entry among the user's own) still has to occupy the handle's width,
+				// or the two kinds of row sit on different left edges.
+				<span aria-hidden="true" className="size-7 shrink-0" />
 			) : hideSelectedCheck ? null : (
 				<span className="flex w-3 shrink-0 items-center justify-center">
 					<Combobox.ItemIndicator>

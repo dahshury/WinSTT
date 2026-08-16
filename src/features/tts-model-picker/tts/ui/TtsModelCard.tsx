@@ -1,12 +1,13 @@
 "use client";
 
 import {
+	BracketsIcon,
 	Copy01Icon,
 	GlobeIcon,
 	MagicWand01Icon,
 	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import type { TtsModelInfo, TtsModelState } from "@/entities/tts-catalog";
@@ -16,14 +17,14 @@ import { downloadSizeMetaEntry } from "@/shared/ui/model-picker/core/model-card/
 import type { MetaEntry } from "@/shared/ui/model-picker/core/model-card/CardMeta";
 import { ModelCard } from "@/shared/ui/model-picker/core/model-card/ModelCard";
 import {
-	type QuantDownloadAction,
-	type QuantDownloadSnapshot,
+	type QuantDownloadCallbacks,
 	QuantShelf,
 	type QuantShelfEntry,
 } from "@/shared/ui/model-picker/core/model-card/QuantShelf";
 import { resolveQuantDownloadState } from "@/shared/ui/model-picker/core/model-card/quant-shelf-state";
 import {
 	cloningLabel,
+	inlineTagsLabel,
 	ttsLanguageMeta,
 	voiceDesignLabel,
 } from "@/entities/tts-catalog";
@@ -112,37 +113,11 @@ function getTtsQuantOptions(model: TtsModelInfo): TtsQuantOption[] {
 		);
 }
 
-interface PrecisionGroupProps {
+interface PrecisionGroupProps
+	extends Omit<QuantDownloadCallbacks, "canDeleteQuant"> {
 	currentQuantization: string;
-	getDownloadSnapshot?:
-		| ((
-				modelId: string,
-				quantization: string,
-		  ) => QuantDownloadSnapshot | undefined)
-		| undefined;
-	/** Suggested per-quant gating: the fitting quant set for this model
-	 *  (`null` = no verdict → no gating). Only passed while the Suggested
-	 *  filter is ON; badges outside the set render disabled/greyed. */
-	getFittingQuants?:
-		| ((modelId: string) => ReadonlySet<string> | null)
-		| undefined;
 	isSelectedModel: boolean;
 	model: TtsModelInfo;
-	onDownloadAction?:
-		| ((
-				action: QuantDownloadAction,
-				modelId: string,
-				quantization: string,
-		  ) => void)
-		| undefined;
-	onRequestDeleteQuant?:
-		| ((
-				modelId: string,
-				quantization: string,
-				displayName: string,
-				quantLabel: string,
-		  ) => void)
-		| undefined;
 	onSelect: (modelId: string, quantization: string) => void;
 	state: TtsModelState | undefined;
 }
@@ -300,79 +275,47 @@ function buildMetaEntries(
 	return entries;
 }
 
-/** The voice-cloning capability chip, rendered into `ModelCard.badges` when the
- *  model supports cloning. `null` for `cloning: 'none'`. */
-function CloningChip({ model }: { model: TtsModelInfo }): ReactNode {
-	const cloning = cloningLabel(model.cloning);
-	if (!cloning) {
-		return null;
-	}
+/**
+ * One voice-capability chip in `ModelCard.badges` — the single pill definition
+ * the cloning / voice-design / inline-tag badges all share, so the three read as
+ * one family and only the glyph tells them apart.
+ *
+ * `iconOnly` keeps the label available to screen readers while spending only a
+ * glyph's width: badges sit on the SAME single `overflow-hidden` line as the
+ * meta strip (see `ModelCard`'s IdentityColumn), so every character a chip
+ * spends is a character clipped off "54 voices · Multilingual (23) · 566 MB".
+ * Chatterbox Turbo carries two chips at once, which is why the third capability
+ * is the one that goes icon-only.
+ */
+function CapabilityChip({
+	icon,
+	iconOnly = false,
+	label,
+	tooltip,
+}: {
+	icon: IconSvgElement;
+	iconOnly?: boolean;
+	label: string;
+	tooltip: string;
+}): ReactNode {
 	return (
-		<Tooltip content={cloning.tooltip} side="top">
+		<Tooltip content={tooltip} side="top">
 			<span className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 font-medium text-[10px] text-accent">
-				<HugeiconsIcon className="size-3" icon={Copy01Icon} />
-				{cloning.label}
+				<HugeiconsIcon className="size-3" icon={icon} />
+				{iconOnly ? <span className="sr-only">{label}</span> : label}
 			</span>
 		</Tooltip>
 	);
 }
 
-/** The voice-design capability chip, rendered into `ModelCard.badges` when the
- *  model is a voice-design model (Qwen3-TTS-VoiceDesign). Styled identically to
- *  {@link CloningChip} — same accent pill — but with a distinct wand glyph so the
- *  two capabilities read apart at a glance. `null` unless `model.voiceDesign`. */
-function VoiceDesignChip({ model }: { model: TtsModelInfo }): ReactNode {
-	if (!model.voiceDesign) {
-		return null;
-	}
-	const design = voiceDesignLabel();
-	return (
-		<Tooltip content={design.tooltip} side="top">
-			<span className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 font-medium text-[10px] text-accent">
-				<HugeiconsIcon className="size-3" icon={MagicWand01Icon} />
-				{design.label}
-			</span>
-		</Tooltip>
-	);
-}
-
-export interface TtsModelCardProps {
+export interface TtsModelCardProps
+	extends Omit<QuantDownloadCallbacks, "canDeleteQuant"> {
 	/** Currently-effective precision for the selected model — drives the active
 	 *  precision badge highlight. */
 	currentQuantization: string;
-	/** Lookup for the active download snapshot per (modelId, quant). `undefined`
-	 *  return = no active download for that variant. */
-	getDownloadSnapshot?:
-		| ((
-				modelId: string,
-				quantization: string,
-		  ) => QuantDownloadSnapshot | undefined)
-		| undefined;
-	/** Suggested per-quant gating (only while the flag is ON): the fitting
-	 *  quant set per model id, `null` = no verdict for that model. */
-	getFittingQuants?:
-		| ((modelId: string) => ReadonlySet<string> | null)
-		| undefined;
 	/** Whether `model.id` is currently starred — drives the favorite toggle. */
 	isFavorite?: ((modelId: string) => boolean) | undefined;
 	model: TtsModelInfo;
-	/** Single dispatch for the four per-quant download actions. */
-	onDownloadAction?:
-		| ((
-				action: QuantDownloadAction,
-				modelId: string,
-				quantization: string,
-		  ) => void)
-		| undefined;
-	/** Trash-icon handler — when omitted, no delete control is rendered. */
-	onRequestDeleteQuant?:
-		| ((
-				modelId: string,
-				quantization: string,
-				displayName: string,
-				quantLabel: string,
-		  ) => void)
-		| undefined;
 	onSelect: (modelId: string, quantization?: string) => void;
 	/** Star / unstar handler. When omitted, no favorite toggle is rendered. */
 	onToggleFavorite?: ((modelId: string) => void) | undefined;
@@ -384,8 +327,9 @@ export interface TtsModelCardProps {
  * The TTS adapter over the universal {@link ModelCard} — the exact same shape
  * as `SttModelCard`: meta line = voices + languages + size, the perf module =
  * quality + speed bars, the quant precision controls drop into the recessed
- * `shelf` (the shared {@link QuantShelf}), and the voice-cloning capability
- * rides in `badges`.
+ * `shelf` (the shared {@link QuantShelf}), and the voice capabilities — cloning
+ * (clip vs clip + transcript), voice design, inline paralinguistic tags — ride
+ * in `badges`.
  */
 export function TtsModelCard({
 	model,
@@ -400,6 +344,7 @@ export function TtsModelCard({
 	isFavorite,
 	onToggleFavorite,
 }: TtsModelCardProps) {
+	const t = useTranslations("modelPicker");
 	const isSelected = model.id === selectedId;
 	const isUnavailable = model.available === false;
 	const downloadSizeBytes = resolveTtsDownloadSizeBytes({
@@ -410,16 +355,41 @@ export function TtsModelCard({
 	});
 	const bytes = formatBytes(downloadSizeBytes ?? 0);
 	const metaEntries = buildMetaEntries(model, bytes);
-	// Both capability chips ride in `badges` (the ModelCard wraps them in its
-	// wrapping pill container). A model can in principle advertise more than one;
-	// pass `undefined` only when it advertises none so the container stays hidden.
-	const hasBadges = model.cloning !== "none" || model.voiceDesign;
-	const capabilityBadges = hasBadges ? (
-		<>
-			<CloningChip model={model} />
-			<VoiceDesignChip model={model} />
-		</>
-	) : undefined;
+	// The three voice capabilities ride in `badges`. Each builder returns `null`
+	// when the row doesn't advertise it, and the container itself stays hidden
+	// (`undefined`) when the model advertises none — so a plain preset-voice model
+	// keeps the identical footprint. Cloning distinguishes its two tiers by LABEL
+	// (clip vs clip + transcript) because that changes what the user must supply.
+	const cloning = cloningLabel(model, t);
+	const inlineTags = inlineTagsLabel(model, t);
+	const design = model.voiceDesign ? voiceDesignLabel(t) : null;
+	const capabilityBadges =
+		cloning || design || inlineTags ? (
+			<>
+				{cloning ? (
+					<CapabilityChip
+						icon={Copy01Icon}
+						label={cloning.label}
+						tooltip={cloning.tooltip}
+					/>
+				) : null}
+				{design ? (
+					<CapabilityChip
+						icon={MagicWand01Icon}
+						label={design.label}
+						tooltip={design.tooltip}
+					/>
+				) : null}
+				{inlineTags ? (
+					<CapabilityChip
+						icon={BracketsIcon}
+						iconOnly
+						label={inlineTags.label}
+						tooltip={inlineTags.tooltip}
+					/>
+				) : null}
+			</>
+		) : undefined;
 	return (
 		<ModelCard
 			badges={capabilityBadges}

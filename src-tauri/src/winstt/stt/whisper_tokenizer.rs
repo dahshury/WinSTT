@@ -50,7 +50,38 @@ pub struct WhisperTokenizer {
     /// True iff the export is multilingual (`<|fr|>` present). `.en` exports are false
     /// and MUST NOT have a language token written into prompt position 1.
     pub is_multilingual: bool,
+
+    /// CrisperWhisper 2.0 verbatim-mode prompt prefix: `[verbatim_1]..[verbatim_5]` ids in
+    /// order, emitted BEFORE `<|startoftranscript|>` (the training-time prompt layout is
+    /// `{mode_tags} {<htx> hotwords <ehtx>?} <|startoftranscript|>...`). Empty on every
+    /// other Whisper export.
+    pub crisper_verbatim_prefix: Vec<i64>,
+    /// CrisperWhisper 2.0 hotword-block markers `(<htx>, <ehtx>)`; hotword text between
+    /// them replaces `<|startofprev|>` biasing on that model.
+    pub crisper_hotword_markers: Option<(i64, i64)>,
+    /// Every CrisperWhisper 2.0 prompt-control token id ([verbatim_N]/[intended_N] +
+    /// <vtx>/<evtx>/<ctx>/<ectx>/<htx>/<ehtx>): skipped during text decode exactly like
+    /// the `<|...|>` specials (they are prompt machinery, never transcript text). The
+    /// verbatim EVENT tokens ([UM], [laughter], ...) are NOT here — they decode literally.
+    crisper_marker_ids: std::collections::HashSet<i64>,
 }
+
+/// CrisperWhisper 2.0 prompt-marker token strings (mode tags + block markers).
+const CRISPER_MODE_TAGS_VERBATIM: [&str; 5] = [
+    "[verbatim_1]",
+    "[verbatim_2]",
+    "[verbatim_3]",
+    "[verbatim_4]",
+    "[verbatim_5]",
+];
+const CRISPER_MODE_TAGS_INTENDED: [&str; 5] = [
+    "[intended_1]",
+    "[intended_2]",
+    "[intended_3]",
+    "[intended_4]",
+    "[intended_5]",
+];
+const CRISPER_BLOCK_MARKERS: [&str; 6] = ["<vtx>", "<evtx>", "<ctx>", "<ectx>", "<htx>", "<ehtx>"];
 
 impl WhisperTokenizer {
     /// Load from the resolved file map. `vocab` is required; `added_tokens` is optional
@@ -99,6 +130,30 @@ impl WhisperTokenizer {
         let startofprev_id = tokens.get("<|startofprev|>").copied();
         let (byte_decoder, byte_encoder) = build_byte_maps();
 
+        // CrisperWhisper 2.0 detection: the verbatim prefix is usable only when ALL five
+        // tags are present (a partial set would build a prompt the model never saw).
+        let crisper_verbatim_prefix: Vec<i64> = {
+            let ids: Vec<i64> = CRISPER_MODE_TAGS_VERBATIM
+                .iter()
+                .filter_map(|t| tokens.get(*t).copied())
+                .collect();
+            if ids.len() == CRISPER_MODE_TAGS_VERBATIM.len() {
+                ids
+            } else {
+                Vec::new()
+            }
+        };
+        let crisper_hotword_markers = match (tokens.get("<htx>"), tokens.get("<ehtx>")) {
+            (Some(&s), Some(&e)) if !crisper_verbatim_prefix.is_empty() => Some((s, e)),
+            _ => None,
+        };
+        let crisper_marker_ids: std::collections::HashSet<i64> = CRISPER_MODE_TAGS_VERBATIM
+            .iter()
+            .chain(CRISPER_MODE_TAGS_INTENDED.iter())
+            .chain(CRISPER_BLOCK_MARKERS.iter())
+            .filter_map(|t| tokens.get(*t).copied())
+            .collect();
+
         Ok(Self {
             tokens,
             vocab,
@@ -114,7 +169,28 @@ impl WhisperTokenizer {
             timestamp_begin_id,
             timestamp_step_s: 0.02,
             is_multilingual,
+            crisper_verbatim_prefix,
+            crisper_hotword_markers,
+            crisper_marker_ids,
         })
+    }
+
+    /// Build the CrisperWhisper 2.0 hotword block `[<htx>, *encoded, <ehtx>]` (the model's
+    /// trained vocabulary-biasing channel — used INSTEAD of `<|startofprev|>` there). Empty
+    /// when the export has no hotword markers or the text encodes to nothing.
+    pub fn crisper_hotword_block(&self, text: &str) -> Vec<i64> {
+        let Some((start, end)) = self.crisper_hotword_markers else {
+            return Vec::new();
+        };
+        let encoded = self.encode_prompt(text);
+        if encoded.is_empty() {
+            return Vec::new();
+        }
+        let mut block = Vec::with_capacity(encoded.len() + 2);
+        block.push(start);
+        block.extend(encoded);
+        block.push(end);
+        block
     }
 
     /// Encode free-form prompt text into Whisper token ids via a deliberately APPROXIMATE
@@ -190,9 +266,11 @@ impl WhisperTokenizer {
         self.tokens.get(&format!("<|{lang}|>")).copied()
     }
 
-    /// True if `id` is a special `<|...|>` marker token (skipped in text decode).
+    /// True if `id` is a special `<|...|>` marker token OR a CrisperWhisper 2.0 prompt
+    /// marker (both skipped in text decode).
     pub fn is_special(&self, id: i64) -> bool {
-        self.vocab.get(&id).is_some_and(|t| t.starts_with("<|"))
+        self.crisper_marker_ids.contains(&id)
+            || self.vocab.get(&id).is_some_and(|t| t.starts_with("<|"))
     }
 
     /// Decode token ids → text, skipping `<|...|>` markers and stripping ONE leading
@@ -215,9 +293,15 @@ impl WhisperTokenizer {
     }
 
     /// Concatenate the byte-unicode strings of every non-special, present token id.
+    /// CrisperWhisper 2.0 prompt markers ([verbatim_N], <htx>, ...) are skipped like the
+    /// `<|...|>` specials; its verbatim EVENT tokens ([UM], [laughter], ...) pass through
+    /// and decode to their literal bracketed text — that IS the verbatim transcript format.
     fn collect_byte_chars(&self, ids: &[i64]) -> String {
         let mut s = String::new();
         for &id in ids {
+            if self.crisper_marker_ids.contains(&id) {
+                continue;
+            }
             if let Some(tok) = self.vocab.get(&id)
                 && !tok.starts_with("<|")
             {
@@ -253,7 +337,10 @@ impl WhisperTokenizer {
         let mut i = 0usize;
         while i < tokens.len() {
             let tok = tokens[i];
-            if tok < begin_id {
+            // CrisperWhisper 2.0 prompt markers sit ABOVE the timestamp range
+            // (51880+ > <|0.00|>=50364) — without this guard the mode tags in the
+            // prompt would parse as ~30 s phantom timestamps.
+            if tok < begin_id || self.crisper_marker_ids.contains(&tok) {
                 i += 1;
                 continue;
             }
@@ -430,5 +517,81 @@ mod tests {
         let tk = WhisperTokenizer::from_tokens(tiny_vocab()).unwrap();
         // tiny_vocab has no <|startofprev|> → no prefix even with text.
         assert!(tk.initial_prompt_prefix("hello").is_empty());
+    }
+
+    /// tiny_vocab + the CrisperWhisper 2.0 marker/event token set (real ids).
+    fn crisper_vocab() -> HashMap<String, i64> {
+        let mut m = tiny_vocab();
+        for (i, t) in [
+            "[verbatim_1]",
+            "[verbatim_2]",
+            "[verbatim_3]",
+            "[verbatim_4]",
+            "[verbatim_5]",
+            "[intended_1]",
+            "[intended_2]",
+            "[intended_3]",
+            "[intended_4]",
+            "[intended_5]",
+        ]
+        .iter()
+        .enumerate()
+        {
+            m.insert((*t).into(), 51880 + i as i64);
+        }
+        m.insert("<vtx>".into(), 51890);
+        m.insert("<evtx>".into(), 51891);
+        m.insert("<ctx>".into(), 51892);
+        m.insert("<ectx>".into(), 51893);
+        m.insert("<htx>".into(), 51894);
+        m.insert("<ehtx>".into(), 51895);
+        m.insert("[UM]".into(), 51865);
+        m.insert("[laughter]".into(), 51867);
+        m
+    }
+
+    #[test]
+    fn crisper_markers_detected_and_ordered() {
+        let tk = WhisperTokenizer::from_tokens(crisper_vocab()).unwrap();
+        assert_eq!(
+            tk.crisper_verbatim_prefix,
+            vec![51880, 51881, 51882, 51883, 51884]
+        );
+        assert_eq!(tk.crisper_hotword_markers, Some((51894, 51895)));
+        // Plain exports never grow a prefix.
+        let plain = WhisperTokenizer::from_tokens(tiny_vocab()).unwrap();
+        assert!(plain.crisper_verbatim_prefix.is_empty());
+        assert!(plain.crisper_hotword_markers.is_none());
+    }
+
+    #[test]
+    fn crisper_partial_tag_set_is_not_a_prefix() {
+        let mut m = tiny_vocab();
+        m.insert("[verbatim_1]".into(), 51880); // 2..5 missing
+        let tk = WhisperTokenizer::from_tokens(m).unwrap();
+        assert!(tk.crisper_verbatim_prefix.is_empty());
+    }
+
+    #[test]
+    fn crisper_decode_skips_markers_but_keeps_event_tokens() {
+        let tk = WhisperTokenizer::from_tokens(crisper_vocab()).unwrap();
+        // [verbatim_1] sot "Ġhi" [UM] [laughter] <htx> eot
+        let ids = [51880, 50258, 100, 51865, 51867, 51894, 50257];
+        assert_eq!(tk.decode_text(&ids), "hi[UM][laughter]");
+        assert!(tk.is_special(51880));
+        assert!(tk.is_special(51894));
+        assert!(!tk.is_special(51865)); // [UM] is transcript text, not prompt machinery
+    }
+
+    #[test]
+    fn crisper_hotword_block_wraps_encoded_text() {
+        let mut m = crisper_vocab();
+        m.insert("Ġthere".into(), 200);
+        let tk = WhisperTokenizer::from_tokens(m).unwrap();
+        assert_eq!(tk.crisper_hotword_block("there"), vec![51894, 200, 51895]);
+        assert!(tk.crisper_hotword_block("").is_empty());
+        // Non-crisper exports have no hotword channel.
+        let plain = WhisperTokenizer::from_tokens(tiny_vocab()).unwrap();
+        assert!(plain.crisper_hotword_block("there").is_empty());
     }
 }

@@ -66,6 +66,9 @@ mock.module("@/shared/api/ipc-client", () => ({
 }));
 
 const { IntlProvider } = await import("@/app/providers/IntlProvider");
+const { useModeTransitionStore } = await import(
+	"@/features/recording-mode-transition"
+);
 const { DEFAULT_SETTINGS, useSettingsStore } = await import(
 	"@/entities/setting"
 );
@@ -149,11 +152,23 @@ function wakeWordComboboxTrigger(): HTMLElement {
 	return trigger;
 }
 
+const IDLE_MODE_TRANSITION = {
+	error: null,
+	from: "ptt",
+	generation: 0,
+	phase: "idle",
+	to: "ptt",
+} as const;
+
 beforeEach(() => {
 	setWakewordStatus({ available: false, downloading: false });
 	wakewordDownloadCalls = { cancel: 0, pause: 0, resume: 0, start: 0 };
 	settingsSaveCalls.length = 0;
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+	useModeTransitionStore.setState({
+		isPreparing: false,
+		transition: IDLE_MODE_TRANSITION,
+	});
 });
 
 afterEach(() => {
@@ -211,6 +226,40 @@ describe("RecordingSettingsPanel", () => {
 		);
 		expect(settingsSaveCalls.at(-1)?.general?.recordingMode).toBe("ptt");
 		expect(settingsSaveCalls.at(-1)?.general?.recordingSound).toBe(true);
+	});
+
+	test("locks the mode switcher while the new mode's model is still loading", async () => {
+		seedListenMode(true);
+		renderPanel();
+		await flushWakewordStatus();
+
+		act(() => {
+			useModeTransitionStore.setState({
+				isPreparing: true,
+				transition: {
+					error: null,
+					from: "listen",
+					generation: 1,
+					phase: "preparing",
+					to: "ptt",
+				},
+			});
+		});
+
+		const savesBefore = settingsSaveCalls.length;
+		fireEvent.click(screen.getByRole("button", { name: "Push to Talk" }));
+
+		// Still on listen: the click must not queue a second switch behind the
+		// load that is already in flight.
+		expect(useSettingsStore.getState().settings.general.recordingMode).toBe(
+			"listen",
+		);
+		expect(settingsSaveCalls.length).toBe(savesBefore);
+		expect(
+			screen
+				.getByRole("button", { name: "Push to Talk" })
+				.hasAttribute("disabled"),
+		).toBe(true);
 	});
 
 	test("downloads wake-word files before enabling Wake Word mode", async () => {

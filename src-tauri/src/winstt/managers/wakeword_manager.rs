@@ -61,6 +61,26 @@ pub(super) const LEGACY_PORCUPINE_WHEEL_SHA256: &str =
     "8f4e95c966f72258b417743e13e8c571d2fb79cdf2fe59571e6766638787481d";
 pub(super) const WAKEWORD_MODEL_STATUS_EVENT: &str = "wakeword:model-status";
 pub(super) const DOWNLOAD_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+const DEFAULT_WAKE_TIMEOUT_SECONDS: f32 = 5.0;
+const DEFAULT_WAKE_SENSITIVITY: f32 = 0.6;
+const MIN_WAKE_TIMEOUT_SECONDS: f32 = 1.0;
+const MAX_WAKE_TIMEOUT_SECONDS: f32 = 30.0;
+
+fn sanitize_wake_timeout(seconds: f32) -> f32 {
+    if seconds.is_finite() {
+        seconds.clamp(MIN_WAKE_TIMEOUT_SECONDS, MAX_WAKE_TIMEOUT_SECONDS)
+    } else {
+        DEFAULT_WAKE_TIMEOUT_SECONDS
+    }
+}
+
+fn sanitize_wake_sensitivity(sensitivity: f32) -> f32 {
+    if sensitivity.is_finite() {
+        sensitivity.clamp(0.0, 1.0)
+    } else {
+        DEFAULT_WAKE_SENSITIVITY
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -220,8 +240,8 @@ impl WakeWordManager {
             let mut s = self.state.lock().map_err(|_| "wakeword state poisoned")?;
             s.name = name.to_string();
             s.phrase = phrase;
-            s.sensitivity = sensitivity.clamp(0.0, 1.0);
-            s.timeout_seconds = timeout_seconds.max(0.0);
+            s.sensitivity = sanitize_wake_sensitivity(sensitivity);
+            s.timeout_seconds = sanitize_wake_timeout(timeout_seconds);
         }
         let result = self.rebuild_detector();
         emit_wakeword_model_status(&self.app, &self.model_status());
@@ -255,8 +275,8 @@ impl WakeWordManager {
             Ok(mut s) => {
                 s.name = general.wake_word;
                 s.phrase = phrase;
-                s.sensitivity = general.wake_word_sensitivity as f32;
-                s.timeout_seconds = general.wake_word_timeout as f32;
+                s.sensitivity = sanitize_wake_sensitivity(general.wake_word_sensitivity as f32);
+                s.timeout_seconds = sanitize_wake_timeout(general.wake_word_timeout as f32);
             }
             Err(_) => warn!("Wake-word state poisoned during status sync"),
         }
@@ -746,5 +766,30 @@ impl WakeWordManager {
         if let Ok(mut guard) = self.detector.lock() {
             *guard = detector;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wake_timeout_is_finite_and_bounded() {
+        assert_eq!(sanitize_wake_timeout(-10.0), MIN_WAKE_TIMEOUT_SECONDS);
+        assert_eq!(sanitize_wake_timeout(99.0), MAX_WAKE_TIMEOUT_SECONDS);
+        assert_eq!(
+            sanitize_wake_timeout(f32::NAN),
+            DEFAULT_WAKE_TIMEOUT_SECONDS
+        );
+    }
+
+    #[test]
+    fn wake_sensitivity_is_finite_and_bounded() {
+        assert_eq!(sanitize_wake_sensitivity(-1.0), 0.0);
+        assert_eq!(sanitize_wake_sensitivity(2.0), 1.0);
+        assert_eq!(
+            sanitize_wake_sensitivity(f32::NAN),
+            DEFAULT_WAKE_SENSITIVITY
+        );
     }
 }

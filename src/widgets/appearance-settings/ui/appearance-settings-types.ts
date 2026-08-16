@@ -3,7 +3,6 @@ import { type Locale, LOCALE_NAMES, LOCALES } from "@/shared/i18n";
 import type { SelectOption } from "@/shared/ui/select";
 
 export type { GeneralSettings, GeneralT } from "@/entities/setting";
-// ``UpdateFn`` is this widget's local name for the shared general update-fn.
 export type { UpdateGeneralFn as UpdateFn } from "@/entities/setting";
 
 // Country-code chip shown in the language picker — the ISO 3166-1 alpha-2

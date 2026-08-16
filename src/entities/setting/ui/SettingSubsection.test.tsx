@@ -61,6 +61,8 @@ describe("SettingSubsection", () => {
 		const contentParent = screen.getByTestId("content")
 			.parentElement as HTMLElement;
 		expect(contentParent.className).toContain("pointer-events-none");
+		expect(contentParent.hasAttribute("inert")).toBe(true);
+		expect(contentParent.getAttribute("aria-disabled")).toBe("true");
 	});
 
 	test("busy keeps the toggle ON but blocks interaction and inerts the body", () => {
@@ -80,5 +82,6 @@ describe("SettingSubsection", () => {
 		const contentParent = screen.getByTestId("content")
 			.parentElement as HTMLElement;
 		expect(contentParent.className).toContain("pointer-events-none");
+		expect(contentParent.hasAttribute("inert")).toBe(true);
 	});
 });

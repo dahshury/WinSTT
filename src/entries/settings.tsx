@@ -9,9 +9,11 @@ import { useGpuInfo } from "@/entities/connection";
 import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
 import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
+import { CloudKeyRevertNotice } from "@/features/revert-cloud-on-key-removal";
 import {
 	LlmConfigPersistErrorToast,
 	SmartEndpointDisabledNotice,
+	useAppProfileIndicator,
 } from "@/widgets/llm-settings";
 import { SettingsWarningToasts } from "@/features/surface-settings-warnings";
 import { useSyncActiveModel } from "@/features/sync-active-model";
@@ -60,6 +62,7 @@ export function SettingsBootstrap() {
 	useDownloadListener(); // per-quant download progress for the model tab
 	useConnectionListener(); // server/runtime status for the badges
 	useGpuInfo(); // GPU details for the model tab device/fit surfaces
+	useAppProfileIndicator(); // app-profile events are scoped to this webview's store
 	// Hydrate + live-sync transcription/transform history at the window root so
 	// the store stays current while the user is on other tabs and the History
 	// tab's stats read warm caches on every revisit (no per-visit refetch).
@@ -77,6 +80,7 @@ export function SettingsBootstrap() {
 			    window's process (settings-hydration + LLM-config/smart-endpoint),
 			    so they mount here alongside the page rather than inside it. */}
 			<SettingsWarningToasts />
+			<CloudKeyRevertNotice />
 			<LlmConfigPersistErrorToast />
 			<SmartEndpointDisabledNotice />
 		</>

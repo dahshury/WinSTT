@@ -699,6 +699,35 @@ CROSS_MAX = 1024  # fixed cross-attention key length (covers ~80 s post-8x-subsa
 # audio limit is 35 s and the app VADs to <=10 s, so real S_enc is far smaller).
 
 
+def inject_cross_bias_adds(g) -> int:
+    """Insert `Add(scores, cross_bias)` before every CROSS-attention Softmax; returns the count.
+
+    Discriminator: a SELF-attention Softmax is always fed by the `Add` that applies its causal/pad
+    mask (explicit causal mask pre-staticize, `attn_bias` after); a CROSS Softmax has no mask, so it
+    is fed directly by the scaled scores — `Mul(scores, scale)` in the onnx-community decomposition,
+    or the raw score `MatMul` in the Arabic torch export (scale folded into Q/K). So "NOT `Add`-fed"
+    robustly identifies cross Softmaxes across both layouts, before OR after `staticize_kv`.
+
+    The caller declares the `cross_bias` graph input (pinned `(1,1,1,cross_max)` for the bucketed
+    layout, dynamic `(1,1,1,enc_seq)` for bias-only) — the score tensor's last axis is the key
+    length in every layout, so the bias broadcasts correctly either way."""
+    producers = {o: n for n in g.node for o in n.output}
+    masked = 0
+    new_nodes = []
+    for n in g.node:
+        feeder = producers.get(n.input[0]) if n.op_type == "Softmax" else None
+        if feeder is not None and feeder.op_type != "Add":
+            biased = f"ds/cross/{masked}/biased"
+            new_nodes.append(helper.make_node("Add", [n.input[0], "cross_bias"], [biased]))
+            n.input[0] = biased
+            masked += 1
+        new_nodes.append(n)
+    if masked:
+        del g.node[:]
+        g.node.extend(new_nodes)
+    return masked
+
+
 def bucket_cross_kv(dec, enc_path: str, cross_max: int = CROSS_MAX) -> int:
     """Fuse the cross-attention on DirectML by giving it a FIXED key length.
 
@@ -730,34 +759,34 @@ def bucket_cross_kv(dec, enc_path: str, cross_max: int = CROSS_MAX) -> int:
     # transposed/auto-hoisted tensor) and SKIP — the caller falls back to static-self only (cross
     # stays dynamic; still ~4 ms/tok for the app's ≤10 s VAD segments, only long single clips regress).
     cross_ins = [i.name for i in g.input if i.name.startswith("cross_attn.")]
-    if any(".encoder.key" not in n and ".encoder.value" not in n for n in cross_ins):
-        print("  cross-bucket SKIPPED (non-uniform cross layout — static-self only)")
-        return 0
-    producers = {o: n for n in g.node for o in n.output}
+    # Non-uniform layout → BIAS-ONLY: the cross K/V can't be pinned to one bucket, but the
+    # `cross_bias` Add can still be injected (the score tensor's last axis is the key length in
+    # EVERY layout, so a (1,1,1,S_enc) bias broadcasts correctly). The decoder then declares a
+    # DYNAMIC `cross_bias` input the ENGINE computes per utterance from the real (pre-pad) audio
+    # length — without it the maskless cross-attention attends trailing pad/silence zeros and
+    # phrase-loops (re-emits one sentence until the token budget), and the engine must withhold
+    # the DirectML encoder pad bucket entirely (paying the per-utterance re-fuse tax).
+    bias_only = any(".encoder.key" not in n and ".encoder.value" not in n for n in cross_ins)
+    if bias_only:
+        print("  cross-bucket: non-uniform cross layout — injecting BIAS-ONLY dynamic cross_bias")
     past0 = next(i for i in g.input if i.name.startswith("past_key_values.") and ".decoder." in i.name)
     elem = past0.type.tensor_type.elem_type
     nh = past0.type.tensor_type.shape.dim[1].dim_value
     hd = past0.type.tensor_type.shape.dim[3].dim_value
 
-    # Inject cross_bias before every CROSS-attention Softmax. Discriminator: a SELF-attention Softmax
-    # is always fed by the `Add` that applies its causal/pad mask; a CROSS Softmax has no mask, so it
-    # is fed directly by the scaled scores — `Mul(scores, scale)` in the onnx-community decomposition,
-    # or the raw score `MatMul` in the Arabic torch export (scale folded into Q/K). So "NOT `Add`-fed"
-    # robustly identifies cross Softmaxes across both layouts.
-    masked = 0
-    new_nodes = []
-    for n in g.node:
-        feeder = producers.get(n.input[0]) if n.op_type == "Softmax" else None
-        if feeder is not None and feeder.op_type != "Add":
-            biased = f"ds/cross/{masked}/biased"
-            new_nodes.append(helper.make_node("Add", [n.input[0], "cross_bias"], [biased]))
-            n.input[0] = biased
-            masked += 1
-        new_nodes.append(n)
+    masked = inject_cross_bias_adds(g)
     if not masked:
         return 0
-    del g.node[:]
-    g.node.extend(new_nodes)
+
+    if bias_only:
+        # Dynamic-length bias input; no pinning, no encoder padding — the engine builds the bias
+        # host-side (0 over real-speech keys, -inf over pad) and binds it every decode step.
+        g.input.append(helper.make_tensor_value_info("cross_bias", elem, [1, 1, 1, "enc_seq"]))
+        del g.value_info[:]
+        if not any(e.key == "winstt_cross_bias" for e in dec.metadata_props):
+            e = dec.metadata_props.add()
+            e.key, e.value = "winstt_cross_bias", "dynamic"
+        return masked
 
     # pin cross inputs to the fixed bucket; add cross_bias input
     for vi in g.input:
@@ -899,13 +928,17 @@ def parity_check(orig_decoder: str, new_decoder: str, probe_path: str | None = N
                 if k in names:
                     if cross_bucket and k.startswith("cross_attn."):
                         cm = next(i for i in sess.get_inputs() if i.name == k).shape[2]
-                        senc = v.shape[2]
-                        pad = np.zeros((v.shape[0], v.shape[1], cm - senc, v.shape[3]), dtype=v.dtype)
-                        v = np.concatenate([v, pad], axis=2)
+                        # BIAS-ONLY graphs keep dynamic (unpinned) cross inputs — no padding there.
+                        if isinstance(cm, int):
+                            senc = v.shape[2]
+                            pad = np.zeros((v.shape[0], v.shape[1], cm - senc, v.shape[3]), dtype=v.dtype)
+                            v = np.concatenate([v, pad], axis=2)
                     feeds[k] = v.astype(dts[k])
         if cross_bucket:
             cm = next(i for i in sess.get_inputs() if i.name == "cross_bias").shape[3]
-            senc = next(v.shape[2] for k, v in (extra or {}).items() if k.startswith("cross_attn."))
+            if not isinstance(cm, int):  # bias-only: dynamic length = the encoder key length
+                cm = enc.shape[1]
+            senc = enc.shape[1]
             mdt = dts["cross_bias"]
             neg = np.float32(-3.4028234663852886e38) if mdt == np.float32 else np.float16(-65504.0)
             cb = np.full((1, 1, 1, cm), neg, dtype=mdt)

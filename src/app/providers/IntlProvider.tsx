@@ -4,12 +4,12 @@ import defaultMessages from "../../../messages/en.json";
 import { getSystemLocale } from "@/shared/api/ipc-client";
 import {
 	DEFAULT_LOCALE,
+	LOCALE_STORAGE_KEY,
 	loadMessages,
 	pickLocaleFromSystem,
 	useLocaleStore,
 } from "@/shared/i18n";
 
-const LOCALE_STORAGE_KEY = "winstt-locale";
 const DEFAULT_MESSAGE_BUNDLE = defaultMessages as Record<string, unknown>;
 
 export function IntlProvider({ children }: { children: ReactNode }) {

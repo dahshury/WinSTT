@@ -88,7 +88,7 @@ interface RealtimeModelSectionProps {
 	) => import("@/features/model-download").QuantDownloadState | undefined;
 	quality: QualitySettings | undefined;
 	sourceLanguageSelection: SourceLanguageSelection | undefined;
-	/** Language options for the realtime language picker (same list the main model uses). */
+	/** Language options from the effective realtime model's own catalog row. */
 	langOpts: SelectOption[];
 	/** Forced language for a multilingual realtime model (`""` = auto-detect). */
 	realtimeLanguage: string;
@@ -185,6 +185,7 @@ export function RealtimeModelSection({
 						tooltip={realtimeTooltip}
 					>
 						<SttModelSelector
+							compact
 							currentQuantization={currentQuantization}
 							disabled={selectorDisabled}
 							downloadProgress={downloadProgress}

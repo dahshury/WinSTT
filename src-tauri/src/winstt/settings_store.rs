@@ -34,7 +34,19 @@ pub const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
 pub(crate) const WINSTT_SETTINGS_FILE: &str = "winstt-settings.json";
 /// Renderer-facing sentinel substituted for any non-empty secret so the renderer
 /// can know a secret exists without receiving its plaintext.
+///
+/// The masked wire value is either the BARE sentinel or the sentinel plus
+/// `SECRET_HINT_SEPARATOR` plus a non-secret last-4 hint
+/// (`__WINSTT_SECRET_PRESENT__:4f2a`) so a saved row can render `sk-…****4f2a`.
+/// Keep in sync with the renderer's `shared/config/settings-schema/secrets.ts`.
 pub(crate) const SECRET_PRESENT_SENTINEL: &str = "__WINSTT_SECRET_PRESENT__";
+/// Separates the present-sentinel from its optional last-4 hint on the wire.
+const SECRET_HINT_SEPARATOR: char = ':';
+/// Shortest plaintext that may carry a last-4 hint. Below this the hint would be
+/// half the secret or more, so short keys get the BARE sentinel instead.
+const SECRET_HINT_MIN_CHARS: usize = 8;
+/// How many trailing CHARACTERS the hint reveals.
+const SECRET_HINT_CHARS: usize = 4;
 /// Renderer→backend sentinel that signals an EXPLICIT user clear of a stored
 /// secret. Distinct from an incidental empty string (which a pre-hydration or
 /// programmatic save can post before the renderer has loaded the masked
@@ -580,10 +592,47 @@ fn seal_unless_sealed(value: &str) -> Result<String, String> {
     try_encrypt_secret(value)
 }
 
-fn mask_secret_for_renderer(value: &mut String) {
-    if !value.is_empty() {
-        *value = SECRET_PRESENT_SENTINEL.to_string();
+/// True when `value` is a renderer-masked secret — the bare present-sentinel OR
+/// the sentinel carrying a last-4 hint. EVERY site that used to compare exactly
+/// against `SECRET_PRESENT_SENTINEL` must route through this: once the mask can
+/// carry a suffix, an equality test silently stops recognizing an echoed-back
+/// key (and `preserve_masked_secret` would then overwrite the real stored key
+/// with the mask string). Prefix semantics mirror the renderer's
+/// `isSecretPresent`, so both sides agree on what "present" looks like.
+pub(crate) fn is_masked_secret(value: &str) -> bool {
+    value.starts_with(SECRET_PRESENT_SENTINEL)
+}
+
+/// The last `SECRET_HINT_CHARS` CHARACTERS of `plaintext`, or `None` when the
+/// key is too short to spare them.
+///
+/// Counts by `chars()`, never bytes: a multibyte key sliced at `len() - 4` would
+/// land mid-codepoint and PANIC, and a byte-suffix could emit invalid UTF-8.
+fn secret_last4_hint(plaintext: &str) -> Option<String> {
+    let chars = plaintext.chars().count();
+    if chars < SECRET_HINT_MIN_CHARS {
+        return None;
     }
+    Some(plaintext.chars().skip(chars - SECRET_HINT_CHARS).collect())
+}
+
+fn mask_secret_for_renderer(value: &mut String) {
+    if value.is_empty() {
+        return;
+    }
+    // A value still in its `enc:v1:` envelope is CIPHERTEXT, not the key (the
+    // read path is tolerant of secrets it could not open — see
+    // `open_secrets_tolerant`). Its last 4 chars are not the key's last 4, so
+    // emit the bare sentinel rather than a hint the UI would render as truth.
+    let hint = if crate::winstt::commands::secret_storage::is_encrypted(value) {
+        None
+    } else {
+        secret_last4_hint(value)
+    };
+    *value = match hint {
+        Some(hint) => format!("{SECRET_PRESENT_SENTINEL}{SECRET_HINT_SEPARATOR}{hint}"),
+        None => SECRET_PRESENT_SENTINEL.to_string(),
+    };
 }
 
 pub(crate) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
@@ -592,7 +641,8 @@ pub(crate) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
 }
 
 /// Reconcile one incoming secret field against the stored one before sealing:
-///   * `SECRET_PRESENT_SENTINEL` (renderer echoing "a key exists") → keep stored.
+///   * a masked secret (renderer echoing "a key exists", WITH or WITHOUT its
+///     last-4 hint suffix) → keep stored.
 ///   * `SECRET_CLEAR_SENTINEL` (explicit user clear) → clear to empty.
 ///   * empty incoming with a stored key present → KEEP stored. An empty string is
 ///     ambiguous — a genuine clear looks identical to a pre-hydration / programmatic
@@ -601,7 +651,7 @@ pub(crate) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
 ///     DPAPI-sealed key (finding #41). A deliberate clear must post the sentinel.
 ///   * anything else (a freshly typed/pasted key) → use incoming.
 fn preserve_masked_secret(previous: &str, next: &mut String) {
-    if next == SECRET_PRESENT_SENTINEL {
+    if is_masked_secret(next) {
         *next = previous.to_string();
     } else if next == SECRET_CLEAR_SENTINEL {
         next.clear();
@@ -995,15 +1045,71 @@ mod tests {
     }
 
     #[test]
-    fn renderer_sanitization_masks_non_empty_secrets() {
+    fn renderer_sanitization_masks_non_empty_secrets_with_last4_hint() {
         let mut s = WinsttSettings::default();
         s.llm.openrouter_api_key = "sk-or-v1-secret".into();
         s.integrations.elevenlabs.api_key = "xi-el-secret".into();
 
         sanitize_settings_for_renderer(&mut s);
 
+        assert_eq!(
+            s.llm.openrouter_api_key,
+            format!("{SECRET_PRESENT_SENTINEL}:cret")
+        );
+        assert_eq!(
+            s.integrations.elevenlabs.api_key,
+            format!("{SECRET_PRESENT_SENTINEL}:cret")
+        );
+        assert!(is_masked_secret(&s.llm.openrouter_api_key));
+    }
+
+    #[test]
+    fn short_secret_is_masked_without_a_hint() {
+        // A hint on a <8-char key would reveal HALF the secret or more, so short
+        // keys fall back to the bare sentinel.
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "sk-1234".into(); // 7 chars
+        s.integrations.elevenlabs.api_key = "sk-12345".into(); // 8 chars — at the floor
+
+        sanitize_settings_for_renderer(&mut s);
+
         assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
-        assert_eq!(s.integrations.elevenlabs.api_key, SECRET_PRESENT_SENTINEL);
+        assert_eq!(
+            s.integrations.elevenlabs.api_key,
+            format!("{SECRET_PRESENT_SENTINEL}:2345")
+        );
+    }
+
+    #[test]
+    fn multibyte_secret_hint_does_not_split_a_codepoint() {
+        // Byte slicing (`&s[s.len() - 4..]`) would panic mid-codepoint here.
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "مفتاح-سري-طويل".into();
+        s.integrations.elevenlabs.api_key = "key-🔐🔑🗝️🧩".into();
+
+        sanitize_settings_for_renderer(&mut s);
+
+        let hint = s
+            .llm
+            .openrouter_api_key
+            .strip_prefix(SECRET_PRESENT_SENTINEL)
+            .and_then(|rest| rest.strip_prefix(':'))
+            .expect("long multibyte key carries a hint");
+        assert_eq!(hint.chars().count(), 4);
+        assert_eq!(hint, "طويل");
+        assert!(is_masked_secret(&s.integrations.elevenlabs.api_key));
+    }
+
+    #[test]
+    fn sealed_envelope_is_masked_without_a_hint() {
+        // The tolerant read path can hand the mask an UNOPENED `enc:v1:` envelope.
+        // Its last 4 chars are ciphertext, not the key — emit no hint at all.
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "enc:v1:deadbeefcafe".into();
+
+        sanitize_settings_for_renderer(&mut s);
+
+        assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
     }
 
     #[test]
@@ -1025,6 +1131,27 @@ mod tests {
         let mut next = previous.clone();
         next.llm.openrouter_api_key = SECRET_PRESENT_SENTINEL.into();
         next.integrations.elevenlabs.api_key = SECRET_PRESENT_SENTINEL.into();
+
+        preserve_masked_secrets(&previous, &mut next);
+
+        assert_eq!(next.llm.openrouter_api_key, "sk-or-v1-secret");
+        assert_eq!(next.integrations.elevenlabs.api_key, "xi-el-secret");
+    }
+
+    #[test]
+    fn hinted_masked_secret_patch_preserves_previous_plaintext_secret() {
+        // HIGHEST-RISK regression guard: the renderer round-trips the value it was
+        // handed, which now carries a `:last4` suffix. If `preserve_masked_secret`
+        // still compared for EQUALITY, saving any section that echoes the mask
+        // would overwrite the real DPAPI-sealed key with the mask string.
+        let mut previous = WinsttSettings::default();
+        previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
+
+        // Exactly what `sanitize_settings_for_renderer` handed the renderer.
+        let mut next = previous.clone();
+        sanitize_settings_for_renderer(&mut next);
+        assert!(next.llm.openrouter_api_key.ends_with(":cret"));
 
         preserve_masked_secrets(&previous, &mut next);
 

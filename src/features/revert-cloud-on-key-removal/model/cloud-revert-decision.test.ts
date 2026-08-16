@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
+import { SECRET_CLEAR_SENTINEL } from "@/shared/config/settings-schema";
 import {
 	affectedProviders,
 	clearableProviderLabel,
@@ -22,6 +23,7 @@ function surfaces(over: Partial<SurfaceSnapshot> = {}): SurfaceSnapshot {
 		model: "tiny",
 		dictationProvider: "ollama",
 		transformsProvider: "ollama",
+		ttsProvider: "elevenlabs",
 		ttsSource: "local",
 		...over,
 	};
@@ -76,6 +78,14 @@ describe("detectClearedKeys", () => {
 			keys({ elevenlabs: "  " }),
 		);
 		expect([...cleared]).toEqual(["elevenlabs"]);
+	});
+
+	test("the explicit clear sentinel counts as an empty next key", () => {
+		const cleared = detectClearedKeys(
+			keys({ openrouter: "sk-or" }),
+			keys({ openrouter: SECRET_CLEAR_SENTINEL }),
+		);
+		expect([...cleared]).toEqual(["openrouter"]);
 	});
 
 	test("detects several providers cleared at once", () => {
@@ -154,22 +164,29 @@ describe("affectedProviders", () => {
 	test("STT revert maps to the active model's provider", () => {
 		const set = affectedProviders(
 			plan({ stt: true }),
-			"openrouter:openai/whisper-1",
+			surfaces({ model: "openrouter:openai/whisper-1" }),
 		);
 		expect([...set]).toEqual(["openrouter"]);
 	});
 
 	test("LLM reverts map to openrouter", () => {
-		const set = affectedProviders(plan({ llmTransforms: true }), "tiny");
+		const set = affectedProviders(plan({ llmTransforms: true }), surfaces());
 		expect([...set]).toEqual(["openrouter"]);
 	});
 
 	test("elevenlabs STT + cloud TTS dedupe to a single notice", () => {
 		const set = affectedProviders(
 			plan({ stt: true, ttsCloud: true }),
-			"elevenlabs:scribe_v1",
+			surfaces({ model: "elevenlabs:scribe_v1" }),
 		);
 		expect([...set]).toEqual(["elevenlabs"]);
+	});
+
+	test("OpenRouter cloud TTS maps to OpenRouter", () => {
+		const current = surfaces({ ttsProvider: "openrouter", ttsSource: "cloud" });
+		const revertPlan = planReverts(new Set(["openrouter"]), current);
+		expect(revertPlan.ttsCloud).toBe(true);
+		expect([...affectedProviders(revertPlan, current)]).toEqual(["openrouter"]);
 	});
 });
 

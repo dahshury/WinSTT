@@ -292,7 +292,6 @@ impl HistoryManager {
         let recordings_dir = app_data_dir.join("recordings");
         let db_path = app_data_dir.join("history.db");
 
-        // Ensure recordings directory exists
         if !recordings_dir.exists() {
             fs::create_dir_all(&recordings_dir)?;
             debug!("Created recordings directory: {:?}", recordings_dir);
@@ -320,22 +319,17 @@ impl HistoryManager {
         // tauri-plugin-sql used _sqlx_migrations table, rusqlite_migration uses user_version pragma
         self.migrate_from_tauri_plugin_sql(&conn)?;
 
-        // Create migrations object and run to latest version
         let migrations = Migrations::new(MIGRATIONS.to_vec());
 
-        // Validate migrations in debug builds
         #[cfg(debug_assertions)]
         migrations.validate()?;
 
-        // Get current version before migration
         let version_before: i32 =
             conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         debug!("Database version before migration: {}", version_before);
 
-        // Apply any pending migrations
         migrations.to_latest(&mut conn)?;
 
-        // Get version after migration
         let version_after: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
         if version_after > version_before {
@@ -355,7 +349,6 @@ impl HistoryManager {
     /// SQLite's user_version pragma. This function checks if the old system was in use
     /// and sets the user_version accordingly so migrations don't re-run.
     fn migrate_from_tauri_plugin_sql(&self, conn: &Connection) -> Result<()> {
-        // Check if the old _sqlx_migrations table exists
         let has_sqlx_migrations: bool = conn
             .query_row(
                 "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
@@ -368,7 +361,6 @@ impl HistoryManager {
             return Ok(());
         }
 
-        // Check current user_version
         let current_version: i32 =
             conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
@@ -377,7 +369,6 @@ impl HistoryManager {
             return Ok(());
         }
 
-        // Get the highest version from the old migrations table
         let old_version: i32 = conn
             .query_row(
                 "SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success = 1",
@@ -392,11 +383,7 @@ impl HistoryManager {
                 old_version
             );
 
-            // Set user_version to match the old migration state
             conn.pragma_update(None, "user_version", old_version)?;
-
-            // Optionally drop the old migrations table (keeping it doesn't hurt)
-            // conn.execute("DROP TABLE IF EXISTS _sqlx_migrations", [])?;
 
             info!(
                 "Migration tracking converted: user_version set to {}",

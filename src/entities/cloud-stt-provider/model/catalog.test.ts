@@ -113,6 +113,26 @@ describe("getApiKeyUrl", () => {
 	test("openrouter routes to the openrouter.ai keys page", () => {
 		expect(getApiKeyUrl("openrouter")).toBe("https://openrouter.ai/keys");
 	});
+
+	test("every cloud provider gets a distinct https console URL", () => {
+		// Totality: the switch has no default arm, so a provider added to the
+		// union without a URL is a compile error — this pins the runtime half
+		// (no empty string, no accidental duplicate) as the "Get a key" link on
+		// each provider card is built straight from this.
+		const urls = CLOUD_PROVIDERS.map(getApiKeyUrl);
+		for (const url of urls) {
+			expect(url.startsWith("https://")).toBe(true);
+		}
+		expect(new Set(urls).size).toBe(CLOUD_PROVIDERS.length);
+	});
+
+	test("the URL points at the provider's own domain", () => {
+		// Cheap guard against a copy-paste swap between the two arms — a "Get a
+		// key" link that opens the wrong vendor's console is a silent dead end.
+		for (const provider of CLOUD_PROVIDERS) {
+			expect(new URL(getApiKeyUrl(provider)).hostname).toContain(provider);
+		}
+	});
 });
 
 describe("providerDisplayName", () => {

@@ -187,11 +187,6 @@ pub fn set_selected_output_device(app: AppHandle, device_name: String) -> Result
         Some(device_name)
     };
     write_settings(&app, settings);
-
-    let rm = app.state::<Arc<AudioRecordingManager>>();
-    rm.update_selected_device()
-        .map_err(|e| format!("Failed to update selected device: {}", e))?;
-
     Ok(())
 }
 

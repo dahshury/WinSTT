@@ -25,6 +25,26 @@
 	--icon-swap-ease: ease-in-out;
 	--resize-dur: 240ms;
 	--resize-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	/* Drag-to-reorder (shared/ui/data-grid/primitives/sortable.tsx). Siblings
+	   glide out of the way and the drop plays a FLIP on the moderate tier; the
+	   grabbed card lifts by --drag-lift-scale with a shadow underneath it. */
+	--drag-dur: 160ms;
+	--drag-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--drag-lift-scale: 1.02;
+}
+
+/* The lift lives INSIDE the drag transform (`translate3d(…) scale(var(--drag-lift))`)
+   rather than in the `scale` property, because dnd-kit measures rows with
+   `ignoreTransform` — it only knows how to undo `transform`, so anything that
+   displaces a row has to go through that one property or its collision rects go
+   stale. Registering the variable lets the scale be *transitioned* on its own
+   clock while `transform` itself stays untransitioned, so the grabbed card keeps
+   tracking the pointer with zero easing (easing between hand and card reads as
+   lag). Chromium can only interpolate a custom property that declares a type. */
+@property --drag-lift {
+	syntax: "<number>";
+	inherits: false;
+	initial-value: 1;
 }
 
 /* ── Theme: design tokens → Tailwind utilities ── */
@@ -150,6 +170,25 @@
 	--color-settings-card-bottom: oklch(14% 0.015 265);
 	--color-settings-card-overlay-bloom: oklch(30% 0.012 265 / 0.14);
 	--color-settings-card-overlay-highlight: oklch(100% 0 0 / 0.035);
+
+	/* Dialog / modal material. A popup is its OWN plate, not a surface-N step
+	   off whatever opened it: stepping (+4 from the substrate) landed dialogs at
+	   surface-5..8 — a pale slab floating over a ~13%L window, reading like a
+	   different application. These continue the settings-card gradient family
+	   (same hue, same bloom shape) one stop lighter, so a dialog lifts off the
+	   window while still belonging to it. Keep in step with
+	   --color-settings-card-* above; the dialog sits exactly one rung higher. */
+	--color-dialog-top: oklch(21% 0.014 265);
+	--color-dialog-bottom: oklch(17.5% 0.015 265);
+	--color-dialog-bloom-strong: oklch(29% 0.013 265 / 0.46);
+	--color-dialog-bloom-soft: oklch(24% 0.014 265 / 0.3);
+	--color-dialog-top-bloom: oklch(26% 0.013 265 / 0.32);
+	--color-dialog-sheen: oklch(100% 0 0 / 0.05);
+	/* Header / footer bands: a recessed tint over the plate, so the chrome rows
+	   read as attached rails rather than as body content that happens to be
+	   pinned. Alpha-black (not a lighter fill) keeps the bands reading BEHIND
+	   the scrollable body. */
+	--color-dialog-chrome: oklch(0% 0 0 / 0.18);
 	--color-model-picker-group-header-surface: color-mix(
 		in oklch,
 		var(--color-surface-5) 95%,
@@ -274,6 +313,8 @@
 	--color-model-family-sense-voice: oklch(74% 0.18 327);
 	--color-model-family-dolphin: var(--color-teal);
 	--color-model-family-qwen3: oklch(68% 0.2 300);
+	--color-model-family-vibevoice: oklch(72% 0.13 180);
+	--color-model-family-audio8: oklch(75% 0.16 120);
 	--color-model-family-custom: var(--color-foreground-muted);
 	--color-tts-engine-kokoro: var(--color-model-family-whisper);
 	--color-tts-engine-kitten: var(--color-model-family-t-one);
@@ -283,6 +324,12 @@
 	--color-tts-engine-qwen3tts: var(--color-model-family-qwen3);
 	--color-tts-engine-orpheus: var(--color-model-family-moonshine);
 	--color-tts-engine-spark: var(--color-model-family-nemo);
+	--color-tts-engine-neutts: var(--color-model-family-cohere);
+	--color-tts-engine-omnivoice: var(--color-model-family-sense-voice);
+	/* Same vendor as the Audio8-ASR STT family — share the accent so the brand reads
+	   consistently across the STT picker and the TTS engine list (this used to alias
+	   Lite-Whisper's blue, which collided with an unrelated family). */
+	--color-tts-engine-audio8: var(--color-model-family-audio8);
 	--color-tts-engine-unknown: var(--color-foreground-muted);
 
 	/* Border — blue-tinted dark edges */
@@ -363,6 +410,15 @@
 		0 10px 28px -10px oklch(3% 0.02 265 / 0.6),
 		0 2px 10px -4px oklch(3% 0.02 265 / 0.5),
 		inset 0 1px 0 0 oklch(100% 0 0 / 0.05);
+	/* Dialog popup — a hairline ring, a top sheen, and a two-stage drop so the
+	   plate reads as floating well above the window. Replaces the old
+	   `border-[3px] border-foreground/10`, which read as a milky bevel rather
+	   than an edge. */
+	--shadow-dialog:
+		0 0 0 1px var(--color-divider-strong),
+		inset 0 1px 0 0 var(--color-dialog-sheen),
+		0 8px 20px -10px oklch(0% 0 0 / 0.6),
+		0 28px 64px -20px oklch(0% 0 0 / 0.7);
 	--shadow-model-picker-search: inset 0 1px 0 0 oklch(100% 0 0 / 0.035);
 	--shadow-model-picker-search-focus: inset 0 -1px 0 0 oklch(100% 0 0 / 0.055);
 	--shadow-action-accent:
@@ -636,6 +692,70 @@
 			transparent 0,
 			black 1.5rem,
 			black calc(100% - 1.25rem),
+			transparent 100%
+		);
+	}
+
+	/* ── Dialog chrome ──────────────────────────────────────────────────────
+	   One material for every popup in the app (see shared/ui/dialog). The
+	   gradient stack mirrors `.settings-content-card` — bloom, top bloom, base
+	   ramp — so a dialog reads as the same material as the panel it opened
+	   from, only lifted. Painted as a background stack rather than a `::before`
+	   overlay: `DialogContent` renders arbitrary children, and an absolutely
+	   positioned pseudo-element would need every one of them to opt into a
+	   stacking context. */
+	.dialog-surface {
+		background:
+			radial-gradient(
+				ellipse 112% 86% at 52% 38%,
+				var(--color-dialog-bloom-strong) 0%,
+				var(--color-dialog-bloom-soft) 38%,
+				transparent 78%
+			),
+			radial-gradient(
+				ellipse 130% 46% at 48% -6%,
+				var(--color-dialog-top-bloom),
+				transparent 26rem
+			),
+			linear-gradient(
+				180deg,
+				var(--color-dialog-top) 0%,
+				var(--color-dialog-bottom) 100%
+			);
+		box-shadow: var(--shadow-dialog);
+	}
+
+	/* Header / footer rails. The hairline is a box-shadow rather than a border
+	   so the band keeps its exact height whether or not it is present (a border
+	   would shift the 1px into layout and desynchronise the sticky offsets). */
+	.dialog-rail-top {
+		background: var(--color-dialog-chrome);
+		box-shadow: inset 0 -1px 0 0 var(--color-divider);
+	}
+
+	.dialog-rail-bottom {
+		background: var(--color-dialog-chrome);
+		box-shadow: inset 0 1px 0 0 var(--color-divider);
+	}
+
+	/* Scroll-edge dissolve for a dialog body, matching
+	   `.settings-scroll-edge-fade` but with the dialog body's own padding
+	   (pt-4 = 1rem, pb-4 = 1rem): at rest only padding sits inside the fade
+	   zones, so nothing reads washed out until content actually scrolls under
+	   the rails. */
+	.dialog-body-edge-fade {
+		mask-image: linear-gradient(
+			180deg,
+			transparent 0,
+			black 1rem,
+			black calc(100% - 1rem),
+			transparent 100%
+		);
+		-webkit-mask-image: linear-gradient(
+			180deg,
+			transparent 0,
+			black 1rem,
+			black calc(100% - 1rem),
 			transparent 100%
 		);
 	}

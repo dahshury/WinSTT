@@ -26,8 +26,7 @@ const ROW_LINGER_MS = 320;
 /**
  * Hold the last non-empty queue for a moment after it drains, so the exit
  * transition shows the rows fading out. Returns live items while busy (no lag),
- * the last snapshot during the linger, then []. Avoids extra renders: the ref is
- * updated in render and `setCleared(false)` is a no-op while busy.
+ * the last snapshot during the linger, then [].
  */
 function useLingeringItems(items: FileQueueItem[]): FileQueueItem[] {
 	// Snapshot the last non-empty queue so the drain transition can fade it out.

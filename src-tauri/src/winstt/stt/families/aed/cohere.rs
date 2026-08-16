@@ -29,6 +29,37 @@ fn kv_seq_len(v: &DynValue) -> i64 {
     }
 }
 
+/// Seq (dim 1) of the encoder's `last_hidden_state` runtime shape `(1, S_enc, hidden)` — the number
+/// of cross-attention key frames the decoder sees. Metadata-only read (no host copy).
+fn hidden_seq_len(v: &DynValue) -> usize {
+    match v.dtype() {
+        ValueType::Tensor { shape, .. } => shape.get(1).copied().unwrap_or(0).max(0) as usize,
+        _ => 0,
+    }
+}
+
+/// Safety margin (encoder frames) added past the proportional speech boundary when masking padded
+/// cross-attention keys, so conformer edge effects at the pad seam never mask real trailing speech.
+const CROSS_BIAS_MARGIN_FRAMES: usize = 2;
+
+/// Number of leading cross-attention key frames that carry REAL audio, for the engine-computed
+/// `cross_bias` mask. `s_enc_padded` is the encoder output length for the (possibly zero-padded)
+/// input; `real_samples`/`padded_samples` are the audio lengths before/after the DirectML encoder
+/// pad bucket. Conformer subsampling is a uniform conv stride, so the speech/pad boundary maps
+/// proportionally; `CROSS_BIAS_MARGIN_FRAMES` keeps boundary speech un-masked. No pad → every frame
+/// is valid (the mask then only covers the cross-bucket K/V padding beyond `s_enc_padded`).
+fn cross_bias_valid_frames(
+    s_enc_padded: usize,
+    real_samples: usize,
+    padded_samples: usize,
+) -> usize {
+    if real_samples >= padded_samples || padded_samples == 0 {
+        return s_enc_padded;
+    }
+    let proportional = (s_enc_padded * real_samples).div_ceil(padded_samples);
+    (proportional + CROSS_BIAS_MARGIN_FRAMES).min(s_enc_padded)
+}
+
 /// Stage-timing diagnostics, printed to stderr when `WINSTT_COHERE_PROFILE` is set (spike harness /
 /// bench runs only — never in the shipped hot path unless the user opts in).
 fn profile_enabled() -> bool {
@@ -57,6 +88,15 @@ pub struct CohereEngine {
     /// its fused graph once instead of re-fusing per token (~34 ms/token measured). `None` = legacy
     /// growing-KV layout.
     static_kv_max: Option<usize>,
+    /// Whether the decoder declares a `cross_bias` input (cross-bucket or bias-only exports). When
+    /// set, the engine computes the mask per utterance from the REAL (pre-pad) audio length and
+    /// binds it every decode step, so cross-attention can never see padded frames — the structural
+    /// fix for the trailing-zero phrase-loop hallucination (maskless exports can't do this; they
+    /// also never get the encoder pad bucket, see `encoder_pad_bucket`).
+    decoder_has_cross_bias: bool,
+    /// Static pinned key length of `cross_bias` (`(1,1,1,cross_max)` on cross-bucket exports);
+    /// `None` = dynamic → sized to the encoder output length at runtime.
+    cross_bias_len: Option<usize>,
     /// `Some(bucket_samples)` when the ENCODER runs on DirectML AND the STATIC decoder is active
     /// (`static_kv_max.is_some()` — the fully-optimized, DML-safe export pair): input audio is
     /// zero-padded up to this fixed length so every utterance shares ONE encoder input shape. A
@@ -124,13 +164,22 @@ const STATIC_MAX_KV: usize = 1024;
 /// removes. Audio longer than the bucket runs at natural length (re-fuse, same as before).
 const ENC_PAD_BUCKET_SAMPLES: usize = 28 * 16_000;
 
-/// Whether the DirectML encoder pad-bucket applies (see `encoder_pad_bucket`). Gated on THREE facts:
+/// Whether the DirectML encoder pad-bucket applies (see `encoder_pad_bucket`). Gated on FOUR facts:
 /// the encoder session is on DirectML (only there does the per-shape re-fuse tax exist), the STATIC
-/// decoder is the one loaded (`static_decoder` — the pad is only proven benign for the shipped static
-/// export pair; a legacy/dynamic decoder that still resolves runs at natural length), and the
-/// `WINSTT_COHERE_NO_ENC_PAD` escape hatch is unset. Pure so the gate is unit-testable without a session.
-fn encoder_pad_bucket(enc_on_dml: bool, static_decoder: bool, no_pad_env: bool) -> Option<usize> {
-    (enc_on_dml && static_decoder && !no_pad_env).then_some(ENC_PAD_BUCKET_SAMPLES)
+/// decoder is the one loaded (`static_decoder` — a legacy/dynamic decoder that still resolves runs
+/// at natural length), the decoder can MASK the pad (`cross_maskable` — it declares a `cross_bias`
+/// input the engine sizes to the real audio length; a maskless decoder cross-attends the pad zeros,
+/// which is the proven phrase-loop hallucination trigger, so it must never be fed seconds of
+/// trailing zeros no matter the re-fuse tax), and the `WINSTT_COHERE_NO_ENC_PAD` escape hatch is
+/// unset. Pure so the gate is unit-testable without a session.
+fn encoder_pad_bucket(
+    enc_on_dml: bool,
+    static_decoder: bool,
+    cross_maskable: bool,
+    no_pad_env: bool,
+) -> Option<usize> {
+    (enc_on_dml && static_decoder && cross_maskable && !no_pad_env)
+        .then_some(ENC_PAD_BUCKET_SAMPLES)
 }
 
 impl CohereEngine {
@@ -186,17 +235,6 @@ impl CohereEngine {
         };
         let encoder = build_session(file(&cfg.resolved, "encoder")?, enc_providers)?;
         let decoder = build_session(decoder_path, dec_providers)?;
-        // One fixed encoder input shape on DirectML, but ONLY under the static decoder — a legacy /
-        // dynamic-only decoder that still resolves runs the encoder at natural length (see
-        // `encoder_pad_bucket` field docs). `static_export` here already reflects the dyn-decoder
-        // override above (reset to false when `decoder_dyn` was picked for the CPU EP).
-        // WINSTT_COHERE_NO_ENC_PAD disables it (diagnostics / A-B benchmarking).
-        let encoder_pad_bucket = encoder_pad_bucket(
-            enc_providers.first() == Some(&Accelerator::DirectMl),
-            static_export,
-            std::env::var("WINSTT_COHERE_NO_ENC_PAD").is_ok(),
-        );
-
         let tok_json: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(file(&cfg.resolved, "tokenizer")?)
                 .map_err(|e| SttError::Tokenizer(format!("read tokenizer.json: {e}")))?,
@@ -252,14 +290,42 @@ impl CohereEngine {
             .into_iter()
             .filter(|n| n.starts_with("cross_attn.") || n == "cross_bias")
             .collect();
+        // `cross_bias` is exempt from the pair check: the ENGINE computes it per utterance from the
+        // real (pre-pad) audio length (see `transcribe`), so the decoder may declare it even when
+        // the encoder does not output it (bias-only exports). The encoder-computed value — where one
+        // exists (cross-bucket exports) — only masks beyond ITS OWN padded input length, which
+        // leaves the DirectML pad-bucket zeros attendable; the engine's override masks those too.
         for name in &decoder_cross_inputs {
-            if !enc_out_names.contains(name) {
+            if name != "cross_bias" && !enc_out_names.contains(name) {
                 return Err(SttError::SessionCreate(format!(
                     "cohere decoder expects passthrough input '{name}' but the encoder graph does not output it (mismatched export pair)"
                 )));
             }
         }
-        let encoder_cross_outputs = decoder_cross_inputs.clone();
+        // Bind (and later ignore) an encoder-side `cross_bias` if the export emits one — every
+        // encoder output must be bound; the engine's real-length value replaces it in the map.
+        let encoder_cross_outputs: Vec<String> = decoder_cross_inputs
+            .iter()
+            .filter(|n| enc_out_names.contains(*n))
+            .cloned()
+            .collect();
+        // Static pinned key length of the decoder's `cross_bias` input (cross-bucket exports pin it
+        // to `(1,1,1,cross_max)`); `None` = dynamic (bias-only exports) → sized to S_enc at runtime.
+        let cross_bias_len = static_input_dim(&decoder, "cross_bias", 3);
+        let decoder_has_cross_bias = decoder_cross_inputs.iter().any(|n| n == "cross_bias");
+        // One fixed encoder input shape on DirectML, but ONLY under the static decoder — a legacy /
+        // dynamic-only decoder that still resolves runs the encoder at natural length (see
+        // `encoder_pad_bucket` field docs) — and ONLY when the decoder can mask the pad via
+        // `cross_bias` (an unmaskable decoder cross-attending seconds of trailing zeros is the
+        // phrase-loop hallucination trigger). `static_export` here already reflects the dyn-decoder
+        // override above (reset to false when `decoder_dyn` was picked for the CPU EP).
+        // WINSTT_COHERE_NO_ENC_PAD disables it (diagnostics / A-B benchmarking).
+        let encoder_pad_bucket = encoder_pad_bucket(
+            enc_providers.first() == Some(&Accelerator::DirectMl),
+            static_export,
+            decoder_has_cross_bias,
+            std::env::var("WINSTT_COHERE_NO_ENC_PAD").is_ok(),
+        );
         let (num_heads, head_dim, past_is_fp16) = cohere_past_shape(&decoder)?;
         // The KV-cache / encoder-output binding device follows the DECODER's placement: in the
         // DirectML hybrid the decoder runs on CPU, so the encoder's outputs (incl. hoisted cross-KV)
@@ -281,6 +347,8 @@ impl CohereEngine {
             encoder_cross_outputs,
             decoder_cross_inputs,
             static_kv_max: static_export.then_some(STATIC_MAX_KV),
+            decoder_has_cross_bias,
+            cross_bias_len,
             encoder_pad_bucket,
             num_heads,
             head_dim,
@@ -296,7 +364,7 @@ impl CohereEngine {
     }
 
     /// EP `MemoryInfo` for KV-cache-resident outputs (CPU when no GPU EP → the current cohere path).
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -393,8 +461,8 @@ impl CohereEngine {
         &mut self,
         encoder_out: &DynValue,
         cross_kv: &BTreeMap<String, DynValue>,
-        cpu_mem: &MemoryInfo,
-        dev_mem: &MemoryInfo,
+        cpu_mem: &MemoryInfo<'_>,
+        dev_mem: &MemoryInfo<'_>,
         prompt: Vec<i64>,
         max_tokens: usize,
     ) -> SttResult<(Vec<i64>, f32)> {
@@ -695,6 +763,13 @@ impl CohereEngine {
                     break;
                 }
                 generated.push(next);
+                // Phrase-loop guard: trailing silence (mic tail / DirectML encoder pad-bucket
+                // zeros) can pull the maskless decoder into re-emitting one sentence until the
+                // token budget. Keep one occurrence and stop — see `phrase_loop_truncation`.
+                if let Some(keep) = phrase_loop_truncation(&generated) {
+                    generated.truncate(keep);
+                    break;
+                }
                 if !token_wise {
                     next_input = vec![next];
                 }
@@ -726,8 +801,8 @@ impl CohereEngine {
         &mut self,
         encoder_out: &DynValue,
         cross_kv: &BTreeMap<String, DynValue>,
-        cpu_mem: &MemoryInfo,
-        dev_mem: &MemoryInfo,
+        cpu_mem: &MemoryInfo<'_>,
+        dev_mem: &MemoryInfo<'_>,
         candidates: &[String],
     ) -> SttResult<Option<String>> {
         const DETECT_TOKENS: usize = 24;
@@ -778,6 +853,9 @@ impl Transcriber for CohereEngine {
         let mel_start = std::time::Instant::now();
         // DirectML: zero-pad up to the fixed bucket so the encoder always runs its one cached
         // fused-graph shape (see `encoder_pad_bucket`). Longer audio keeps its natural length.
+        // `real_samples` (pre-pad) sizes the engine-computed `cross_bias` below, so the decoder's
+        // cross-attention never sees the pad region.
+        let real_samples = audio.len();
         let audio: std::borrow::Cow<'_, [f32]> = match self.encoder_pad_bucket {
             Some(bucket) if audio.len() < bucket => {
                 let mut padded = Vec::with_capacity(bucket);
@@ -788,6 +866,7 @@ impl Transcriber for CohereEngine {
             _ => std::borrow::Cow::Borrowed(audio),
         };
         let audio = audio.as_ref();
+        let padded_samples = audio.len();
         let fbank = frontend::nemo_features(audio, &self.mel_fb);
         let mel_ms = mel_start.elapsed().as_secs_f64() * 1e3;
         let t = fbank.nrows();
@@ -808,7 +887,7 @@ impl Transcriber for CohereEngine {
         .map_err(|e| SttError::Inference(format!("cohere cpu mem info: {e}")))?;
 
         let enc_start = std::time::Instant::now();
-        let (encoder_out, cross_kv): (DynValue, BTreeMap<String, DynValue>) = {
+        let (encoder_out, mut cross_kv): (DynValue, BTreeMap<String, DynValue>) = {
             let mut binding = self
                 .encoder
                 .create_binding()
@@ -851,6 +930,45 @@ impl Transcriber for CohereEngine {
                 enc_start.elapsed().as_secs_f64() * 1e3,
                 cross_kv.len()
             );
+        }
+
+        // Engine-computed `cross_bias`: 0 over the real-speech key frames, -inf over EVERYTHING
+        // padded — both the DirectML encoder pad-bucket zeros and (on cross-bucket exports) the
+        // cross-K/V bucket padding. This REPLACES any encoder-emitted cross_bias, which only knows
+        // its own (already padded) input length and therefore leaves the pad-bucket zeros
+        // attendable — the trailing-silence frames the maskless cross-attention phrase-loops on.
+        if self.decoder_has_cross_bias {
+            let s_enc = hidden_seq_len(&encoder_out);
+            let bias_len = self.cross_bias_len.unwrap_or(s_enc);
+            if bias_len > 0 {
+                let valid =
+                    cross_bias_valid_frames(s_enc, real_samples, padded_samples).min(bias_len);
+                let neg = if self.past_is_fp16 {
+                    -65504.0f32
+                } else {
+                    -3.402_823_5e38f32
+                };
+                let mut vals = vec![neg; bias_len];
+                vals[..valid].fill(0.0);
+                let dims = (1usize, 1usize, 1usize, bias_len);
+                let value: DynValue = if self.past_is_fp16 {
+                    let arr = ndarray::Array4::<F16>::from_shape_vec(
+                        dims,
+                        vals.into_iter().map(F16::from_f32).collect(),
+                    )
+                    .map_err(|e| SttError::Inference(format!("cross_bias f16: {e}")))?;
+                    Tensor::<F16>::from_array(arr)
+                        .map_err(|e| SttError::Inference(format!("cross_bias tensor: {e}")))?
+                        .into_dyn()
+                } else {
+                    let arr = ndarray::Array4::<f32>::from_shape_vec(dims, vals)
+                        .map_err(|e| SttError::Inference(format!("cross_bias f32: {e}")))?;
+                    Tensor::<f32>::from_array(arr)
+                        .map_err(|e| SttError::Inference(format!("cross_bias tensor: {e}")))?
+                        .into_dyn()
+                };
+                cross_kv.insert("cross_bias".into(), value);
+            }
         }
 
         // Resolve the transcription language. Explicit choice → source == target == choice. Auto-detect
@@ -898,10 +1016,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pad_bucket_requires_dml_static_and_no_escape_hatch() {
-        // Canonical shipped case: encoder on DirectML, static decoder loaded, escape hatch unset.
+    fn pad_bucket_requires_dml_static_maskable_and_no_escape_hatch() {
+        // Canonical shipped case: encoder on DirectML, static decoder loaded, decoder can mask the
+        // pad via `cross_bias`, escape hatch unset.
         assert_eq!(
-            encoder_pad_bucket(true, true, false),
+            encoder_pad_bucket(true, true, true, false),
             Some(ENC_PAD_BUCKET_SAMPLES)
         );
     }
@@ -911,19 +1030,48 @@ mod tests {
         // A legacy / dynamic-only decoder still resolves (optional `decoder_dyn`, permissive `decoder`
         // glob) — even with the encoder on DirectML the pad is withheld: only the static export pair
         // is a verified-benign target for trailing zero-pad.
-        assert_eq!(encoder_pad_bucket(true, false, false), None);
+        assert_eq!(encoder_pad_bucket(true, false, true, false), None);
+    }
+
+    #[test]
+    fn pad_bucket_off_when_decoder_cannot_mask_the_pad() {
+        // A static export WITHOUT a `cross_bias` input (e.g. the Arabic bias-less export) must never
+        // be fed seconds of trailing zeros — its maskless cross-attention phrase-loops on them. The
+        // per-utterance DML re-fuse tax is the price of correctness until the export gains the mask.
+        assert_eq!(encoder_pad_bucket(true, true, false, false), None);
     }
 
     #[test]
     fn pad_bucket_off_when_encoder_not_on_dml() {
         // CPU / CUDA encoders have no per-shape re-fuse tax, so padding would only add compute.
-        assert_eq!(encoder_pad_bucket(false, true, false), None);
+        assert_eq!(encoder_pad_bucket(false, true, true, false), None);
     }
 
     #[test]
     fn pad_bucket_escape_hatch_disables_it() {
         // WINSTT_COHERE_NO_ENC_PAD forces natural length even on the static DirectML path.
-        assert_eq!(encoder_pad_bucket(true, true, true), None);
+        assert_eq!(encoder_pad_bucket(true, true, true, true), None);
+    }
+
+    #[test]
+    fn cross_bias_valid_frames_no_pad_keeps_every_frame() {
+        // Unpadded utterance (or pad bucket off): every encoder frame is real speech.
+        assert_eq!(cross_bias_valid_frames(700, 448_000, 448_000), 700);
+        // Degenerate zero-length guard.
+        assert_eq!(cross_bias_valid_frames(700, 0, 0), 700);
+    }
+
+    #[test]
+    fn cross_bias_valid_frames_masks_proportionally_with_margin() {
+        // 4 s of speech padded to the 28 s bucket → 1/7 of the frames are real, plus the 2-frame
+        // seam margin; everything beyond is masked.
+        let valid = cross_bias_valid_frames(700, 4 * 16_000, 28 * 16_000);
+        assert_eq!(valid, 100 + CROSS_BIAS_MARGIN_FRAMES);
+        // The margin never pushes past the padded length.
+        assert_eq!(
+            cross_bias_valid_frames(700, 28 * 16_000 - 1, 28 * 16_000),
+            700
+        );
     }
 
     #[test]

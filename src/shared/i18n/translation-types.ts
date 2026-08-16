@@ -7,3 +7,6 @@ export type SettingsTranslateFn = ReturnType<
 export type StatusBarTranslateFn = ReturnType<
 	typeof useTranslations<"statusBar">
 >;
+export type ModelPickerTranslateFn = ReturnType<
+	typeof useTranslations<"modelPicker">
+>;

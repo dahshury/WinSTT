@@ -339,8 +339,6 @@ function recordPausedSnapshot(
 	};
 }
 
-/** State transition for a cancelled status — preserve the last known progress
- *  in pausedPulls so the UI can offer Resume. */
 function maxOptionalNumber(
 	previous: number | undefined,
 	next: number | undefined,

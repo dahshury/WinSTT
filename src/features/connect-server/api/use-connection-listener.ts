@@ -58,7 +58,6 @@ export function useConnectionListener(): void {
 		[setConnectionStatus, setServerStatus],
 	);
 
-	// Server-ready signal subscription.
 	useEffect(
 		() =>
 			onServerStatus((status) => {

@@ -280,10 +280,11 @@ describe("SettingsPage", () => {
 
 		try {
 			renderSettingsPage();
-			// The prewarm reveal's rAF chain just played (in the real app it thaws
-			// exactly at show). The shown event arrives a few ms later — it must
-			// YIELD to the in-flight/fresh enter instead of restarting it, or the
-			// half-faded card snaps invisible and fades in again (the first-open
+			// The mount-time cold-open reveal just played (in the real app the
+			// window is already visible when the lazily-created renderer mounts).
+			// The shown event arrives a few ms later — it must YIELD to the
+			// in-flight/fresh enter instead of restarting it, or the half-faded
+			// card snaps invisible and fades in again (the first-open
 			// double-animation flicker).
 			await waitForOpen();
 			act(() => {

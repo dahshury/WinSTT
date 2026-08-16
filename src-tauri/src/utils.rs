@@ -6,10 +6,17 @@ use log::debug;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
-// Re-export all utility modules for easy access
 pub use crate::clipboard::*;
 pub use crate::tray::*;
 pub use crate::winstt::commands::overlay::{hide_recording_overlay, show_recording_overlay};
+
+/// Whether listen mode owns the tray's recording animation right now. Listen runs
+/// off the loopback endpoint rather than [`AudioRecordingManager`], so the dictation
+/// cancel path sees "nothing active" while the visualizer is legitimately live.
+fn listen_mode_is_capturing(app: &AppHandle) -> bool {
+    app.try_state::<Arc<crate::winstt::managers::LoopbackManager>>()
+        .is_some_and(|loopback| loopback.is_capturing())
+}
 
 /// Centralized cancellation function that can be called from anywhere in the app.
 /// Handles cancelling both recording and transcription operations and updates UI state.
@@ -23,14 +30,22 @@ pub fn cancel_current_operation(app: &AppHandle) -> bool {
 
     if !dictation_was_active {
         debug!("No active dictation operation to cancel");
+        // Nothing to cancel, but this is also the app's ONLY user-reachable reset
+        // (Escape / the overlay X). If a lifecycle event went missing the tray can be
+        // animating a take that the pipeline already forgot about — in which case
+        // every automatic path has, by definition, already failed. Repaint the static
+        // idle icon so the user is never left with a permanently spinning tray.
+        // Listen mode is genuinely capturing while the coordinator reads idle, so it
+        // keeps its animation.
+        if !listen_mode_is_capturing(app) {
+            change_tray_icon(app, crate::tray::TrayIconState::Idle);
+        }
         unregister_cancel_shortcut_if_idle(app);
         return false;
     }
 
-    // Cancel any ongoing recording
     audio_manager.cancel_recording();
 
-    // Update tray icon and hide overlay
     change_tray_icon(app, crate::tray::TrayIconState::Idle);
     hide_recording_overlay(app);
 

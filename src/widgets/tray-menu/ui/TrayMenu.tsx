@@ -2,19 +2,27 @@ import { Separator } from "@base-ui/react/separator";
 import {
 	AppWindowIcon,
 	ArrowReloadHorizontalIcon,
+	ArrowRight01Icon,
 	Bug01Icon,
 	ClipboardCopyIcon,
 	FileAudioIcon,
 	Logout03Icon,
+	Mic01Icon,
 	Settings05Icon,
+	VoiceIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type ReactNode, useEffect, useReducer, useRef } from "react";
 import { useTranslations } from "use-intl";
-import { InputDeviceSelect } from "@/entities/audio-device";
+import {
+	InlineInputDeviceList,
+	useInputDevicePickerModel,
+	useInputDevices,
+} from "@/entities/audio-device";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
-import { useSettingsTabStore } from "@/entities/setting";
+import { openSettingsToSection } from "@/entities/setting";
 import { resolveListenStreamingModelId } from "@/features/listen-mode";
+import { useModeTransitionPending } from "@/features/recording-mode-transition";
 import {
 	copyLastTranscript,
 	fileQueuePickAndEnqueue,
@@ -41,6 +49,13 @@ import {
 	surfaceHoverBg,
 } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
+import {
+	focusViewInitialTarget,
+	NavPopoverHeader,
+	NavPopoverStage,
+	useViewStack,
+} from "@/shared/ui/nav-popover";
+import { PendingBadge } from "@/shared/ui/pending";
 import { Switcher } from "@/shared/ui/switcher";
 
 interface TrayMenuState {
@@ -174,6 +189,25 @@ function useTrayMenuRender() {
 	const t = useTranslations("tray");
 	const tAudio = useTranslations("audio");
 	const refreshModelState = useModelStateStore((s) => s.refresh);
+	const { devices, defaultDevice } = useInputDevices();
+	// Recording mode and microphone are drill-down views rather than controls
+	// inlined into the menu: both used to open a popup *inside* a ~192px OS
+	// window, where the popup is clipped by the window itself.
+	const nav = useViewStack();
+	// The single-letter shortcuts and Escape below run from a window-level
+	// listener, so they read nav state through a ref written after commit.
+	const navRef = useRef(nav);
+	useEffect(() => {
+		navRef.current = nav;
+	});
+	// Drilling in moves focus into the new view; without it a keyboard user is
+	// left on a button that no longer exists and Tab restarts from the top.
+	useEffect(() => {
+		const el = containerRef.current;
+		if (el !== null && nav.activeId !== null) {
+			focusViewInitialTarget(el);
+		}
+	}, [nav.activeId]);
 
 	useEffect(() => {
 		void refreshModelState();
@@ -258,6 +292,12 @@ function useTrayMenuRender() {
 	}, []);
 
 	const handleModeChange = async (mode: RecordingMode) => {
+		// The switcher is already rendered disabled while a mode's model loads;
+		// guard the value path too so a keyboard select can't stack a second
+		// switch behind the in-flight one.
+		if (modeTransition.isPending) {
+			return;
+		}
 		const settings = await settingsLoad();
 		if (mode === "listen") {
 			await refreshModelState();
@@ -272,13 +312,15 @@ function useTrayMenuRender() {
 					type: "set-recording-mode",
 					value: settings.general.recordingMode,
 				});
-				useSettingsTabStore.getState().setActiveTab("model");
-				trayWindowOpenSettings();
+				openSettingsToSection("model");
 				closeTrayMenu();
 				return;
 			}
 		}
 		dispatch({ type: "set-recording-mode", value: mode });
+		// Picking is the whole reason the view was opened, so return to the menu
+		// instead of leaving the user to find the back button.
+		nav.back();
 		await settingsSave({
 			general: { ...settings.general, recordingMode: mode },
 		});
@@ -303,7 +345,19 @@ function useTrayMenuRender() {
 
 			if (event.key === "Escape") {
 				event.preventDefault();
+				// Escape unwinds the hierarchy first; only an Escape at the root
+				// dismisses the menu.
+				if (navRef.current.depth > 0) {
+					navRef.current.back();
+					return;
+				}
 				closeTrayMenu();
+				return;
+			}
+
+			// The letter accelerators belong to the root menu's items. Inside a
+			// sub-view they would fire actions whose rows are not even on screen.
+			if (navRef.current.depth > 0) {
 				return;
 			}
 
@@ -336,8 +390,12 @@ function useTrayMenuRender() {
 		return () => window.removeEventListener("keydown", onKeyDown);
 	}, [isConnected]);
 
-	const recordingModeOptions: ReadonlyArray<{
+	// Mode changes are process-global, so the tray reflects a switch started from
+	// the settings window (or the PTT+ArrowUp gesture) exactly like its own.
+	const modeTransition = useModeTransitionPending();
+	const baseRecordingModeOptions: ReadonlyArray<{
 		value: RecordingMode;
+		disabled?: boolean;
 		label: string;
 	}> = [
 		{ value: "ptt", label: t("modePtt") },
@@ -345,6 +403,22 @@ function useTrayMenuRender() {
 		{ value: "listen", label: t("modeListen") },
 		{ value: "wakeword", label: t("modeWakeWord") },
 	];
+	const recordingModeOptions = modeTransition.isPending
+		? baseRecordingModeOptions.map((option) => ({ ...option, disabled: true }))
+		: baseRecordingModeOptions;
+	const activeModeLabel =
+		recordingModeOptions.find((option) => option.value === recordingMode)
+			?.label ?? "";
+	// Root-row summary only — `monitorOpen: false` keeps the level meters (and
+	// their audio capture) off until the microphone view is actually open.
+	const { currentDeviceLabel } = useInputDevicePickerModel({
+		defaultDeviceName: defaultDevice?.name,
+		devices,
+		inputDeviceIndex,
+		inputDevicePriority,
+		monitorOpen: false,
+		systemDefaultLabel: tAudio("systemDefault"),
+	});
 
 	const menuLevel = 3;
 	const hoverLevel = Math.min(menuLevel + 1, 8);
@@ -372,106 +446,160 @@ function useTrayMenuRender() {
 						"font-sans text-body-sm text-foreground",
 					)}
 				>
-					<MenuItem
-						activeBg={activeBg}
-						hoverBg={hoverBg}
-						icon={AppWindowIcon}
-						onClick={handleShowWindow}
-						shortcut="W"
+					<NavPopoverStage
+						activeKey={nav.activeId ?? "__root__"}
+						direction={nav.direction}
 					>
-						{t("showWindow")}
-					</MenuItem>
-					<MenuItem
-						activeBg={activeBg}
-						hoverBg={hoverBg}
-						icon={Settings05Icon}
-						onClick={handleSettings}
-						shortcut=","
-					>
-						{t("openSettings")}
-					</MenuItem>
-					<MenuItem
-						activeBg={activeBg}
-						hoverBg={hoverBg}
-						icon={ClipboardCopyIcon}
-						onClick={handleCopyLastTranscript}
-					>
-						{t("copyLastTranscript")}
-					</MenuItem>
+						{nav.activeId === "mode" ? (
+							<>
+								<NavPopoverHeader
+									backLabel={t("backToMenu")}
+									onBack={nav.back}
+									title={t("recordingMode")}
+								/>
+								<div className="p-1">
+									{/* 2×2, not one column: `columns={1}` falls through to the
+									    single-row flex mode, whose four segments together
+									    overflow the tray's 185px content width. */}
+									<PendingBadge
+										className="w-full"
+										pending={modeTransition.isPending}
+									>
+										<Switcher
+											columns={2}
+											fullWidth
+											onChange={handleModeChange}
+											options={recordingModeOptions}
+											value={recordingMode}
+										/>
+									</PendingBadge>
+								</div>
+							</>
+						) : null}
+						{nav.activeId === "microphone" ? (
+							<>
+								<NavPopoverHeader
+									backLabel={t("backToMenu")}
+									onBack={nav.back}
+									title={tAudio("inputDevice")}
+								/>
+								<div className="p-1">
+									<InlineInputDeviceList
+										ariaLabel={tAudio("inputDevice")}
+										inputDeviceIndex={inputDeviceIndex}
+										inputDevicePriority={inputDevicePriority}
+										onChange={(value) => void saveInputDeviceIndex(value)}
+										onPicked={nav.back}
+										onPriorityChange={(value) =>
+											void saveInputDevicePriority(value)
+										}
+										reorderHandleLabel={tAudio("devicePriorityHandle")}
+										systemDefaultLabel={tAudio("systemDefault")}
+									/>
+								</div>
+							</>
+						) : null}
+						{nav.activeId === null ? (
+							<>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={AppWindowIcon}
+									onClick={handleShowWindow}
+									shortcut="W"
+								>
+									{t("showWindow")}
+								</MenuItem>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={Settings05Icon}
+									onClick={handleSettings}
+									shortcut=","
+								>
+									{t("openSettings")}
+								</MenuItem>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={ClipboardCopyIcon}
+									onClick={handleCopyLastTranscript}
+								>
+									{t("copyLastTranscript")}
+								</MenuItem>
 
-					<MenuSeparator />
+								<MenuSeparator />
 
-					<div className="p-1">
-						<Switcher
-							columns={2}
-							fullWidth
-							onChange={handleModeChange}
-							options={recordingModeOptions}
-							value={recordingMode}
-						/>
-					</div>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={VoiceIcon}
+									onClick={() => nav.push("mode")}
+									value={activeModeLabel}
+								>
+									{t("recordingMode")}
+								</MenuItem>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={Mic01Icon}
+									onClick={() => nav.push("microphone")}
+									value={currentDeviceLabel}
+								>
+									{tAudio("inputDevice")}
+								</MenuItem>
 
-					<MenuSeparator />
+								<MenuSeparator />
 
-					<InputDeviceSelect
-						aria-label={tAudio("inputDevice")}
-						className="w-full"
-						inputDeviceIndex={inputDeviceIndex}
-						inputDevicePriority={inputDevicePriority}
-						onChange={(value) => void saveInputDeviceIndex(value)}
-						onPriorityChange={(value) => void saveInputDevicePriority(value)}
-						reorderHandleLabel={tAudio("devicePriorityHandle")}
-						systemDefaultLabel={tAudio("systemDefault")}
-					/>
+								<MenuItem
+									activeBg={activeBg}
+									disabled={!isConnected}
+									hoverBg={hoverBg}
+									icon={FileAudioIcon}
+									onClick={handleTranscribeFile}
+									shortcut="T"
+								>
+									{t("transcribeFile")}
+								</MenuItem>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={ArrowReloadHorizontalIcon}
+									onClick={handleCheckForUpdates}
+								>
+									{t("checkForUpdates")}
+								</MenuItem>
 
-					<MenuSeparator />
+								{CONTEXT_PLAYGROUND_ENABLED && (
+									<>
+										<MenuSeparator />
+										{/* eslint-disable i18next/no-literal-string -- debug-only menu item, gated off in release */}
+										<MenuItem
+											activeBg={activeBg}
+											hoverBg={hoverBg}
+											icon={Bug01Icon}
+											onClick={handleOpenContextPlayground}
+										>
+											Context Playground (debug)
+										</MenuItem>
+										{/* eslint-enable i18next/no-literal-string */}
+									</>
+								)}
 
-					<MenuItem
-						activeBg={activeBg}
-						disabled={!isConnected}
-						hoverBg={hoverBg}
-						icon={FileAudioIcon}
-						onClick={handleTranscribeFile}
-						shortcut="T"
-					>
-						{t("transcribeFile")}
-					</MenuItem>
-					<MenuItem
-						activeBg={activeBg}
-						hoverBg={hoverBg}
-						icon={ArrowReloadHorizontalIcon}
-						onClick={handleCheckForUpdates}
-					>
-						{t("checkForUpdates")}
-					</MenuItem>
+								<MenuSeparator />
 
-					{CONTEXT_PLAYGROUND_ENABLED && (
-						<>
-							<MenuSeparator />
-							{/* eslint-disable i18next/no-literal-string -- debug-only menu item, gated off in release */}
-							<MenuItem
-								activeBg={activeBg}
-								hoverBg={hoverBg}
-								icon={Bug01Icon}
-								onClick={handleOpenContextPlayground}
-							>
-								Context Playground (debug)
-							</MenuItem>
-							{/* eslint-enable i18next/no-literal-string */}
-						</>
-					)}
-
-					<MenuSeparator />
-
-					<MenuItem
-						activeBg={activeBg}
-						hoverBg={hoverBg}
-						icon={Logout03Icon}
-						onClick={handleQuit}
-						shortcut="Q"
-					>
-						{t("quit")}
-					</MenuItem>
+								<MenuItem
+									activeBg={activeBg}
+									hoverBg={hoverBg}
+									icon={Logout03Icon}
+									onClick={handleQuit}
+									shortcut="Q"
+								>
+									{t("quit")}
+								</MenuItem>
+							</>
+						) : null}
+					</NavPopoverStage>
 				</div>
 			</div>
 		</SurfaceProvider>
@@ -490,6 +618,10 @@ interface MenuItemProps {
 	icon?: IconSvgElement;
 	onClick?: () => void;
 	shortcut?: string;
+	/** Current setting of a drill-down row. Renders in place of the shortcut,
+	 *  followed by a chevron — the row's promise that there is a view behind
+	 *  it. */
+	value?: string;
 }
 
 function MenuItem({
@@ -500,6 +632,7 @@ function MenuItem({
 	hoverBg,
 	activeBg,
 	icon,
+	value,
 }: MenuItemProps) {
 	return (
 		<Button
@@ -523,6 +656,17 @@ function MenuItem({
 				)}
 				<span className="truncate">{children}</span>
 			</span>
+			{value === undefined ? null : (
+				<span className="flex min-w-0 shrink items-center gap-0.5 text-foreground-muted">
+					<span className="truncate text-[10px]">{value}</span>
+					<HugeiconsIcon
+						aria-hidden="true"
+						className="shrink-0"
+						icon={ArrowRight01Icon}
+						size={12}
+					/>
+				</span>
+			)}
 			{shortcut && (
 				<span className="shrink-0 text-[8px] tracking-tight text-foreground-muted">
 					{shortcut}

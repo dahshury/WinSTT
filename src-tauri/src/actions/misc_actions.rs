@@ -8,7 +8,6 @@ use tauri::{AppHandle, Emitter};
 use super::{ShortcutAction, last_transcription};
 use crate::winstt::commands::events::names;
 
-// Cancel Action
 pub(super) struct CancelAction;
 
 impl ShortcutAction for CancelAction {
@@ -172,6 +171,32 @@ impl ShortcutAction for ReadAloudAction {
                 "ReadAloudAction: captured {} bytes in {capture_ms}ms; overlay reserve {reserve_ms}ms",
                 text.len()
             );
+            // Track the read's id BEFORE the annotation phase. `reserve_tts_playback_layer`
+            // just armed Escape, but `cancel_all` can only mark ids the registry
+            // already knows and this id is otherwise first tracked inside
+            // `read_aloud` — so without this, Escape would tear the pill down and
+            // the read would still start when the round-trip returned.
+            let cancel = mgr.track_request(&rid);
+            // Post-processing (`llm.readAloud` modifiers, then `tts.inlineTags`):
+            // hand the selection to the post-processing LLM so it can rewrite the
+            // prose and mark up the delivery in the SELECTED model's own tag syntax
+            // before a single sample is synthesized. Fail-soft — any refusal returns
+            // the text untouched, so this can only ever delay the read, never cancel
+            // it. Deliberately AFTER the overlay reserve above so the pill is already
+            // up while the round-trips run, and off the hotkey thread like everything
+            // else here.
+            let text = tauri::async_runtime::block_on(
+                crate::winstt::commands::tts_voice::prepare_read_aloud_text(&app, &text, &cancel),
+            );
+            // Escape (or any other cancel) during those round-trips means the user
+            // no longer wants this read — `cancel_all` already emitted its
+            // terminal `tts:completed` and hid the pill, so starting now would
+            // speak a selection the user explicitly cancelled.
+            if mgr.is_cancelled(&rid) {
+                debug!("ReadAloudAction: cancelled during read-aloud post-processing");
+                mgr.release_request(&rid);
+                return;
+            }
             // Empty voice/lang → the manager fills them from the active source's
             // settings (same as the `tts_speak_selection` command path). Speed is
             // sampled per sentence so a mid-read change applies to the next one.

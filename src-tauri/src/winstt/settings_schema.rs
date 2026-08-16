@@ -345,21 +345,12 @@ pub struct CustomModifier {
     pub level: Option<PresetLevel>,
 }
 
-/// `transformSchema` — a single user-configurable text transform.
-/// `builtin: true` entries show a Reset action instead of Delete in the UI.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct Transform {
-    pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub prompt: String,
-    #[serde(default)]
-    pub hotkey: String,
-    #[serde(default)]
-    pub builtin: bool,
-}
+// NOTE: `llm.transforms.prompts` (a `Transform` list of named, individually
+// hotkeyed rewrites) was removed. It was validated and round-tripped but never
+// written or read by anything — empty on every install — and the CONFIGURATION
+// model supersedes it: "several named rewrites, each on a hotkey" is just
+// several configurations, each assigned to a binding, which is the same
+// mechanism dictation / transforms / read-aloud already use.
 
 // ===========================================================================
 // SECTION: model  (modelSettingsSchema)
@@ -398,7 +389,7 @@ pub struct ModelSettings {
     /// ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `int4`, `q4`,
     /// `q4f16`, `bnb4`). Free-string (not an enum) — the catalog gates valid values per
     /// model and the server resolves `""`/`auto`. HOT-SWAP.
-    #[serde(default)]
+    #[serde(default = "ModelSettings::default_onnx_quantization")]
     pub onnx_quantization: String,
     /// Whisper decoder-bias prompt (main). HOT-SWAP (read per-utterance).
     /// INVARIANT: Canary/Cohere ignore this slot (untrained) — do not bias them.
@@ -434,6 +425,9 @@ impl ModelSettings {
     fn default_language() -> String {
         "en".to_string()
     }
+    fn default_onnx_quantization() -> String {
+        "auto".to_string()
+    }
 }
 
 impl Default for DeviceType {
@@ -458,7 +452,7 @@ impl Default for ModelSettings {
             language_candidates: Vec::new(),
             device: DeviceType::default(),
             // "auto" = RAM/VRAM-aware recommended pick; "" would mean EXPLICIT fp32 (see backend.rs).
-            onnx_quantization: "auto".into(),
+            onnx_quantization: Self::default_onnx_quantization(),
             initial_prompt: String::new(),
             initial_prompt_realtime: String::new(),
             translate_target_language: String::new(),
@@ -709,8 +703,8 @@ pub struct GeneralSettings {
     #[serde(default)]
     pub start_minimized: bool,
     /// Duck system playback to `(100-v)%` while dictating; 0=off, 100=mute.
-    /// Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(0)`.
-    #[serde(default)]
+    /// Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(60)`.
+    #[serde(default = "GeneralSettings::default_system_audio_reduction")]
     pub system_audio_reduction_while_dictating: i64,
     /// Play chime on record start/stop. HOT-SWAP.
     #[serde(default = "bool_true")]
@@ -838,7 +832,8 @@ pub struct GeneralSettings {
     /// HOT-SWAP (runtime toggle via diarization-toggle method).
     #[serde(default)]
     pub speaker_diarization: bool,
-    /// Sentry crash-reporting opt-out. Persisted live; never prompts for restart.
+    /// Deprecated compatibility leaf. Persisted for old settings-file round trips;
+    /// there is no crash-report upload runtime or user-facing control.
     #[serde(default = "bool_true")]
     pub send_crash_reports: bool,
     /// Opt-in pre-release auto-updates. HOT-SWAP.
@@ -912,6 +907,10 @@ pub struct GeneralSettings {
 }
 
 impl GeneralSettings {
+    fn default_system_audio_reduction() -> i64 {
+        60
+    }
+
     pub fn effective_file_transcription_formats(&self) -> Vec<FileTranscriptionFormat> {
         let configured = if self.file_transcription_formats.is_empty() {
             Self::default_file_transcription_formats()
@@ -1079,7 +1078,7 @@ impl Default for GeneralSettings {
             auto_start: false,
             minimize_to_tray: true,
             start_minimized: false,
-            system_audio_reduction_while_dictating: 60,
+            system_audio_reduction_while_dictating: Self::default_system_audio_reduction(),
             recording_sound: true,
             recording_sound_path: String::new(),
             recording_sound_library: Vec::new(),
@@ -1282,7 +1281,13 @@ pub struct LlmDictation {
     /// partial JSON; see the note on `LlmFeatureBase`.
     #[serde(flatten)]
     pub base: LlmFeatureBase,
-    #[serde(default = "default_dictation_presets")]
+    /// Id of the saved CONFIGURATION this feature is assigned to, or `""` when
+    /// its stack was hand-edited away from every saved one. See the note on
+    /// [`LlmSettings::local_model`] for why the resolved fields above still
+    /// live here rather than being looked up from the id at runtime.
+    #[serde(default = "default_configuration_id")]
+    pub configuration_id: String,
+    #[serde(default = "default_neutral_presets")]
     pub presets: Vec<PresetEntry>,
     #[serde(default)]
     pub custom_modifiers: Vec<CustomModifier>,
@@ -1294,7 +1299,46 @@ impl Default for LlmDictation {
             enabled: false,
             dictionary_auto_add_enabled: false,
             base: LlmFeatureBase::default(),
-            presets: default_dictation_presets(),
+            configuration_id: default_configuration_id(),
+            presets: default_neutral_presets(),
+            custom_modifiers: Vec::new(),
+        }
+    }
+}
+
+/// Post-processing applied to text on its way to the SYNTHESIZER (read-aloud),
+/// as opposed to `LlmDictation`, which post-processes text on its way to the
+/// KEYBOARD. Deliberately its own preset/modifier set: "summarize what I just
+/// dictated" and "summarize what you are about to read to me" are different
+/// intents that happen to share one prompt vocabulary.
+///
+/// Carries its own [`LlmFeatureBase`] like the other two consumers: a
+/// configuration chooses its PROVIDER (a cloud read-aloud pass alongside a local
+/// dictation pass is a supported, and cheap, combination). The one thing it
+/// cannot choose freely is the local model — see [`LlmSettings::local_model`].
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmReadAloud {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub base: LlmFeatureBase,
+    /// Assigned configuration id; see [`LlmDictation::configuration_id`].
+    #[serde(default = "default_configuration_id")]
+    pub configuration_id: String,
+    #[serde(default = "default_neutral_presets")]
+    pub presets: Vec<PresetEntry>,
+    #[serde(default)]
+    pub custom_modifiers: Vec<CustomModifier>,
+}
+
+impl Default for LlmReadAloud {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base: LlmFeatureBase::default(),
+            configuration_id: default_configuration_id(),
+            presets: default_neutral_presets(),
             custom_modifiers: Vec::new(),
         }
     }
@@ -1307,6 +1351,9 @@ pub struct LlmTransforms {
     pub enabled: bool,
     #[serde(flatten)]
     pub base: LlmFeatureBase,
+    /// Assigned configuration id; see [`LlmDictation::configuration_id`].
+    #[serde(default = "default_configuration_id")]
+    pub configuration_id: String,
     #[serde(default = "default_neutral_presets")]
     pub presets: Vec<PresetEntry>,
     #[serde(default)]
@@ -1314,9 +1361,6 @@ pub struct LlmTransforms {
     /// Always non-empty (Zod `.min(1).catch`). The transform's invoke hotkey.
     #[serde(default = "LlmTransforms::default_hotkey")]
     pub hotkey: String,
-    /// User-configurable text transforms (built-ins carry `builtin: true`).
-    #[serde(default)]
-    pub prompts: Vec<Transform>,
 }
 
 impl LlmTransforms {
@@ -1330,10 +1374,10 @@ impl Default for LlmTransforms {
         Self {
             enabled: false,
             base: LlmFeatureBase::default(),
+            configuration_id: default_configuration_id(),
             presets: default_neutral_presets(),
             custom_modifiers: Vec::new(),
             hotkey: Self::default_hotkey(),
-            prompts: Vec::new(),
         }
     }
 }
@@ -1376,6 +1420,9 @@ pub struct AppProfileRule {
     pub title_pattern: String,
     #[serde(default)]
     pub url_pattern: String,
+    /// An app RULE is different from a feature assignment: an empty id means the
+    /// rule carries a hand-edited config rather than pointing at a saved one, so
+    /// it must NOT default to the shipped configuration.
     #[serde(default)]
     pub configuration_id: String,
     #[serde(default)]
@@ -1418,15 +1465,45 @@ pub struct LlmSettings {
     /// Global shortcut that cycles through saved post-processing profiles.
     #[serde(default = "LlmSettings::default_profile_swap_hotkey")]
     pub profile_swap_hotkey: String,
+    /// THE local Ollama model, shared by every feature whose assigned
+    /// configuration runs locally.
+    ///
+    /// Why one, and why here: local models are VRAM-resident. Ollama happily
+    /// accepts several (`OLLAMA_MAX_LOADED_MODELS` defaults to 3), but when they
+    /// do not all fit it does not fail — it queues the request and evicts an
+    /// idle model to make room, so every switch between features silently pays a
+    /// full reload. One model by default makes that impossible.
+    ///
+    /// Cloud configurations are unconstrained: they hold their own
+    /// `openrouterModel` in their `LlmFeatureBase` and cost no memory here, so a
+    /// cloud read-aloud pass alongside a local dictation pass is fine.
+    ///
+    /// This is the value the renderer writes into every locally-running
+    /// feature's `base.model` when it resolves an assignment. The per-feature
+    /// `base` stays the runtime source of truth (this side reads it verbatim and
+    /// knows nothing about configurations); this field is what the UI resolves
+    /// FROM, which keeps assignment a renderer concern.
+    #[serde(default)]
+    pub local_model: String,
+    /// Power-user escape hatch: let each configuration pick its own LOCAL model
+    /// instead of sharing [`Self::local_model`]. Off by default because on a
+    /// machine that cannot hold them all it converts every feature switch into
+    /// an Ollama evict-and-reload (see above) — which reads as random multi-
+    /// second stalls, not as an error.
+    #[serde(default)]
+    pub allow_multiple_local_models: bool,
     #[serde(default)]
     pub dictation: LlmDictation,
+    /// Modifiers applied to read-aloud text before synthesis (see [`LlmReadAloud`]).
+    #[serde(default)]
+    pub read_aloud: LlmReadAloud,
     #[serde(default)]
     pub transforms: LlmTransforms,
     #[serde(default)]
     pub app_profiles: AppProfilesSettings,
     /// Client request timeout (ms). Range 1000..30000. Applied (via
     /// `llm::llm_request_timeout`) to every cloud LLM round-trip: the
-    /// dictation and transform OpenRouter attempts.
+    /// dictation, transform/app-profile, and playground OpenRouter attempts.
     #[serde(default = "LlmSettings::default_timeout")]
     pub timeout: i64,
 }
@@ -1449,7 +1526,10 @@ impl Default for LlmSettings {
             endpoint: Self::default_endpoint(),
             openrouter_api_key: String::new(),
             profile_swap_hotkey: Self::default_profile_swap_hotkey(),
+            local_model: String::new(),
+            allow_multiple_local_models: false,
             dictation: LlmDictation::default(),
+            read_aloud: LlmReadAloud::default(),
             transforms: LlmTransforms::default(),
             app_profiles: AppProfilesSettings::default(),
             timeout: Self::default_timeout(),
@@ -1567,8 +1647,27 @@ pub struct TtsSettings {
     /// HOT-SWAP (the Spark engine is rebuilt when this changes).
     #[serde(default)]
     pub clone_ref_text: String,
+    /// Natural-language style instruction for models whose prompt carries a dedicated
+    /// instruct span ALONGSIDE the voice (`voice_instruct` in the catalog, e.g.
+    /// OmniVoice). Voice-DESIGN models are different: there the prompt IS the voice and
+    /// lives in the overloaded `voice` field above, which a cloning row cannot use
+    /// because it holds the reference-clip path. Empty = no instruction.
+    /// HOT-SWAP (the engine is rebuilt when this changes).
+    #[serde(default)]
+    pub voice_instruct: String,
     #[serde(default = "TtsSettings::default_lang")]
     pub lang: String,
+    /// Run the read-aloud text through the post-processing LLM first so it can
+    /// insert the SELECTED MODEL's inline paralinguistic tags (`<laugh>`,
+    /// `[sigh]`, …) where the delivery calls for them.
+    ///
+    /// This flag only says "annotate"; the vocabulary AND the delimiters come
+    /// from the model's catalog row (`tags` / `tag_syntax`), because the two
+    /// shipped syntaxes are incompatible — Orpheus reads `<laugh>`, Chatterbox
+    /// Turbo reads `[laugh]`, and the wrong one is SPOKEN rather than rejected.
+    /// Off by default: it costs one LLM round-trip before the first word.
+    #[serde(default)]
+    pub inline_tags: bool,
     /// 0.4..2.0 multiplier (Supertonic slider reaches 0.4; other engines 0.5).
     #[serde(default = "TtsSettings::default_speed")]
     pub speed: f64,
@@ -1614,7 +1713,9 @@ impl Default for TtsSettings {
             quantization: String::new(),
             voice: Self::default_voice(),
             clone_ref_text: String::new(),
+            voice_instruct: String::new(),
             lang: Self::default_lang(),
+            inline_tags: false,
             speed: Self::default_speed(),
             hotkey: Self::default_hotkey(),
             source: TtsSource::default(),
@@ -1805,30 +1906,15 @@ fn default_neutral_presets() -> Vec<PresetEntry> {
     }]
 }
 
-/// Dictation post-processing defaults: neutral tone plus clarity modifiers.
-fn default_dictation_presets() -> Vec<PresetEntry> {
-    vec![
-        PresetEntry {
-            key: PresetKey::Neutral,
-            level: None,
-            target_lang: None,
-        },
-        PresetEntry {
-            key: PresetKey::Reorder,
-            level: None,
-            target_lang: None,
-        },
-        PresetEntry {
-            key: PresetKey::Restructure,
-            level: None,
-            target_lang: None,
-        },
-        PresetEntry {
-            key: PresetKey::RewordForClarity,
-            level: None,
-            target_lang: None,
-        },
-    ]
+/// The configuration id every consumer is assigned out of the box.
+///
+/// A feature must not be enableable without a configuration — there would be no
+/// prompt to run — so all three default to the plainest shipped one ("Default":
+/// the base cleanup pass, neutral tone, no modifiers). Mirrors
+/// `DEFAULT_CONFIGURATION_ID` in the renderer's configuration store, which seeds
+/// that configuration on first load.
+fn default_configuration_id() -> String {
+    "builtin:default".to_string()
 }
 
 // ===========================================================================
@@ -2058,11 +2144,19 @@ mod tests {
             ThinkingEffort::Medium
         );
         assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Off);
-        assert_eq!(s.llm.dictation.presets.len(), 4);
+        // Every consumer ships ASSIGNED to the "Default" configuration, whose
+        // stack is the plainest one — base cleanup, neutral tone, no modifiers.
+        // The persisted stack has to agree with that assignment, or a fresh
+        // install would show a configuration the settings do not match.
+        for feature in [
+            &s.llm.dictation.configuration_id,
+            &s.llm.transforms.configuration_id,
+            &s.llm.read_aloud.configuration_id,
+        ] {
+            assert_eq!(feature, "builtin:default");
+        }
+        assert_eq!(s.llm.dictation.presets.len(), 1);
         assert_eq!(s.llm.dictation.presets[0].key, PresetKey::Neutral);
-        assert_eq!(s.llm.dictation.presets[1].key, PresetKey::Reorder);
-        assert_eq!(s.llm.dictation.presets[2].key, PresetKey::Restructure);
-        assert_eq!(s.llm.dictation.presets[3].key, PresetKey::RewordForClarity);
         assert_eq!(s.llm.transforms.hotkey, "LCtrl+LShift+T");
 
         // tts
@@ -2133,6 +2227,46 @@ mod tests {
     }
 
     #[test]
+    fn empty_section_objects_match_their_canonical_defaults() {
+        macro_rules! assert_empty_matches_default {
+            ($type:ty) => {{
+                let decoded: $type = serde_json::from_str("{}").expect(concat!(
+                    "empty ",
+                    stringify!($type),
+                    " object must parse"
+                ));
+                assert_eq!(
+                    decoded,
+                    <$type>::default(),
+                    concat!(
+                        stringify!($type),
+                        " serde field defaults drifted from its Default implementation"
+                    )
+                );
+            }};
+        }
+
+        assert_empty_matches_default!(GlobalSettings);
+        assert_empty_matches_default!(ModelSettings);
+        assert_empty_matches_default!(QualitySettings);
+        assert_empty_matches_default!(AudioSettings);
+        assert_empty_matches_default!(GeneralSettings);
+        assert_empty_matches_default!(HotkeySettings);
+        assert_empty_matches_default!(LlmFeatureBase);
+        assert_empty_matches_default!(LlmDictation);
+        assert_empty_matches_default!(LlmReadAloud);
+        assert_empty_matches_default!(LlmTransforms);
+        assert_empty_matches_default!(AppProfileConfig);
+        assert_empty_matches_default!(AppProfileRule);
+        assert_empty_matches_default!(AppProfilesSettings);
+        assert_empty_matches_default!(LlmSettings);
+        assert_empty_matches_default!(TtsCloud);
+        assert_empty_matches_default!(TtsSettings);
+        assert_empty_matches_default!(ProviderIntegrationStatus);
+        assert_empty_matches_default!(IntegrationsSettings);
+    }
+
+    #[test]
     fn partial_section_does_not_wipe_other_sections() {
         // One field set in `model`; everything else (including the rest of
         // `model`) must fall back to defaults — the per-field `.default()`
@@ -2195,7 +2329,8 @@ mod tests {
         assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Off);
         assert_eq!(s.llm.dictation.base.max_output_tokens, None);
         // Sibling non-flattened fields default too.
-        assert_eq!(s.llm.dictation.presets.len(), 4);
+        assert_eq!(s.llm.dictation.presets.len(), 1);
+        assert_eq!(s.llm.dictation.configuration_id, "builtin:default");
         // Shared infra + transforms default.
         assert_eq!(s.llm.endpoint, "http://localhost:11434");
         assert_eq!(s.llm.profile_swap_hotkey, "LCtrl+LShift+P");

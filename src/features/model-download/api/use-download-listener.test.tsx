@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { IPC } from "@test/mocks/legacy-ipc";
+import { commands } from "@/bindings";
 import { useDownloadStore } from "../model/download-store";
 import { useDownloadListener } from "./use-download-listener";
 
@@ -47,6 +48,32 @@ function fire(channel: string, ...args: unknown[]) {
 }
 
 describe("useDownloadListener", () => {
+	test("does not query or subscribe outside a native runtime", () => {
+		const maybeWindow = window as Window & {
+			__TAURI_INTERNALS__?: unknown;
+		};
+		const previousInternals = maybeWindow.__TAURI_INTERNALS__;
+		const previousBridge = window.nativeBridge;
+		const previousSnapshots = commands.sttModelLifecycleSnapshots;
+		let snapshotCalls = 0;
+		Reflect.deleteProperty(maybeWindow, "__TAURI_INTERNALS__");
+		Reflect.deleteProperty(window, "nativeBridge");
+		commands.sttModelLifecycleSnapshots = async () => {
+			snapshotCalls += 1;
+			return [];
+		};
+
+		try {
+			renderHook(() => useDownloadListener());
+			expect(snapshotCalls).toBe(0);
+			expect(listeners.size).toBe(0);
+		} finally {
+			maybeWindow.__TAURI_INTERNALS__ = previousInternals;
+			window.nativeBridge = previousBridge;
+			commands.sttModelLifecycleSnapshots = previousSnapshots;
+		}
+	});
+
 	test("subscribes to all three model-download channels", () => {
 		renderHook(() => useDownloadListener());
 		expect(listeners.has(IPC.STT_MODEL_DOWNLOAD_START)).toBe(true);

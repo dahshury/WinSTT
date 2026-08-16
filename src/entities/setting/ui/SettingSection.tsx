@@ -169,6 +169,7 @@ export function SettingSection({
 				)}
 				{hasBody ? (
 					<div
+						aria-disabled={isDisabled || undefined}
 						className={cn(
 							"transition-opacity duration-200 ease-out",
 							boxed
@@ -180,6 +181,7 @@ export function SettingSection({
 								: "pt-1",
 							isDisabled && "settings-dim pointer-events-none",
 						)}
+						inert={isDisabled ? true : undefined}
 					>
 						{body}
 					</div>

@@ -11,6 +11,40 @@ use crate::settings::{self, ShortcutBinding};
 
 use super::handler::handle_shortcut_event;
 
+#[cfg(target_os = "windows")]
+fn validate_windows_reserved(tokens: &[String]) -> Result<(), String> {
+    let has = |token: &str| tokens.iter().any(|part| part == token);
+    let has_any = |candidates: &[&str]| candidates.iter().any(|token| has(token));
+
+    if has_any(&["win", "windows", "super", "meta", "command", "cmd"]) {
+        return Err("Windows-key shortcuts are reserved by the operating system".into());
+    }
+    if has("f12") {
+        return Err("F12 is reserved by Windows for debuggers".into());
+    }
+    if has_any(&["printscreen", "printscrn", "prtsc", "snapshot"]) {
+        return Err("Print Screen shortcuts are reserved by Windows".into());
+    }
+
+    let ctrl = has_any(&["ctrl", "control"]);
+    let alt = has_any(&["alt", "option"]);
+    let shift = has("shift");
+    if (ctrl && alt && has("delete"))
+        || (alt && has("tab"))
+        || (alt && has("f4"))
+        || (ctrl && has_any(&["escape", "esc"]))
+        || (ctrl && shift && has_any(&["escape", "esc"]))
+    {
+        return Err("this shortcut is reserved by Windows".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn validate_windows_reserved(_tokens: &[String]) -> Result<(), String> {
+    Ok(())
+}
+
 /// Initialize shortcuts using Tauri's global-shortcut plugin
 pub fn init_shortcuts(app: &AppHandle) {
     let default_bindings = settings::get_default_settings().bindings;
@@ -72,7 +106,8 @@ pub fn validate_shortcut(raw: &str) -> Result<(), String> {
         }
     }
 
-    // Check for at least one non-modifier key
+    validate_windows_reserved(&parts)?;
+
     let has_non_modifier = parts.iter().any(|part| !modifiers.contains(&part.as_str()));
 
     if has_non_modifier {
@@ -93,7 +128,6 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
         return Err(e);
     }
 
-    // Parse shortcut and return error if it fails
     let shortcut = match binding.current_binding.parse::<Shortcut>() {
         Ok(s) => s,
         Err(e) => {
@@ -113,7 +147,6 @@ pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<()
         return Err(error_msg);
     }
 
-    // Clone binding.id for use in the closure
     let binding_id_for_closure = binding.id.clone();
 
     app.global_shortcut()
@@ -224,5 +257,30 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
             // We ignore errors here as it might already be unregistered.
             let _ = unregister_shortcut(&app_clone, cancel_binding);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_shortcut;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn rejects_windows_reserved_shortcuts() {
+        for accel in [
+            "F12",
+            "Ctrl+Alt+Delete",
+            "Alt+Tab",
+            "Alt+F4",
+            "Ctrl+Escape",
+            "Ctrl+Shift+Escape",
+            "PrintScreen",
+            "Super+K",
+        ] {
+            assert!(
+                validate_shortcut(accel).is_err(),
+                "expected '{accel}' to be reserved"
+            );
+        }
     }
 }

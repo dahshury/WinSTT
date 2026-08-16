@@ -1283,8 +1283,10 @@ pub async fn history_clear(
     })
     .await?;
     for id in ids {
-        // Best-effort: a row vanishing under us (concurrent delete) is not fatal.
-        let _ = history_manager.delete_entry(id).await;
+        history_manager
+            .delete_entry(id)
+            .await
+            .map_err(|err| format!("failed to delete history entry {id}: {err}"))?;
     }
     Ok(ClearResult { cleared: true })
 }

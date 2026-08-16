@@ -1,4 +1,3 @@
-// Re-export all audio components
 mod device;
 mod recorder;
 mod resampler;

@@ -139,7 +139,21 @@ export function ResetSection(): ReactNode {
 	const handleRemoveApplicationData = async () => {
 		dispatch({ type: "cleanupErrorChanged", error: "" });
 		try {
-			await removeApplicationData(deleteOllamaModels);
+			const result = await removeApplicationData(deleteOllamaModels);
+			if (!result.scheduled) {
+				// Nothing was armed, so keeping the app open is safe — and is the
+				// only outcome where reporting the failure instead of quitting is
+				// the honest thing to do.
+				throw new Error(ts("appDataCleanupNotScheduled"));
+			}
+			// Once the backend reports `scheduled`, a detached cleanup script is
+			// already waiting on this process id and will delete every target path
+			// the next time WinSTT exits — quitting now or not only changes *when*
+			// the wipe happens, never *whether*. So a non-empty `result.ollamaErrors`
+			// must NOT abort the quit: that would leave the user believing the
+			// removal failed while their data is destroyed on their next normal
+			// close. Per-model Ollama failures are recorded backend-side as an
+			// operational issue instead.
 			await commands.quitApp();
 		} catch (err) {
 			dispatch({
@@ -222,7 +236,9 @@ export function ResetSection(): ReactNode {
 							title={ts("removeApplicationDataOllama")}
 						/>
 						{cleanupError ? (
-							<p className="text-body text-error">{cleanupError}</p>
+							<p className="whitespace-pre-line text-body text-error">
+								{cleanupError}
+							</p>
 						) : null}
 					</div>
 				}
@@ -241,43 +257,55 @@ export function ResetSection(): ReactNode {
 				title={ts("applicationDataTitle")}
 			>
 				<AppDataUsageBreakdown />
-				<AboutActionRow
-					buttonLabel={ts("removeDownloadedModelsButton")}
-					icon={PackageRemoveIcon}
-					onClick={() => {
-						dispatch({ type: "modelCleanupErrorChanged", error: "" });
-						dispatch({ type: "removeModelsConfirmOpenChanged", open: true });
-					}}
-					summary={ts("removeDownloadedModelsSummary")}
-					title={ts("removeDownloadedModelsButton")}
-				/>
-				<AboutActionRow
-					buttonLabel={ts("removeApplicationDataButton")}
-					destructive
-					icon={Delete02Icon}
-					onClick={() => {
-						dispatch({ type: "cleanupErrorChanged", error: "" });
-						dispatch({ type: "removeConfirmOpenChanged", open: true });
-					}}
-					summary={ts("removeApplicationDataSummary")}
-					title={ts("removeApplicationDataButton")}
-				/>
-			</SettingSection>
-			<SettingSection
-				boxed
-				description={ts("resetDefaultsSummary")}
-				icon={ArrowTurnBackwardIcon}
-				title={ts("resetDefaultsTitle")}
-			>
-				<AboutActionRow
-					buttonLabel={ts("resetDefaults")}
-					icon={ArrowTurnBackwardIcon}
-					onClick={() =>
-						dispatch({ type: "resetConfirmOpenChanged", open: true })
-					}
-					summary={ts("resetDefaultsSummary")}
-					title={ts("resetDefaults")}
-				/>
+				{/* The three ways to throw data away, pulled out of the usage list
+				    and under one micro-label: reading down the section you first
+				    see what is stored, then — clearly fenced off — what removes it.
+				    `pt-6` widens the hairline the divided list already draws above
+				    this group into a real break. */}
+				<div
+					aria-label={ts("destructiveActionsTitle")}
+					className="flex flex-col gap-1 pt-6"
+					role="group"
+				>
+					<h4 className="font-semibold text-2xs text-foreground-muted uppercase tracking-[0.11em]">
+						{ts("destructiveActionsTitle")}
+					</h4>
+					<div className="flex flex-col divide-y divide-divider">
+						<AboutActionRow
+							buttonLabel={ts("removeDownloadedModelsButton")}
+							icon={PackageRemoveIcon}
+							onClick={() => {
+								dispatch({ type: "modelCleanupErrorChanged", error: "" });
+								dispatch({
+									type: "removeModelsConfirmOpenChanged",
+									open: true,
+								});
+							}}
+							summary={ts("removeDownloadedModelsSummary")}
+							title={ts("removeDownloadedModelsButton")}
+						/>
+						<AboutActionRow
+							buttonLabel={ts("resetDefaults")}
+							icon={ArrowTurnBackwardIcon}
+							onClick={() =>
+								dispatch({ type: "resetConfirmOpenChanged", open: true })
+							}
+							summary={ts("resetDefaultsSummary")}
+							title={ts("resetDefaultsTitle")}
+						/>
+						<AboutActionRow
+							buttonLabel={ts("removeApplicationDataButton")}
+							destructive
+							icon={Delete02Icon}
+							onClick={() => {
+								dispatch({ type: "cleanupErrorChanged", error: "" });
+								dispatch({ type: "removeConfirmOpenChanged", open: true });
+							}}
+							summary={ts("removeApplicationDataSummary")}
+							title={ts("removeApplicationDataButton")}
+						/>
+					</div>
+				</div>
 			</SettingSection>
 		</>
 	);

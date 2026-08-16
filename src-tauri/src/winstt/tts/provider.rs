@@ -108,6 +108,36 @@ pub(crate) fn cpu_session(
     Ok(session)
 }
 
+/// Build a **CPU-only** session with an explicit intra-op thread cap.
+///
+/// [`cpu_session`] leaves `intra_threads` unset, which lets ORT spawn one thread
+/// per logical core. That is the right default for the wide graphs (Kokoro's
+/// vocoder, Chatterbox's encoder) but it is actively harmful for a *narrow*
+/// autoregressive decoder: NeuTTS-2e's backbone has `hidden_size` 512, so a
+/// single-token step is a stack of tiny GEMMs whose per-op fork/join dominates
+/// once the pool is large. Measured on this box (24 logical cores, int8 graph,
+/// 40 timed steps): 8.3 tok/s at the ORT default vs **23.2 tok/s at 4 threads** —
+/// a 2.8x loss from over-subscription, matching the upstream card's "set
+/// intra_op_num_threads to 3-4" note. Engines that want that cap ask for it here
+/// rather than every engine paying for a knob only one of them needs.
+pub(crate) fn cpu_session_with_intra_threads(
+    path: &Path,
+    reason: &'static str,
+    engine: &str,
+    intra_threads: usize,
+) -> Result<Session, String> {
+    log::debug!("[tts] {engine} CPU-pinned with {intra_threads} intra-op threads ({reason})");
+    let mut builder = configure_session(
+        GraphOptimizationLevel::Level3,
+        Some(intra_threads.max(1)),
+        false,
+        Some(&[Accelerator::Cpu]),
+    )?;
+    builder
+        .commit_from_file(path)
+        .map_err(|err| format!("commit_from_file {}: {err}", path.display()))
+}
+
 /// Input node names of a loaded session (e.g. Kokoro's `tokens` vs `input_ids`
 /// schema probe). Empty if the runtime exposes none.
 pub(crate) fn input_names(session: &Session) -> Vec<String> {

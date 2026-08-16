@@ -6,10 +6,12 @@ import {
 } from "@/entities/setting";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Slider } from "@/shared/ui/slider";
-import type {
-	AudioSettings,
-	AudioT,
-	UpdateAudioFn,
+import {
+	type AudioSettings,
+	type AudioT,
+	SILENCE_STOP_MAX_SECONDS,
+	SILENCE_STOP_MIN_SECONDS,
+	type UpdateAudioFn,
 } from "./recording-settings-types";
 
 interface VadSectionProps {
@@ -98,7 +100,8 @@ export function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					tooltip={ta("postSpeechSilenceTooltip")}
 				>
 					<NumberStepper
-						min={0.1}
+						max={SILENCE_STOP_MAX_SECONDS}
+						min={SILENCE_STOP_MIN_SECONDS}
 						onChange={(v) => updateAudio({ postSpeechSilenceDuration: v })}
 						step={0.1}
 						value={

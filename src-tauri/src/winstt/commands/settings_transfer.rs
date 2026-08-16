@@ -20,7 +20,7 @@ use crate::winstt::cloud_stt::{CloudSttProvider, provider_of};
 use crate::winstt::commands::catalog_data::ModelCacheInfo;
 use crate::winstt::commands::runtime::probe_cache_states;
 use crate::winstt::commands::settings::{
-    PartialWinsttSettings, SECRET_PRESENT_SENTINEL, apply_settings_patch, read_settings,
+    SECRET_PRESENT_SENTINEL, apply_settings_replacement, read_settings,
 };
 use crate::winstt::managers::DownloadManager;
 use crate::winstt::managers::llm_manager::LlmManager;
@@ -187,6 +187,15 @@ fn default_export_filename() -> String {
     format!("winstt-settings-{}.json", now_epoch_seconds())
 }
 
+/// Redact one secret for the EXPORT file — always the BARE sentinel, never the
+/// last-4 hint the renderer mask carries.
+///
+/// WHY the divergence: an exported settings file LEAVES THE MACHINE (backup
+/// folder, cloud sync, a shared bug report), while the renderer mask never does.
+/// A file that outlives its machine must carry no key material at all — not even
+/// 4 characters, which narrow a brute force and are enough to fingerprint which
+/// key an account is using. Keep this call site independent of
+/// `settings_store::mask_secret_for_renderer`.
 fn redact_secret(value: &mut String) {
     if !value.trim().is_empty() {
         *value = SECRET_PRESENT_SENTINEL.to_string();
@@ -397,22 +406,6 @@ fn parse_import(bytes: &[u8]) -> Result<ParsedImport, String> {
         settings,
         llm_configurations,
     })
-}
-
-fn full_settings_patch(settings: &WinsttSettings) -> PartialWinsttSettings {
-    PartialWinsttSettings {
-        global: Some(settings.global),
-        model: Some(settings.model.clone()),
-        quality: Some(settings.quality.clone()),
-        audio: Some(settings.audio.clone()),
-        general: Some(settings.general.clone()),
-        hotkey: Some(settings.hotkey.clone()),
-        dictionary: Some(settings.dictionary.clone()),
-        snippets: Some(settings.snippets.clone()),
-        llm: Some(settings.llm.clone()),
-        tts: Some(settings.tts.clone()),
-        integrations: Some(settings.integrations.clone()),
-    }
 }
 
 fn stt_cache_to_available(
@@ -991,7 +984,7 @@ pub async fn settings_import_full(
     .await;
     let (next, mut adjusted) = reconcile_imported_settings(parsed, &current, &availability);
 
-    if let Err(err) = apply_settings_patch(&app, full_settings_patch(&next)) {
+    if let Err(err) = apply_settings_replacement(&app, &next) {
         return Ok(SettingsImportResult::failed(format!(
             "Failed to apply imported settings: {err}"
         )));
@@ -1093,6 +1086,25 @@ mod tests {
             value["settings"]["llm"]["openrouterApiKey"],
             serde_json::json!(SECRET_PRESENT_SENTINEL)
         );
+    }
+
+    #[test]
+    fn export_redaction_never_carries_a_last4_hint() {
+        // The renderer mask appends `:last4`; the EXPORT must not. An exported file
+        // leaves the machine, so it carries zero key material — long keys (which the
+        // renderer would hint) redact to the bare sentinel, exactly like short ones.
+        let mut settings = WinsttSettings::default();
+        settings.llm.openrouter_api_key = "sk-or-v1-long-enough-to-hint".into();
+        settings.integrations.elevenlabs.api_key = "xi-el-long-enough-to-hint".into();
+
+        redact_export_secrets(&mut settings);
+
+        assert_eq!(settings.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
+        assert_eq!(
+            settings.integrations.elevenlabs.api_key,
+            SECRET_PRESENT_SENTINEL
+        );
+        assert!(!settings.llm.openrouter_api_key.contains("hint"));
     }
 
     #[test]

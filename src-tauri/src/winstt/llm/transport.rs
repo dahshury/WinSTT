@@ -5,6 +5,7 @@
 // loopback validation. (OpenRouter and endpoint helpers are both small,
 // self-contained, provider-config concerns.)
 
+use std::future::Future;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -21,6 +22,25 @@ pub trait ReasoningSink: Send {
 /// so a stalled provider can never hang the transcription→paste pipeline.
 pub fn llm_request_timeout(timeout_ms: i64) -> Duration {
     Duration::from_millis(timeout_ms.clamp(1_000, 30_000) as u64)
+}
+
+async fn with_timeout_duration<T, F>(timeout: Duration, future: F) -> Result<T, Duration>
+where
+    F: Future<Output = T>,
+{
+    tokio::time::timeout(timeout, future)
+        .await
+        .map_err(|_| timeout)
+}
+
+/// Apply the configured cloud-LLM deadline to one request future. The timeout
+/// value is normalized in one place so dictation, transforms, app profiles and
+/// playground calls cannot drift to different clamp behavior.
+pub async fn with_llm_request_timeout<T, F>(timeout_ms: i64, future: F) -> Result<T, Duration>
+where
+    F: Future<Output = T>,
+{
+    with_timeout_duration(llm_request_timeout(timeout_ms), future).await
 }
 
 // ─────────────────────── OpenRouter extra-body ────────────────────────
@@ -263,6 +283,21 @@ fn is_loopback_ollama_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_timeout_wrapper_returns_completed_output() {
+        assert_eq!(
+            with_timeout_duration(Duration::from_millis(20), async { 7 }).await,
+            Ok(7)
+        );
+    }
+
+    #[tokio::test]
+    async fn request_timeout_wrapper_reports_the_applied_deadline() {
+        let deadline = Duration::from_millis(1);
+        let result = with_timeout_duration(deadline, std::future::pending::<()>()).await;
+        assert_eq!(result, Err(deadline));
+    }
 
     // ── openrouter helpers ──
 

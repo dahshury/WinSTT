@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { commands } from "@/bindings";
 import {
 	type AppSettingsOutput,
 	appSettingsSchema,
@@ -7,11 +8,25 @@ import {
 
 const DEFAULTS: AppSettingsOutput = appSettingsSchema.parse({});
 
+function isRealSettingsWindow(): boolean {
+	if (typeof window === "undefined") {
+		return false;
+	}
+	const internals = (
+		window as Window & {
+			__TAURI_INTERNALS__?: {
+				metadata?: { currentWindow?: { label?: string } };
+			};
+		}
+	).__TAURI_INTERNALS__;
+	return internals?.metadata?.currentWindow?.label === "settings";
+}
+
 type Integrations = AppSettingsOutput["integrations"];
 type GeneralSettings = AppSettingsOutput["general"];
 type LlmSettings = AppSettingsOutput["llm"];
 type LlmDictationSettings = LlmSettings["dictation"];
-type LlmTransformsSettings = LlmSettings["transforms"];
+
 type LlmPostProcessingPatch = Partial<
 	Pick<
 		LlmDictationSettings,
@@ -95,14 +110,6 @@ function normalizeSettings(settings: AppSettingsOutput): AppSettingsOutput {
 		...next,
 		llm: normalizeLlmSettings(next),
 	};
-}
-
-function toTransformsPostProcessingPatch(
-	patch: LlmPostProcessingPatch,
-): Partial<LlmTransformsSettings> {
-	const { dictionaryAutoAddEnabled: _dictionaryAutoAddEnabled, ...shared } =
-		patch;
-	return shared;
 }
 
 /**
@@ -189,6 +196,27 @@ interface SettingsState {
 	updateLlmSettings: (
 		patch: Partial<Omit<AppSettingsOutput["llm"], "dictation" | "transforms">>,
 	) => void;
+	/** Patches the read-aloud post-processing config (`llm.readAloud`) — its
+	 *  enable flag plus the provider/model/tone/modifiers its assigned
+	 *  configuration resolved to. */
+	updateLlmReadAloud: (
+		patch: Partial<AppSettingsOutput["llm"]["readAloud"]>,
+	) => void;
+	/**
+	 * Adopt `model` as THE shared local model.
+	 *
+	 * While `allowMultipleLocalModels` is off, every locally-running consumer has
+	 * to resolve onto ONE model: Ollama does not refuse to overcommit, it evicts
+	 * an idle model to make room, so a second resident local model turns every
+	 * switch between features into a silent multi-second reload.
+	 *
+	 * It lives here, as one atomic write across `llm.localModel` and the three
+	 * consumers, because the invariant spans slices and every surface that lands
+	 * a local model has to uphold it — the model picker used to write only
+	 * `localModel` plus the feature it was opened from, leaving the other
+	 * consumers pointing at the previous model and two models resident.
+	 */
+	updateLlmSharedLocalModel: (model: string) => void;
 	updateLlmTransforms: (
 		patch: Partial<AppSettingsOutput["llm"]["transforms"]>,
 	) => void;
@@ -272,25 +300,32 @@ export const useSettingsStore = create<SettingsState>()(
 					};
 					return { settings: normalizeSettings(settings) };
 				}),
+			// Transformations used to be a SHADOW of dictation: this action copied
+			// dictation's provider, model, tuning, tone, modifiers AND `enabled`
+			// straight into `llm.transforms`, so the two could never be configured
+			// apart. They are independent consumers now — each is ASSIGNED a saved
+			// configuration — so this writes dictation only.
 			updateLlmPostProcessing: (patch) =>
 				set((state) => {
-					const dictation = {
-						...state.settings.llm.dictation,
-						...patch,
-					};
 					const settings = {
 						...state.settings,
 						llm: {
 							...state.settings.llm,
-							dictation,
-							transforms: {
-								...state.settings.llm.transforms,
-								...toTransformsPostProcessingPatch(dictation),
-							},
+							dictation: { ...state.settings.llm.dictation, ...patch },
 						},
 					};
 					return { settings: normalizeSettings(settings) };
 				}),
+			updateLlmReadAloud: (patch) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						llm: {
+							...state.settings.llm,
+							readAloud: { ...state.settings.llm.readAloud, ...patch },
+						},
+					},
+				})),
 			updateLlmTransforms: (patch) =>
 				set((state) => ({
 					settings: {
@@ -301,6 +336,33 @@ export const useSettingsStore = create<SettingsState>()(
 						},
 					},
 				})),
+			updateLlmSharedLocalModel: (model) =>
+				set((state) => {
+					const llm = state.settings.llm;
+					// Cloud consumers are unconstrained (their model costs no VRAM), and
+					// the power toggle frees every consumer to keep its own. Unchanged
+					// slices are returned by identity so subscribers don't re-render.
+					const adopt = <T extends { model: string; provider: string }>(
+						feature: T,
+					): T =>
+						llm.allowMultipleLocalModels ||
+						feature.provider !== "ollama" ||
+						feature.model === model
+							? feature
+							: { ...feature, model };
+					return {
+						settings: {
+							...state.settings,
+							llm: {
+								...llm,
+								localModel: model,
+								dictation: adopt(llm.dictation),
+								readAloud: adopt(llm.readAloud),
+								transforms: adopt(llm.transforms),
+							},
+						},
+					};
+				}),
 			updateDictionary: (dictionary) =>
 				set((state) => ({
 					settings: { ...state.settings, dictionary },
@@ -320,14 +382,31 @@ export const useSettingsStore = create<SettingsState>()(
 						integrations: mergeIntegrations(state.settings, patch),
 					},
 				})),
-			resetSettings: () =>
-				set((state) => ({
-					settings: {
-						...DEFAULTS,
-						dictionary: state.settings.dictionary,
-						snippets: state.settings.snippets,
-					},
-				})),
+			resetSettings: () => {
+				// A full reset is an explicit, trusted action. In the real Settings
+				// webview let the backend replace the whole canonical tree so its
+				// anti-wipe guard cannot mistake the defaults for an unhydrated cache
+				// dump. Plain Vite/tests have no native command and reset locally; the
+				// normal dev settings bridge persists that local diff.
+				if (isRealSettingsWindow()) {
+					void commands
+						.settingsResetDefaults()
+						.then((result) => {
+							if (result.status === "error") {
+								throw new Error(result.error);
+							}
+							set({
+								settings: appSettingsSchema.parse(result.data.settings),
+								isLoaded: true,
+							});
+						})
+						.catch((error: unknown) => {
+							console.error("[settings] reset to defaults failed:", error);
+						});
+					return;
+				}
+				set({ settings: DEFAULTS });
+			},
 			setLoaded: (loaded) => set({ isLoaded: loaded }),
 		}),
 		{

@@ -17,14 +17,16 @@ import { GROUP_HEADER_CLASSES } from "./card-constants";
 export function FavoritesGroupLabel({
 	count,
 	noun = "model",
+	compact = false,
 }: {
 	count: number;
 	noun?: string;
+	compact?: boolean;
 }) {
 	const t = useTranslations("modelPicker");
 	return (
 		<Combobox.GroupLabel
-			className={GROUP_HEADER_CLASSES}
+			className={compact ? `${GROUP_HEADER_CLASSES} h-7` : GROUP_HEADER_CLASSES}
 			data-rail-section={FAVORITES_GROUP_VALUE}
 		>
 			<span className="flex size-4 items-center justify-center rounded bg-favorite/[0.12] text-favorite">

@@ -65,7 +65,7 @@ export function PermissionPreflightPanel({
 		<div className="flex h-full items-center justify-center overflow-y-auto px-6 py-8">
 			<div className="flex w-full max-w-xl flex-col gap-5">
 				<div className="text-center">
-					<h1 className="font-semibold text-foreground text-title-lg leading-tight">
+					<h1 className="font-semibold text-foreground text-title leading-tight">
 						{t("permissionTitle")}
 					</h1>
 					<p className="mx-auto mt-2 max-w-lg text-body-sm text-foreground-muted leading-relaxed">

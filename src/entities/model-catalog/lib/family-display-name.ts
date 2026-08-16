@@ -1,4 +1,4 @@
-import type { ModelInfo } from "@/entities/model-catalog";
+import type { ModelInfo } from "../model/catalog-store";
 import { getFamilyConfig } from "./family-metadata";
 
 /** Parameter-count tokens like "180M", "1B", "0.6B" embedded in a display

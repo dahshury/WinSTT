@@ -1,4 +1,5 @@
 export {
+	defaultVoiceForTtsModel,
 	type TtsModelSelectionPatch,
 	resolveTtsModelSelectionPatch,
 } from "./model/tts-model-selection";

@@ -139,12 +139,10 @@ interface PublisherRule {
 }
 
 const PUBLISHER_RULES: readonly PublisherRule[] = [
-	// PrismML
 	{
 		publisher: { slug: "prismml", label: "PrismML" },
 		tokens: ["bonsai", "prismml"],
 	},
-	// Google
 	{
 		publisher: { slug: "google", label: "Google" },
 		tokens: ["gemma", "paligemma", "gemini"],
@@ -154,7 +152,6 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "openai", label: "OpenAI" },
 		tokens: ["gpt"],
 	},
-	// Meta
 	{
 		publisher: { slug: "meta-llama", label: "Meta" },
 		tokens: ["llama", "tinyllama", "codellama"],
@@ -176,7 +173,6 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 			"orca",
 		],
 	},
-	// Mistral AI
 	{
 		publisher: { slug: "mistralai", label: "Mistral AI" },
 		tokens: [
@@ -189,32 +185,26 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 			"ministral",
 		],
 	},
-	// DeepSeek
 	{
 		publisher: { slug: "deepseek", label: "DeepSeek" },
 		tokens: ["deepseek"],
 	},
-	// IBM
 	{
 		publisher: { slug: "ibm-granite", label: "IBM" },
 		tokens: ["granite"],
 	},
-	// NVIDIA
 	{
 		publisher: { slug: "nvidia", label: "NVIDIA" },
 		tokens: ["nemotron", "minitron", "llama-nemotron"],
 	},
-	// Cohere
 	{
 		publisher: { slug: "cohere", label: "Cohere" },
 		tokens: ["command", "aya"],
 	},
-	// Nous Research
 	{
 		publisher: { slug: "nousresearch", label: "Nous Research" },
 		tokens: ["hermes", "nous"],
 	},
-	// Cognitive Computations
 	{
 		publisher: {
 			slug: "cognitivecomputations",
@@ -222,7 +212,6 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		},
 		tokens: ["dolphin"],
 	},
-	// 01.AI
 	{
 		publisher: { slug: "01-ai", label: "01.AI" },
 		tokens: ["yi"],
@@ -242,7 +231,6 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "upstage", label: "Upstage" },
 		tokens: ["solar"],
 	},
-	// Databricks
 	{
 		publisher: { slug: "databricks", label: "Databricks" },
 		tokens: ["dbrx"],
@@ -252,7 +240,6 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "stabilityai", label: "Stability AI" },
 		tokens: ["stablelm", "stable"],
 	},
-	// Deep Cogito
 	{
 		publisher: { slug: "deepcogito", label: "Deep Cogito" },
 		tokens: ["cogito"],
@@ -262,7 +249,6 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "intel", label: "Intel" },
 		tokens: ["neural"],
 	},
-	// Nexusflow
 	{
 		publisher: { slug: "nexusflow", label: "Nexusflow" },
 		tokens: ["athene", "nexusraven"],
@@ -272,12 +258,10 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "huggingface", label: "Hugging Face" },
 		tokens: ["smollm", "smolvlm", "starcoder", "zephyr"],
 	},
-	// Moonshot
 	{
 		publisher: { slug: "moonshotai", label: "Moonshot" },
 		tokens: ["kimi", "moonshot"],
 	},
-	// xAI
 	{
 		publisher: { slug: "x-ai", label: "xAI" },
 		tokens: ["grok"],
@@ -287,22 +271,18 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "z-ai", label: "Z.AI" },
 		tokens: ["glm", "chatglm"],
 	},
-	// MiniMax
 	{
 		publisher: { slug: "minimax", label: "MiniMax" },
 		tokens: ["minimax"],
 	},
-	// Allen AI
 	{
 		publisher: { slug: "allenai", label: "Allen AI" },
 		tokens: ["olmo", "tulu", "molmo"],
 	},
-	// StepFun AI
 	{
 		publisher: { slug: "stepfun-ai", label: "StepFun AI" },
 		tokens: ["step"],
 	},
-	// Liquid AI
 	{
 		publisher: { slug: "liquid", label: "Liquid AI" },
 		tokens: ["lfm", "liquid"],
@@ -312,27 +292,22 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "opengvlab", label: "OpenGVLab" },
 		tokens: ["internlm", "internvl"],
 	},
-	// Tencent
 	{
 		publisher: { slug: "tencent", label: "Tencent" },
 		tokens: ["hunyuan"],
 	},
-	// Baidu
 	{
 		publisher: { slug: "baidu", label: "Baidu" },
 		tokens: ["ernie"],
 	},
-	// ByteDance
 	{
 		publisher: { slug: "bytedance", label: "ByteDance" },
 		tokens: ["doubao", "seedream"],
 	},
-	// THUDM
 	{
 		publisher: { slug: "thudm", label: "THUDM" },
 		tokens: ["codegeex"],
 	},
-	// Inception
 	{
 		publisher: { slug: "inception", label: "Inception" },
 		tokens: ["jais"],

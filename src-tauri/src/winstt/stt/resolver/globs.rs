@@ -370,6 +370,100 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("tokenizer", "tokenizer.json".into()),
             g("tokenizer_config", "tokenizer_config.json".into()),
         ],
+        EngineKind::Audio8Asr => {
+            // Audio8/Audio8-ASR-0.1B-onnx-runtime ships everything under `model_bundle/` with the
+            // `_` quant separator (`lm_cache_prefill_int8.onnx`). The int8/int4 LM graphs carry
+            // `<stem>.onnx.data` external-data sidecars, which the automatic sidecar sweep
+            // resolves — only the graphs themselves need logical keys.
+            //
+            // The audio tower is quantized INDEPENDENTLY of the LM: the bundle ships fp32 and int8
+            // towers only, so the int4 tier reuses the int8 tower (there is no `audio_hidden_int4`).
+            // Hence the tower glob is derived from the tier, not from the shared `{s}` suffix.
+            let tower = match quant {
+                Quantization::Default => "audio_hidden.onnx".to_string(),
+                _ => "audio_hidden_int8.onnx".to_string(),
+            };
+            vec![
+                g("audio_tower", format!("model_bundle/{tower}")),
+                g(
+                    "lm_prefill",
+                    format!("model_bundle/lm_cache_prefill{s}.onnx"),
+                ),
+                g("lm_decode", format!("model_bundle/lm_cache_decode{s}.onnx")),
+                // Host-side weights the bundle keeps OUTSIDE ONNX: the fp32 token-embedding table
+                // (`[vocab, 512]`) the decode loop looks rows up from, and the MLP adapter
+                // (LayerNorm + Linear 1024→512) applied to the tower's hidden states. Both are
+                // shared across precisions → no quant suffix.
+                g(
+                    "embed_tokens",
+                    "model_bundle/weights/token_embedding.npy".into(),
+                ),
+                g(
+                    "audio_projector",
+                    "model_bundle/weights/audio_projector.npz".into(),
+                ),
+                g("tokenizer", "model_bundle/tokenizer.json".into()),
+                g(
+                    "tokenizer_config",
+                    "model_bundle/tokenizer_config.json".into(),
+                ),
+                // Prompt scaffold token ids + the adapter's merge factor / hop length live here,
+                // NOT in the repo-root `config.json` that `download_set()` adds automatically.
+                g("bundle_metadata", "model_bundle/metadata.json".into()),
+            ]
+        }
+        EngineKind::ArkAsr => {
+            // ark-asr-*-onnx ships FLAT at the repo root with literal file names — no `?quant`
+            // suffix anywhere. Only the LM has more than one precision: the upstream 0.6B publishes
+            // int8 alone, while our 3B re-export additionally carries a weight-only int4
+            // (MatMulNBits) LM, which is both smaller and faster on CPU. The encoder stays int8 in
+            // every tier (it is convolution-heavy, so there is no MatMul weight to 4-bit).
+            // `int8g` selects the GROWING-cache LM: `past_* -> present_*` instead of a fixed
+            // buffer re-fed every token, so attention costs O(actual length) and the engine can
+            // keep the KV device-resident. Same weights, different decode contract — the engine
+            // detects which it got from the graph's input names.
+            let lm = match quant {
+                Quantization::Int4 => "llm_kv_cpu_fp32_int4.onnx",
+                Quantization::Int8g => "llm_kv_growing_int8.onnx",
+                _ => "llm_kv_cpu_fp32_int8.onnx",
+            };
+            vec![
+                g("audio_encoder", "audio_encoder_whisper_int8.onnx".into()),
+                g("audio_adapter", "audio_encoder_adapter_int8.onnx".into()),
+                // ONE graph serves prefill AND decode (unlike the Audio8-ASR bundle's pair).
+                g("lm", lm.into()),
+                // The raw `[vocab, hidden]` embedding table. NOT a `<stem>.onnx_data` sidecar, so
+                // the automatic sweep would never fetch it — it must be an explicit logical key or
+                // a download would complete without the embeddings and fail at load.
+                //
+                // BOTH spellings are optional because a bundle ships exactly ONE of them: upstream
+                // uses fp32, our re-export uses fp16 (half the download, and the engine downcasts
+                // to f16 on load regardless, so nothing is lost). `ArkAsrEngine::load` requires
+                // exactly one to have resolved. Marking them optional costs the cache badge
+                // nothing — `required_onnx_globs` only counts `.onnx` graphs.
+                go("embed_tokens", "embedding_fp32.data".into()),
+                go("embed_tokens_fp16", "embedding_fp16.data".into()),
+                g("runtime_manifest", "runtime_manifest.json".into()),
+                g("tokenizer", "tokenizer.json".into()),
+                g("tokenizer_config", "tokenizer_config.json".into()),
+            ]
+        }
+        EngineKind::VibeVoiceAsr => vec![
+            // Masterx/vibevoice-asr-bitnet-onnx ships at the repo ROOT with the qwen3 layout
+            // (`.` quant separator, shared decoder external-data blob, suffix-less fp16 embed
+            // table). `audio_encoder`'s external data is a `<stem>.onnx_data` sidecar, so the
+            // automatic sidecar sweep resolves it — no explicit key needed.
+            g("audio_encoder", format!("audio_encoder{s}.onnx")),
+            g("decoder_init", format!("decoder_init{s}.onnx")),
+            g("decoder_step", format!("decoder_step{s}.onnx")),
+            // Shared external-data blob for BOTH decoder graphs (same transformer weights —
+            // per-graph blobs would double the download). Explicit key: not a `.onnx_data`
+            // sidecar, the automatic sweep won't find it.
+            g("decoder_weights", format!("decoder_weights{s}.data")),
+            g("embed_tokens", "embed_tokens.bin".into()),
+            g("tokenizer", "tokenizer.json".into()),
+            g("tokenizer_config", "tokenizer_config.json".into()),
+        ],
         EngineKind::NemoCtc => vec![
             g("model", format!("model{s}.onnx")),
             g("vocab", "vocab.txt".into()),
@@ -427,6 +521,13 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
                 ]
             }
         }
+        EngineKind::KaldiCtc => vec![
+            // icefall zipformer CTC single-graph export (Muno459/zipformer_p-arabic-v2):
+            // flat root `zipformer_*{?q}.onnx` + `tokens.txt`. The default-quant glob also
+            // matches the `.int8` sibling — disambiguated by `pick_kaldi_tiebreak`.
+            g("model", format!("zipformer*{s}.onnx")),
+            g("vocab", "tokens.txt".into()),
+        ],
         EngineKind::GigaamCtc => vec![
             // GigaAM v3 e2e ctc: flat root, `v3_e2e_ctc{sfx}.onnx` (gigaam.py:144). The `v?_` glob
             // also covers v2 (`v2_ctc.onnx`); we use the e2e form the catalog ships.
@@ -497,7 +598,9 @@ pub(crate) fn pick_kaldi_tiebreak<'a>(
         1 => Ok(Some(matches[0])),
         _ if matches!(
             kind,
-            EngineKind::KaldiTransducer | EngineKind::KaldiTransducerStreaming
+            EngineKind::KaldiTransducer
+                | EngineKind::KaldiTransducerStreaming
+                | EngineKind::KaldiCtc
         ) =>
         {
             // Keep only the matches with NO quant tag on the `.onnx` stem (the default export).

@@ -135,14 +135,15 @@ function activeQuantMatchesDeletion(
 	if (args.modelId !== activeModel) {
 		return false;
 	}
-	const activeQuant = resolveEffectiveQuant(
-		args.statesById[activeModel],
-		args.currentQuantization,
-	);
-	return (
-		activeQuant === args.quantization &&
-		isCachedQuant(args.statesById, args.modelId, args.quantization)
-	);
+	const state = args.statesById[activeModel];
+	// With auto selected and no server-reported effective precision yet, we cannot
+	// prove which files the live slot owns. Fail closed for every quant badge on
+	// that model until state arrives.
+	if (args.currentQuantization === "auto" && !state?.effective_quantization) {
+		return true;
+	}
+	const activeQuant = resolveEffectiveQuant(state, args.currentQuantization);
+	return activeQuant === args.quantization;
 }
 
 function modelSize(statesById: StatesById, model: ModelInfo): number {
@@ -343,6 +344,17 @@ export function resolveSttDeleteRecovery(
 			args.modelId,
 			args.quantization,
 		)
+	) {
+		return { canDelete: false };
+	}
+	// Deleting bytes that either live slot still references is not transactional:
+	// the renderer's swap controller is fire-and-forget, so a "switch then delete"
+	// sequence can remove the weights before the backend has finished loading the
+	// replacement. Keep the active precision non-deletable instead. Once the user
+	// explicitly switches the affected slot, the same request becomes safe.
+	if (
+		activeQuantMatchesDeletion(args, args.currentMainModel) ||
+		activeQuantMatchesDeletion(args, args.currentRealtimeModel ?? "")
 	) {
 		return { canDelete: false };
 	}

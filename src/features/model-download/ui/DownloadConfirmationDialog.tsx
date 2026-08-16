@@ -9,8 +9,8 @@ import {
 } from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { formatBytes, formatBytesPerSecond } from "@/shared/lib/format-bytes";
-import { surfaceClasses, useSurface } from "@/shared/lib/surface";
-import { DialogActionButton } from "@/shared/ui/dialog";
+import { surfaceClasses } from "@/shared/lib/surface";
+import { DIALOG_SURFACE_LEVEL, DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import {
 	DownloadActions,
@@ -320,15 +320,11 @@ function DownloadConfirmationContent({
 	systemInfo,
 }: DownloadConfirmationDialogProps): ReactNode {
 	const t = useTranslations("download");
-	// DialogShell raises the substrate by +4 for the popup; mirror that math
-	// here (this component renders the shell, so its own useSurface() reads the
-	// OUTER level) to lift the body info cards +1 above the popup. The footer
+	// This component renders the shell, so its own useSurface() reads the OUTER
+	// level — it has to name the popup's level rather than read it. The footer
 	// dismiss button uses DialogActionButton, which derives its own +1/+2 lift
-	// from the popup surface — so it matches the other dialogs without us
-	// recomputing the level here.
-	const substrate = useSurface();
-	const popupLevel = Math.min(substrate + 4, 8);
-	const infoLevel = Math.min(popupLevel + 1, 8);
+	// from inside the popup, so only the body info cards need the explicit +1.
+	const infoLevel = Math.min(DIALOG_SURFACE_LEVEL + 1, 8);
 	const state = pending ? statesById[pending.modelId] : undefined;
 	const info = pending ? getModel(pending.modelId) : undefined;
 	// The precision the swap will actually load. When the user left the quant

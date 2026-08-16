@@ -99,14 +99,15 @@ Two specialist Whisper-large fine-tunes for narrower jobs. Both are 1.5B-class, 
   head={["Model", "Params", "WER", "RTFx", "Langs", "Specialty"]}
   numeric={[1, 2, 3, 4]}
   rows={[
-    ["crisper-whisper", "1.54B", "5.8", "33", "2", "Verbatim transcription — keeps fillers (um/uh), stutters, and false starts instead of cleaning them up. English + German."],
+    ["crisper-whisper", "1.54B", "5.8", "33", "99", "CrisperWhisper 2.0 — verbatim transcription with ~30 ms word timing. Keeps fillers ([um]/[uh]), stutters, and vocal events ([laughter], [cough]) instead of cleaning them up. Multilingual."],
+    ["crisper-whisper-turbo", "809M", "6.5", "100", "99", "CrisperWhisper 2.0 Turbo — the same verbatim + word-timing behavior on the large-v3-turbo architecture (4 decoder layers): much faster decodes at a small accuracy cost."],
     ["breeze-asr-25", "1.55B", "8.0", "460", "99", "MediaTek Breeze — a large-v2 fine-tune tuned for Mandarin/English code-switching."],
   ]}
-  caption="CrisperWhisper is a large-v3 fine-tune (nyrahealth); Breeze ASR 25 is a large-v2 fine-tune that retains the full multilingual vocabulary."
+  caption="CrisperWhisper 2.0 is a Whisper-large fine-tune (Nyra Labs, non-commercial research license) that tops the Nyra Verbatim Speech Benchmark at 87.8 disfluency F1 across ten languages; Breeze ASR 25 is a large-v2 fine-tune that retains the full multilingual vocabulary."
 />
 
 <Callout type="info" title="Verbatim vs. clean">
-  Most ASR models silently delete disfluencies. **CrisperWhisper** does the opposite — it transcribes exactly what was said, fillers and all. Use it for interview/legal transcripts where every "um" matters; avoid it for dictation, where you want the clean version.
+  Most ASR models silently delete disfluencies. **CrisperWhisper 2.0** does the opposite — it transcribes exactly what was said, fillers and all, as bracketed event markers (`[um]`, `[laughter]`). Use it for interview/legal transcripts where every "um" matters; for dictation, enable **Remove Filler Words** (Quality → Formatting) to strip the markers while keeping its accuracy.
 </Callout>
 
 ## Translate to English

@@ -319,8 +319,9 @@ export function OnboardingWizard() {
 			    a real scroll region between the pinned header and footer. */}
 			<div className="absolute inset-0 flex flex-col">
 				{/* Heading strip — matches SettingSection's header row: icon badge,
-			    title, subtitle. Step indicator floats on the trailing edge. */}
-				<header className="flex shrink-0 items-start gap-4 pt-6 pe-12 pb-4 ps-6">
+			    title, subtitle. Step indicator floats on the trailing edge. Doubles
+			    as the window's grab handle, like the Settings content header. */}
+				<header className="titlebar-drag flex shrink-0 items-start gap-4 pt-6 pe-12 pb-4 ps-6">
 					<span
 						aria-hidden
 						className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-accent/12 text-accent ring-1 ring-accent/30"
@@ -358,7 +359,7 @@ export function OnboardingWizard() {
 							</m.div>
 						</AnimatePresence>
 					</div>
-					<div className="mt-1 hidden sm:block">
+					<div className="titlebar-no-drag mt-1 hidden sm:block">
 						<StepIndicator
 							current={currentStep}
 							onSelect={goToStep}

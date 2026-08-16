@@ -314,7 +314,6 @@ function VisualizerAuraControls({
 	);
 }
 
-/** Renders the customization controls for whichever visualizer shape is active. */
 export function VisualizerShapeControls({
 	t,
 	general,

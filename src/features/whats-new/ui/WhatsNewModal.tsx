@@ -7,8 +7,14 @@ import {
 	releaseNotesForVersion,
 	writeLastSeenVersion,
 } from "@/features/whats-new/model/release-notes";
-import { Button } from "@/shared/ui/button";
-import { Dialog, DialogContent, DialogHeader } from "@/shared/ui/dialog";
+import {
+	Dialog,
+	DialogActionButton,
+	DialogBody,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+} from "@/shared/ui/dialog";
 
 interface ActiveReleaseNotes {
 	notes: string;
@@ -157,25 +163,24 @@ export function WhatsNewWindow() {
 				fluid
 				padded={false}
 			>
-				<div className="border-divider border-b px-5 py-4">
-					<DialogHeader
-						closeLabel={common("close")}
-						icon={<HugeiconsIcon icon={SparklesIcon} size={17} />}
-						onClose={close}
-						title={active ? `WinSTT ${active.version}` : "WinSTT"}
-					/>
-				</div>
-				<div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+				{/* Was a hand-rolled header/footer band; now the shared rails, so this
+				    window picks up the same chrome tint and hairlines as every other
+				    dialog. */}
+				<DialogHeader
+					closeLabel={common("close")}
+					icon={<HugeiconsIcon icon={SparklesIcon} size={15} />}
+					onClose={close}
+					rail
+					title={active ? `WinSTT ${active.version}` : "WinSTT"}
+				/>
+				<DialogBody className="flex-1" maxHeight="none">
 					{active ? <MarkdownReleaseNotes notes={active.notes} /> : null}
-				</div>
-				<div className="flex justify-end border-divider border-t px-5 py-3">
-					<Button
-						className="h-8 rounded-md bg-accent px-4 font-medium text-body text-on-accent hover:bg-accent-hover"
-						onClick={close}
-					>
+				</DialogBody>
+				<DialogFooter bar>
+					<DialogActionButton onClick={close} variant="accent">
 						{common("close")}
-					</Button>
-				</div>
+					</DialogActionButton>
+				</DialogFooter>
 			</DialogContent>
 		</Dialog>
 	);

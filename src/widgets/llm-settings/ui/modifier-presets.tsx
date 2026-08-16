@@ -2,8 +2,6 @@ import {
 	AiBrain02Icon,
 	ArrangeIcon,
 	BrushIcon,
-	ArrowLeft01Icon,
-	ArrowRight01Icon,
 	Delete02Icon,
 	LanguageSkillIcon,
 	Layout01Icon,
@@ -30,22 +28,15 @@ import {
 import { useSettingsStore } from "@/entities/setting";
 import { generateId } from "@/shared/lib/generate-id";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
-import { cn } from "@/shared/lib/cn";
-import {
-	surfaceClasses,
-	surfaceHoverBg,
-	useSurface,
-} from "@/shared/lib/surface";
+import { surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { AutoTextarea } from "@/shared/ui/auto-textarea";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import {
-	CreatableCombobox,
-	type CreatableComboboxItem,
-} from "@/shared/ui/creatable-combobox";
-import {
 	DialogActionButton,
+	DialogBody,
 	DialogFooter,
-	DialogTitle,
+	DialogHeader,
 } from "@/shared/ui/dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -54,18 +45,16 @@ import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { Modal } from "@/shared/ui/modal";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
-import { type SelectOption, usePopupSurfaceLevels } from "@/shared/ui/select";
+import type { SelectOption } from "@/shared/ui/select";
 import { Switcher } from "@/shared/ui/switcher";
 import { TextField } from "@/shared/ui/text-field";
 import { Toggle } from "@/shared/ui/toggle";
-import { Tooltip } from "@/shared/ui/tooltip";
 import {
 	DEFAULT_LEVEL,
 	getLevel,
 	getTargetLang,
 	getToneKey,
 	isIndependentEnabled,
-	type LlmFeatureDraft,
 	PRESET_LABEL_KEY,
 	type PresetCarrier,
 	setIndependentLevel,
@@ -73,17 +62,7 @@ import {
 	setTone,
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
-import {
-	configurationsEqual,
-	type LlmConfiguration,
-	matchPostProcessingProfileId,
-	postProcessingPatchFromConfiguration,
-	useLlmConfigurationsStore,
-	withAvailableLlmProvider,
-} from "../model/configurations";
-import { iconForPostProcessingProfileId } from "../model/profile-icons";
 import type { LlmSettingsPanelModel } from "../model/use-llm-settings-panel";
-import { seedDraftFromFeature } from "./modifier-presets-state";
 import type { TranslateFn } from "./types";
 
 type IndependentKey = (typeof INDEPENDENT_PRESETS)[number];
@@ -246,6 +225,11 @@ function removeCustomModifier(
 // Built-in independent presets + custom rows share one scrollable group;
 // past this many total rows the group scrolls instead of growing the panel.
 const MODIFIER_SCROLL_THRESHOLD = 7;
+
+/** Resting height of the modifier prompt editor, in rows. Five lines reproduces
+ *  the 120px floor it used to be pinned to; past that it grows with the prompt
+ *  instead of clipping it behind a resize grip. */
+const PROMPT_MIN_ROWS = 5;
 
 interface IndependentPresetListProps {
 	customModifiers: readonly CustomModifier[];
@@ -413,13 +397,17 @@ function ModifierDialog({
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex w-[28rem] max-w-[90vw] flex-col p-6">
-				<DialogTitle>
-					{isEdit ? t("modifierEditTitle") : t("modifierAddTitle")}
-				</DialogTitle>
+			<div className="flex w-[30rem] max-w-[90vw] flex-col">
+				<DialogHeader
+					closeLabel={tc("close")}
+					icon={<HugeiconsIcon icon={MagicWand01Icon} size={15} />}
+					onClose={onClose}
+					rail
+					title={isEdit ? t("modifierEditTitle") : t("modifierAddTitle")}
+				/>
 				{/* Same hairline-divided, self-padded row column the settings panels
 				    use — text inputs stacked, the compact toggle as a one-liner row. */}
-				<div className="flex flex-col divide-y divide-divider">
+				<DialogBody className="flex flex-col divide-y divide-divider">
 					<FormControl label={t("modifierName")}>
 						<TextField
 							id="modifier-name-input"
@@ -429,12 +417,15 @@ function ModifierDialog({
 						/>
 					</FormControl>
 					<FormControl label={t("modifierPrompt")}>
-						<textarea
+						<AutoTextarea
 							aria-label={t("modifierPrompt")}
-							className={`min-h-[120px] w-full resize-y rounded-lg p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${surfaceClasses(inputLevel)}`}
 							id="modifier-prompt-input"
+							minRows={PROMPT_MIN_ROWS}
 							onChange={(e) => setPrompt(e.target.value)}
 							placeholder={t("modifierPromptPlaceholder")}
+							// The dialog body is built OUTSIDE the popup's SurfaceProvider, so
+							// the level resolved here is the one to paint with.
+							surfaceLevel={inputLevel}
 							value={prompt}
 						/>
 					</FormControl>
@@ -449,8 +440,8 @@ function ModifierDialog({
 							onCheckedChange={setLevelsEnabled}
 						/>
 					</FormControl>
-				</div>
-				<DialogFooter>
+				</DialogBody>
+				<DialogFooter bar>
 					<DialogActionButton onClick={onClose} variant="neutral">
 						{tc("cancel")}
 					</DialogActionButton>
@@ -771,279 +762,12 @@ export type PresetUpdate = Partial<{
 	presets: BuiltinPresetEntry[];
 }>;
 
-// The full per-feature snapshot (provider/model fields + the tone/modifiers
-// carrier). Saved post-processing profiles capture a complete configuration
-// that's also runnable in the Playground.
-export type FullFeatureSnapshot = LlmFeatureDraft & PresetCarrier;
-
-/**
- * Full-profile picker for the unified post-processing header. Selecting a saved
- * profile applies provider/model, tone, modifiers and request-tuning settings
- * together; the enable toggle is deliberately excluded so profile swaps do not
- * silently turn post-processing on or off.
- */
-export function PostProcessingProfilesCombobox({
-	disabled = false,
-	snapshot,
-	t,
-	update,
-}: {
-	disabled?: boolean;
-	snapshot: FullFeatureSnapshot;
-	t: TranslateFn;
-	update: (patch: Partial<LlmConfiguration>) => void;
-}) {
-	const configurations = useLlmConfigurationsStore((s) => s.configurations);
-	const saveConfiguration = useLlmConfigurationsStore(
-		(s) => s.saveConfiguration,
-	);
-	const removeConfiguration = useLlmConfigurationsStore(
-		(s) => s.removeConfiguration,
-	);
-	const moveConfiguration = useLlmConfigurationsStore(
-		(s) => s.moveConfiguration,
-	);
-	const activeConfigurationId = useLlmConfigurationsStore(
-		(s) => s.activeConfigurationId,
-	);
-	const setActiveConfiguration = useLlmConfigurationsStore(
-		(s) => s.setActiveConfiguration,
-	);
-	const updateConfiguration = useLlmConfigurationsStore(
-		(s) => s.updateConfiguration,
-	);
-	const openrouterKey = useSettingsStore(
-		(s) => s.settings.llm.openrouterApiKey,
-	);
-	const draft = seedDraftFromFeature(snapshot);
-	const matchedId = matchPostProcessingProfileId(draft, configurations);
-	// The applied preset is "modified" once the live settings diverge from the
-	// config it was applied from — that dirty row exposes Save (overwrite) and
-	// Reset (revert) actions inside the dropdown. Compare against the key-gated
-	// form so a keyless OpenRouter preset (which applies as its local fallback)
-	// isn't perpetually "dirty" and its Reset actually clears.
-	const activeConfig =
-		configurations.find((c) => c.id === activeConfigurationId) ?? null;
-	// Compare against the POST-reconcile baseline. A keyless OpenRouter preset is
-	// downshifted to local Ollama with no model; the settings panel then reconciles
-	// in the smallest installed model. Treat that reconcile-fill of an empty local
-	// model as part of the applied baseline (not a user edit) so apply/reset don't
-	// immediately read as "modified" and Reset actually clears the dirty state.
-	const baseline = activeConfig
-		? withAvailableLlmProvider(activeConfig.config, openrouterKey)
-		: null;
-	const reconciledBaseline =
-		baseline &&
-		baseline.provider === "ollama" &&
-		baseline.model === "" &&
-		draft.provider === "ollama"
-			? { ...baseline, model: draft.model }
-			: baseline;
-	const activeModified =
-		reconciledBaseline != null &&
-		!configurationsEqual(reconciledBaseline, draft);
-	// The combobox shows `matchedId` (the saved config the live settings exactly
-	// match). Once the user edits the active config that match vanishes and the
-	// field would go blank while the dirty Save/Reset actions rendered on a hidden
-	// row. Keep both on ONE row: when nothing matches but the active config is
-	// modified, show the active (dirty) row instead of a blank field, and pin the
-	// dirty marker to whatever row is actually shown.
-	const shownId =
-		matchedId ||
-		(activeModified && activeConfigurationId ? activeConfigurationId : "");
-	const { triggerLevel } = usePopupSurfaceLevels({ selfElevate: false });
-	// Nav arrows cycle prev/next between saved presets, so they only mean anything
-	// with at least two. With 0 or 1 preset there is nothing to cycle to — and
-	// rendering them permanently disabled sits a dimmed, "behind-level" segment on
-	// either side of the fully-active combobox (opacity-40 kills the surface shadow
-	// so they read as broken cutouts). Drop them entirely instead: the combobox
-	// stands alone with full rounding, and the arrows reappear — enabled and
-	// matching its surface — once a second preset exists. When they ARE shown, the
-	// feature-level `disabled` greys the whole row (combobox + arrows) uniformly.
-	const showNavigation = configurations.length >= 2;
-
-	const items: CreatableComboboxItem[] = configurations.map((c) => ({
-		id: c.id,
-		label: c.name,
-		icon: iconForPostProcessingProfileId(c.id),
-		deletable: true,
-		modified: activeModified && c.id === shownId,
-	}));
-
-	const applyConfiguration = (id: string) => {
-		const cfg = configurations.find((c) => c.id === id);
-		if (!cfg) {
-			return;
-		}
-		// Gate cloud providers behind their key so selecting / navigating to / or
-		// resetting to an OpenRouter preset can't silently strand dictation on a
-		// keyless cloud provider — it falls back to local instead.
-		update(
-			postProcessingPatchFromConfiguration(
-				withAvailableLlmProvider(cfg.config, openrouterKey),
-			),
-		);
-		setActiveConfiguration(id);
-	};
-
-	const applyConfigurationAtOffset = (offset: -1 | 1) => {
-		if (configurations.length < 2) {
-			return;
-		}
-		const currentIndex = configurations.findIndex((c) => c.id === matchedId);
-		const activeIndex = configurations.findIndex(
-			(c) => c.id === activeConfigurationId,
-		);
-		const fallbackIndex = offset > 0 ? 0 : configurations.length - 1;
-		const startIndex =
-			currentIndex >= 0
-				? currentIndex
-				: activeIndex >= 0
-					? activeIndex
-					: offset > 0
-						? -1
-						: 0;
-		const nextIndex =
-			startIndex >= 0
-				? (startIndex + offset + configurations.length) % configurations.length
-				: fallbackIndex;
-		const next = configurations[nextIndex];
-		if (next) {
-			applyConfiguration(next.id);
-		}
-	};
-
-	const handleCreate = (rawName: string) => {
-		const name = rawName.trim();
-		if (name) {
-			saveConfiguration(name, draft);
-		}
-	};
-
-	const handleDelete = (id: string) => {
-		removeConfiguration(id);
-		if (activeConfigurationId === id) {
-			setActiveConfiguration(null);
-		}
-	};
-
-	// Overwrite the preset with the current live settings (clears the dirty state).
-	const handleSaveActive = (id: string) => {
-		updateConfiguration(id, draft);
-	};
-
-	// Revert the live settings back to the preset's saved state.
-	const handleResetActive = (id: string) => {
-		applyConfiguration(id);
-	};
-
-	// ONE shared plate for the joined group: the wrapper carries the surface
-	// fill + elevation shadow and every segment is transparent, so
-	// [ < | field | > ] reads as a single raised control with hairline dividers.
-	// (Per-segment surfaceClasses stacked three plates whose own shadow
-	// hairlines/insets made the arrows look sunken next to the input.) Hover
-	// brightens a segment one surface step — gated in JS rather than left to
-	// CSS `hover:` alone, because `:hover` still matches on disabled buttons
-	// and the arrows would glow while the whole group is switched off.
-	const navButtonBase = cn(
-		"h-8 w-9 shrink-0 bg-transparent text-foreground-dim transition-colors focus-visible:ring-inset focus-visible:ring-offset-0 disabled:cursor-not-allowed",
-		!disabled &&
-			cn(
-				surfaceHoverBg(Math.min(triggerLevel + 1, 8)),
-				"hover:text-foreground",
-			),
-	);
-
-	return (
-		<div
-			aria-label="Post-processing preset navigation"
-			className={cn(
-				"flex min-w-0 items-center",
-				// The plate only exists when the arrows render; standalone, the
-				// combobox keeps its own surface + rounding.
-				showNavigation &&
-					cn("overflow-hidden rounded-lg", surfaceClasses(triggerLevel)),
-			)}
-			role="group"
-		>
-			{showNavigation ? (
-				<Tooltip content="Previous preset">
-					<Button
-						aria-label="Previous preset"
-						// `border-solid` is required: the Button base sets `border-none`
-						// (border-STYLE), so the `border-e` width alone never paints.
-						className={cn(
-							navButtonBase,
-							"border-divider-strong border-e border-solid",
-						)}
-						disabled={disabled}
-						onClick={() => applyConfigurationAtOffset(-1)}
-					>
-						<HugeiconsIcon
-							aria-hidden="true"
-							icon={ArrowLeft01Icon}
-							size={15}
-						/>
-					</Button>
-				</Tooltip>
-			) : null}
-			<CreatableCombobox
-				bareInput={showNavigation}
-				className="w-64 min-w-0 max-w-[40vw]"
-				createLabel={(name) => t("modifierPresetCreate", { name })}
-				deleteAriaLabel={t("playgroundDeletePreset")}
-				disabled={disabled}
-				emptyLabel={t("modifierPresetEmpty")}
-				hideSelectedCheck
-				// Square middle segment only when flanked by arrows; standalone it keeps
-				// the base rounded-lg + normal (non-inset) focus ring.
-				inputClassName={
-					showNavigation
-						? "rounded-none focus-visible:ring-inset focus-visible:ring-offset-0"
-						: ""
-				}
-				items={items}
-				leadingReorderHandle
-				onCreate={handleCreate}
-				onDelete={handleDelete}
-				onReorder={moveConfiguration}
-				onReset={handleResetActive}
-				onSave={handleSaveActive}
-				onSelect={applyConfiguration}
-				placeholder={t("modifierPresetPlaceholder")}
-				reorderAriaLabel={(item) => `Drag ${item.label} to reorder`}
-				resetAriaLabel="Reset to saved settings"
-				saveAriaLabel="Overwrite preset with current settings"
-				value={shownId}
-			/>
-			{showNavigation ? (
-				<Tooltip content="Next preset">
-					<Button
-						aria-label="Next preset"
-						className={cn(
-							navButtonBase,
-							"border-divider-strong border-s border-solid",
-						)}
-						disabled={disabled}
-						onClick={() => applyConfigurationAtOffset(1)}
-					>
-						<HugeiconsIcon
-							aria-hidden="true"
-							icon={ArrowRight01Icon}
-							size={15}
-						/>
-					</Button>
-				</Tooltip>
-			) : null}
-		</div>
-	);
-}
-
 export function FeaturePresetControls({
 	configControl,
 	feature,
 	model,
 	snapshot,
+	translateLockedOverride,
 	update,
 }: {
 	/** Configuration combobox rendered on the trailing edge of the Tone row — the
@@ -1052,17 +776,25 @@ export function FeaturePresetControls({
 	 *  settings panel passes one; the Playground omits it (it has its own config
 	 *  selector). */
 	configControl?: ReactNode;
-	feature: "dictation" | "transforms";
+	/** `"configuration"` = the shared editor, which is feature-agnostic: it cannot
+	 *  derive the translate lock itself (a configuration does not know who it is
+	 *  assigned to), so its caller passes {@link translateLockedOverride}. */
+	feature: "configuration" | "dictation" | "readAloud" | "transforms";
 	model: Pick<LlmSettingsPanelModel, "t" | "tc" | "toneOpts" | "levelOpts">;
 	snapshot: PresetCarrier;
+	/** Forces the translate lock on regardless of `feature`. The configuration
+	 *  editor passes `true` when the stack it is editing is assigned to dictation
+	 *  AND the STT model already translates — the editor knows the assignment,
+	 *  this component cannot. */
+	translateLockedOverride?: boolean;
 	update: (patch: PresetUpdate) => void;
 }) {
 	const { t, tc, toneOpts, levelOpts } = model;
 	const activeTone = getToneKey(snapshot.presets);
 	// When the active STT model natively translates to a target language, the
 	// built-in "Translate" modifier would translate the transcript a second time
-	// — lock it off for the dictation pass. Transforms operate on already-selected
-	// text, so the STT toggle has no bearing there (lock stays dictation-only).
+	// — lock it off for the dictation pass. Transforms and read-aloud operate on
+	// already-selected text, so the STT toggle has no bearing there.
 	const sttTranslateOn = useSettingsStore(
 		(s) => (s.settings.model?.translateTargetLanguage ?? "") !== "",
 	);
@@ -1071,10 +803,11 @@ export function FeaturePresetControls({
 	);
 	const activeSttModel = useCatalogStore((s) => s.getModel(activeSttModelId));
 	const translateLocked =
-		feature === "dictation" &&
-		sttTranslateOn &&
-		activeSttModel !== undefined &&
-		supportsTranslateToEnglish(activeSttModel);
+		translateLockedOverride ??
+		(feature === "dictation" &&
+			sttTranslateOn &&
+			activeSttModel !== undefined &&
+			supportsTranslateToEnglish(activeSttModel));
 	return (
 		<div className="flex flex-col divide-y divide-divider">
 			<div>

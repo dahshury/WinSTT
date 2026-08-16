@@ -1,4 +1,7 @@
-import { PlayIcon } from "@hugeicons/core-free-icons";
+import {
+	PlusSignIcon,
+	SlidersHorizontalIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { computeModelExclusionConfig } from "@/shared/ui/model-picker/lib/model-exclusion";
 import { useEffect, useRef, useState } from "react";
@@ -10,11 +13,18 @@ import {
 	CreatableCombobox,
 	type CreatableComboboxItem,
 } from "@/shared/ui/creatable-combobox";
-import { DialogHeader } from "@/shared/ui/dialog";
+import {
+	DialogActionButton,
+	DialogBody,
+	DialogFooter,
+	DialogHeader,
+	DialogSection,
+} from "@/shared/ui/dialog";
 import { FormControl } from "@/shared/ui/form-control";
+import { IconButton } from "@/shared/ui/icon-button";
 import { Modal } from "@/shared/ui/modal";
-import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Switcher } from "@/shared/ui/switcher";
+import { TextField } from "@/shared/ui/text-field";
 import { resolvePlaygroundLocalModel } from "../lib/llm-settings-helpers";
 import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
 import {
@@ -36,9 +46,9 @@ import type { LlmProvider, TranslateFn } from "./types";
 //
 // A single, detached LLM playground (one modal in the AI-processing tab, not a
 // duplicated inline block per feature). The config combobox seeds an EDITABLE,
-// ephemeral config from the saved Dictation config, the saved Transforms
-// config, or a saved preset — and typing a new name saves the current config
-// as a preset. Tweaks here never touch saved settings. The composed config
+// ephemeral config from the live post-processing config or a saved preset —
+// and typing a new name saves the current config as a preset. Tweaks here
+// never touch saved settings. The composed config
 // (tone + modifiers + provider/model) is sent to the preview IPC as an explicit
 // override so the user can test how the LLM behaves under arbitrary configs.
 
@@ -47,7 +57,7 @@ import type { LlmProvider, TranslateFn } from "./types";
 const LIVE_POST_PROCESSING = "live:post-processing";
 
 /** True for combobox values the restored session can legitimately point at:
- *  the two live entries always, a saved preset only while it still exists. */
+ *  the live entry always, a saved preset only while it still exists. */
 function isResolvableSelection(
 	selection: string,
 	presets: readonly SavedConfiguration[],
@@ -212,7 +222,7 @@ function playgroundHasModel(
 	return draft.model.length > 0;
 }
 
-/** Combobox items for the playground config selector: the two live configs
+/** Combobox items for the playground config selector: the live config
  *  (non-deletable) followed by the saved config presets (deletable). */
 function buildConfigItems(
 	presets: readonly SavedConfiguration[],
@@ -222,6 +232,142 @@ function buildConfigItems(
 		{ id: LIVE_POST_PROCESSING, label: t("title") },
 		...presets.map((p) => ({ id: p.id, label: p.name, deletable: true })),
 	];
+}
+
+/**
+ * The header's profile control: pick a profile, or add one.
+ *
+ * Adding used to be reachable ONLY by typing a name into the picker's search
+ * box and then hitting the synthesized "Create …" row — an affordance you had
+ * to already know about, because nothing on screen said "you can add one here".
+ * So adding now has its own button, and pressing it swaps the picker for a
+ * name field: a profile is referenced by name everywhere else (per-mode
+ * pickers, per-app rules), so naming is real content, not a step to skip. The
+ * type-to-create path still works for anyone who already learned it.
+ */
+function ProfilePicker({
+	items,
+	onCreate,
+	onDelete,
+	onSelect,
+	t,
+	tc,
+	value,
+}: {
+	items: CreatableComboboxItem[];
+	onCreate: (name: string) => void;
+	onDelete: (id: string) => void;
+	onSelect: (id: string) => void;
+	t: TranslateFn;
+	tc: TranslateFn;
+	value: string;
+}) {
+	const [naming, setNaming] = useState(false);
+
+	if (naming) {
+		return (
+			<ProfileNameField
+				onCancel={() => setNaming(false)}
+				onCommit={(name) => {
+					onCreate(name);
+					setNaming(false);
+				}}
+				t={t}
+				tc={tc}
+			/>
+		);
+	}
+
+	return (
+		<>
+			<CreatableCombobox
+				className="w-56"
+				createLabel={(name) => t("modifierPresetCreate", { name })}
+				deleteAriaLabel={t("playgroundDeletePreset")}
+				emptyLabel={t("modifierPresetEmpty")}
+				// The same action, pinned to the bottom of the open popup — that is
+				// where you already are when you go looking for "is there another
+				// one?" and find there isn't.
+				footerAction={{
+					label: t("profileAdd"),
+					onSelect: () => setNaming(true),
+				}}
+				items={items}
+				onCreate={onCreate}
+				onDelete={onDelete}
+				onSelect={onSelect}
+				placeholder={t("playgroundSelectConfig")}
+				value={value}
+			/>
+			{/* IconButton carries its own tooltip (defaults to the aria-label), so
+			    the label is both the accessible name and the hover hint. */}
+			<IconButton
+				aria-label={t("profileAdd")}
+				icon={<HugeiconsIcon icon={PlusSignIcon} size={14} />}
+				onClick={() => setNaming(true)}
+			/>
+		</>
+	);
+}
+
+/** Name-and-confirm state for a new profile. Mounted only while naming, so the
+ *  focus lands on a fresh field and the text never survives a cancel. */
+function ProfileNameField({
+	onCancel,
+	onCommit,
+	t,
+	tc,
+}: {
+	onCancel: () => void;
+	onCommit: (name: string) => void;
+	t: TranslateFn;
+	tc: TranslateFn;
+}) {
+	const inputRef = useRef<HTMLInputElement>(null);
+	const [name, setName] = useState("");
+	const canCommit = name.trim().length > 0;
+
+	// External DOM side effect on a component that exists only while naming —
+	// no prop-driven reset needed, the mount IS the reset.
+	useMountEffect(() => {
+		inputRef.current?.focus();
+	});
+
+	return (
+		<>
+			<TextField
+				aria-label={t("profileNamePlaceholder")}
+				className="w-44"
+				onChange={(event) => setName(event.target.value)}
+				onKeyDown={(event) => {
+					// Enter commits; Escape backs out of naming WITHOUT closing the
+					// dialog, so it must not reach the popup's own Escape handler.
+					if (event.key === "Enter" && canCommit) {
+						onCommit(name);
+					} else if (event.key === "Escape") {
+						event.stopPropagation();
+						onCancel();
+					}
+				}}
+				placeholder={t("profileNamePlaceholder")}
+				ref={inputRef}
+				value={name}
+			/>
+			{/* A worded Cancel, not an ✕: the dialog's own close ✕ sits immediately
+			    to the right, and two identical glyphs side by side is a coin flip
+			    between "discard this name" and "throw away the whole dialog". */}
+			<DialogActionButton onClick={onCancel} variant="neutral">
+				{tc("cancel")}
+			</DialogActionButton>
+			<DialogActionButton
+				disabled={!canCommit}
+				onClick={() => onCommit(name)}
+				variant="accent"
+			>
+				{tc("add")}
+			</DialogActionButton>
+		</>
+	);
 }
 
 function PlaygroundModalBody({
@@ -353,58 +499,56 @@ function PlaygroundModalBody({
 	};
 
 	return (
-		<div className="flex w-[44rem] max-w-[94vw] flex-col">
+		<div className="flex max-h-[86vh] w-[44rem] max-w-[94vw] flex-col">
+			{/* Header / body / footer rails. The profile picker rides in the header's
+			    trailing slot rather than sitting as the first body row: it selects
+			    WHICH profile everything below edits, so it belongs to the dialog's
+			    identity, not to its content. That also keeps it on screen while the
+			    body scrolls. */}
 			<DialogHeader
-				className="shrink-0 px-6 pt-6 pb-3"
 				closeLabel={tc("close")}
-				icon={<HugeiconsIcon icon={PlayIcon} size={18} />}
+				icon={<HugeiconsIcon icon={SlidersHorizontalIcon} size={15} />}
 				onClose={onClose}
-				title={t("playgroundModalTitle")}
+				rail
+				title={t("profileEditorTitle")}
+				trailing={
+					<ProfilePicker
+						items={configItems}
+						onCreate={handleCreatePreset}
+						onDelete={deletePreset}
+						onSelect={handleSelect}
+						t={t}
+						tc={tc}
+						value={selection}
+					/>
+				}
 			/>
-			{/* The viewport carries the max-height + overflow so the body scrolls
-			    even though the popup is content-sized (a `flex-1` child of a
-			    `max-h` popup never gets a definite height to scroll within). */}
-			<ScrollArea viewportClassName="max-h-[76vh] px-6 pb-6" verticalOnly>
-				{/* One hairline-divided column — the same row language the settings
-				    panel's feature blocks use (divide-y + self-padded py-3.5 rows)
-				    instead of the old gap-4 stack. */}
-				<div className="flex flex-col divide-y divide-divider">
-					<FormControl
-						label={t("playgroundConfigLabel")}
-						layout="row"
-						tooltip={t("playgroundConfigHint")}
-					>
-						<CreatableCombobox
-							className="w-64"
-							createLabel={(name) => t("modifierPresetCreate", { name })}
-							deleteAriaLabel={t("playgroundDeletePreset")}
-							emptyLabel={t("modifierPresetEmpty")}
-							items={configItems}
-							onCreate={handleCreatePreset}
-							onDelete={deletePreset}
-							onSelect={handleSelect}
-							placeholder={t("playgroundSelectConfig")}
-							value={selection}
-						/>
-					</FormControl>
+			<DialogBody className="flex-1" maxHeight="none">
+				{/* The config groups stay unlabelled: every row inside them already
+				    carries its own label (Source / Model / Tone / Modifiers), so a
+				    group heading would only repeat one of them. The rule between
+				    sections is what does the grouping. The run surface DOES get a
+				    heading — it is the one block that stops being configuration. */}
+				<DialogSection divided={false}>
 					<PlaygroundModelPicker
 						draft={draft}
 						model={model}
 						onChange={update}
 					/>
-					{/* Everything below the model selection — tone/modifiers and the
-					    run surface — is inert until a usable model is configured for
-					    the chosen provider: there's nothing to tune or test without
-					    one. The Playground's own `disabled` still surfaces the reason. */}
-					<div
-						aria-disabled={!hasModel || undefined}
-						className={cn(
-							"flex flex-col divide-y divide-divider",
-							// settings-dim (not opacity-40) so the divide-y hairlines
-							// stay crisp while the group greys out.
-							!hasModel && "settings-dim pointer-events-none",
-						)}
-					>
+				</DialogSection>
+				{/* Everything below the model selection — tone/modifiers and the run
+				    surface — is inert until a usable model is configured for the
+				    chosen provider: there's nothing to tune or test without one. The
+				    Playground's own `disabled` still surfaces the reason. */}
+				<div
+					aria-disabled={!hasModel || undefined}
+					className={cn(
+						// settings-dim (not opacity-40) so the divide-y hairlines
+						// stay crisp while the group greys out.
+						!hasModel && "settings-dim pointer-events-none",
+					)}
+				>
+					<DialogSection>
 						{/* Re-key on `selection` so the preset list's internal level/lang
 						    caches reseed from the freshly-seeded draft on switch. */}
 						<FeaturePresetControls
@@ -417,14 +561,31 @@ function PlaygroundModalBody({
 							}}
 							update={update}
 						/>
+					</DialogSection>
+					<DialogSection label={t("transformPlaygroundTitle")}>
 						<Playground
 							disabled={runDisabled}
 							disabledReason={disabledReason}
 							run={run}
 						/>
-					</div>
+					</DialogSection>
 				</div>
-			</ScrollArea>
+			</DialogBody>
+			{/* The caveat that edits here are ephemeral belongs where the user
+			    leaves the dialog, not in the header where it competed with the
+			    title for two lines. */}
+			<DialogFooter
+				bar
+				leading={
+					<p className="m-0 line-clamp-2 text-foreground-muted text-xs-tight">
+						{t("playgroundConfigHint")}
+					</p>
+				}
+			>
+				<DialogActionButton onClick={onClose} variant="neutral">
+					{tc("close")}
+				</DialogActionButton>
+			</DialogFooter>
 		</div>
 	);
 }

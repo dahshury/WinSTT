@@ -250,7 +250,6 @@ export function LongTextCell<TData>({
 	}, 300);
 
 	const onSave = () => {
-		// Immediately save any pending changes and close the popover
 		if (!readOnly && value !== initialValue) {
 			tableMeta?.onDataUpdate?.({ rowIndex, columnId, value });
 		}
@@ -258,7 +257,6 @@ export function LongTextCell<TData>({
 	};
 
 	const onCancel = () => {
-		// Restore the original value
 		setValue(initialValue ?? "");
 		if (!readOnly) {
 			tableMeta?.onDataUpdate?.({ rowIndex, columnId, value: initialValue });
@@ -270,7 +268,6 @@ export function LongTextCell<TData>({
 		if (open && !readOnly) {
 			tableMeta?.onCellEditingStart?.(rowIndex, columnId);
 		} else {
-			// Immediately save any pending changes when closing
 			if (!readOnly && value !== initialValue) {
 				tableMeta?.onDataUpdate?.({ rowIndex, columnId, value });
 			}
@@ -323,7 +320,6 @@ export function LongTextCell<TData>({
 	};
 
 	const onBlur = () => {
-		// Immediately save any pending changes on blur
 		if (!readOnly && value !== initialValue) {
 			tableMeta?.onDataUpdate?.({ rowIndex, columnId, value });
 		}
@@ -345,7 +341,6 @@ export function LongTextCell<TData>({
 			onSave();
 		} else if (event.key === "Tab") {
 			event.preventDefault();
-			// Save any pending changes
 			if (value !== initialValue) {
 				tableMeta?.onDataUpdate?.({ rowIndex, columnId, value });
 			}

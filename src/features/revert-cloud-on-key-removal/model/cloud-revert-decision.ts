@@ -8,6 +8,7 @@ import {
 } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS } from "@/entities/setting";
 import type { CloudSttProvider } from "@/shared/api/models";
+import { displaySecretValue } from "@/shared/config/settings-schema";
 
 /**
  * Every cloud integration whose API key, once removed, must revert the
@@ -30,6 +31,7 @@ export interface SurfaceSnapshot {
 	dictationProvider: string;
 	model: string;
 	transformsProvider: string;
+	ttsProvider: string;
 	ttsSource: string;
 }
 
@@ -51,8 +53,26 @@ export interface SttTarget {
  * Mirrors the whitespace rule the legacy removal guard used so a key of
  * `"   "` going to `""` is not treated as a real removal.
  */
+function cloudKeyPresent(value: string): boolean {
+	return displaySecretValue(value).trim() !== "";
+}
+
 function wasCleared(prev: string, next: string): boolean {
-	return prev.trim() !== "" && next.trim() === "";
+	return cloudKeyPresent(prev) && !cloudKeyPresent(next);
+}
+
+/** Providers that cannot currently service their selected cloud surfaces. */
+export function unavailableProviders(
+	keys: KeySnapshot,
+): ReadonlySet<ClearableProvider> {
+	const unavailable = new Set<ClearableProvider>();
+	if (!cloudKeyPresent(keys.elevenlabs)) {
+		unavailable.add("elevenlabs");
+	}
+	if (!cloudKeyPresent(keys.openrouter)) {
+		unavailable.add("openrouter");
+	}
+	return unavailable;
 }
 
 /** Which providers' keys went non-empty → empty between two snapshots. */
@@ -86,7 +106,10 @@ export function planReverts(
 		stt: activeSttProvider !== null && cleared.has(activeSttProvider),
 		llmDictation: orCleared && surfaces.dictationProvider === "openrouter",
 		llmTransforms: orCleared && surfaces.transformsProvider === "openrouter",
-		ttsCloud: cleared.has("elevenlabs") && surfaces.ttsSource === "cloud",
+		ttsCloud:
+			surfaces.ttsSource === "cloud" &&
+			((surfaces.ttsProvider === "elevenlabs" && cleared.has("elevenlabs")) ||
+				(surfaces.ttsProvider === "openrouter" && cleared.has("openrouter"))),
 	};
 }
 
@@ -102,17 +125,21 @@ export function planHasWork(plan: RevertPlan): boolean {
  */
 export function affectedProviders(
 	plan: RevertPlan,
-	model: string,
+	surfaces: Pick<SurfaceSnapshot, "model" | "ttsProvider">,
 ): ReadonlySet<ClearableProvider> {
 	const providers = new Set<ClearableProvider>();
 	if (plan.stt) {
-		const sttProvider = providerOf(model);
+		const sttProvider = providerOf(surfaces.model);
 		if (sttProvider) {
 			providers.add(sttProvider);
 		}
 	}
-	if (plan.ttsCloud) {
-		providers.add("elevenlabs");
+	if (
+		plan.ttsCloud &&
+		(surfaces.ttsProvider === "elevenlabs" ||
+			surfaces.ttsProvider === "openrouter")
+	) {
+		providers.add(surfaces.ttsProvider);
 	}
 	if (plan.llmDictation || plan.llmTransforms) {
 		providers.add("openrouter");

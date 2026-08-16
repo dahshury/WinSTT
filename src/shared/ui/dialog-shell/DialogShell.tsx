@@ -46,11 +46,16 @@ export function DialogShell({
 }: DialogShellProps) {
 	return (
 		<Dialog alert onOpenChange={onOpenChange} open={open}>
-			<DialogContent width={width}>
+			{/* `gap-0` overrides the padded default: title→description is a tighter
+			    pair than description→body, so the rhythm is set per-slot here
+			    rather than by one uniform gap. */}
+			<DialogContent className="gap-0" width={width}>
 				<DialogTitle>{title}</DialogTitle>
-				<DialogDescription render={<div />}>{description}</DialogDescription>
-				{body}
-				<DialogFooter className="mt-1">{children}</DialogFooter>
+				<DialogDescription className="mt-2" render={<div />}>
+					{description}
+				</DialogDescription>
+				{body ? <div className="mt-4">{body}</div> : null}
+				<DialogFooter className="mt-5">{children}</DialogFooter>
 			</DialogContent>
 		</Dialog>
 	);

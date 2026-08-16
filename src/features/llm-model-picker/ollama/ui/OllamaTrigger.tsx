@@ -50,8 +50,6 @@ import type {
 	TriggerPullSummary,
 } from "./ollama-selector-types";
 
-// ── Trigger ───────────────────────────────────────────────────────────
-
 function resolveOllamaMemoryBytes(
 	model: OllamaModel,
 	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined,

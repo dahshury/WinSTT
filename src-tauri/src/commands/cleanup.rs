@@ -27,8 +27,8 @@ pub struct RemoveApplicationDataResult {
 }
 
 /// One row of the "remove application data" disk-usage preview: a category key
-/// (`stt` / `tts` / `dictionary` / `wakeword` / `history` / `logs` / `other`) and
-/// its on-disk size in bytes.
+/// (`stt` / `tts` / `voices` / `dictionary` / `wakeword` / `history` / `logs` /
+/// `other`) and its on-disk size in bytes.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppDataUsageEntry {
@@ -188,6 +188,36 @@ pub async fn remove_app_data_category(
                 },
             ) {
                 errors.push(err);
+            }
+        }
+        "voices" => {
+            // Authored audio, not a cache — so it is deliberately NOT touched by
+            // the `tts` row or by "remove downloaded models". This is the only
+            // path that removes it.
+            let Ok(dir) = crate::portable::app_data_dir(&app) else {
+                return Err("cannot resolve the app data dir".to_string());
+            };
+            let voices_dir = cleanup::reference_voices_dir(&dir);
+            // A live engine may be holding one of these clips open (and is
+            // certainly conditioned on it), so drop it before the files go.
+            tts_manager.unload_active_local_model_for_cleanup("voice cleanup");
+            delete_path_best_effort(&voices_dir, &mut errors);
+            // The live voice pointed INTO the folder that just went away. Left
+            // alone, read-aloud would keep naming a clip that no longer exists —
+            // on a clone-only engine that is a hard synthesis error every time.
+            let mut settings = read_settings(&app);
+            if std::path::Path::new(settings.tts.voice.trim()).starts_with(&voices_dir) {
+                settings.tts.voice.clear();
+                settings.tts.clone_ref_text.clear();
+                if let Err(err) = apply_settings_patch(
+                    &app,
+                    PartialWinsttSettings {
+                        tts: Some(settings.tts),
+                        ..PartialWinsttSettings::default()
+                    },
+                ) {
+                    errors.push(err);
+                }
             }
         }
         "wakeword" => {

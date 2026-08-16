@@ -22,6 +22,7 @@ import {
 } from "@/shared/lib/surface";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import {
+	OPTION_DRAG_HANDLE_SIZE,
 	OptionDragHandle,
 	type SelectOption,
 	SortableOptionRows,
@@ -80,7 +81,10 @@ function ChipRow({
 				option.sortable ? (
 					<OptionDragHandle className="-ml-1.5" label={handleLabel} />
 				) : (
-					<span aria-hidden="true" className="-ml-1.5 size-5 shrink-0" />
+					<span
+						aria-hidden="true"
+						className={`-ml-1.5 ${OPTION_DRAG_HANDLE_SIZE} shrink-0`}
+					/>
 				)
 			) : null}
 			{option.icon ? (
@@ -181,6 +185,7 @@ export function FooterMenuChip({
 							>
 								<MenuHighlightLayer
 									containerRef={radioGroupRef}
+									suppressed={dragSorting}
 									value={value}
 								/>
 								{onReorder ? (

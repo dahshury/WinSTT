@@ -142,18 +142,23 @@ export function HomeHero() {
         {heartIcon}
         100% Free / Open Source / MIT
       </a>
-      <h1 className="mb-4 font-bold text-5xl tracking-tight">WinSTT</h1>
+      <h1
+        className="mb-4 font-semibold text-6xl"
+        style={{ letterSpacing: "-0.04em" }}
+      >
+        WinSTT
+      </h1>
+      {/* Centred and ragged-right. The previous `text-justify hyphens-auto`
+          pairing stretched a 4-line paragraph across a narrow measure, which
+          opened rivers of whitespace between words. */}
       <p
-        className="max-w-xl text-justify text-lg leading-relaxed hyphens-auto"
-        style={{
-          color: "color-mix(in oklab, var(--fg-strong) 55%, transparent)",
-        }}
+        className="max-w-xl text-center text-pretty text-lg leading-relaxed"
+        style={{ color: "var(--fg-secondary)" }}
       >
         A complete local voice toolkit for macOS, Linux, and Windows.
         Speech-to-text, text-to-speech, wake-word detection, and LLM-powered
-        text processing - powered by Whisper, NeMo, and 70+ AI models,
-        completely offline and entirely on your hardware. Free forever, source
-        on GitHub.
+        text processing — powered by Whisper, NeMo, and 70+ AI models,
+        completely offline and entirely on your hardware.
       </p>
       <div
         className="mt-6 inline-flex flex-col items-stretch overflow-hidden rounded-2xl sm:flex-row sm:rounded-full"

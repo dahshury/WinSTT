@@ -87,6 +87,7 @@ type SttModelChange = (
 
 export interface SttModelSelectorProps {
 	currentQuantization: OnnxQuantization;
+	compact?: boolean;
 	disabled?: boolean;
 	/** Live download snapshot — drives the trigger's "downloading X · 23%"
 	 *  variant when the in-flight swap target matches the downloading model.
@@ -340,6 +341,7 @@ function useSttModelSelectorPanelState({
 	models,
 	value,
 	currentQuantization,
+	compact = false,
 	onChange,
 	onDeleteQuant,
 	canDeleteQuant,
@@ -572,11 +574,6 @@ function useSttModelSelectorPanelState({
 		hasSearch || activeRailId === ALL_AUTHORS_RAIL_ID
 			? menuFilteredModels.length
 			: groups.reduce((sum, group) => sum + group.items.length, 0);
-	// Re-sync the active rail tile to the selection's family during render
-	// whenever it changes, while still letting a user rail click override
-	// it until the selection moves again. The prev-value tracker is a ref
-	// (never read in JSX) so the resync doesn't schedule an extra render —
-	// see https://react.dev/learn/you-might-not-need-an-effect
 	// Variant-bundle expansion. Sync at render-time (cheaper than useEffect,
 	// no extra render pass — see https://react.dev/learn/you-might-not-need-an-effect):
 	// whenever the externally-controlled selection moves to a different variant,
@@ -636,6 +633,7 @@ function useSttModelSelectorPanelState({
 
 	const viewProps: SttModelSelectorViewProps = {
 		activeRailId,
+		compact,
 		availableLanguages,
 		baseModels,
 		currentQuantization,

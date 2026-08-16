@@ -43,6 +43,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
@@ -623,7 +624,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
     // apart from "page loaded but its invokes are blocked". Tauri `on_page_load`.
     {
         let diag_label = spec.label;
-        builder = builder.on_page_load(move |_w, payload| {
+        builder = builder.on_page_load(move |webview, payload| {
             log::debug!(
                 "[webview-load:{diag_label}] {:?} url={}",
                 payload.event(),
@@ -636,6 +637,20 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
                     }
                     tauri::webview::PageLoadEvent::Finished => {
                         crate::winstt::commands::overlay::mark_overlay_page_loaded();
+                    }
+                }
+            }
+            // Same deal for the tray menu: a tray click that arrives before the
+            // page has painted is deferred, and this is what releases it.
+            if diag_label == "tray-menu" {
+                match payload.event() {
+                    tauri::webview::PageLoadEvent::Started => {
+                        crate::winstt::commands::tray_menu::mark_tray_menu_page_loading();
+                    }
+                    tauri::webview::PageLoadEvent::Finished => {
+                        crate::winstt::commands::tray_menu::mark_tray_menu_page_loaded(
+                            webview.app_handle(),
+                        );
                     }
                 }
             }
@@ -711,6 +726,64 @@ pub(crate) fn show_onboarding_window_internal(app: &AppHandle) -> Result<(), Str
     window.show().map_err(|e| e.to_string())?;
     let _ = window.unminimize();
     window.set_focus().map_err(|e| e.to_string())
+}
+
+/// One-shot guard for `schedule_secondary_window_warmup` (both startup paths —
+/// hidden launch and first main-window show — may request it).
+static SECONDARY_WINDOW_WARMUP_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+/// How long after startup handoff to defer secondary webview creation, keeping
+/// it off the first-paint path (same delay as the tray-menu warmup).
+const SECONDARY_WINDOW_WARMUP_DELAY_MS: u64 = 250;
+
+/// Hidden secondary windows whose UX depends on a LIVE renderer before their
+/// first open — created shortly after startup, mirroring
+/// `tray_menu::schedule_tray_menu_warmup`:
+///
+///   - `tray-indicator` — FUNCTIONAL requirement, not a latency nicety: its
+///     renderer is the only trigger for the mode/preset pill (it watches the
+///     `settings:changed` broadcast and calls `tray_indicator_show` itself), so
+///     without a live renderer the pill can never appear at all.
+///   - `model-footprint` — the hover panel's renderer prehydrates its stores
+///     and reports its true content size while hidden, so the first hover shows
+///     a correctly-sized, populated panel instead of an empty one that grows
+///     and re-anchors in front of the user.
+///   - `overlay` — the first PTT session reveals an already-loaded pill, and
+///     WebView2 creation stays off the recording pipeline (which would
+///     otherwise block on main-thread window construction mid-recording).
+///
+/// `settings` and `model-picker` stay lazy on purpose: their open paths are
+/// load-aware (the settings renderer replays its reveal from a mount-time
+/// visibility check; the picker has the `window_model_picker_ready` handshake),
+/// and both are shown full-size on open, so a cold create costs latency only.
+const SECONDARY_WINDOW_WARMUP_LABELS: &[&str] = &["overlay", "model-footprint", "tray-indicator"];
+
+/// Pre-create the hidden secondary webviews in `SECONDARY_WINDOW_WARMUP_LABELS`
+/// shortly after startup. Idempotent: one-shot guard here, and `ensure_window`
+/// early-returns for any window that already exists.
+pub(crate) fn schedule_secondary_window_warmup(app: &AppHandle) {
+    if SECONDARY_WINDOW_WARMUP_SCHEDULED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(
+            SECONDARY_WINDOW_WARMUP_DELAY_MS,
+        ));
+        let app_for_main = app.clone();
+        // WebView2 creation must happen on the main thread; the event loop is
+        // pumping by now, so this runs right after the current tick.
+        if let Err(e) = app.run_on_main_thread(move || {
+            for &label in SECONDARY_WINDOW_WARMUP_LABELS {
+                match ensure_window(&app_for_main, label) {
+                    Ok(_) => log::debug!("[warmup] '{label}' pre-created (hidden, deferred)"),
+                    Err(e) => log::warn!("[warmup] '{label}' failed: {e}"),
+                }
+            }
+        }) {
+            log::warn!("secondary window warmup scheduling failed: {e}");
+        }
+    });
 }
 
 // ── Settings modal (pill input gate) ────────────────────────────────────────

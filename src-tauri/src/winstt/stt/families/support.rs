@@ -255,9 +255,11 @@ impl Vocab {
                 path.display()
             )));
         }
+        // `<blk>` (sherpa/GigaAM) or `<blank>` (icefall CTC — e.g. zipformer_p-arabic-v2, where
+        // blank is 250 and id 0 is a REAL token, so falling back to 0 would eat that token).
         let blank_idx = id_to_sym
             .iter()
-            .find(|(_, s)| s.as_str() == "<blk>")
+            .find(|(_, s)| matches!(s.as_str(), "<blk>" | "<blank>"))
             .map_or(0, |(id, _)| *id);
         let lowercase_decoded = vocab_is_uppercase(id_to_sym.values().map(String::as_str));
         let size = id_to_sym.len();
@@ -825,6 +827,55 @@ pub(super) fn argmax_iter(values: impl Iterator<Item = f32>) -> (usize, f32) {
     (best, best_v)
 }
 
+/// Longest token cycle the phrase-loop guard scans for. A looped sentence tokenizes to ~10–30
+/// SentencePiece pieces; 100 leaves margin for byte-fallback-heavy (non-Latin) text.
+const PHRASE_LOOP_MAX_CYCLE: usize = 100;
+/// Verbatim occurrences before a multi-token cycle counts as a loop. Genuine dictation almost never
+/// repeats the same sentence 3× token-identically (punctuation included); hallucination loops run
+/// until the token budget.
+const PHRASE_LOOP_MIN_OCCURRENCES: usize = 3;
+/// Stricter threshold for 1–2-token cycles, where short verbatim runs ("no, no, no…") are
+/// legitimate speech.
+const PHRASE_LOOP_MIN_OCCURRENCES_SHORT: usize = 6;
+
+/// Phrase-loop guard for the maskless greedy AED decodes (Cohere/Canary/Granite-AR/Qwen3). These
+/// decoders have no encoder attention mask in their ONNX export, so trailing silence — mic tail,
+/// the trailing-pad word guard, or the DirectML encoder pad bucket's zeros — can pull the greedy
+/// path into re-emitting one sentence verbatim until the token budget ("phrase loop"; the
+/// consecutive-identical-token guards never fire because the tokens differ within each cycle).
+///
+/// Call after every generated token. Returns `Some(keep_len)` when the tail of `generated` is at
+/// least `PHRASE_LOOP_MIN_OCCURRENCES` verbatim repeats of one cycle (≥`…_SHORT` for 1–2-token
+/// cycles): truncate to `keep_len` — which keeps exactly ONE occurrence (the dominant loop mode
+/// re-emits the final GENUINE sentence, so the first occurrence is real speech) — and stop the
+/// decode (the model is in a hallucination attractor; continuing only re-loops). `None` on any
+/// sequence whose tail is not a verbatim cycle — clean decodes are untouched, matching the
+/// reference Cohere implementations' pure-greedy design (no logits penalty).
+pub(super) fn phrase_loop_truncation(generated: &[i64]) -> Option<usize> {
+    let len = generated.len();
+    for cycle_len in 1..=PHRASE_LOOP_MAX_CYCLE.min(len / 2) {
+        let min_occ = if cycle_len <= 2 {
+            PHRASE_LOOP_MIN_OCCURRENCES_SHORT
+        } else {
+            PHRASE_LOOP_MIN_OCCURRENCES
+        };
+        let span = cycle_len * min_occ;
+        if span > len {
+            continue;
+        }
+        // The last `span` tokens are `min_occ` copies of the final `cycle_len`-gram exactly when
+        // every position in the span matches the token one cycle later.
+        if generated[len - span..len - cycle_len]
+            .iter()
+            .zip(&generated[len - span + cycle_len..])
+            .all(|(a, b)| a == b)
+        {
+            return Some(len - (min_occ - 1) * cycle_len);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -868,6 +919,58 @@ mod tests {
         append_ctc_greedy_ids_from_logits(second.view(), 0, usize::MAX, &mut prev, &mut ids);
 
         assert_eq!(ids, vec![1, 1, 2]);
+    }
+
+    #[test]
+    fn phrase_loop_fires_on_third_sentence_repeat_and_keeps_one() {
+        // Genuine prefix [1..=4], then a 5-token "sentence" looped verbatim. The guard fires the
+        // moment the 3rd occurrence completes and keeps the prefix + ONE occurrence.
+        let sentence = [10, 11, 12, 13, 14];
+        let mut generated = vec![1, 2, 3, 4];
+        for _ in 0..2 {
+            generated.extend_from_slice(&sentence);
+            assert_eq!(phrase_loop_truncation(&generated), None);
+        }
+        generated.extend_from_slice(&sentence);
+        assert_eq!(phrase_loop_truncation(&generated), Some(4 + sentence.len()));
+    }
+
+    #[test]
+    fn phrase_loop_fires_at_cycle_boundary_when_checked_every_token() {
+        // Per-token checking catches the loop exactly at the boundary — a partial 4th cycle never
+        // accumulates because the decode stops on the first Some.
+        let mut generated = Vec::new();
+        let mut fired_at = None;
+        for step in 0..40 {
+            generated.push([20, 21, 22][step % 3]);
+            if phrase_loop_truncation(&generated).is_some() {
+                fired_at = Some(generated.len());
+                break;
+            }
+        }
+        assert_eq!(fired_at, Some(9)); // exactly three 3-token cycles
+    }
+
+    #[test]
+    fn phrase_loop_short_cycles_need_six_occurrences() {
+        // "no, no, no" style 1–2-token runs are legitimate speech — 5 identical tokens pass…
+        assert_eq!(phrase_loop_truncation(&[7; 5]), None);
+        // …the 6th fires and collapses the run to one token.
+        assert_eq!(phrase_loop_truncation(&[7; 6]), Some(1));
+        // Same for a 2-token cycle: five pairs pass, the sixth fires keeping one pair.
+        let pair: Vec<i64> = [8, 9].repeat(5);
+        assert_eq!(phrase_loop_truncation(&pair), None);
+        assert_eq!(phrase_loop_truncation(&[8, 9].repeat(6)), Some(2));
+    }
+
+    #[test]
+    fn phrase_loop_is_noop_on_clean_and_near_miss_sequences() {
+        assert_eq!(phrase_loop_truncation(&[]), None);
+        assert_eq!(phrase_loop_truncation(&[1, 2, 3, 4, 5, 6, 7, 8]), None);
+        // Two verbatim occurrences of a multi-token cycle stay untouched (threshold is 3).
+        assert_eq!(phrase_loop_truncation(&[5, 6, 7, 5, 6, 7]), None);
+        // A one-token mutation inside the would-be third cycle breaks the verbatim match.
+        assert_eq!(phrase_loop_truncation(&[5, 6, 7, 5, 6, 7, 5, 99, 7]), None);
     }
 
     #[test]

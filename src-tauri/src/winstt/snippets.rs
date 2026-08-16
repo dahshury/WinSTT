@@ -38,7 +38,7 @@ pub(crate) mod phonetic;
 use std::sync::RwLock;
 
 use once_cell::sync::Lazy;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use tauri::AppHandle;
 
 use crate::helpers::regex::static_regex;
@@ -120,6 +120,12 @@ fn window_matches(window: &[&WordHit], trigger: &TriggerContext) -> bool {
         .map(|w| w.lower.as_str())
         .collect::<Vec<_>>()
         .join(" ");
+    // Exact word equality must not depend on Double Metaphone. The phonetic
+    // implementation intentionally returns empty keys for non-Latin scripts, so
+    // requiring overlap here made an exact Cyrillic/Arabic/etc. trigger inert.
+    if joined == trigger.joined {
+        return true;
+    }
     if jaro_winkler(&joined, &trigger.joined) < SNIPPET_JW_THRESHOLD {
         return false;
     }
@@ -128,16 +134,65 @@ fn window_matches(window: &[&WordHit], trigger: &TriggerContext) -> bool {
     phonetic_overlap(&mp, &trigger.mp)
 }
 
+fn is_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '\''
+}
+
+/// Literal, case-insensitive trigger matches. This pass runs before the
+/// word/phonetic fallback so punctuation that is part of an explicit trigger
+/// (notably `/sig`) is included in the replacement span instead of being left
+/// behind. Word-like edges retain the same whole-word behavior as `WORD_RE`.
+fn find_exact_trigger_matches(text: &str, trigger: &str, expansion: &str) -> Vec<SnippetMatch> {
+    if trigger.is_empty() {
+        return Vec::new();
+    }
+    let Ok(pattern) = RegexBuilder::new(&regex::escape(trigger))
+        .case_insensitive(true)
+        .unicode(true)
+        .build()
+    else {
+        return Vec::new();
+    };
+    let starts_with_word = trigger.chars().next().is_some_and(is_word_character);
+    let ends_with_word = trigger.chars().next_back().is_some_and(is_word_character);
+
+    pattern
+        .find_iter(text)
+        .filter(|matched| {
+            let left_is_word = text[..matched.start()]
+                .chars()
+                .next_back()
+                .is_some_and(is_word_character);
+            let right_is_word = text[matched.end()..]
+                .chars()
+                .next()
+                .is_some_and(is_word_character);
+            (!starts_with_word || !left_is_word) && (!ends_with_word || !right_is_word)
+        })
+        .map(|matched| SnippetMatch {
+            start: matched.start(),
+            end: matched.end(),
+            expansion: expansion.to_string(),
+        })
+        .collect()
+}
+
 /// Find non-overlapping fuzzy occurrences of one snippet trigger, in order.
 /// Mirrors `findSnippetMatches` + `collectSnippetMatches`.
 pub fn find_snippet_matches(text: &str, trigger: &str, expansion: &str) -> Vec<SnippetMatch> {
+    let trigger = trigger.trim();
+    let mut results = find_exact_trigger_matches(text, trigger, expansion);
+    // Slash commands are deliberately explicit. Falling through to the phonetic
+    // word matcher would strip the slash and make `/sig` fire for a bare "sig".
+    if trigger.starts_with('/') {
+        return results;
+    }
     let t_words = trigger_words(trigger);
     let hits = word_hits(text);
     if t_words.is_empty() || hits.len() < t_words.len() {
-        return Vec::new();
+        return results;
     }
     let ctx = build_trigger_context(&t_words);
-    let mut results: Vec<SnippetMatch> = Vec::new();
     let span = hits.len() - ctx.word_count;
     let mut cursor = 0usize; // byte offset of the previous accepted match's end
     for i in 0..=span {
@@ -147,11 +202,17 @@ pub fn find_snippet_matches(text: &str, trigger: &str, expansion: &str) -> Vec<S
             continue;
         }
         let window: Vec<&WordHit> = hits[i..i + ctx.word_count].iter().collect();
+        let start = window[0].start;
+        let end = window[window.len() - 1].end;
+        if results
+            .iter()
+            .any(|matched| start < matched.end && end > matched.start)
+        {
+            continue;
+        }
         if !window_matches(&window, &ctx) {
             continue;
         }
-        let start = window[0].start;
-        let end = window[window.len() - 1].end;
         results.push(SnippetMatch {
             start,
             end,
@@ -159,6 +220,7 @@ pub fn find_snippet_matches(text: &str, trigger: &str, expansion: &str) -> Vec<S
         });
         cursor = end;
     }
+    results.sort_by_key(|matched| matched.start);
     results
 }
 
@@ -388,14 +450,20 @@ mod tests {
     }
 
     #[test]
-    fn unicode_words_do_not_panic_on_byte_slicing() {
-        // Cyrillic words tokenize via \p{L}, but double-metaphone returns empty
-        // codes for non-Latin scripts (verified against the `double-metaphone` npm
-        // package: `доubleMetaphone("привет мир") === ["",""]`). The phonetic gate
-        // (empty keys never overlap) therefore fails, so the snippet does NOT
-        // expand — byte-IDENTICAL to the reference TS path. The load-bearing
-        // assertion here is that multi-byte word spans never panic the splice.
+    fn exact_non_latin_trigger_expands_without_phonetic_keys() {
         let s = vec![entry("привет мир", "HELLO")];
-        assert_eq!(replace_with_snippets("привет мир!", &s), "привет мир!");
+        assert_eq!(replace_with_snippets("привет мир!", &s), "HELLO!");
+    }
+
+    #[test]
+    fn slash_trigger_replaces_the_slash_and_supports_multiline_expansion() {
+        let s = vec![entry("/sig", "Best,\nSam")];
+        assert_eq!(replace_with_snippets("Use /sig.", &s), "Use Best,\nSam.");
+    }
+
+    #[test]
+    fn slash_trigger_does_not_fire_for_bare_word() {
+        let s = vec![entry("/sig", "Best,\nSam")];
+        assert_eq!(replace_with_snippets("Use sig.", &s), "Use sig.");
     }
 }

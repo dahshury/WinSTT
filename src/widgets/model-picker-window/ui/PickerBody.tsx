@@ -493,10 +493,6 @@ export function PickerBody({
 			? realtime.mainModelInfo
 			: catalogModels.find((m) => m.id === currentModel),
 	});
-	// Which sub-picker shows is derived purely from the active model — there is
-	// NO Local/Cloud switch in this window. The source toggle is a Settings-only
-	// control (see `SourceArea` in ModelSettingsPanel); this detached picker just
-	// browses the models for whatever source the persisted model already uses.
 	// A persisted cloud model whose key was removed falls back to the local list
 	// (the key-removal banner explains why), matching the Settings behaviour.
 	if (mode.kind === "llm-ollama") {
@@ -528,6 +524,7 @@ export function PickerBody({
 			<DetachedPickerFrame>
 				<div className="min-h-0 flex-1 [&>*]:size-full">
 					<SttModelSelector
+						compact
 						currentQuantization={currentQuantization}
 						disabled={fileQueueBusy}
 						getFitAssessment={getFitAssessment}
@@ -588,6 +585,7 @@ export function PickerBody({
 			) : (
 				<div className="min-h-0 flex-1 [&>*]:size-full">
 					<SttModelSelector
+						compact
 						currentQuantization={currentQuantization}
 						disabled={fileQueueBusy}
 						getFitAssessment={getFitAssessment}

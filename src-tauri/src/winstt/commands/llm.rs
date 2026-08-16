@@ -603,7 +603,6 @@ async fn run_openrouter_with_fallback(
         options,
     } = request;
 
-    let timeout = llm::llm_request_timeout(timeout_ms);
     match run_openrouter_attempt(
         mgr,
         OpenRouterAttempt {
@@ -614,7 +613,7 @@ async fn run_openrouter_with_fallback(
             text,
             options: options.clone(),
             request_id,
-            timeout,
+            timeout_ms,
         },
     )
     .await
@@ -656,7 +655,7 @@ async fn run_openrouter_with_fallback(
                     text,
                     options,
                     request_id,
-                    timeout,
+                    timeout_ms,
                 },
             )
             .await
@@ -719,15 +718,15 @@ async fn run_openrouter_with_fallback(
     }
 }
 
-struct OpenRouterAttempt<'a> {
-    api_key: &'a str,
-    model: &'a str,
-    system_prompt: &'a str,
-    user_prompt: &'a str,
-    text: &'a str,
-    options: llm::OpenRouterRequestOptions,
-    request_id: &'a str,
-    timeout: Duration,
+pub(crate) struct OpenRouterAttempt<'a> {
+    pub(crate) api_key: &'a str,
+    pub(crate) model: &'a str,
+    pub(crate) system_prompt: &'a str,
+    pub(crate) user_prompt: &'a str,
+    pub(crate) text: &'a str,
+    pub(crate) options: llm::OpenRouterRequestOptions,
+    pub(crate) request_id: &'a str,
+    pub(crate) timeout_ms: i64,
 }
 
 fn should_try_openrouter_fallback(code: &CloudSttErrorCode) -> bool {
@@ -741,7 +740,7 @@ fn should_try_openrouter_fallback(code: &CloudSttErrorCode) -> bool {
     )
 }
 
-async fn run_openrouter_attempt(
+pub(crate) async fn run_openrouter_attempt(
     mgr: &Arc<LlmManager>,
     attempt: OpenRouterAttempt<'_>,
 ) -> Result<String, String> {
@@ -753,10 +752,10 @@ async fn run_openrouter_attempt(
         text,
         options,
         request_id,
-        timeout,
+        timeout_ms,
     } = attempt;
-    match tokio::time::timeout(
-        timeout,
+    match llm::with_llm_request_timeout(
+        timeout_ms,
         mgr.openrouter_chat(
             api_key,
             model,
@@ -774,7 +773,7 @@ async fn run_openrouter_attempt(
             mgr.clear_cancel(request_id);
             Err(format!(
                 "OpenRouter request timed out after {}ms",
-                timeout.as_millis()
+                llm::llm_request_timeout(timeout_ms).as_millis()
             ))
         }
     }

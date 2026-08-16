@@ -5,8 +5,12 @@ import {
 	type SelectOptionGroup,
 } from "@/shared/ui/searchable-select";
 import { Slider } from "@/shared/ui/slider";
+import type { InlineTagsBlocker } from "../lib/inline-tags-gate";
+import type { SavedVoice, SavedVoiceValue } from "../model/voice-library";
+import { InlineTagsField } from "./InlineTagsField";
 import { TtsPreviewButton } from "./TtsPreviewButton";
 import { VoiceDesignField } from "./VoiceDesignField";
+import { VoiceField, type VoiceFieldClip } from "./VoiceField";
 
 export interface TtsControlsProps {
 	activeRequestId: string | null;
@@ -32,11 +36,62 @@ export interface TtsControlsProps {
 	/** True when the selected model is a voice-design model — swaps the voice
 	 *  dropdown for the "Design voice" prompt affordance. */
 	voiceDesign?: boolean | undefined;
+	/** Character budget for the design prompt, from the model's catalog row.
+	 *  `0` = unknown → no cap is enforced and the counter is hidden. */
+	voiceDesignMaxChars?: number | undefined;
 	/** Persist the voice-design prompt (the overloaded `voice` field). Only used
 	 *  when `voiceDesign` is true. */
 	onVoiceDesignPromptChange?: ((prompt: string) => void) | undefined;
+	/** The row takes a style instruction ALONGSIDE its voice (OmniVoice). Renders the
+	 *  same prompt editor as an EXTRA field rather than in place of the voice control,
+	 *  because these rows clone and `voice` already holds the reference-clip path. */
+	voiceInstructSupported?: boolean | undefined;
+	voiceInstruct?: string | undefined;
+	onVoiceInstructChange?: ((instruct: string) => void) | undefined;
+	/** Turn a character description into a voice-design instruct via the
+	 *  configured post-processing LLM. Omitted when post-processing isn't
+	 *  runnable, which hides the AI affordance entirely. */
+	onGenerateVoiceDesignPrompt?:
+		| ((description: string) => Promise<string>)
+		| undefined;
 	voiceGroups: SelectOptionGroup[];
 	voicePlaceholder: string;
+	/** True when the selected model clones from a reference clip — swaps the
+	 *  voice dropdown for the voice card. */
+	cloning?: boolean | undefined;
+	/** That engine's clip + transcript wiring; only read when `cloning`. The
+	 *  preview wiring is assembled here from the props this component already
+	 *  carries, so the parent hands over only what is engine-specific. */
+	clone?:
+		| (Omit<VoiceFieldClip, "onPresetChange" | "presetVoice" | "preview"> & {
+				busy: boolean;
+		  })
+		| undefined;
+	/** Inline paralinguistic-tag wiring. Present ONLY when the selected engine
+	 *  ships a tag vocabulary (Orpheus / Chatterbox Turbo today) — every other
+	 *  engine renders no row at all, since there is no capability to offer. */
+	inlineTags?:
+		| {
+				blockedBy: InlineTagsBlocker | null;
+				enabled: boolean;
+				onChange: (next: boolean) => void;
+				tagList: string;
+		  }
+		| undefined;
+	/** Saved-voice library wiring. Present for the two models whose voice is a
+	 *  user-authored artifact worth naming (cloning clip / design prompt); absent
+	 *  for preset-bank engines, where the dropdown already IS the library. */
+	voiceLibrary?:
+		| {
+				live: SavedVoiceValue;
+				onApply: (value: SavedVoiceValue) => void;
+				onDiscard: (input: {
+					entry: SavedVoice | null;
+					paths: readonly string[];
+				}) => void;
+				onOverwrite: (id: string, value: SavedVoiceValue) => void;
+		  }
+		| undefined;
 }
 
 // Voice / speed pickers. Extracted so each focused control stays readable
@@ -65,9 +120,18 @@ export function TtsControls({
 	voice,
 	voiceDefault = DEFAULT_SETTINGS.tts.voice,
 	voiceDesign = false,
+	voiceDesignMaxChars = 0,
 	onVoiceDesignPromptChange,
+	onGenerateVoiceDesignPrompt,
+	voiceInstructSupported = false,
+	voiceInstruct = "",
+	onVoiceInstructChange,
 	voiceGroups,
 	voicePlaceholder,
+	cloning = false,
+	clone,
+	inlineTags,
+	voiceLibrary,
 }: TtsControlsProps) {
 	const languageSelectGroups = languageGroups ?? [];
 	const showLanguageSelect = Boolean(
@@ -75,11 +139,48 @@ export function TtsControls({
 	);
 	return (
 		<>
-			{voiceDesign ? (
+			{/* ONE row for the whole voice: the library combobox names it, and the
+			    always-open card under it holds the clips it was cloned from and their
+			    transcript. Cloning engines therefore render NO separate voice
+			    dropdown — their preset voices live inside that card, offered only
+			    while no clip is overriding them. */}
+			{voiceLibrary ? (
+				<VoiceField
+					busy={cloning && clone ? clone.busy : false}
+					clip={
+						cloning && clone
+							? {
+									...clone,
+									onPresetChange: onVoiceChange,
+									// The audition control the merged-away dropdown used to
+									// carry: a cloning engine must still be hearable from the
+									// settings row, not only through the hotkey.
+									preview: {
+										activeRequestId,
+										isLoading,
+										isSpeaking,
+										langForVoice,
+										onPreview: previewVoice,
+										previewVoiceId,
+									},
+									presetVoice: voice,
+								}
+							: undefined
+					}
+					live={voiceLibrary.live}
+					onApply={voiceLibrary.onApply}
+					onDiscard={voiceLibrary.onDiscard}
+					onOverwrite={voiceLibrary.onOverwrite}
+					t={t}
+				/>
+			) : null}
+			{cloning ? null : voiceDesign ? (
 				// Voice-design models describe the voice with a prompt (stored in the
 				// overloaded `voice` field) instead of picking from a bank — swap the
 				// dropdown for the "Design voice" affordance.
 				<VoiceDesignField
+					maxChars={voiceDesignMaxChars}
+					onGeneratePrompt={onGenerateVoiceDesignPrompt}
 					onPromptChange={
 						onVoiceDesignPromptChange ??
 						(() => {
@@ -132,6 +233,24 @@ export function TtsControls({
 					/>
 				</SettingField>
 			)}
+			{voiceInstructSupported ? (
+				// EXTRA row, not a replacement: these engines clone, so the control above
+				// is the clip picker and `voice` holds its path. The instruction is its
+				// own setting and reuses the design-prompt editor (same LLM fill).
+				<VoiceDesignField
+					keyPrefix="voiceInstruct"
+					maxChars={voiceDesignMaxChars}
+					onGeneratePrompt={onGenerateVoiceDesignPrompt}
+					onPromptChange={
+						onVoiceInstructChange ??
+						(() => {
+							/* no-op */
+						})
+					}
+					prompt={voiceInstruct}
+					t={t}
+				/>
+			) : null}
 			{showLanguageSelect ? (
 				<SettingField
 					isDefault={language === languageDefault}
@@ -165,6 +284,17 @@ export function TtsControls({
 					value={speed}
 				/>
 			</SettingField>
+			{/* Last row of the tab: unlike everything above it this one is about the
+			    TEXT rather than the voice — it rewrites what gets synthesized. */}
+			{inlineTags ? (
+				<InlineTagsField
+					blockedBy={inlineTags.blockedBy}
+					enabled={inlineTags.enabled}
+					onChange={inlineTags.onChange}
+					t={t}
+					tagList={inlineTags.tagList}
+				/>
+			) : null}
 		</>
 	);
 }

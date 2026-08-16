@@ -7,7 +7,11 @@ import {
 } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
-import { onDeviceSwitchFailed, settingsSave } from "@/shared/api/ipc-client";
+import {
+	audioSetSelectedOutputDevice,
+	onDeviceSwitchFailed,
+	settingsSave,
+} from "@/shared/api/ipc-client";
 import { fireAndForget } from "@/shared/lib/fire-and-forget";
 
 /**
@@ -157,7 +161,11 @@ export function useDeviceSwitchFeedback(): void {
 		if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputSinkIds)) {
 			return;
 		}
-		updateGeneral({ outputDeviceId: "" });
+		updateGeneral({ outputDeviceId: "", loopbackDeviceIndex: null });
 		settingsSave({ general: useSettingsStore.getState().settings.general });
+		fireAndForget(
+			audioSetSelectedOutputDevice("default"),
+			"deviceSwitchFeedback.resetNativeOutput",
+		);
 	}, [outputSinkIds, savedOutputDeviceId, updateGeneral]);
 }

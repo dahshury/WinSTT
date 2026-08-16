@@ -132,7 +132,6 @@ if (typeof window !== "undefined") {
 	useSettingsStore.subscribe(syncOnSettingsChange);
 }
 
-/** Hook returning the live status entry for a single provider. */
 export function useCredentialStatus(
 	provider: IntegrationCloudProvider,
 ): ProviderStatusEntry {

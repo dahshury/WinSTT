@@ -1,17 +1,24 @@
-// Qwen3-TTS-12Hz-1.7B VoiceDesign (Qwen) — text + voice-design instruct
-// → 24 kHz speech, on ort 2.0. Faithful port of the exported-ONNX VoiceDesign path in
-// the reference `inference.py` (`generate` L263-358 + `_ar_loop_cached` L407-447 +
-// `decode_chunked` L197-211). See PORT_SPEC.md §5-§7 for the verified algorithm.
+// Qwen3-TTS-12Hz (Qwen) — text + voice steering → 24 kHz speech, on ort 2.0. Faithful
+// port of the exported-ONNX path in the reference `inference.py` (`generate` L263-358 +
+// `_ar_loop_cached` L407-447 + `decode_chunked` L197-211). See PORT_SPEC.md §5-§7 for
+// the verified algorithm.
+//
+// Drives BOTH published checkpoints — they ship the same graph layout and a byte-identical
+// `inference.py`, and differ only in scale and in how the voice is steered:
+//   1.7B VoiceDesign  H=2048, no preset bank  → `voice` is a natural-language instruct.
+//   0.6B CustomVoice  H=1024, 9 preset timbres → `voice` names one (see Qwen3TtsVoiceMode).
+// Every dim below is therefore read from `config.json`/the graphs, never hardcoded; the
+// shapes quoted are the 1.7B's.
 //
 // SIX ort sessions (manifest `sub_models`), all CPU (int4 talker uses MatMulNBits, a
 // standard-ORT contrib op; DirectML is not validated for this pipeline yet — CPU-only
 // for v1, cited in `build_session`):
-//   text_embed      text_ids[B,T] i64            → [B,T,2048]                      run per embed
-//   codec_embed     codec_ids[B,T] i64           → [B,T,2048]                      run per embed
+//   text_embed      text_ids[B,T] i64            → [B,T,H]                         run per embed
+//   codec_embed     codec_ids[B,T] i64           → [B,T,H]                         run per embed
 //   talker_cache    inputs_embeds + position_ids + attention_mask + 56 past K/V
-//                     → logits[B,cur,3072], hidden[B,cur,2048], 56 present          run per AR step (prefill + decode)
-//   code_predictor  talker_hidden[B,2048] + codec_ids[B,16] → group_logits[B,15,3072]  run 15×/frame
-//   residual_embed  codec_ids[B,16] i64          → step_embed[B,2048]              run per frame
+//                     → logits[B,cur,3072], hidden[B,cur,H], 56 present            run per AR step (prefill + decode)
+//   code_predictor  talker_hidden[B,H] + codec_ids[B,16] → group_logits[B,15,≥2048]   run 15×/frame
+//   residual_embed  codec_ids[B,16] i64          → step_embed[B,H]                 run per frame
 //   tok_decoder     audio_codes[B,25,16] i64     → waveform[B,1,L] f32             run per 25-frame chunk
 //
 // Modeled on chatterbox.rs (CPU ONNX AR-LLM voice engine): `LazyOrtEngine` lazy load,
@@ -19,9 +26,11 @@
 // plain `session.run` + `Tensor::from_array`/`try_extract_tensor`. KV is threaded host-side
 // (present → past each step, chatterbox style) because the int4 talker is CPU-pinned.
 //
-// v1 scope (BUILD_PLAN.md §"Backend engine"): VoiceDesign only, language Auto / nothink
-// (the `lang` arg is ignored — noted at the call site), `speed` ignored (natural rate).
-// Empty prompt is a VALID default voice (skips the instruct prefix), never an error.
+// v1 scope (BUILD_PLAN.md §"Backend engine"): language Auto / nothink (the `lang` arg is
+// ignored — noted at the call site), `speed` ignored (natural rate). An empty `voice` is a
+// VALID default voice (skips the instruct prefix / the speaker row), never an error.
+// The base clone-from-a-clip path (`tok_encoder` + ref audio) is NOT ported — no shipped
+// entry uses it, which is why the download manifest skips that graph.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -62,6 +71,8 @@ const FB_HIDDEN: usize = 2048;
 const FB_KV_HEADS: usize = 8;
 const FB_HEAD_DIM: usize = 128;
 const FB_VOCAB: usize = 3072;
+/// Residual codebook size — `code_predictor_config.vocab_size`. See `ModelConfig::residual_vocab`.
+const FB_RESIDUAL_VOCAB: usize = 2048;
 const FB_TTS_BOS: i64 = 151_672;
 const FB_TTS_EOS: i64 = 151_673;
 const FB_TTS_PAD: i64 = 151_671;
@@ -89,6 +100,22 @@ pub type Qwen3TtsResult<T> = Result<T, Qwen3TtsError>;
 
 type NamedInput = (Cow<'static, str>, SessionInputValue<'static>);
 
+/// How the engine interprets the `voice` string it is handed.
+///
+/// The two published checkpoints steer the voice through DIFFERENT mechanisms even
+/// though they share one export pipeline and one `inference.py`:
+///   * VoiceDesign has no preset bank — `voice` is a natural-language instruct prompt
+///     that is embedded and prepended to the talker prefill.
+///   * CustomVoice has 9 preset timbres — `voice` names one, which resolves through
+///     `config.talker_config.spk_id` to a codec token embedded INTO the prefill.
+///     (Despite the name, CustomVoice is not clone-from-a-clip; there is no reference
+///     audio anywhere in this path.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Qwen3TtsVoiceMode {
+    DesignPrompt,
+    PresetSpeaker,
+}
+
 /// Token ids + dims resolved from `config.json` (falling back to PORT_SPEC §3).
 #[derive(Clone, Debug)]
 struct ModelConfig {
@@ -96,6 +123,15 @@ struct ModelConfig {
     kv_heads: usize,
     head_dim: usize,
     vocab: usize,
+    /// `talker_config.code_predictor_config.vocab_size` — the RESIDUAL codebook size (2048),
+    /// which is NOT the talker vocab (3072). The talker's extra 1024 ids are control tokens
+    /// only the first codebook may emit (codec_bos 2149, codec_eos 2150, think 2154-2157).
+    ///
+    /// `code_predictor` nevertheless emits `group_logits` padded to the FULL 3072 width, so the
+    /// valid range has to come from config rather than the tensor: sampling a residual code out
+    /// of the padded tail yields an id ≥ 2048, which the next call's `GatherBlockQuantized`
+    /// codebook lookup rejects outright ("indices element out of data bounds").
+    residual_vocab: usize,
     tts_bos: i64,
     tts_eos: i64,
     tts_pad: i64,
@@ -105,6 +141,9 @@ struct ModelConfig {
     codec_nothink: i64,
     codec_think_bos: i64,
     codec_think_eos: i64,
+    /// `talker_config.spk_id`: preset-timbre name (lowercase) → codec token id. Empty
+    /// on VoiceDesign checkpoints, 9 entries on CustomVoice (inference.py L~325).
+    spk_id: std::collections::HashMap<String, i64>,
     // NOTE: im_start/im_end/endoftext ids are intentionally NOT stored — the chat
     // template is built from the literal `<|im_start|>`/`<|im_end|>` strings and the
     // tokenizer maps them to their ids (PORT_SPEC §5).
@@ -140,6 +179,16 @@ impl ModelConfig {
             kv_heads: tcu("num_key_value_heads", FB_KV_HEADS),
             head_dim: tcu("head_dim", FB_HEAD_DIM),
             vocab: tcu("vocab_size", FB_VOCAB),
+            // A ZERO here is treated as absent, not honoured: `residual_vocab` is the
+            // upper bound of the sub-codebook sampler's range, so 0 would hand the
+            // sampler an empty row. Keeping it >= 1 makes "valid range is non-empty" an
+            // invariant of the struct rather than a check every call site must repeat.
+            residual_vocab: tc
+                .and_then(|c| c.get("code_predictor_config"))
+                .and_then(|c| c.get("vocab_size"))
+                .and_then(serde_json::Value::as_u64)
+                .filter(|&v| v > 0)
+                .map_or(FB_RESIDUAL_VOCAB, |v| v as usize),
             tts_bos: top("tts_bos_token_id", FB_TTS_BOS),
             tts_eos: top("tts_eos_token_id", FB_TTS_EOS),
             tts_pad: top("tts_pad_token_id", FB_TTS_PAD),
@@ -149,6 +198,15 @@ impl ModelConfig {
             codec_nothink: tci("codec_nothink_id", FB_CODEC_NOTHINK),
             codec_think_bos: tci("codec_think_bos_id", FB_CODEC_THINK_BOS),
             codec_think_eos: tci("codec_think_eos_id", FB_CODEC_THINK_EOS),
+            spk_id: tc
+                .and_then(|c| c.get("spk_id"))
+                .and_then(|v| v.as_object())
+                .map(|map| {
+                    map.iter()
+                        .filter_map(|(k, v)| v.as_i64().map(|id| (k.to_ascii_lowercase(), id)))
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 }
@@ -175,14 +233,17 @@ pub struct Qwen3TtsEngine {
     cache_dir: PathBuf,
     /// Quant selector ∈ {"int4","fp16","fp32"} → subdir `cpu_int4|cpu_fp16|cpu_fp32`.
     quant: String,
+    /// How to read the `voice` argument (see [`Qwen3TtsVoiceMode`]).
+    voice_mode: Qwen3TtsVoiceMode,
     inner: LazyOrtEngine<Loaded>,
 }
 
 impl Qwen3TtsEngine {
-    pub fn new(cache_dir: PathBuf, quant: String) -> Self {
+    pub fn new(cache_dir: PathBuf, quant: String, voice_mode: Qwen3TtsVoiceMode) -> Self {
         Self {
             cache_dir,
             quant,
+            voice_mode,
             inner: LazyOrtEngine::new(),
         }
     }
@@ -304,15 +365,17 @@ impl Qwen3TtsEngine {
         })
     }
 
-    /// Synthesize `text` in the voice described by `prompt` (the VoiceDesign instruct;
-    /// empty ⇒ default voice). Returns mono f32 PCM @ 24 kHz.
+    /// Synthesize `text` in the requested voice. `voice` is either the VoiceDesign
+    /// instruct prompt or a CustomVoice preset-timbre name, per the engine's
+    /// [`Qwen3TtsVoiceMode`]. Empty ⇒ the checkpoint's own default voice, never an
+    /// error. Returns mono f32 PCM @ 24 kHz.
     ///
     /// `lang` and `speed` are accepted for the `TtsEngine` contract but ignored in v1
     /// (language Auto / nothink; natural rate) — see the module header + BUILD_PLAN §.
     pub fn synthesize(
         &self,
         text: &str,
-        prompt: &str,
+        voice: &str,
         lang: &str,
         speed: f32,
     ) -> Qwen3TtsResult<Vec<f32>> {
@@ -321,15 +384,23 @@ impl Qwen3TtsEngine {
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
-        // Per-call rng seed derived from the request so a given (text, prompt) pair is
+        let voice = voice.trim();
+        // Per-call rng seed derived from the request so a given (text, voice) pair is
         // reproducible within a run but different requests get different voices. Greedy
         // (parity) ignores the rng entirely.
-        let seed = fnv1a_seed(trimmed) ^ fnv1a_seed(prompt);
+        let seed = fnv1a_seed(trimmed) ^ fnv1a_seed(voice);
+        let mode = self.voice_mode;
         self.inner.with_loaded(
             || Qwen3TtsError::Session("lock poisoned".into()),
             || Qwen3TtsError::Session("qwen3-tts session was not initialized".into()),
             || self.load(),
-            |loaded| generate(loaded, trimmed, prompt.trim(), seed),
+            |loaded| {
+                let (instruct, speaker) = match mode {
+                    Qwen3TtsVoiceMode::DesignPrompt => (voice, ""),
+                    Qwen3TtsVoiceMode::PresetSpeaker => ("", voice),
+                };
+                generate(loaded, trimmed, instruct, speaker, seed)
+            },
         )
     }
 }
@@ -449,6 +520,18 @@ fn code_predictor_logits(
 
 // ── prefill assembly (PORT_SPEC §5 / inference.py generate L263-358) ─────────────
 
+/// Resolve a CustomVoice preset-timbre name to its codec token id via
+/// `talker_config.spk_id` (case-insensitive, as the reference lowercases before the
+/// lookup). `None` for an empty name, a VoiceDesign checkpoint (empty map), or an
+/// unrecognised name — all of which mean "use the checkpoint's default timbre" rather
+/// than failing the read, so a persisted selection from another model still speaks.
+fn speaker_token(cfg: &ModelConfig, speaker: &str) -> Option<i64> {
+    if speaker.is_empty() || cfg.spk_id.is_empty() {
+        return None;
+    }
+    cfg.spk_id.get(&speaker.to_ascii_lowercase()).copied()
+}
+
 /// Slice `[1, T, H]` embeds along the T axis into `[start, end)`, appending flat.
 /// (batch is always 1 → contiguous rows.)
 fn append_rows(dst: &mut Vec<f32>, embeds: &ArrayD<f32>, start: usize, end: usize, hidden: usize) {
@@ -456,13 +539,16 @@ fn append_rows(dst: &mut Vec<f32>, embeds: &ArrayD<f32>, start: usize, end: usiz
     dst.extend_from_slice(&flat[start * hidden..end * hidden]);
 }
 
-/// Build the VoiceDesign talker prefill embed `[1, L, H]` (flat) and the trailing
-/// pad-embed `[H]` added to every generated step. Empty `instruct` ⇒ no instruct
-/// prefix (default voice) — PORT_SPEC §5 "Empty-instruct handling".
+/// Build the talker prefill embed `[1, L, H]` (flat) and the trailing pad-embed `[H]`
+/// added to every generated step. Empty `instruct` ⇒ no instruct prefix (default voice)
+/// — PORT_SPEC §5 "Empty-instruct handling". Empty/unknown `speaker` ⇒ no speaker row
+/// (the checkpoint's default timbre); an unknown name is NOT an error, so a stale
+/// persisted selection still speaks.
 fn build_prefill(
     loaded: &mut Loaded,
     text: &str,
     instruct: &str,
+    speaker: &str,
 ) -> Qwen3TtsResult<(Vec<f32>, usize, Vec<f32>)> {
     let cfg = &loaded.cfg;
     let h = cfg.hidden;
@@ -495,13 +581,24 @@ fn build_prefill(
     let codec_prefill = [cfg.codec_nothink, cfg.codec_think_bos, cfg.codec_think_eos];
     let codec0 = embed_codec(&mut loaded.codec_embed, &codec_prefill)?; // [1,3,H]
     let codec1 = embed_codec(&mut loaded.codec_embed, &[cfg.codec_pad, cfg.codec_bos])?; // [1,2,H]
-    // No speaker (VoiceDesign) → codec_input = concat([codec0, codec1]) = [1,5,H].
-    let codec_len = 3 + 2;
+    // 4) CustomVoice preset timbre: the speaker's codec token embeds to ONE row spliced
+    //    BETWEEN codec0 and codec1 (inference.py L322-330). VoiceDesign has an empty
+    //    `spk_id` map, so this is skipped and codec_input stays [1,5,H].
+    let speaker_row: Option<ArrayD<f32>> = match speaker_token(cfg, speaker) {
+        Some(id) => Some(embed_codec(&mut loaded.codec_embed, &[id])?), // [1,1,H]
+        None => None,
+    };
+    let codec_len = 3 + usize::from(speaker_row.is_some()) + 2;
     let mut codec_input: Vec<f32> = Vec::with_capacity(codec_len * h);
     append_rows(&mut codec_input, &codec0, 0, 3, h);
+    if let Some(row) = &speaker_row {
+        append_rows(&mut codec_input, row, 0, 1, h);
+    }
     append_rows(&mut codec_input, &codec1, 0, 2, h);
 
-    // 5) instruct prefix embeds (only when non-empty) (inference.py L332-336).
+    // 5) instruct prefix embeds (only when non-empty) (inference.py L332-336). Both
+    //    checkpoints accept an instruct; VoiceDesign uses it to DESIGN the timbre,
+    //    CustomVoice to style an already-chosen preset.
     let prefix: Option<Vec<f32>> = if instruct.is_empty() {
         None
     } else {
@@ -588,13 +685,14 @@ fn generate(
     loaded: &mut Loaded,
     text: &str,
     instruct: &str,
+    speaker: &str,
     seed: u64,
 ) -> Qwen3TtsResult<Vec<f32>> {
     let cfg = loaded.cfg.clone();
     let h = cfg.hidden;
     let vocab = cfg.vocab;
 
-    let (prefill_flat, t0, trailing) = build_prefill(loaded, text, instruct)?;
+    let (prefill_flat, t0, trailing) = build_prefill(loaded, text, instruct, speaker)?;
 
     // suppress = [vocab-1024, vocab) except codec_eos (inference.py L413, PORT_SPEC §3).
     let suppress_lo = vocab.saturating_sub(1024);
@@ -654,9 +752,10 @@ fn generate(
         let mut codes16 = [0i64; N_GROUPS];
         codes16[0] = code0;
         for j in 1..N_GROUPS {
-            let gl = code_predictor_logits(&mut loaded.code_predictor, &th, &codes16)?; // [1,15,V]
-            // gl[0, j-1] — the (j-1)-th group row.
-            let row = code_predictor_row_f64(&gl, j - 1, vocab)?;
+            let gl = code_predictor_logits(&mut loaded.code_predictor, &th, &codes16)?; // [1,15,G]
+            // gl[0, j-1] — the (j-1)-th group row, sliced at the tensor stride but truncated to
+            // the residual codebook size so no out-of-range code is sampled (see below).
+            let row = code_predictor_row_f64(&gl, j - 1, cfg.residual_vocab)?;
             codes16[j] = sampling::sample(
                 &row,
                 SUB_DO_SAMPLE,
@@ -816,18 +915,48 @@ fn last_step_hidden(hidden: &ArrayD<f32>, h: usize) -> Qwen3TtsResult<Vec<f32>> 
     Ok(flat[start..start + h].to_vec())
 }
 
-/// group_logits[0, row] as an f64 vec of length `vocab`. gl is [1, 15, V].
-fn code_predictor_row_f64(gl: &ArrayD<f32>, row: usize, vocab: usize) -> Qwen3TtsResult<Vec<f64>> {
+/// group_logits[0, row] as an f64 vec, truncated to the residual codebook size.
+///
+/// TWO different widths are in play and conflating them is a live bug:
+///   * the tensor's last dim is the STRIDE (3072 — the export pads every group row out to the
+///     talker vocab), so the row must be sliced at that stride or every row after the first is
+///     read from a misaligned offset and decodes garbage;
+///   * only the first `residual_vocab` (2048) entries are REAL codes. The remaining 1024 are
+///     padding standing where the talker's control tokens live, and only the first codebook may
+///     emit those. Sampling the padded tail returns an id ≥ 2048, which the next
+///     `code_predictor` call rejects outright — "indices element out of data bounds, idx=3051
+///     must be within the inclusive range [-2048,2047]" from its GatherBlockQuantized codebook
+///     lookup — so the row is truncated to the valid range before it reaches the sampler.
+fn code_predictor_row_f64(
+    gl: &ArrayD<f32>,
+    row: usize,
+    residual_vocab: usize,
+) -> Qwen3TtsResult<Vec<f64>> {
+    let stride = *gl
+        .shape()
+        .last()
+        .ok_or_else(|| Qwen3TtsError::Inference("group_logits has no shape".into()))?;
     let flat = gl
         .as_slice()
         .ok_or_else(|| Qwen3TtsError::Inference("group_logits not contiguous".into()))?;
-    let start = row * vocab;
-    if flat.len() < start + vocab {
+    let start = row * stride;
+    if stride == 0 || flat.len() < start + stride {
         return Err(Qwen3TtsError::Inference(
             "group_logits shape unexpected".into(),
         ));
     }
-    Ok(flat[start..start + vocab]
+    // A checkpoint whose export is already tight (stride == residual_vocab) is handled by the
+    // min: never read past the row. A ZERO `residual_vocab` (a config declaring
+    // `code_predictor_config.vocab_size: 0`) would otherwise yield an EMPTY row and hand the
+    // sampler nothing to choose from — `ModelConfig::load` already rejects it, and this
+    // second guard keeps the function total for any other caller.
+    let vocab = if residual_vocab == 0 {
+        FB_RESIDUAL_VOCAB
+    } else {
+        residual_vocab
+    };
+    let width = vocab.min(stride);
+    Ok(flat[start..start + width]
         .iter()
         .map(|&x| x as f64)
         .collect())
@@ -1059,18 +1188,21 @@ fn read_added_special_tokens(dir: &Path) -> Vec<(String, AddedTokenOpts)> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::local_engines::QWEN3TTS_CUSTOMVOICE_VOICES;
     use super::*;
 
     #[test]
     fn quant_maps_to_subdir() {
-        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "int4".into());
+        // The subdir depends only on the quant; the voice mode is irrelevant here.
+        let mode = Qwen3TtsVoiceMode::DesignPrompt;
+        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "int4".into(), mode);
         assert_eq!(e.quant_subdir(), "cpu_int4");
-        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "fp16".into());
+        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "fp16".into(), mode);
         assert_eq!(e.quant_subdir(), "cpu_fp16");
-        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "fp32".into());
+        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "fp32".into(), mode);
         assert_eq!(e.quant_subdir(), "cpu_fp32");
         // Unknown quant falls through to the int4 default.
-        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "weird".into());
+        let e = Qwen3TtsEngine::new(PathBuf::from("/x"), "weird".into(), mode);
         assert_eq!(e.quant_subdir(), "cpu_int4");
     }
 
@@ -1090,6 +1222,217 @@ mod tests {
         assert_eq!(cfg.codec_eos, FB_CODEC_EOS);
         assert_eq!(cfg.tts_pad, FB_TTS_PAD);
         assert_eq!(cfg.codec_bos, FB_CODEC_BOS);
+        // No `code_predictor_config` at all ⇒ the residual codebook size falls back
+        // to 2048 (D4: the value the sub-codebook sampler is clamped to).
+        assert_eq!(cfg.residual_vocab, FB_RESIDUAL_VOCAB);
+    }
+
+    // ── D4: code_predictor row extraction ────────────────────────────────────
+    //
+    // The shipped `qwen3-tts-1.7b-voicedesign` row could never produce audio because
+    // this row slice used the TALKER vocab stride (3072) as the row width instead of
+    // reading the stride off the tensor and clamping the RANGE to the residual
+    // codebook size (2048). Two independent widths; conflating them fails on frame 1.
+
+    /// `group_logits[1, 15, w]` where element `[0, r, c] = r * 100_000 + c`, so a row
+    /// read from the wrong offset is immediately visible in the values (and every
+    /// value is exactly representable in f32 — max 14*100_000+3071 = 1,403,071 < 2^24).
+    fn synthetic_group_logits(w: usize) -> ArrayD<f32> {
+        let rows = N_GROUPS - 1; // code_predictor emits 15 group rows per frame
+        let mut flat = Vec::with_capacity(rows * w);
+        for r in 0..rows {
+            for c in 0..w {
+                flat.push((r * 100_000 + c) as f32);
+            }
+        }
+        ArrayD::from_shape_vec(IxDyn(&[1, rows, w]), flat).expect("synthetic group_logits")
+    }
+
+    #[test]
+    fn code_predictor_row_reads_every_row_at_the_tensor_stride() {
+        // Tight export: stride == residual codebook size. Every one of the 15 rows must
+        // come back whole and start at `r * 2048`.
+        let gl = synthetic_group_logits(FB_RESIDUAL_VOCAB);
+        for r in 0..(N_GROUPS - 1) {
+            let row = code_predictor_row_f64(&gl, r, FB_RESIDUAL_VOCAB).expect("row");
+            assert_eq!(row.len(), FB_RESIDUAL_VOCAB, "row {r} width");
+            assert_eq!(row[0], (r * 100_000) as f64, "row {r} first");
+            assert_eq!(
+                row[FB_RESIDUAL_VOCAB - 1],
+                (r * 100_000 + FB_RESIDUAL_VOCAB - 1) as f64,
+                "row {r} last"
+            );
+        }
+    }
+
+    #[test]
+    fn code_predictor_row_is_offset_by_stride_not_by_vocab() {
+        // THE REGRESSION. Real export: stride 3072 (padded to the talker vocab), valid
+        // range 2048. Row r must start at r*3072 — the pre-fix code started it at
+        // r*2048, so every row after the first was read from a misaligned offset.
+        let gl = synthetic_group_logits(FB_VOCAB);
+        for r in 0..(N_GROUPS - 1) {
+            let row = code_predictor_row_f64(&gl, r, FB_RESIDUAL_VOCAB).expect("row");
+            // Truncated to the residual codebook: the 1024 padded entries are dropped.
+            assert_eq!(row.len(), FB_RESIDUAL_VOCAB, "row {r} width");
+            assert_eq!(row[0], (r * 100_000) as f64, "row {r} misaligned");
+            assert_eq!(row[7], (r * 100_000 + 7) as f64, "row {r} misaligned");
+        }
+        // Explicitly: slicing at the WRONG width would have produced these values.
+        let wrong_start_row_3 = (3 * FB_RESIDUAL_VOCAB) as f64; // flat index, i.e. 6144
+        let row3 = code_predictor_row_f64(&gl, 3, FB_RESIDUAL_VOCAB).expect("row 3");
+        assert_ne!(row3[0], wrong_start_row_3);
+        assert_eq!(row3[0], 300_000.0);
+    }
+
+    #[test]
+    fn code_predictor_row_cannot_emit_an_out_of_range_code() {
+        // Put the LARGEST logits in the padded tail (>= 2048) — exactly the shape that
+        // made the next code_predictor call fail with "indices element out of data
+        // bounds, idx=3051 must be within the inclusive range [-2048,2047]".
+        let rows = N_GROUPS - 1;
+        let mut flat = vec![0.0f32; rows * FB_VOCAB];
+        for r in 0..rows {
+            for c in FB_RESIDUAL_VOCAB..FB_VOCAB {
+                flat[r * FB_VOCAB + c] = 1.0e9;
+            }
+            flat[r * FB_VOCAB + 3051 - r] = 2.0e9; // the reported offender, per row
+        }
+        let gl = ArrayD::from_shape_vec(IxDyn(&[1, rows, FB_VOCAB]), flat).expect("gl");
+
+        for r in 0..rows {
+            let row = code_predictor_row_f64(&gl, r, FB_RESIDUAL_VOCAB).expect("row");
+            assert_eq!(row.len(), FB_RESIDUAL_VOCAB);
+            // Greedy AND stochastic draws must both stay inside the codebook.
+            let mut rng = sampling::SplitMix64Rng::new(0xC0FF_EE00);
+            assert!(sampling::sample(&row, false, SUB_TOP_K, SUB_TOP_P, 0.0, &mut rng) < 2048);
+            for seed in 0..64u64 {
+                let mut rng = sampling::SplitMix64Rng::new(seed);
+                let id = sampling::sample(
+                    &row,
+                    SUB_DO_SAMPLE,
+                    SUB_TOP_K,
+                    SUB_TOP_P,
+                    SUB_TEMPERATURE,
+                    &mut rng,
+                );
+                assert!(
+                    id < 2048,
+                    "row {r} seed {seed} sampled out-of-range id {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn code_predictor_row_never_returns_an_empty_row() {
+        // `residual_vocab == 0` (a config declaring `vocab_size: 0`) must NOT hand the
+        // sampler an empty slice — it degrades to the 2048 fallback, clamped to stride.
+        let gl = synthetic_group_logits(FB_VOCAB);
+        let row = code_predictor_row_f64(&gl, 4, 0).expect("row");
+        assert_eq!(row.len(), FB_RESIDUAL_VOCAB);
+        assert_eq!(row[0], 400_000.0);
+
+        // A checkpoint whose stride is TIGHTER than the configured range is clamped the
+        // other way: never read past the row.
+        let tight = synthetic_group_logits(FB_RESIDUAL_VOCAB);
+        let row = code_predictor_row_f64(&tight, 4, FB_VOCAB).expect("row");
+        assert_eq!(row.len(), FB_RESIDUAL_VOCAB);
+        assert_eq!(row[0], 400_000.0);
+    }
+
+    #[test]
+    fn code_predictor_row_rejects_an_out_of_bounds_row_index() {
+        let gl = synthetic_group_logits(FB_RESIDUAL_VOCAB);
+        assert!(code_predictor_row_f64(&gl, N_GROUPS - 1, FB_RESIDUAL_VOCAB).is_err());
+        // A degenerate zero-width tensor is an error, not a panic.
+        let empty = ArrayD::from_shape_vec(IxDyn(&[1, 15, 0]), Vec::<f32>::new()).expect("empty");
+        assert!(code_predictor_row_f64(&empty, 0, FB_RESIDUAL_VOCAB).is_err());
+    }
+
+    /// Write a `config.json` holding `talker_config` into a fresh temp dir.
+    fn config_dir_with(talker: serde_json::Value) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("config.json"),
+            serde_json::json!({ "talker_config": talker }).to_string(),
+        )
+        .expect("write config.json");
+        dir
+    }
+
+    #[test]
+    fn residual_vocab_comes_from_config_and_guards_zero() {
+        // Present and sane → honoured verbatim (a future checkpoint may resize it).
+        let dir = config_dir_with(serde_json::json!({
+            "code_predictor_config": { "vocab_size": 1024 }
+        }));
+        assert_eq!(ModelConfig::load(dir.path()).unwrap().residual_vocab, 1024);
+
+        // `code_predictor_config` present but with no `vocab_size` → 2048 fallback.
+        let dir = config_dir_with(serde_json::json!({ "code_predictor_config": {} }));
+        assert_eq!(
+            ModelConfig::load(dir.path()).unwrap().residual_vocab,
+            FB_RESIDUAL_VOCAB
+        );
+
+        // ZERO is nonsense — treated as absent so the sampler range is never empty.
+        let dir = config_dir_with(serde_json::json!({
+            "code_predictor_config": { "vocab_size": 0 }
+        }));
+        assert_eq!(
+            ModelConfig::load(dir.path()).unwrap().residual_vocab,
+            FB_RESIDUAL_VOCAB
+        );
+    }
+
+    // ── D4: preset-speaker resolution ────────────────────────────────────────
+
+    #[test]
+    fn speaker_token_resolves_all_nine_customvoice_presets() {
+        // The ids are the CustomVoice voice list the picker ships; a rename on either
+        // side (voice list ↔ `talker_config.spk_id` lookup) breaks this test.
+        let spk: serde_json::Map<String, serde_json::Value> = QWEN3TTS_CUSTOMVOICE_VOICES
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (v.id.to_string(), serde_json::json!(3000 + i as i64)))
+            .collect();
+        assert_eq!(spk.len(), 9, "CustomVoice ships 9 preset timbres");
+        let dir = config_dir_with(serde_json::json!({ "spk_id": spk }));
+        let cfg = ModelConfig::load(dir.path()).unwrap();
+
+        for (i, v) in QWEN3TTS_CUSTOMVOICE_VOICES.iter().enumerate() {
+            assert_eq!(
+                speaker_token(&cfg, v.id),
+                Some(3000 + i as i64),
+                "preset {} did not resolve",
+                v.id
+            );
+            // The reference lowercases before the lookup, so a persisted
+            // differently-cased selection must still resolve.
+            assert_eq!(
+                speaker_token(&cfg, &v.id.to_ascii_uppercase()),
+                Some(3000 + i as i64),
+                "preset {} is case-sensitive",
+                v.id
+            );
+        }
+
+        // Unknown / empty ⇒ the checkpoint's own default timbre, never an error.
+        assert_eq!(speaker_token(&cfg, "nobody"), None);
+        assert_eq!(speaker_token(&cfg, "VIVIAN "), None); // not trimmed: exact key match
+        assert_eq!(speaker_token(&cfg, ""), None);
+    }
+
+    #[test]
+    fn speaker_token_is_none_on_a_voicedesign_checkpoint() {
+        // VoiceDesign publishes no `spk_id` map — a stale CustomVoice selection carried
+        // over by settings must fall back to the default voice rather than fail the read.
+        let cfg = ModelConfig::load(Path::new("/nonexistent-qwen3tts")).unwrap();
+        assert!(cfg.spk_id.is_empty());
+        for v in QWEN3TTS_CUSTOMVOICE_VOICES {
+            assert_eq!(speaker_token(&cfg, v.id), None);
+        }
     }
 
     /// PARITY: build the tokenizer from the reference fixtures (env-pointed, not

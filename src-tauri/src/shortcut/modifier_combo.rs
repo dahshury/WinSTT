@@ -147,8 +147,6 @@ mod platform {
             return Ok(true);
         }
 
-        listener.take();
-
         // Prefer the blocking hook: the combo is consumed system-wide (nothing is
         // forwarded to the foreground app / the OS while PTT is held). Fall back to
         // the observe-only polling listener when the hook cannot be installed.
@@ -168,6 +166,9 @@ mod platform {
             }
         };
 
+        // Construct the replacement before dropping the working listener. If
+        // both the hook and polling fallback fail, the old PTT combo remains
+        // armed instead of being lost halfway through a rebind.
         *listener = Some(ListenerHandle {
             accelerator: binding.current_binding.clone(),
             _backend: backend,

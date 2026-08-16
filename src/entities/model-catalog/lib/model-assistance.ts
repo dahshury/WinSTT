@@ -42,7 +42,7 @@ export function getModelAssistance(
 	if (!model) {
 		return [];
 	}
-	if (model.id === "crisper-whisper") {
+	if (model.id.startsWith("crisper-whisper")) {
 		return cleanup("verbatim");
 	}
 	if (model.nativeStreaming || model.id.startsWith("streaming-")) {

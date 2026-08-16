@@ -87,10 +87,54 @@ export interface QuantShelfEntry {
 	modelId?: string;
 }
 
+/**
+ * The per-quant callbacks a picker threads from its selector down through the
+ * list, any variant bundle, and every card to the shelf. Each level used to
+ * re-declare all five signatures verbatim; they are declared once here and
+ * extended so a signature change lands in one place.
+ *
+ * `Q` is the precision id the picker deals in — `OnnxQuantization` for STT,
+ * plain `string` for TTS's router badges.
+ */
+export interface QuantDownloadCallbacks<Q extends string = string> {
+	/** Suppresses the trash icon for one cached/partial precision while leaving
+	 *  the other precision actions enabled. */
+	canDeleteQuant?: ((modelId: string, quantization: Q) => boolean) | undefined;
+	/** Active download snapshot per (modelId, quant); `undefined` = no active
+	 *  download for that variant. Pickers are self-contained, so the consumer
+	 *  wires this. */
+	getDownloadSnapshot?:
+		| ((modelId: string, quantization: Q) => QuantDownloadSnapshot | undefined)
+		| undefined;
+	/** Per-quant Suggested gating — the fitting quant set for a BACKING model id,
+	 *  or `null` for no verdict (no gating). Only passed while the Suggested
+	 *  filter is ON; badges outside the set render disabled. */
+	getFittingQuants?:
+		| ((modelId: string) => ReadonlySet<string> | null)
+		| undefined;
+	/** Single dispatch for the four download actions (Download / Pause / Resume
+	 *  / Cancel) emitted by the badge controls. */
+	onDownloadAction?:
+		| ((action: QuantDownloadAction, modelId: string, quantization: Q) => void)
+		| undefined;
+	/** Trash-icon handler. Receives `(modelId, quantization, displayName,
+	 *  quantLabel)` so the consumer can render its own confirmation dialog. When
+	 *  omitted, no trash icon is rendered. */
+	onRequestDeleteQuant?:
+		| ((
+				modelId: string,
+				quantization: Q,
+				displayName: string,
+				quantLabel: string,
+		  ) => void)
+		| undefined;
+}
+
 export interface QuantShelfProps {
 	entries: readonly QuantShelfEntry[];
 	modelDisplayName: string;
 	modelId: string;
+	compact?: boolean;
 	/** Single dispatch for the four per-quant download actions. */
 	onDownloadAction?:
 		| ((

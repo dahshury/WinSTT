@@ -77,9 +77,13 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tLlm("subDictationTitle"),
 			tLlm("modelAssistanceTitle"),
 			tLlm("modelAssistanceCleanup"),
-			tLlm("subTransformTitle"),
+			tLlm("profileEditorTitle"),
+			tLlm("manageProfiles"),
+			tLlm("assignDictationTitle"),
+			tLlm("assignTransformsTitle"),
+			tLlm("assignReadAloudTitle"),
 			tg("contextAwarenessSection"),
-			"llm cleanup grammar tone transform modifiers formatting punctuation code commands symbols context assistance model selected apps allow list deny list",
+			"llm cleanup grammar tone transform modifiers preset configuration assign formatting punctuation code commands symbols context assistance model selected apps allow list deny list read aloud speech summarize before speaking",
 		].join(" "),
 		vocabulary: [
 			tDict("title"),
@@ -109,7 +113,8 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tTts("voice"),
 			tTts("speed"),
 			tTts("hotkeyLabel"),
-			"read aloud text to speech tts voice speed",
+			tTts("inlineTagsLabel"),
+			"read aloud text to speech tts voice speed inline paralinguistic tags emotion laugh sigh",
 		].join(" "),
 		shortcuts: [
 			th("configuration"),
@@ -159,8 +164,7 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tSettings("settingsExport"),
 			tSettings("settingsImport"),
 			tg("startOnLogin"),
-			tg("sendCrashReports"),
-			"startup login crash reports reset defaults updates version logs diagnostics diagnostic bundle support settings export import backup restore",
+			"startup login reset defaults updates version logs diagnostics diagnostic bundle support settings export import backup restore",
 		].join(" "),
 	};
 }

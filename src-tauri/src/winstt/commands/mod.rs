@@ -52,6 +52,11 @@ pub mod dictation;
 /// + the HotkeyEvents emit façade (hotkey:pressed/released/recording-update/done).
 pub mod hotkey;
 pub mod llm;
+/// Recording-mode transition PHASE (`recording:mode-transition` +
+/// `recording_mode_transition_state`) — the "preparing" window that spans the
+/// model load a mode change triggers, so the mode switcher can show a spinner and
+/// lock itself instead of pretending the new mode is already live.
+pub mod mode_transition;
 /// Recording-overlay visibility: show/hide/reposition the WinSTT `overlay` window
 /// (windows/overlay.html — the renderer dynamic-island pill) in lock-step with the
 /// recording lifecycle. No commands — called
@@ -62,6 +67,13 @@ pub mod overlay;
 /// the auto-paste; see `winstt::commands::overlay::enter_preview_overlay`.
 pub mod preview;
 pub mod tts;
+/// TTS voice authoring: `tts_prepare_reference_clip` (decode + trim + persist a
+/// cloning reference clip), `tts_build_reference` (the same for N clips, welded
+/// into the one path the engines load) and `tts_delete_reference_clips` (drop a
+/// deleted voice's stored clips), plus the two LLM-backed helpers that run on the
+/// configured post-processing model — `generate_voice_design_prompt` and
+/// `insert_paralinguistic_tags`.
+pub mod tts_voice;
 // ── slice: LLM/Ollama long-tail ──
 pub mod cloud_stt;
 /// Ollama public-library scraper: ollama_refresh_library / ollama_refresh_tags /

@@ -14,6 +14,7 @@ use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
 use super::convert::openrouter_options;
+use crate::winstt::commands::llm::{OpenRouterAttempt, run_openrouter_attempt};
 
 // ── provider routing (mirrors llm.rs::process_transform → runProcessText) ───────
 
@@ -82,6 +83,7 @@ pub(super) async fn run_transform_provider(
                 user_prompt,
                 text,
                 &request_id,
+                settings.llm.timeout,
                 openrouter_options(&settings.llm.transforms.base),
             )
             .await;
@@ -139,19 +141,23 @@ async fn run_openrouter_with_fallback(
     user_prompt: &str,
     text: &str,
     request_id: &str,
+    timeout_ms: i64,
     options: llm::OpenRouterRequestOptions,
 ) -> String {
-    match mgr
-        .openrouter_chat(
+    match run_openrouter_attempt(
+        mgr,
+        OpenRouterAttempt {
             api_key,
-            primary,
+            model: primary,
             system_prompt,
             user_prompt,
             text,
-            options.clone(),
-            Some(request_id),
-        )
-        .await
+            options: options.clone(),
+            request_id,
+            timeout_ms,
+        },
+    )
+    .await
     {
         Ok(answer) => answer,
         Err(primary_err) if primary_err == llm::OPENROUTER_CANCELLED => text.to_string(),
@@ -166,14 +172,18 @@ async fn run_openrouter_with_fallback(
                 request_id,
                 &[("fallbackModel", fallback)],
             );
-            mgr.openrouter_chat(
-                api_key,
-                fallback,
-                system_prompt,
-                user_prompt,
-                text,
-                options,
-                Some(request_id),
+            run_openrouter_attempt(
+                mgr,
+                OpenRouterAttempt {
+                    api_key,
+                    model: fallback,
+                    system_prompt,
+                    user_prompt,
+                    text,
+                    options,
+                    request_id,
+                    timeout_ms,
+                },
             )
             .await
             .unwrap_or_else(|fallback_err| {
@@ -253,33 +263,41 @@ pub(super) async fn run_openrouter_preview_with_fallback(
     user_prompt: &str,
     feature: &str,
     request_id: &str,
+    timeout_ms: i64,
     options: llm::OpenRouterRequestOptions,
 ) -> Result<String, String> {
-    match mgr
-        .openrouter_chat(
+    match run_openrouter_attempt(
+        mgr,
+        OpenRouterAttempt {
             api_key,
-            primary,
+            model: primary,
             system_prompt,
             user_prompt,
-            "",
-            options.clone(),
-            Some(request_id),
-        )
-        .await
+            text: "",
+            options: options.clone(),
+            request_id,
+            timeout_ms,
+        },
+    )
+    .await
     {
         Ok(answer) if !answer.trim().is_empty() => Ok(answer),
         Ok(_) if !fallback.is_empty() => {
             log::warn!(
                 "[llm][{request_id}] preview {feature} OpenRouter primary model '{primary}' returned no text; trying fallback '{fallback}'"
             );
-            mgr.openrouter_chat(
+            run_openrouter_attempt(
+                mgr,
+                OpenRouterAttempt {
                 api_key,
-                fallback,
+                model: fallback,
                 system_prompt,
                 user_prompt,
-                "",
-                options.clone(),
-                Some(request_id),
+                text: "",
+                options: options.clone(),
+                request_id,
+                timeout_ms,
+            },
             )
                 .await
                 .and_then(|answer| {
@@ -308,14 +326,18 @@ pub(super) async fn run_openrouter_preview_with_fallback(
                 "[llm][{request_id}] preview {feature} OpenRouter primary model '{primary}' failed; trying fallback '{fallback}': {}",
                 llm::compact_error_for_log(&primary_err)
             );
-            mgr.openrouter_chat(
+            run_openrouter_attempt(
+                mgr,
+                OpenRouterAttempt {
                 api_key,
-                fallback,
+                model: fallback,
                 system_prompt,
                 user_prompt,
-                "",
+                text: "",
                 options,
-                Some(request_id),
+                request_id,
+                timeout_ms,
+            },
             )
                 .await
                 .and_then(|answer| {

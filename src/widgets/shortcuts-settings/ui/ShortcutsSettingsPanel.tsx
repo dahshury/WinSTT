@@ -1,4 +1,5 @@
 import { CommandIcon } from "@hugeicons/core-free-icons";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
@@ -8,9 +9,20 @@ import {
 } from "@/entities/setting";
 import { type ForbiddenCombo, HotkeyRecorder } from "@/features/record-hotkey";
 import { FormControl } from "@/shared/ui/form-control";
+import {
+	claimDefaultShortcutBinding,
+	type ShortcutBindingId,
+} from "../lib/reset-shortcut";
 import { HotkeyShortcutsLegend } from "./HotkeyShortcutsLegend";
 
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export function ShortcutsSettingsPanel() {
+	const [resetErrors, setResetErrors] = useState<
+		Partial<Record<ShortcutBindingId, string>>
+	>({});
 	const recordingMode = useSettingsStore(
 		(s) => s.settings.general?.recordingMode ?? "ptt",
 	);
@@ -86,6 +98,30 @@ export function ShortcutsSettingsPanel() {
 		{ combo: ttsHotkey, label: ttsLabel },
 		{ combo: transformHotkey, label: transformLabel },
 	];
+	const clearResetError = (id: ShortcutBindingId) => {
+		setResetErrors((current) => {
+			if (!(id in current)) {
+				return current;
+			}
+			const next = { ...current };
+			delete next[id];
+			return next;
+		});
+	};
+	const resetShortcut = (id: ShortcutBindingId, applyDefault: () => void) => {
+		clearResetError(id);
+		void claimDefaultShortcutBinding(id)
+			.then(() => {
+				clearResetError(id);
+				applyDefault();
+			})
+			.catch((error: unknown) => {
+				setResetErrors((current) => ({
+					...current,
+					[id]: errorMessage(error),
+				}));
+			});
+	};
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -99,73 +135,103 @@ export function ShortcutsSettingsPanel() {
 			>
 				<SettingField
 					disabled={recordingMode === "listen"}
+					error={resetErrors.transcribe}
 					isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
 					label={th("pushToTalkKey")}
 					layout="row"
 					onReset={() =>
-						updateHotkey({
-							pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey,
-						})
+						resetShortcut("transcribe", () =>
+							updateHotkey({
+								pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey,
+							}),
+						)
 					}
 					tooltip={th("pushToTalkKeyTooltip")}
 				>
 					<HotkeyRecorder
 						currentKey={pttKey}
 						forbiddenCombos={pttForbidden}
-						onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
+						hotkeyId="transcribe"
+						onKeyRecorded={(key) => {
+							clearResetError("transcribe");
+							updateHotkey({ pushToTalkKey: key });
+						}}
 					/>
 				</SettingField>
 				<SettingField
+					error={resetErrors.repaste}
 					isDefault={repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey}
 					label={th("repasteKey")}
 					layout="row"
 					onReset={() =>
-						updateGeneral({
-							repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey,
-						})
+						resetShortcut("repaste", () =>
+							updateGeneral({
+								repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey,
+							}),
+						)
 					}
 					tooltip={th("repasteKeyTooltip")}
 				>
 					<HotkeyRecorder
 						currentKey={repasteHotkey}
 						forbiddenCombos={repasteForbidden}
-						onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
+						hotkeyId="repaste"
+						onKeyRecorded={(key) => {
+							clearResetError("repaste");
+							updateGeneral({ repasteHotkey: key });
+						}}
 					/>
 				</SettingField>
 				<SettingField
 					disabled={!ttsEnabled}
+					error={resetErrors.read_aloud}
 					isDefault={ttsHotkey === DEFAULT_SETTINGS.tts.hotkey}
 					label={tt("hotkeyLabel")}
 					layout="row"
-					onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
+					onReset={() =>
+						resetShortcut("read_aloud", () =>
+							updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey }),
+						)
+					}
 					tooltip={tt("hotkeyHint")}
 				>
 					<HotkeyRecorder
 						currentKey={ttsHotkey}
 						forbiddenCombos={ttsForbidden}
-						onKeyRecorded={(key) => updateTts({ hotkey: key })}
+						hotkeyId="read_aloud"
+						onKeyRecorded={(key) => {
+							clearResetError("read_aloud");
+							updateTts({ hotkey: key });
+						}}
 					/>
 				</SettingField>
 				{/* Profile-swap hotkey: global combo that cycles saved post-processing
 				    profiles using the order from the LLM settings profile picker. */}
 				<SettingField
 					disabled={!postProcessingEnabled}
+					error={resetErrors.post_processing_profile_swap}
 					isDefault={
 						profileSwapHotkey === DEFAULT_SETTINGS.llm.profileSwapHotkey
 					}
 					label={profileSwapLabel}
 					layout="row"
 					onReset={() =>
-						updateLlm({
-							profileSwapHotkey: DEFAULT_SETTINGS.llm.profileSwapHotkey,
-						})
+						resetShortcut("post_processing_profile_swap", () =>
+							updateLlm({
+								profileSwapHotkey: DEFAULT_SETTINGS.llm.profileSwapHotkey,
+							}),
+						)
 					}
 					tooltip="Press this combo from any app to cycle through saved post-processing profiles in the order shown in LLM Post-Processing."
 				>
 					<HotkeyRecorder
 						currentKey={profileSwapHotkey}
 						forbiddenCombos={profileSwapForbidden}
-						onKeyRecorded={(key) => updateLlm({ profileSwapHotkey: key })}
+						hotkeyId="post_processing_profile_swap"
+						onKeyRecorded={(key) => {
+							clearResetError("post_processing_profile_swap");
+							updateLlm({ profileSwapHotkey: key });
+						}}
 					/>
 				</SettingField>
 				{/* ── Text-transformation hotkey — global combo that runs the
@@ -174,20 +240,27 @@ export function ShortcutsSettingsPanel() {
 				    is configured in the Text-transformation settings. */}
 				<SettingField
 					disabled={!transformsEnabled}
+					error={resetErrors.transforms}
 					isDefault={transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey}
 					label={tl("subTransformTitle")}
 					layout="row"
 					onReset={() =>
-						updateTransforms({
-							hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey,
-						})
+						resetShortcut("transforms", () =>
+							updateTransforms({
+								hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey,
+							}),
+						)
 					}
 					tooltip={`${tl("transformHotkeyTooltip")} ${tl("transformHotkeyCaption")}`}
 				>
 					<HotkeyRecorder
 						currentKey={transformHotkey}
 						forbiddenCombos={transformForbidden}
-						onKeyRecorded={(key) => updateTransforms({ hotkey: key })}
+						hotkeyId="transforms"
+						onKeyRecorded={(key) => {
+							clearResetError("transforms");
+							updateTransforms({ hotkey: key });
+						}}
 					/>
 				</SettingField>
 				<FormControl

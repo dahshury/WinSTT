@@ -148,11 +148,7 @@ pub fn delete_tts_model_caches(
     }
 
     match crate::portable::app_data_dir(app) {
-        Ok(app_data_dir) => match remove_path_if_exists(&app_data_dir.join("tts")) {
-            Ok(true) => deleted += 1,
-            Ok(false) => {}
-            Err(err) => errors.push(format!("{}: {err}", app_data_dir.join("tts").display())),
-        },
+        Ok(app_data_dir) => deleted += delete_tts_dir_except_voices(&app_data_dir, errors),
         Err(err) => errors.push(format!("failed to resolve app data directory: {err}")),
     }
 
@@ -189,6 +185,54 @@ pub fn delete_wakeword_model_caches(app: &AppHandle, errors: &mut Vec<String>) -
             0
         }
     }
+}
+
+/// The managed reference-voice folder, relative to the app data dir. Spelled out
+/// once here because two different concerns read it: the usage breakdown reports
+/// it as its own category, and the model-cache wipe has to step AROUND it.
+pub const REFERENCE_VOICES_REL: [&str; 2] = ["tts", "reference-voices"];
+
+/// The user's saved voices — their clips, and the `library.json` that names them.
+pub fn reference_voices_dir(app_data_dir: &Path) -> PathBuf {
+    let [tts, voices] = REFERENCE_VOICES_REL;
+    app_data_dir.join(tts).join(voices)
+}
+
+/// Delete everything under `<app_data>/tts` EXCEPT the saved voices.
+///
+/// `tts` holds two unrelated things: downloaded model weights (a cache — deleting
+/// it costs a re-download) and `reference-voices` (the clips the user recorded or
+/// picked, plus the library naming them — deleting it costs work that cannot be
+/// recovered at all). "Remove downloaded models" and the About tab's `tts` row
+/// both mean the FIRST one, so a blanket `remove_dir_all` on the parent silently
+/// destroyed the second and left every saved voice pointing at absent audio.
+/// Voices are removed through their own category instead.
+fn delete_tts_dir_except_voices(app_data_dir: &Path, errors: &mut Vec<String>) -> usize {
+    let tts_dir = app_data_dir.join(REFERENCE_VOICES_REL[0]);
+    let keep = tts_dir.join(REFERENCE_VOICES_REL[1]);
+    let Ok(entries) = std::fs::read_dir(&tts_dir) else {
+        // No `tts` dir at all (or it is unreadable) — nothing to remove, and the
+        // caller's other targets still run.
+        return 0;
+    };
+    let mut deleted = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == keep {
+            continue;
+        }
+        match remove_path_if_exists(&path) {
+            Ok(true) => deleted += 1,
+            Ok(false) => {}
+            Err(err) => errors.push(format!("{}: {err}", path.display())),
+        }
+    }
+    // Leave `tts` itself behind when the voices are still in it; drop it when the
+    // pass emptied it, so an install that never cloned anything ends up clean.
+    if !keep.exists() {
+        let _ = std::fs::remove_dir(&tts_dir);
+    }
+    deleted
 }
 
 fn hardcoded_tts_runtime_dirs() -> Vec<PathBuf> {
@@ -350,7 +394,13 @@ pub async fn app_data_usage(app: &AppHandle) -> Vec<(&'static str, u64)> {
     };
     let log_dir = crate::portable::app_log_dir(app).ok();
 
-    let tts_app = path_size(&app_data.join("tts"));
+    let tts_all = path_size(&app_data.join("tts"));
+    // The saved voices sit UNDER `tts` on disk but are not a model cache: they are
+    // authored audio plus the library that names them, and they are removed by
+    // their own row. Reported separately and subtracted here, or the `tts` row
+    // would quote a size its own removal no longer frees.
+    let voices = path_size(&reference_voices_dir(&app_data));
+    let tts_app = tts_all.saturating_sub(voices);
     let tts_runtime: u64 = hardcoded_tts_runtime_dirs()
         .iter()
         .map(|p| path_size(p))
@@ -369,7 +419,7 @@ pub async fn app_data_usage(app: &AppHandle) -> Vec<(&'static str, u64)> {
     // (settings.json + misc caches). Logs live under app-data in portable mode,
     // so subtract them too when nested to avoid double-counting.
     let app_data_total = path_size(&app_data);
-    let mut known_under = tts_app + dictionary + wakeword + history;
+    let mut known_under = tts_all + dictionary + wakeword + history;
     if log_dir.as_deref().is_some_and(|p| p.starts_with(&app_data)) {
         known_under += logs;
     }
@@ -378,6 +428,7 @@ pub async fn app_data_usage(app: &AppHandle) -> Vec<(&'static str, u64)> {
     vec![
         ("stt", stt),
         ("tts", tts_app + tts_runtime),
+        ("voices", voices),
         ("dictionary", dictionary),
         ("wakeword", wakeword),
         ("history", history),

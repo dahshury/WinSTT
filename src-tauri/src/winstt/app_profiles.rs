@@ -98,9 +98,8 @@ pub fn resolve_rule<'a>(
         .iter()
         .filter(|rule| match rule.config.base.provider {
             LlmProvider::Openrouter => openrouter_key_present,
-            LlmProvider::AppleIntelligence | LlmProvider::Ollama => {
-                !rule.config.base.model.trim().is_empty()
-            }
+            LlmProvider::AppleIntelligence => true,
+            LlmProvider::Ollama => !rule.config.base.model.trim().is_empty(),
         })
         .filter_map(|rule| rule_matches(rule, identity).map(|score| (score, rule)))
         // `max_by_key` returns the last maximum, but table order wins ties. A
@@ -260,6 +259,23 @@ mod tests {
         assert!(std::ptr::eq(
             resolve_rule(&rules, &identity, true).unwrap(),
             &rules[1]
+        ));
+    }
+
+    #[test]
+    fn apple_intelligence_rule_needs_no_model_id() {
+        let mut apple = rule("chrome", "", "");
+        apple.config.base.provider = LlmProvider::AppleIntelligence;
+        apple.config.base.model.clear();
+        let identity = AppIdentity {
+            app_exe: "chrome.exe".into(),
+            ..Default::default()
+        };
+        let rules = vec![apple];
+
+        assert!(std::ptr::eq(
+            resolve_rule(&rules, &identity, false).unwrap(),
+            &rules[0]
         ));
     }
 

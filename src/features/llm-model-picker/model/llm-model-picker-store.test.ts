@@ -136,6 +136,105 @@ describe("useLlmModelPickerStore", () => {
 		);
 	});
 
+	// Read aloud used to be folded into "dictation" here, so a picker opened from
+	// the Read aloud row enabled DICTATION (and silently turned Smart Endpoint
+	// off) while read aloud stayed off.
+	test("commitInstalled routes to read aloud when it is the pending feature", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				quality: { ...initial.quality, smartEndpoint: true },
+			},
+		});
+		useLlmModelPickerStore.getState().openFor("readAloud", true);
+		useLlmModelPickerStore.getState().commitInstalled("gemma3:4b");
+		const { llm, quality } = useSettingsStore.getState().settings;
+		expect(llm.readAloud.model).toBe("gemma3:4b");
+		expect(llm.readAloud.enabled).toBe(true);
+		expect(llm.dictation.enabled).toBe(false);
+		// Smart Endpoint competes with DICTATION's finalization only.
+		expect(quality.smartEndpoint).toBe(true);
+	});
+
+	test("dismissing a read-aloud turn-on switches read aloud off, not dictation", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				llm: {
+					...initial.llm,
+					dictation: { ...initial.llm.dictation, enabled: true },
+					readAloud: { ...initial.llm.readAloud, enabled: true },
+				},
+			},
+		});
+		useLlmModelPickerStore.getState().openFor("readAloud", true);
+		useLlmModelPickerStore.getState().close();
+		const { llm } = useSettingsStore.getState().settings;
+		expect(llm.readAloud.enabled).toBe(false);
+		expect(llm.dictation.enabled).toBe(true);
+	});
+
+	// The installed model becomes THE shared local model, so every OTHER
+	// locally-running consumer has to move onto it — leaving them behind is a
+	// second model resident in VRAM, which is what the rule exists to prevent.
+	test("commitInstalled moves every local consumer onto the installed model", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				llm: {
+					...initial.llm,
+					localModel: "old:1b",
+					dictation: {
+						...initial.llm.dictation,
+						enabled: true,
+						model: "old:1b",
+						provider: "ollama",
+					},
+					readAloud: {
+						...initial.llm.readAloud,
+						model: "old:1b",
+						provider: "ollama",
+					},
+					transforms: {
+						...initial.llm.transforms,
+						enabled: true,
+						model: "old:1b",
+						provider: "ollama",
+					},
+				},
+			},
+		});
+		useLlmModelPickerStore.getState().openFor("dictation", true);
+		useLlmModelPickerStore.getState().commitInstalled("new:4b");
+		const { llm } = useSettingsStore.getState().settings;
+		expect(llm.localModel).toBe("new:4b");
+		expect(llm.dictation.model).toBe("new:4b");
+		expect(llm.transforms.model).toBe("new:4b");
+		expect(llm.readAloud.model).toBe("new:4b");
+	});
+
+	test("a cloud consumer keeps its own model when a local one lands", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				llm: {
+					...initial.llm,
+					transforms: {
+						...initial.llm.transforms,
+						enabled: true,
+						openrouterModel: "vendor/fast",
+						provider: "openrouter",
+					},
+				},
+			},
+		});
+		useLlmModelPickerStore.getState().openFor("dictation", true);
+		useLlmModelPickerStore.getState().commitInstalled("new:4b");
+		const { llm } = useSettingsStore.getState().settings;
+		expect(llm.transforms.provider).toBe("openrouter");
+		expect(llm.transforms.model).toBe(initial.llm.transforms.model);
+	});
+
 	test("a later close without intent keeps an earlier parked intent alive", () => {
 		useLlmModelPickerStore.getState().openFor("dictation", true);
 		seedPull("llama3.2:3b");

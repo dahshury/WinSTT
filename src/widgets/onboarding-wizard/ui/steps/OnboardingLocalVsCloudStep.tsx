@@ -53,9 +53,9 @@ const MotionRadioRoot = m.create(Radio.Root);
 
 /**
  * Step 1: pick the STT track for the user's first dictation. Renders as a
- * pair of selectable cards styled to match Settings' tile-style choices
- * (accent ring + accent/12 fill when selected, divider-strong ring +
- * surface-4 fill when not).
+ * joined two-segment button group: one shared rounded ring around both
+ * options with a hairline seam between them, the accent fill sliding to
+ * whichever segment is selected.
  */
 export function OnboardingLocalVsCloudStep() {
 	const track = useOnboardingWizardStore((s) => s.track);
@@ -65,7 +65,7 @@ export function OnboardingLocalVsCloudStep() {
 		<LayoutGroup id="onboarding-track-choice">
 			<RadioGroup
 				aria-label="Choose how WinSTT transcribes your voice"
-				className="grid gap-4 sm:grid-cols-2"
+				className="grid divide-y divide-divider-strong overflow-hidden rounded-xl bg-surface-4 shadow-surface-3 ring-1 ring-divider-strong sm:grid-cols-2 sm:divide-x sm:divide-y-0"
 				onValueChange={(value) =>
 					setTrack(value as Exclude<OnboardingTrack, "">)
 				}
@@ -130,22 +130,18 @@ function TrackCard({ option, selected }: TrackCardProps) {
 		<MotionRadioRoot
 			aria-label={option.title}
 			className={cn(
-				"group relative flex cursor-pointer flex-col items-start gap-3 overflow-hidden rounded-xl px-5 py-5 text-left outline-none transition-[background-color,box-shadow] duration-200 ease-out",
-				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
-				selected
-					? "bg-accent/[0.08] shadow-elevated"
-					: "bg-surface-4 shadow-surface-3 ring-1 ring-divider-strong hover:bg-surface-5 hover:ring-border-hover",
+				"group relative flex cursor-pointer flex-col items-start gap-3 px-5 py-5 text-left outline-none transition-[background-color] duration-200 ease-out",
+				"focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+				selected ? "bg-accent/[0.08]" : "hover:bg-surface-5",
 			)}
 			layout
 			transition={springs.slow}
-			whileHover={{ y: -2 }}
-			whileTap={{ scale: 0.985 }}
 			value={option.id}
 		>
 			{selected ? (
 				<m.span
 					aria-hidden
-					className="pointer-events-none absolute inset-0 rounded-xl bg-accent/[0.07] ring-1 ring-accent"
+					className="pointer-events-none absolute inset-0 bg-accent/[0.07] ring-1 ring-accent ring-inset"
 					layoutId="onboarding-track-selected-surface"
 					transition={springs.moderate}
 				/>

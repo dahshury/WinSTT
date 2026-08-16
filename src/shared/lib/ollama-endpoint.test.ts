@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildOllamaApiUrl, normalizeOllamaEndpoint } from "./ollama-endpoint";
+import {
+	buildOllamaApiUrl,
+	normalizeOllamaEndpoint,
+	validateLoopbackOllamaEndpoint,
+} from "./ollama-endpoint";
 
 describe("normalizeOllamaEndpoint", () => {
 	test("returns empty string for empty input", () => {
@@ -100,6 +104,40 @@ describe("normalizeOllamaEndpoint", () => {
 		expect(normalizeOllamaEndpoint("https://example.com:8443/api")).toBe(
 			"https://example.com:8443",
 		);
+	});
+});
+
+describe("validateLoopbackOllamaEndpoint", () => {
+	test("accepts and normalizes localhost and loopback IPs", () => {
+		expect(
+			validateLoopbackOllamaEndpoint(" http://localhost:11434/api/ "),
+		).toEqual({ endpoint: "http://localhost:11434", ok: true });
+		expect(validateLoopbackOllamaEndpoint("http://127.24.3.9:11434").ok).toBe(
+			true,
+		);
+		expect(validateLoopbackOllamaEndpoint("http://[::1]:11434").ok).toBe(true);
+	});
+
+	test("rejects remote and private-network hosts", () => {
+		expect(validateLoopbackOllamaEndpoint("https://example.com").ok).toBe(
+			false,
+		);
+		expect(validateLoopbackOllamaEndpoint("http://192.168.1.10:11434").ok).toBe(
+			false,
+		);
+		expect(validateLoopbackOllamaEndpoint("http://10.0.0.5:11434").ok).toBe(
+			false,
+		);
+	});
+
+	test("rejects credentials, bad schemes, and malformed URLs", () => {
+		expect(
+			validateLoopbackOllamaEndpoint("http://user:pass@localhost:11434").ok,
+		).toBe(false);
+		expect(validateLoopbackOllamaEndpoint("file://localhost/tmp").ok).toBe(
+			false,
+		);
+		expect(validateLoopbackOllamaEndpoint("localhost:11434").ok).toBe(false);
 	});
 });
 

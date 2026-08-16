@@ -39,12 +39,57 @@ const OFFSCREEN: f64 = -9999.0;
 
 static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+/// One-shot guard for `schedule_tray_menu_warmup` (both startup paths — hidden
+/// launch and first main-window show — may request it).
+static TRAY_MENU_WARMUP_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+/// How long after startup handoff to defer tray-menu webview creation, keeping
+/// it off the first-paint path (mirrors the removed post-startup prewarm delay).
+const TRAY_MENU_WARMUP_DELAY_MS: u64 = 250;
+
+/// Whether the tray-menu webview has finished loading its page. Creating that
+/// webview takes ~2s in a packaged build, and a transparent window shown before
+/// the page paints is an EMPTY rectangle — the click reads as dead and the next
+/// click just toggles the invisible window away, so the menu never appears (the
+/// reported "right-click does nothing in the compiled app"). Opens that arrive
+/// before the load completes are deferred instead of shown blank.
+static TRAY_MENU_PAGE_LOADED: AtomicBool = AtomicBool::new(false);
+
+/// An open requested while the page was still loading, flushed by
+/// `mark_tray_menu_page_loaded`.
+static TRAY_MENU_OPEN_PENDING: AtomicBool = AtomicBool::new(false);
+
 /// Whether a programmatic tray-menu resize is awaiting its native `Resized`
 /// callback. WebView2 transiently emits `Focused(false)` while `set_size` is in
 /// flight, so that blur is suppressed by lifecycle state instead of by guessing
 /// how long the resize might take. `Resized` is the authoritative completion;
 /// `Focused(true)` also clears the state if WebView2 restores focus first.
 static TRAY_MENU_RESIZE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// `on_page_load` Started for the tray-menu webview (see `windows::ensure_window`).
+pub(crate) fn mark_tray_menu_page_loading() {
+    TRAY_MENU_PAGE_LOADED.store(false, Ordering::Release);
+}
+
+/// `on_page_load` Finished for the tray-menu webview. Flushes an open that a
+/// tray click requested while the page was still loading, so a click that
+/// landed on the cold webview still ends with a painted menu instead of
+/// nothing.
+pub(crate) fn mark_tray_menu_page_loaded(app: &AppHandle) {
+    TRAY_MENU_PAGE_LOADED.store(true, Ordering::Release);
+    if !TRAY_MENU_OPEN_PENDING.swap(false, Ordering::AcqRel) {
+        return;
+    }
+    let anchor = app
+        .try_state::<TrayMenuAnchor>()
+        .and_then(|state| state.0.lock().ok().and_then(|g| *g));
+    let Some(anchor) = anchor else {
+        return;
+    };
+    if let Err(e) = place_tray_menu(app, anchor) {
+        log::warn!("Failed to open deferred tray menu: {e}");
+    }
+}
 
 /// Called immediately before `resize_window` applies a new tray-menu size.
 pub(crate) fn begin_tray_menu_resize() {
@@ -154,6 +199,16 @@ fn is_tray_menu_on_screen(window: &tauri::WebviewWindow) -> bool {
 fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
     install_tray_menu_lifecycle(app);
     let window = ensure_window(app, TRAY_MENU_LABEL)?;
+    // A cold webview paints nothing: moving it on screen now would put an empty
+    // transparent rectangle under the cursor and arm the toggle, so the next
+    // click would "close" a menu the user never saw. Defer to the page-load
+    // callback instead — `install_tray_menu_lifecycle`/the startup warmup have
+    // already kicked the load off.
+    if !TRAY_MENU_PAGE_LOADED.load(Ordering::Acquire) {
+        TRAY_MENU_OPEN_PENDING.store(true, Ordering::Release);
+        log::debug!("[tray-menu] open deferred until the webview finishes loading");
+        return Ok(());
+    }
     dispatch_tray_menu_dom_event(&window, TRAY_MENU_WILL_OPEN_EVENT);
     position_tray_menu(app, &window, anchor)?;
     if !window.is_visible().unwrap_or(false) {
@@ -167,6 +222,12 @@ fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     super::windows::placement::exempt_popup_from_occlusion_tracking(&window);
     dispatch_tray_menu_dom_event(&window, TRAY_MENU_OPENED_EVENT);
+    log::debug!(
+        "[tray-menu] placed at anchor ({}, {}); position={:?}",
+        anchor.0,
+        anchor.1,
+        window.outer_position().ok()
+    );
     Ok(())
 }
 
@@ -209,6 +270,7 @@ pub fn reanchor_tray_menu(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
+    TRAY_MENU_OPEN_PENDING.store(false, Ordering::Release);
     if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
         hide_tray_menu_window(&window);
     }
@@ -224,6 +286,9 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
 /// Windows show animation on the next open; the position check is the source of
 /// truth for whether the popup is open.
 fn hide_tray_menu_window(window: &tauri::WebviewWindow) {
+    // A dismiss also cancels an open still waiting on the page load, so the
+    // menu can't pop up after the user has clicked away.
+    TRAY_MENU_OPEN_PENDING.store(false, Ordering::Release);
     complete_tray_menu_resize();
     dispatch_tray_menu_dom_event(window, TRAY_MENU_HIDDEN_EVENT);
     let _ = window.set_position(LogicalPosition::new(OFFSCREEN, OFFSCREEN));
@@ -232,6 +297,7 @@ fn hide_tray_menu_window(window: &tauri::WebviewWindow) {
 /// Hide the tray menu directly (no command roundtrip). Used by the blur/resize
 /// window-event handler the tray-click wiring installs. Clears the stored anchor.
 fn hide_tray_menu_internal(app: &AppHandle) {
+    TRAY_MENU_OPEN_PENDING.store(false, Ordering::Release);
     if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
         hide_tray_menu_window(&window);
     }
@@ -277,11 +343,44 @@ pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y
     let on_screen = app
         .get_webview_window(TRAY_MENU_LABEL)
         .is_some_and(|w| is_tray_menu_on_screen(&w));
-    if on_screen {
+    // A deferred open counts as "already open" so the second click of a
+    // double-click cancels it instead of racing the page load.
+    let opening = TRAY_MENU_OPEN_PENDING.load(Ordering::Acquire);
+    log::debug!(
+        "[tray-menu] toggle at physical ({physical_x}, {physical_y}); on_screen={on_screen} opening={opening}"
+    );
+    if on_screen || opening {
         hide_tray_menu_internal(app);
     } else {
         show_tray_menu_at_physical(app, physical_x, physical_y);
     }
+}
+
+/// Warm the tray-menu webview shortly after startup so the FIRST tray
+/// right-click reveals an already-loaded menu. Without this the webview is
+/// created cold inside that first click: the transparent window is positioned
+/// on screen while WebView2 is still loading the page, so nothing paints — the
+/// click looks dead, and the toggle/blur logic then eats the next click(s)
+/// until the page has loaded. (The post-startup prewarm that used to do this
+/// was removed in the alpha.8 rollup; this restores the tray-menu half, and
+/// `windows::schedule_secondary_window_warmup` restores the other always-warm
+/// surfaces.)
+pub(crate) fn schedule_tray_menu_warmup(app: &AppHandle) {
+    if TRAY_MENU_WARMUP_SCHEDULED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(TRAY_MENU_WARMUP_DELAY_MS));
+        let app_for_main = app.clone();
+        // WebView2 creation must happen on the main thread; the event loop is
+        // pumping by now, so this runs right after the current tick.
+        if let Err(e) = app.run_on_main_thread(move || {
+            install_tray_menu_lifecycle(&app_for_main);
+        }) {
+            log::warn!("tray-menu warmup scheduling failed: {e}");
+        }
+    });
 }
 
 /// Install the tray-menu window's lifecycle behaviors once, on the first

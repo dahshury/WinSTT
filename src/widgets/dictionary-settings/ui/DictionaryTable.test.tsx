@@ -1,5 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { DictionaryTable } from "./DictionaryTable";
@@ -35,9 +41,13 @@ describe("DictionaryTable", () => {
 		expect(screen.getAllByText("Source").length).toBeGreaterThan(0);
 	});
 
-	test("renders the grid toolbar", () => {
-		const { container } = renderTable();
-		expect(container.querySelector('[role="toolbar"]')).not.toBeNull();
+	test("renders the grid's table-controls trigger", () => {
+		// Filters / Sort / Row height / Columns are one drill-down popover now,
+		// so the toolbar of four buttons is a single count-badged trigger.
+		renderTable();
+		expect(
+			screen.getByRole("button", { name: /Table controls/ }),
+		).not.toBeNull();
 	});
 
 	test("renders complete pagination with disabled boundary controls", () => {
@@ -78,6 +88,32 @@ describe("DictionaryTable", () => {
 				.getByRole("button", { name: "Next page" })
 				.hasAttribute("disabled"),
 		).toBe(true);
+	});
+
+	test("scopes Ctrl+F to the focused grid and searches every page", async () => {
+		render(
+			<IntlProvider>
+				<DictionaryTable entries={manyTerms(40)} onChange={() => undefined} />
+				<DictionaryTable
+					entries={[{ id: "other", term: "Other table" }]}
+					onChange={() => undefined}
+				/>
+			</IntlProvider>,
+		);
+		const grids = screen.getAllByRole("grid");
+		expect(grids[0]).toBeDefined();
+		fireEvent.keyDown(grids[0] as HTMLElement, { ctrlKey: true, key: "f" });
+		const search = await screen.findByPlaceholderText("Find in table...");
+		expect(screen.getAllByPlaceholderText("Find in table...")).toHaveLength(1);
+
+		fireEvent.change(search, {
+			target: { value: "Term 40" },
+		});
+		await waitFor(() =>
+			expect(
+				screen.getByRole("navigation", { name: "Page 8 of 8" }),
+			).toBeDefined(),
+		);
 	});
 
 	test("keeps row selection active while the delete control is pressed", () => {

@@ -34,9 +34,6 @@ export class ApplicationError extends Error {
 	}
 }
 
-/**
- * Type guard to check if an error is an ApplicationError.
- */
 export function isApplicationError(error: unknown): error is ApplicationError {
 	return error instanceof ApplicationError;
 }

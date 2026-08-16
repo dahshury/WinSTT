@@ -6,7 +6,6 @@ import {
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import {
-	canDeleteSttQuant,
 	resolveSttDeleteRecovery,
 	useQuantActions,
 } from "@/features/model-download";
@@ -143,7 +142,17 @@ export function usePickerActions(params: PickerActionsParams): PickerActions {
 	}, [anySwapping]);
 
 	const canDeleteQuant = (modelId: string, quantization: OnnxQuantization) =>
-		canDeleteSttQuant(catalogModels, statesById, modelId, quantization);
+		resolveSttDeleteRecovery({
+			currentMainModel: currentModel ?? "",
+			currentQuantization,
+			currentRealtimeModel: modelSettings?.realtimeModel,
+			mainModelInfo: getModel(currentModel ?? "") ?? undefined,
+			modelId,
+			models: catalogModels,
+			previousModelIds: readLastLocalSttModelHistory(),
+			quantization,
+			statesById,
+		}).canDelete;
 
 	const handleGuardedDeleteQuant = (
 		modelId: string,

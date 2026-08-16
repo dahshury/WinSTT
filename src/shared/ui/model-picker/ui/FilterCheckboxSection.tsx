@@ -1,22 +1,24 @@
 "use client";
 
-import { FilterIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import type { FilterFlagConfig } from "./filter-menu-types";
-import { SectionHeader } from "./FilterSectionHeader";
 
+/**
+ * The boolean-flag view of a filter menu: one checkbox per catalog predicate.
+ * Flags a picker can't evaluate are pruned by the caller before they get here,
+ * and locked-on flags (e.g. "Streaming" in the realtime picker) render disabled
+ * rather than hidden, so it stays visible *why* the list is narrowed.
+ */
 export function FilterCheckboxSection<
 	TFlag extends string,
 	TFilters extends Record<TFlag, boolean>,
 >({
-	filterLabel = "Filter",
 	filters,
 	flags,
 	isDisabled,
 	onToggle,
 }: {
-	filterLabel?: string | undefined;
 	filters: TFilters;
 	flags: readonly FilterFlagConfig<TFlag>[];
 	isDisabled?: ((flag: TFlag) => boolean) | undefined;
@@ -26,8 +28,7 @@ export function FilterCheckboxSection<
 		flags.flatMap((flag, i) => (filters[flag.key] ? [i] : [])),
 	);
 	return (
-		<div className="flex flex-col gap-1.5 p-2">
-			<SectionHeader icon={FilterIcon} label={filterLabel} />
+		<div className="flex flex-col gap-1.5 p-2 pt-1" data-nav-initial-focus>
 			<CheckboxGroup checkedIndices={checkedIndices}>
 				{flags.map((flag, i) => (
 					<CheckboxItem

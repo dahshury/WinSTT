@@ -94,8 +94,14 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
         "sense_voice" => EngineKind::SenseVoiceCtc,
         "dolphin" => EngineKind::DolphinCtc,
         "qwen3" => EngineKind::Qwen3Asr,
+        "vibevoice" => EngineKind::VibeVoiceAsr,
+        // Both `arkasr` models ship under the same maker family; the id picks the engine (their
+        // ONNX packagings share nothing — see EngineKind::ArkAsr).
+        "audio8" if has("ark") => EngineKind::ArkAsr,
+        "audio8" => EngineKind::Audio8Asr,
         "t-one" => EngineKind::ToneCtc,
         "kaldi" if has("streaming") => EngineKind::KaldiTransducerStreaming, // sherpa streaming zipformer2
+        "kaldi" if has("ctc") => EngineKind::KaldiCtc, // icefall zipformer CTC single-graph export
         "kaldi" => EngineKind::KaldiTransducer, // vosk + zipformer both = transducer file set
         "gigaam" => {
             if has("rnnt") {
@@ -453,12 +459,32 @@ mod tests {
             EngineKind::KaldiTransducer
         );
         assert_eq!(
+            engine_kind_for("zipformer-ar-ctc", "kaldi", "Muno459/zipformer_p-arabic-v2"),
+            EngineKind::KaldiCtc
+        );
+        assert_eq!(
             engine_kind_for("alphacep/vosk-model-ru", "kaldi", "x"),
             EngineKind::KaldiTransducer
         );
         assert_eq!(
             engine_kind_for("qwen3-asr-0.6b", "qwen3", "andrewleech/qwen3-asr-0.6b-onnx"),
             EngineKind::Qwen3Asr
+        );
+        assert_eq!(
+            engine_kind_for(
+                "vibevoice-asr-bitnet",
+                "vibevoice",
+                "Masterx/vibevoice-asr-bitnet-onnx"
+            ),
+            EngineKind::VibeVoiceAsr
+        );
+        assert_eq!(
+            engine_kind_for(
+                "audio8-asr-0.1b",
+                "audio8",
+                "Audio8/Audio8-ASR-0.1B-onnx-runtime"
+            ),
+            EngineKind::Audio8Asr
         );
     }
 

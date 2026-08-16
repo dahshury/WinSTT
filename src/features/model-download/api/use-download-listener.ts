@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import {
 	fetchSttModelLifecycleSnapshots,
+	hasNativeRuntime,
 	onModelDownloadComplete,
 	onModelDownloadProgress,
 	onModelDownloadStart,
@@ -29,6 +30,9 @@ export function useDownloadListener(): void {
 	);
 
 	useEffect(() => {
+		if (!hasNativeRuntime()) {
+			return;
+		}
 		let disposed = false;
 		const offLifecycle = onSttModelLifecycle(applyLifecycleSnapshot);
 		void fetchSttModelLifecycleSnapshots()

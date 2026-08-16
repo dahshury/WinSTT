@@ -9,13 +9,38 @@ import {
 	installPendingUpdateAndRelaunch,
 } from "../adapter/updater";
 import { NATIVE_EVENTS as IPC } from "../native-events";
-import { commandOrDefault, noop, onCast } from "../native-boundary";
+import {
+	commandOrDefault,
+	hasNativeRuntime,
+	noop,
+	onCast,
+} from "../native-boundary";
 
 function unwrapResult<T, E>(result: Result<T, E>): T {
 	if (result.status === "ok") {
 		return result.data;
 	}
 	throw result.error;
+}
+
+async function nativeOrPreview<T>(
+	command: () => Promise<T>,
+	previewFallback: T,
+): Promise<T> {
+	if (!hasNativeRuntime()) {
+		return previewFallback;
+	}
+	return command();
+}
+
+function requireCleared(
+	result: { cleared: boolean },
+	operation: string,
+): { cleared: true } {
+	if (!result.cleared) {
+		throw new Error(`${operation} did not clear history`);
+	}
+	return { cleared: true };
 }
 
 // Dialog
@@ -28,6 +53,30 @@ export const dialogOpenFile = (
 		async () => (await callPlugin("dialog:open", { filters, title })) as string,
 		null,
 	);
+
+/**
+ * Multi-select variant. A separate wrapper rather than a flag on
+ * `dialogOpenFile` because the plugin's return type changes with `multiple` —
+ * one function returning `string | string[] | null` would push that union onto
+ * every existing single-file caller.
+ *
+ * Resolves `[]` when the user cancels (and outside a native runtime), so callers
+ * never branch on `null`.
+ */
+export const dialogOpenFiles = (
+	filters?: Array<{ name: string; extensions: string[] }>,
+	title?: string,
+): Promise<string[]> =>
+	commandOrDefault<string[]>("dialog_open_file", async () => {
+		const picked = await callPlugin("dialog:open", {
+			filters,
+			multiple: true,
+			title,
+		});
+		return Array.isArray(picked)
+			? picked.filter((entry): entry is string => typeof entry === "string")
+			: [];
+	}, []);
 
 // Sound library — custom recording-sound files persisted under userData/sounds/.
 interface SoundLibraryEntryDTO {
@@ -292,20 +341,19 @@ export const fetchTranscriptionHistory = () =>
 	);
 
 export const clearTranscriptionHistory = () =>
-	commandOrDefault<{ cleared: true }>(
-		"history_clear",
-		async () => ({
-			cleared: unwrapResult(await commands.historyClear()).cleared as true,
-		}),
+	nativeOrPreview(
+		async () =>
+			requireCleared(
+				unwrapResult(await commands.historyClear()),
+				"Transcription history clear",
+			),
 		{ cleared: true },
 	);
 
 export const deleteTranscriptionHistoryEntry = (id: string) =>
-	commandOrDefault<{ deleted: boolean }>(
-		"history_delete",
-		async () => unwrapResult(await commands.historyDelete(id)),
-		{ deleted: false },
-	);
+	nativeOrPreview(async () => unwrapResult(await commands.historyDelete(id)), {
+		deleted: false,
+	});
 
 export interface TransformHistoryEntry extends TranscriptionHistoryEntry {
 	/** Selection capture path used by the transform runtime. */
@@ -323,18 +371,17 @@ export const fetchTransformHistory = () =>
 	);
 
 export const clearTransformHistory = () =>
-	commandOrDefault<{ cleared: true }>(
-		"transform_history_clear",
-		async () => ({
-			cleared: unwrapResult(await commands.transformHistoryClear())
-				.cleared as true,
-		}),
+	nativeOrPreview(
+		async () =>
+			requireCleared(
+				unwrapResult(await commands.transformHistoryClear()),
+				"Transform history clear",
+			),
 		{ cleared: true },
 	);
 
 export const deleteTransformHistoryEntry = (id: string) =>
-	commandOrDefault<{ deleted: boolean }>(
-		"transform_history_delete",
+	nativeOrPreview(
 		async () => unwrapResult(await commands.transformHistoryDelete(id)),
 		{ deleted: false },
 	);
@@ -377,17 +424,17 @@ export const fetchTtsHistory = () =>
 	);
 
 export const clearTtsHistory = () =>
-	commandOrDefault<{ cleared: true }>(
-		"tts_history_clear",
-		async () => ({
-			cleared: unwrapResult(await commands.ttsHistoryClear()).cleared as true,
-		}),
+	nativeOrPreview(
+		async () =>
+			requireCleared(
+				unwrapResult(await commands.ttsHistoryClear()),
+				"Text-to-speech history clear",
+			),
 		{ cleared: true },
 	);
 
 export const deleteTtsHistoryEntry = (id: string) =>
-	commandOrDefault<{ deleted: boolean }>(
-		"tts_history_delete",
+	nativeOrPreview(
 		async () => unwrapResult(await commands.ttsHistoryDelete(id)),
 		{ deleted: false },
 	);
@@ -654,8 +701,7 @@ export interface DiagOpenLogsFolderResult {
 }
 
 export const diagOpenLogsFolder = (): Promise<DiagOpenLogsFolderResult> =>
-	commandOrDefault(
-		"diag_open_logs_folder",
+	nativeOrPreview(
 		async () =>
 			(await callPlugin("opener:logs", undefined)) as DiagOpenLogsFolderResult,
 		{ ok: false, error: "IPC unavailable" },
@@ -675,7 +721,7 @@ export interface DiagSaveBundleResult {
 }
 
 export const diagSaveBundle = (): Promise<DiagSaveBundleResult> =>
-	commandOrDefault("diag_save_bundle", commands.diagSaveBundle, {
+	nativeOrPreview(commands.diagSaveBundle, {
 		ok: false,
 		error: "IPC unavailable",
 	});

@@ -98,8 +98,6 @@ interface MainModelSectionProps {
 		/** Language picker. False for single-language models (the only choice
 		 *  would be a no-op "auto-detect") or cloud (the provider handles it). */
 		language: boolean;
-		/** Idle model-unload timeout. False for cloud (no local ONNX session
-		 *  to unload). */
 	};
 	selectedModel: string;
 	settings: ModelSettings | undefined;
@@ -274,6 +272,7 @@ function SourceArea({
 						/>
 					) : (
 						<SttModelSelector
+							compact
 							currentQuantization={currentQuantization}
 							disabled={disabled}
 							downloadProgress={downloadProgress}
@@ -501,11 +500,10 @@ function TranslateArea({
 	translateTargetOpts,
 	update,
 }: TranslateAreaProps): ReactNode {
-	// Translate To is a toggle + target picker over ONE persisted field:
-	// `translateTargetLanguage` ("" = off). The toggle owns on/off, so the
-	// dropdown never lists a "Same as spoken" sentinel — it just disables while
-	// translation is off. The last concrete target is remembered (session-local)
-	// so re-enabling restores it instead of resetting to English.
+	// The toggle owns on/off, so the dropdown never lists a "Same as spoken"
+	// sentinel — it just disables while translation is off. The last concrete
+	// target is remembered (session-local) so re-enabling restores it instead of
+	// resetting to English.
 	const translateTarget = settings?.translateTargetLanguage ?? "";
 	const translateActive = translateTargetOpts.some(
 		(option) => option.id === translateTarget,

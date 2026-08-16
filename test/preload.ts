@@ -10,7 +10,7 @@ GlobalRegistrator.register();
 // IS_REACT_ACT_ENVIRONMENT and its afterEach no longer cleans later React roots.
 // Own both process-global responsibilities here instead, where the hooks apply
 // to every test regardless of import order.
-process.env.RTL_SKIP_AUTO_CLEANUP = "true";
+process.env["RTL_SKIP_AUTO_CLEANUP"] = "true";
 (
 	globalThis as typeof globalThis & {
 		IS_REACT_ACT_ENVIRONMENT: boolean;

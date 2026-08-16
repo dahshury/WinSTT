@@ -20,7 +20,6 @@ export interface TooltipProps {
 	 * "add an API key to enable this" hint.
 	 */
 	footer?: string | undefined;
-	/** Which side to show the tooltip on */
 	side?: "top" | "bottom" | "left" | "right";
 	/** Offset from the trigger in px */
 	sideOffset?: number;

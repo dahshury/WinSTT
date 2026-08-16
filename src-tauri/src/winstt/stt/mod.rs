@@ -136,9 +136,19 @@ impl EngineKind {
     /// byte-fallback tokenizer fragmenting numerals, proper nouns, and any out-of-vocab/non-English
     /// runs into many single-byte pieces. 446 / 30 ≈ 14.9 s → cap at 14.0 s. The decoder position
     /// window (`max_position_embeddings = 512`) is never the binding limit here since 448 < 512.
+    ///
+    /// Audio8-ASR overrides to 24.0 s. Its static KV cache is a HARD `max_total_len = 512`
+    /// positions shared by the prompt AND the generated text, and the prompt grows with the audio:
+    /// the adapter emits one audio token per 4 merged mel frames, i.e. `⌊(⌊16000·T/160⌋+1)/2/4⌋`
+    /// ≈ 12.5 tokens per second, plus ~10 scaffold tokens. At 28 s that is ~360 prompt positions,
+    /// leaving only ~150 for the transcript — under the ~140 tokens a dense 28 s Chinese utterance
+    /// needs (~5 chars/s, ~1 token/char), so a fast speaker could run the cache dry mid-sentence.
+    /// 24 s puts the prompt at ~310 and the generation budget at ~200 tokens, comfortably clear of
+    /// both the CJK and the English (~3.5 words/s) worst case.
     pub fn max_chunk_seconds(&self) -> f32 {
         match self {
             EngineKind::Moonshine => 14.0,
+            EngineKind::Audio8Asr => 24.0,
             _ => 28.0,
         }
     }

@@ -502,7 +502,7 @@ export function SubtitleOverlay() {
 							{block.speaker == null ? null : (
 								<span
 									aria-hidden
-									className="w-fit select-none rounded-md px-1.5 py-0.5 font-medium font-sans text-caption leading-none"
+									className="w-fit select-none rounded-md px-1.5 py-0.5 font-medium font-sans text-2xs leading-none"
 									data-speaker-badge={block.speaker}
 									style={{
 										color: speakerColor(block.speaker),

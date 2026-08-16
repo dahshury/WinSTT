@@ -41,6 +41,14 @@ const MODE_TRANSITION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// `useListenMode` shows the active device name in the listen pill. The native
 /// WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
 /// command owns the device-name resolution + the started event.
+///
+/// Also SETTLES the recording-mode transition phase when this call is the one
+/// completing a switch INTO listen mode: the streaming model is loaded inside
+/// `LoopbackManager::start`, so this return is the first moment listen mode can
+/// actually transcribe. `settings/recording_mode.rs` opens that phase and hands it
+/// here rather than starting loopback itself, because the device + streaming-model
+/// choice is renderer policy. An in-mode restart (device or mic-mix change) finds
+/// no pending phase and settles nothing.
 #[tauri::command]
 #[specta::specta]
 pub async fn start_listen(
@@ -51,11 +59,42 @@ pub async fn start_listen(
     model_id: String,
     capture_microphone: bool,
 ) -> Result<(), String> {
+    let result = start_listen_runtime(
+        &app,
+        loopback.inner(),
+        downloads.inner().as_ref(),
+        device_index,
+        model_id,
+        capture_microphone,
+    )
+    .await;
+    match &result {
+        Ok(()) => crate::winstt::commands::mode_transition::complete_pending_for(
+            &app,
+            crate::winstt::settings_schema::RecordingMode::Listen,
+        ),
+        Err(err) => crate::winstt::commands::mode_transition::fail_pending_for(
+            &app,
+            crate::winstt::settings_schema::RecordingMode::Listen,
+            err.clone(),
+        ),
+    }
+    result
+}
+
+async fn start_listen_runtime(
+    app: &AppHandle,
+    loopback: &Arc<LoopbackManager>,
+    downloads: &DownloadManager,
+    device_index: i32,
+    model_id: String,
+    capture_microphone: bool,
+) -> Result<(), String> {
     if crate::winstt::commands::onboarding::is_onboarding_active() {
         return Err("Onboarding is active; listen mode is disabled".to_string());
     }
 
-    wait_for_listen_mode_boundary(&app).await?;
+    wait_for_listen_mode_boundary(app).await?;
 
     // Recording-mode controls update optimistically in the renderer. If Listen's
     // start races ahead of the settings-save command, enforce the same hard mode
@@ -64,17 +103,21 @@ pub async fn start_listen(
         coordinator.finalize_recording_mode_change();
     }
 
-    let model_id =
-        ensure_cached_native_streaming_model(&app, downloads.inner().as_ref(), model_id.trim())
-            .await?;
+    let model_id = ensure_cached_native_streaming_model(app, downloads, model_id.trim()).await?;
 
     let selected_device = resolve_loopback_device(device_index)
         .ok_or_else(|| format!("loopback device index {device_index} is no longer available"))?;
 
-    let loopback_manager = loopback.inner().clone();
+    let loopback_manager = Arc::clone(loopback);
     let selected_device_id = selected_device.id.clone();
     let model_id_for_start = model_id;
     let started_device = tauri::async_runtime::spawn_blocking(move || {
+        // `LoopbackManager::start` loads the native-streaming model into the ONE
+        // shared engine slot. Order it against the recording-mode worker's
+        // main-model reload so a fast listen → ptt → listen can't leave the wrong
+        // model resident — see `mode_transition::lock_model_preparation`. Taken
+        // inside the blocking closure so no lock is held across an await.
+        let _preparation = crate::winstt::commands::mode_transition::lock_model_preparation();
         loopback_manager.start(
             Some(selected_device_id),
             model_id_for_start,
@@ -89,8 +132,8 @@ pub async fn start_listen(
         started_device.name
     };
 
-    set_main_window_listen_mode(&app, true);
-    SttEvents::recording_start(&app);
+    set_main_window_listen_mode(app, true);
+    SttEvents::recording_start(app);
     let _ = app.emit(
         names::LOOPBACK_STARTED,
         serde_json::json!({ "deviceName": device_name }),
@@ -180,10 +223,26 @@ async fn ensure_cached_native_streaming_model(
 /// (mirrors the reference server, which only emits when capture was active — but
 /// the renderer's `setListening(false)` is itself idempotent, so an extra emit on
 /// an already-stopped session is harmless).
+// ASYNC on purpose. A plain `#[tauri::command]` body runs INLINE on the thread
+// that pumps the window event loop, and `stop_listen_runtime` is not cheap: it
+// joins the loopback consumer (which finishes decoding the last segment), frees
+// the diarization ONNX sessions, and writes the session to SQLite. Doing that on
+// the event-loop thread froze every window for the duration — the reported
+// "switching listen → ptt makes the main window unresponsive".
 #[tauri::command]
 #[specta::specta]
-pub fn stop_listen(app: AppHandle, loopback: State<'_, Arc<LoopbackManager>>) {
-    stop_listen_runtime(&app, loopback.inner().as_ref());
+pub async fn stop_listen(app: AppHandle) {
+    let Some(loopback) = app
+        .try_state::<Arc<LoopbackManager>>()
+        .map(|state| state.inner().clone())
+    else {
+        return;
+    };
+    let app_for_stop = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        stop_listen_runtime(&app_for_stop, loopback.as_ref());
+    })
+    .await;
 }
 
 /// Live transcript state of the CURRENT listen session for the History tab's

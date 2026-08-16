@@ -3,6 +3,7 @@ import type { LlmWarmupStatus } from "@/shared/api/ipc-client";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { Button } from "@/shared/ui/button";
 import { findModelStatus } from "../lib/warmup-banner-test-helpers";
+import type { AssignableFeature } from "../model/configuration-assignment";
 
 /**
  * Per-feature banner that translates warmup-status broadcasts from the
@@ -19,7 +20,7 @@ import { findModelStatus } from "../lib/warmup-banner-test-helpers";
  */
 
 interface WarmupStatusBannerProps {
-	feature: "dictation" | "transforms";
+	feature: AssignableFeature;
 	model: string;
 	onOpenManager?: () => void;
 	onRetry?: () => void;
@@ -92,17 +93,22 @@ function StatusBanner({
 	);
 }
 
+/** Mid-sentence names for the "install Ollama to use the {feature} model" copy.
+ *  Read aloud borrowed dictation's key while the banner only knew two features,
+ *  so the banner under the Read aloud row named the wrong one. */
+const FEATURE_MESSAGE_KEY = {
+	dictation: "warmupFeatureDictation",
+	readAloud: "warmupFeatureReadAloud",
+	transforms: "warmupFeatureTransforms",
+} as const satisfies Record<AssignableFeature, string>;
+
 function buildUnreachableProps(
-	feature: "dictation" | "transforms",
+	feature: AssignableFeature,
 	installed: boolean,
 	t: TranslateFn,
 	onRetry?: () => void,
 ): StatusBannerProps {
-	const featureLabel = t(
-		feature === "dictation"
-			? "warmupFeatureDictation"
-			: "warmupFeatureTransforms",
-	);
+	const featureLabel = t(FEATURE_MESSAGE_KEY[feature]);
 	return {
 		severity: "warning",
 		title: t("warmupOllamaUnreachableTitle"),

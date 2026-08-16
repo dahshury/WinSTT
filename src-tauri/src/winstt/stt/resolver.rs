@@ -150,7 +150,7 @@ mod tests {
         );
         assert_eq!(
             resolve_repo("crisper-whisper"),
-            Some(("onnx-community".into(), "CrisperWhisper-ONNX".into()))
+            Some(("Masterx".into(), "CrisperWhisper2.0-large-ONNX".into()))
         );
         // Canary now points at the DirectML-safe Masterx re-export (encoder via dynamo=False).
         assert_eq!(
@@ -285,6 +285,183 @@ mod tests {
     }
 
     #[test]
+    fn audio8_globs_live_under_model_bundle_with_shared_int8_tower() {
+        // int8: tower and LM both int8.
+        let int8 = file_globs("audio8-asr-0.1b", EngineKind::Audio8Asr, Quantization::Int8);
+        assert!(
+            int8.iter()
+                .any(|f| f.key == "audio_tower" && f.glob == "model_bundle/audio_hidden_int8.onnx")
+        );
+        assert!(
+            int8.iter()
+                .any(|f| f.key == "lm_prefill"
+                    && f.glob == "model_bundle/lm_cache_prefill?int8.onnx")
+        );
+        assert!(
+            int8.iter()
+                .any(|f| f.key == "lm_decode" && f.glob == "model_bundle/lm_cache_decode?int8.onnx")
+        );
+        // The `?` separator must match the bundle's `_int8` filenames.
+        assert!(glob_match(
+            "model_bundle/lm_cache_prefill?int8.onnx",
+            "model_bundle/lm_cache_prefill_int8.onnx"
+        ));
+
+        // int4: the bundle ships NO int4 audio tower, so the int4 tier reuses the int8 one while
+        // the LM graphs go int4. If this ever regresses to `audio_hidden?int4.onnx`, every int4
+        // download would plan a file that does not exist and stick at Partial forever.
+        let int4 = file_globs("audio8-asr-0.1b", EngineKind::Audio8Asr, Quantization::Int4);
+        assert!(
+            int4.iter()
+                .any(|f| f.key == "audio_tower" && f.glob == "model_bundle/audio_hidden_int8.onnx")
+        );
+        assert!(
+            int4.iter()
+                .any(|f| f.key == "lm_prefill"
+                    && f.glob == "model_bundle/lm_cache_prefill?int4.onnx")
+        );
+
+        // Default (fp32): the untagged tower.
+        let fp32 = file_globs(
+            "audio8-asr-0.1b",
+            EngineKind::Audio8Asr,
+            Quantization::Default,
+        );
+        assert!(
+            fp32.iter()
+                .any(|f| f.key == "audio_tower" && f.glob == "model_bundle/audio_hidden.onnx")
+        );
+        assert!(
+            fp32.iter()
+                .any(|f| f.key == "lm_decode" && f.glob == "model_bundle/lm_cache_decode.onnx")
+        );
+
+        // The host-side NumPy weights are shared across precisions → no quant suffix, and both are
+        // REQUIRED (the engine cannot embed tokens or run the adapter without them).
+        for key in ["embed_tokens", "audio_projector", "bundle_metadata"] {
+            let entry = int4
+                .iter()
+                .find(|f| f.key == key)
+                .unwrap_or_else(|| panic!("{key} glob present"));
+            assert!(!entry.optional, "{key} must be required");
+            assert!(
+                !entry.glob.contains("int4"),
+                "{key} must not carry a quant suffix"
+            );
+        }
+
+        // The int8/int4 LM graphs keep their weights in `<stem>.onnx.data` sidecars — the automatic
+        // sidecar sweep only finds those if it recognises the `.onnx.data` form.
+        assert!(is_sidecar_for(
+            "lm_cache_prefill_int4",
+            "lm_cache_prefill_int4.onnx.data"
+        ));
+    }
+
+    #[test]
+    fn ark_asr_globs_are_literal_and_sidecar_swept() {
+        // The ARK exports publish exactly one precision, so the file names carry no quant suffix
+        // and are identical for the 0.6B upstream bundle and our 3B re-export.
+        for id in ["ark-asr-0.6b", "ark-asr-3b"] {
+            let g = file_globs(id, EngineKind::ArkAsr, Quantization::Int8);
+            assert!(
+                g.iter().any(
+                    |f| f.key == "audio_encoder" && f.glob == "audio_encoder_whisper_int8.onnx"
+                )
+            );
+            assert!(
+                g.iter()
+                    .any(|f| f.key == "lm" && f.glob == "llm_kv_cpu_fp32_int8.onnx")
+            );
+            // The raw embedding blob is NOT a `<stem>.onnx_data` sidecar of any resolved graph, so
+            // it must stay an EXPLICIT key or a download would complete without the embeddings and
+            // the engine would fail at load. It is `optional` only because a bundle ships one of
+            // two spellings (fp32 upstream / fp16 ours) — `ArkAsrEngine::load` requires one; see
+            // `ark_asr_lm_glob_follows_the_quant_and_embedding_has_two_spellings`.
+            let embed = g
+                .iter()
+                .find(|f| f.key == "embed_tokens")
+                .expect("embed_tokens glob present");
+            assert_eq!(embed.glob, "embedding_fp32.data");
+            assert!(g.iter().any(|f| f.key == "embed_tokens_fp16"));
+        }
+        // Our 3B export keeps each graph's weights in a single `<stem>.onnx.data` sidecar (torch
+        // spills >2 GB graphs), which the automatic sweep must recognise — the 0.6B upstream
+        // graphs are self-contained, so this only bites the 3B row.
+        assert!(is_sidecar_for(
+            "llm_kv_cpu_fp32_int8",
+            "llm_kv_cpu_fp32_int8.onnx.data"
+        ));
+        assert!(is_sidecar_for(
+            "audio_encoder_whisper_int8",
+            "audio_encoder_whisper_int8.onnx.data"
+        ));
+    }
+
+    #[test]
+    fn ark_asr_lm_glob_follows_the_quant_and_embedding_has_two_spellings() {
+        // int8 (upstream 0.6B and our 3B's compatibility tier) vs int4 (our 3B's default): only
+        // the LM graph changes — the encoder is convolution-heavy and stays int8 in both.
+        let int8 = file_globs("ark-asr-3b", EngineKind::ArkAsr, Quantization::Int8);
+        assert!(
+            int8.iter()
+                .any(|f| f.key == "lm" && f.glob == "llm_kv_cpu_fp32_int8.onnx")
+        );
+        let int4 = file_globs("ark-asr-3b", EngineKind::ArkAsr, Quantization::Int4);
+        assert!(
+            int4.iter()
+                .any(|f| f.key == "lm" && f.glob == "llm_kv_cpu_fp32_int4.onnx")
+        );
+        for g in [&int8, &int4] {
+            assert!(
+                g.iter().any(
+                    |f| f.key == "audio_encoder" && f.glob == "audio_encoder_whisper_int8.onnx"
+                )
+            );
+        }
+
+        // A bundle ships exactly ONE embedding spelling, so BOTH are optional and the engine
+        // requires one at load. Optional costs the cache badge nothing: `required_onnx_globs`
+        // counts only `.onnx` graphs, and neither of these is one.
+        for key in ["embed_tokens", "embed_tokens_fp16"] {
+            let e = int4
+                .iter()
+                .find(|f| f.key == key)
+                .unwrap_or_else(|| panic!("{key} glob present"));
+            assert!(e.optional, "{key} must be optional");
+            assert!(
+                !e.glob.ends_with(".onnx"),
+                "{key} must not count as a graph"
+            );
+        }
+        assert!(
+            int4.iter()
+                .any(|f| f.key == "embed_tokens" && f.glob == "embedding_fp32.data")
+        );
+        assert!(
+            int4.iter()
+                .any(|f| f.key == "embed_tokens_fp16" && f.glob == "embedding_fp16.data")
+        );
+    }
+
+    #[test]
+    fn ark_asr_3b_resolves_to_the_winstt_re_export() {
+        // Upstream ARK-ASR-3B is safetensors-only; the catalog must point at our ONNX export.
+        assert_eq!(
+            resolve_repo("ark-asr-3b"),
+            Some(("Masterx".into(), "ark-asr-3b-onnx".into()))
+        );
+    }
+
+    #[test]
+    fn audio8_alias_resolves_to_the_upstream_bundle() {
+        assert_eq!(
+            resolve_repo("audio8-asr-0.1b"),
+            Some(("Audio8".into(), "Audio8-ASR-0.1B-onnx-runtime".into()))
+        );
+    }
+
+    #[test]
     fn qwen3_alias_resolves_to_andrewleech() {
         assert_eq!(
             resolve_repo("qwen3-asr-0.6b"),
@@ -368,6 +545,34 @@ mod tests {
             Quantization::Int8,
         );
         assert!(gi.iter().any(|f| f.glob == "encoder-*?int8.onnx"));
+    }
+
+    #[test]
+    fn kaldi_ctc_globs_single_graph_and_tiebreak() {
+        // icefall zipformer CTC (Muno459/zipformer_p-arabic-v2): flat root single graph + tokens.txt.
+        let g = file_globs(
+            "Muno459/zipformer_p-arabic-v2",
+            EngineKind::KaldiCtc,
+            Quantization::Default,
+        );
+        assert!(
+            g.iter()
+                .any(|f| f.key == "model" && f.glob == "zipformer*.onnx")
+        );
+        assert!(g.iter().any(|f| f.key == "vocab" && f.glob == "tokens.txt"));
+        let gi = file_globs(
+            "Muno459/zipformer_p-arabic-v2",
+            EngineKind::KaldiCtc,
+            Quantization::Int8,
+        );
+        assert!(gi.iter().any(|f| f.glob == "zipformer*?int8.onnx"));
+
+        // Default glob matches BOTH the fp32 and int8 siblings → the Kaldi tiebreak must apply.
+        let a = "zipformer_p_arabic_v2.onnx".to_string();
+        let b = "zipformer_p_arabic_v2.int8.onnx".to_string();
+        let matches = vec![&a, &b];
+        let chosen = pick_kaldi_tiebreak(EngineKind::KaldiCtc, &matches).unwrap();
+        assert_eq!(chosen, Some(&a), "default export (untagged stem) must win");
     }
 
     #[test]

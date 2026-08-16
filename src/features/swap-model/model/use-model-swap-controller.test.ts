@@ -133,6 +133,17 @@ describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 		expect(out).toEqual({ model: "tiny" });
 	});
 
+	test("model switch preserves the universal auto precision selection", () => {
+		const out = t.buildMainSwapPatch(
+			"parakeet",
+			{ availableQuantizations: ["", "int8"] } as never,
+			undefined,
+			false,
+			"auto",
+		);
+		expect(out).toEqual({ model: "parakeet" });
+	});
+
 	test("realtime patch swaps just the realtime model", () => {
 		expect(t.buildRealtimeSwapPatch("rt", undefined, false)).toEqual({
 			realtimeModel: "rt",

@@ -157,6 +157,7 @@ describe("SttModelSelector suggested filter", () => {
 		);
 		// Activate the "Name" sort via the menu.
 		fireEvent.click(screen.getByRole("button", { name: /Sort & filter/ }));
+		fireEvent.click(screen.getByRole("button", { name: /^Sort by/ }));
 		fireEvent.click(screen.getByRole("button", { name: "Name" }));
 		// Header flips to the sorted label, order is A→Z, hidden stays hidden.
 		expect(screen.getByText("Sorted")).toBeDefined();

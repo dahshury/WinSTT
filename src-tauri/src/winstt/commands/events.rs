@@ -73,6 +73,9 @@ pub mod names {
     /// the WinSTT-owned cycle-gesture keyboard hook; the main renderer owns the
     /// mode-cycle order and applies + persists the new mode.
     pub const RECORDING_MODE_CYCLE: &str = "recording:mode-cycle";
+    /// A recording-mode change is preparing (loading the new mode's model) or has
+    /// settled. Drives the mode switcher's spinner + disabled state.
+    pub const RECORDING_MODE_TRANSITION: &str = "recording:mode-transition";
     /// Manual "check for updates" trigger (main → renderer fan-out).
     pub const UPDATER_CHECK: &str = "updater:check";
     /// The settings window was shown by `open_window` (payload: whether it was
@@ -89,6 +92,12 @@ pub mod names {
     pub const MODEL_PICKER_CLOSING: &str = "model-picker:closing";
     /// One existing, privacy-gated app log record for Settings > About.
     pub const DIAGNOSTICS_LOG_LINE: &str = "diagnostics:log-line";
+    /// Encoder-dictionary model download progress/status changed.
+    pub const ENCODER_DICT_DOWNLOAD_PROGRESS: &str = "encoder-dict:download-progress";
+    /// Encoder-dictionary model download reached a terminal outcome.
+    pub const ENCODER_DICT_DOWNLOAD_COMPLETE: &str = "encoder-dict:download-complete";
+    /// The downloaded encoder-dictionary model could not be loaded.
+    pub const ENCODER_DICT_MODEL_ERROR: &str = "encoder-dict:model-error";
 }
 
 /// Emit the shared `output:paste-error` event. Centralizes the previously

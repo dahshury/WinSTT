@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	fetchTranscriptionHistory,
@@ -6,6 +6,7 @@ import {
 	fetchTtsHistory,
 	onTranscriptionHistoryAdded,
 	onTranscriptionHistoryDeleted,
+	onSettingsChangedSnapshot,
 	onTransformHistoryAdded,
 	onTransformHistoryDeleted,
 	onTtsHistoryAdded,
@@ -32,6 +33,12 @@ export function useTranscriptionHistorySync(): void {
 	const historyEnabled = useSettingsStore(
 		(s) => s.settings.general?.historyEnabled ?? true,
 	);
+	const retentionSnapshotRef = useRef({
+		historyMaxEntries:
+			useSettingsStore.getState().settings.general?.historyMaxEntries,
+		recordingRetention:
+			useSettingsStore.getState().settings.general?.recordingRetention,
+	});
 
 	useEffect(() => {
 		// History master switch off: drop the in-memory copies (no data exposure
@@ -98,6 +105,36 @@ export function useTranscriptionHistorySync(): void {
 		const unsubTtsDeleted = onTtsHistoryDeleted((payload) => {
 			removeTtsEntry(payload.id);
 		});
+		const unsubSettingsChanged = onSettingsChangedSnapshot(({ settings }) => {
+			const nextRetention = {
+				historyMaxEntries: settings.general.historyMaxEntries,
+				recordingRetention: settings.general.recordingRetention,
+			};
+			const retentionChanged =
+				retentionSnapshotRef.current.historyMaxEntries !==
+					nextRetention.historyMaxEntries ||
+				retentionSnapshotRef.current.recordingRetention !==
+					nextRetention.recordingRetention;
+			retentionSnapshotRef.current = nextRetention;
+			if (!(retentionChanged && settings.general.historyEnabled)) {
+				return;
+			}
+
+			// The backend emits settings:changed only after applying retention
+			// cleanup. Refresh all three collections so rows removed directly by
+			// that cleanup disappear in this and every other settings window.
+			void Promise.all([
+				fetchTranscriptionHistory(),
+				fetchTransformHistory(),
+				fetchTtsHistory(),
+			]).then(([entries, transforms, tts]) => {
+				if (!cancelled) {
+					setAll(entries);
+					setTransformAll(transforms);
+					setTtsAll(tts);
+				}
+			});
+		});
 		return () => {
 			cancelled = true;
 			unsubAdded();
@@ -106,6 +143,7 @@ export function useTranscriptionHistorySync(): void {
 			unsubTransformDeleted();
 			unsubTtsAdded();
 			unsubTtsDeleted();
+			unsubSettingsChanged();
 		};
 	}, [
 		historyEnabled,

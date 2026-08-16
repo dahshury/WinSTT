@@ -19,6 +19,7 @@ export function useTtsVoiceCatalog(
 	modelId: string,
 	voice: string,
 	update: ApplyVoiceFallback,
+	keepUnlistedVoice = false,
 ): VoiceCatalogPayload {
 	const [catalog, setCatalog] = useState<VoiceCatalogPayload>({
 		voices: [],
@@ -32,9 +33,11 @@ export function useTtsVoiceCatalog(
 	// rule.
 	const voiceRef = useRef(voice);
 	const updateRef = useRef(update);
+	const keepUnlistedRef = useRef(keepUnlistedVoice);
 	useEffect(() => {
 		voiceRef.current = voice;
 		updateRef.current = update;
+		keepUnlistedRef.current = keepUnlistedVoice;
 	});
 
 	useEffect(() => {
@@ -47,7 +50,11 @@ export function useTtsVoiceCatalog(
 			setCatalog(result);
 			const currentVoice = voiceRef.current;
 			const valid = result.voices.some((v) => v.id === currentVoice);
-			if (valid) {
+			// A cloning model's `voice` legitimately holds a reference-clip PATH,
+			// which is never in the catalog. Healing it would silently delete the
+			// user's clip the next time the section re-enabled or the catalog
+			// refetched, so unlisted values are left alone for those models.
+			if (valid || keepUnlistedRef.current) {
 				return;
 			}
 			const first = result.voices[0];

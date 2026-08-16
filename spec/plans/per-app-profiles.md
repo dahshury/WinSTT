@@ -2,6 +2,13 @@
 
 > Generated 2026-07-14 by a Fable planning agent from repository analysis. Status: NOT implemented.
 
+> **STALE IPC STEPS — do not follow §38 or §178.** They add channel constants and a
+> registry entry to `src/shared/api/ipc-channels.ts`, which **was deleted in `720890c6`**
+> (2026-07-15, one day after this plan was written), along with `ipc-transport.ts` and
+> `native-bridge-adapter.ts`. Renderer-facing event names now live in
+> `src/shared/api/native-events.ts`, and commands are called directly via `commands.*`
+> from `@/bindings`. The rest of the plan's analysis still stands.
+
 ## Part 0 — What the codebase already provides (verified findings)
 
 ### 0.1 Context capture: what the Rust side ALREADY captures (requirement 1)

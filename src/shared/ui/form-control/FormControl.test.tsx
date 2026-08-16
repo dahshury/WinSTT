@@ -81,7 +81,7 @@ describe("FormControl", () => {
 		expect(screen.getByTestId("i")).toBeDefined();
 	});
 
-	test("applies disabled styling that visually dims the wrapper", () => {
+	test("applies disabled styling and makes the control subtree inert", () => {
 		render(
 			<FormControl disabled label="X">
 				<input data-testid="i" type="text" />
@@ -90,6 +90,8 @@ describe("FormControl", () => {
 		// the input is wrapped in a div with pointer-events-none when disabled; check the inner wrapper
 		const input = screen.getByTestId("i");
 		expect(input.parentElement?.className).toContain("pointer-events-none");
+		expect(input.parentElement?.hasAttribute("inert")).toBe(true);
+		expect(input.parentElement?.getAttribute("aria-disabled")).toBe("true");
 	});
 
 	test("anchors controlTooltip outside disabled children so it can receive hover", () => {

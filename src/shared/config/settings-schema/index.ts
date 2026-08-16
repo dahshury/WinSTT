@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VOCABULARY_LIMITS } from "../vocabulary-limits";
 import { audioSettingsSchema } from "./audio";
 import {
 	dictionaryEntrySchema,
@@ -26,10 +27,18 @@ const appSettingsBaseSchema = z.object({
 	audio: audioSettingsSchema.prefault({}),
 	general: generalSettingsSchema.prefault({}),
 	hotkey: hotkeySettingsSchema.prefault({}),
-	dictionary: z.array(dictionaryEntrySchema).default([]).catch([]),
+	dictionary: z
+		.array(dictionaryEntrySchema)
+		.max(VOCABULARY_LIMITS.dictionaryEntries)
+		.default([])
+		.catch([]),
 	// `.catch` matches `dictionary`: one malformed persisted snippet must reset
 	// only this array, not fail the whole-tree parse into per-section recovery.
-	snippets: z.array(snippetEntrySchema).default([]).catch([]),
+	snippets: z
+		.array(snippetEntrySchema)
+		.max(VOCABULARY_LIMITS.snippets)
+		.default([])
+		.catch([]),
 	llm: llmSettingsSchema.prefault({}),
 	tts: ttsSettingsSchema.prefault({}),
 	integrations: integrationsSchema.prefault({}),

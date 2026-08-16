@@ -1,8 +1,4 @@
-/**
- * Renderer-side mirror of the main-process `HistoryEntryRow` shape. Field names
- * match the OpenAPI `HistoryEntry` schema 1:1 so a future spec-driven refactor
- * can swap this for a generated type without touching call sites.
- */
+import type { HistoryRow } from "@/bindings";
 
 export type RecordingRetention =
 	| "never"
@@ -11,21 +7,13 @@ export type RecordingRetention =
 	| "weeks2"
 	| "months3";
 
-export interface HistoryEntry {
-	fileName: string;
-	historyTag?: string | null;
-	id: number;
-	postProcessedText: string | null;
-	postProcessPrompt: string | null;
-	postProcessRequested: boolean;
-	privacyMarkers?: string[];
-	saved: boolean;
-	/** Omitted/undefined = mic dictation; "listen" = a listen-mode session. */
-	source?: string | null;
-	timestamp: number;
-	title: string;
-	transcriptionText: string;
-}
+/**
+ * The backend row shape, straight from the generated tauri-specta bindings.
+ * This used to be a hand-maintained mirror; every field had to be kept in sync
+ * by hand, and the drift it allowed (`privacyMarkers` was non-nullable here but
+ * nullable in Rust) was being papered over by a cast at the search call site.
+ */
+export type HistoryEntry = HistoryRow;
 
 export interface PaginatedHistory {
 	entries: HistoryEntry[];

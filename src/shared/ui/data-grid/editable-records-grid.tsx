@@ -1,15 +1,11 @@
 import type { ColumnDef, Table } from "@tanstack/react-table";
 import { useEffect, useRef } from "react";
 import { cellUpdatesBetween } from "@/shared/lib/grid-cell-diff";
-import { ButtonGroup } from "@/shared/ui/button-group";
 import { DataGrid } from "./data-grid";
-import { DataGridFilterMenu } from "./data-grid-filter-menu";
 import { DataGridKeyboardShortcuts } from "./data-grid-keyboard-shortcuts";
 import { DataGridPagination } from "./data-grid-pagination";
-import { DataGridRowHeightMenu } from "./data-grid-row-height-menu";
 import { DataGridSelectionBar } from "./data-grid-selection-bar";
-import { DataGridSortMenu } from "./data-grid-sort-menu";
-import { DataGridViewMenu } from "./data-grid-view-menu";
+import { DataGridTableControls } from "./data-grid-table-controls";
 import { useDataGrid } from "./model/use-data-grid";
 import { useDataGridUndoRedo } from "./model/use-data-grid-undo-redo";
 import {
@@ -30,6 +26,8 @@ export interface EditableRecordsGridProps<TData extends { id: string }> {
 	editableColumnIds: readonly string[];
 	focusColumnId: string;
 	isEmptyRow: (row: TData) => boolean;
+	/** Maximum rows in the whole controlled collection (not just the page). */
+	maxRows?: number;
 	onChange: (rows: TData[]) => void;
 	readOnly?: boolean;
 	rowHeight?: RowHeightValue;
@@ -45,6 +43,7 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 	editableColumnIds,
 	focusColumnId,
 	isEmptyRow,
+	maxRows,
 	onChange,
 	readOnly = false,
 	rowHeight,
@@ -88,6 +87,9 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 				rowIndex: lastRowIndexInPage(current.length),
 			};
 		}
+		if (maxRows !== undefined && current.length >= maxRows) {
+			return null;
+		}
 		const row = createRow();
 		trackRowsAdd([row]);
 		const next = [...current, row];
@@ -100,9 +102,13 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 	};
 
 	const onRowsAdd = (count: number) => {
+		const current = dataRef.current;
+		if (maxRows !== undefined && current.length + count > maxRows) {
+			throw new Error(`This table can contain at most ${maxRows} rows.`);
+		}
 		const rows = Array.from({ length: count }, createRow);
 		trackRowsAdd(rows);
-		const next = [...dataRef.current, ...rows];
+		const next = [...current, ...rows];
 		onChange(next);
 		tableRef.current?.setPageIndex(lastPageIndex(next.length));
 	};
@@ -121,7 +127,10 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 		getRowId: (row) => row.id,
 		interactionBoundaryRef: wrapperRef,
 		onDataChange,
-		...(canAdd && !readOnly ? { onRowAdd, onRowsAdd } : {}),
+		...(canAdd && !readOnly ? { onRowsAdd } : {}),
+		...(canAdd && !readOnly && (maxRows === undefined || data.length < maxRows)
+			? { onRowAdd }
+			: {}),
 		...(readOnly ? {} : { onRowsDelete }),
 		readOnly,
 		...(rowHeight ? { rowHeight } : {}),
@@ -138,12 +147,12 @@ export function EditableRecordsGrid<TData extends { id: string }>({
 
 	return (
 		<div className="flex flex-col gap-3" onBlur={onBlur} ref={wrapperRef}>
-			<ButtonGroup aria-label="Table controls" className="self-end" connected>
-				<DataGridFilterMenu table={table} />
-				{showSortControl ? <DataGridSortMenu table={table} /> : null}
-				<DataGridRowHeightMenu table={table} />
-				<DataGridViewMenu table={table} />
-			</ButtonGroup>
+			<div className="self-end">
+				<DataGridTableControls
+					showSortControl={showSortControl}
+					table={table}
+				/>
+			</div>
 			<DataGridKeyboardShortcuts
 				features={{
 					enableSearch: Boolean(dataGridProps.searchState),

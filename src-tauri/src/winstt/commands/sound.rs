@@ -35,6 +35,10 @@ const ORIGINAL_DEFAULT_SOUND_RESOURCE: &str = "resources/recording_sound_default
 const ERROR_SOUND_RESOURCE: &str = "resources/error_sound.wav";
 const BUILTIN_SOUND_PREFIX: &str = "builtin:";
 const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &["marimba_start.wav"];
+const MAX_SOUND_DURATION_SECONDS: f64 = 3.0;
+const MAX_SOUND_DURATION_TOLERANCE_SECONDS: f64 = 0.05;
+const MAX_SOUND_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const SOUND_VALIDATION_DECODE_SECONDS: u32 = 4;
 
 /// Process-local monotonic counter, combined with the wall-clock nanos to form a
 /// collision-free library filename id (no `uuid` crate dependency — mirrors the
@@ -260,15 +264,8 @@ fn copy_sound_into_library(
     source_path: &Path,
     name: Option<&str>,
 ) -> Result<SoundLibraryEntry, String> {
-    let Some(ext) = sanitize_extension_path(source_path) else {
-        return Err("Only .wav and .mp3 files are accepted".into());
-    };
-    let metadata = source_path
-        .metadata()
-        .map_err(|_| "Source file not found".to_string())?;
-    if !metadata.is_file() {
-        return Err("Source path is not a file".into());
-    }
+    validate_sound_source(source_path)?;
+    let ext = sanitize_extension_path(source_path).expect("validated extension");
     let dir = library_dir(app)?;
     let id = next_sound_id();
     let dest = dir.join(format!("{id}{ext}"));
@@ -281,6 +278,39 @@ fn copy_sound_into_library(
     })
 }
 
+/// Server-side source validation shared by the native picker and drag/drop
+/// command. Client-side Web Audio validation is only early feedback; this is
+/// the authoritative duration/type/size boundary before a file is persisted.
+fn validate_sound_source(source_path: &Path) -> Result<(), String> {
+    let Some(ext) = sanitize_extension_path(source_path) else {
+        return Err("Only .wav and .mp3 files are accepted".into());
+    };
+    let metadata = source_path
+        .metadata()
+        .map_err(|_| "Source file not found".to_string())?;
+    if !metadata.is_file() {
+        return Err("Source path is not a file".into());
+    }
+    if metadata.len() > MAX_SOUND_FILE_BYTES {
+        return Err("Recording sound is too large".into());
+    }
+    let clip = crate::winstt::managers::transcode::decode_reference_clip(
+        source_path,
+        16_000,
+        SOUND_VALIDATION_DECODE_SECONDS,
+    )
+    .map_err(|error| format!("Recording sound is unreadable: {error}"))?;
+    if clip.trimmed
+        || clip.seconds() > MAX_SOUND_DURATION_SECONDS + MAX_SOUND_DURATION_TOLERANCE_SECONDS
+    {
+        return Err(format!(
+            "Recording sounds must be {MAX_SOUND_DURATION_SECONDS:.0} seconds or shorter"
+        ));
+    }
+    debug_assert!(ext == ".wav" || ext == ".mp3");
+    Ok(())
+}
+
 fn sound_add_success(entry: SoundLibraryEntry) -> SoundLibraryAddResult {
     SoundLibraryAddResult {
         ok: true,
@@ -289,21 +319,39 @@ fn sound_add_success(entry: SoundLibraryEntry) -> SoundLibraryAddResult {
     }
 }
 
-/// `sound_library_add` is retained for older renderer code but intentionally
-/// fails closed: renderer-supplied paths are not a trusted proof of user file
-/// selection. Use `sound_library_pick_and_add`, which owns the native picker.
+/// Add a picker/drag-drop path that Tauri granted to this webview's asset scope.
+/// Scope is checked before metadata/decode so this cannot probe arbitrary paths.
 #[tauri::command]
 #[specta::specta]
 pub fn sound_library_add(
-    _app: AppHandle,
+    app: AppHandle,
     webview: tauri::WebviewWindow,
-    _source_path: String,
-    _name: Option<String>,
+    source_path: String,
+    name: Option<String>,
 ) -> SoundLibraryAddResult {
     if let Err(err) = authorize_sound_library_operation(&webview, SoundLibraryOperation::Add) {
         return sound_add_failed(err);
     }
-    sound_add_failed("Recording sounds must be selected through the native picker")
+    let raw = source_path.trim();
+    if raw.is_empty() {
+        return sound_add_failed("No recording sound was selected");
+    }
+    let source = PathBuf::from(raw);
+    if sanitize_extension_path(&source).is_none() {
+        return sound_add_failed("Only .wav and .mp3 files are accepted");
+    }
+    let source = source.canonicalize().unwrap_or(source);
+    if !webview.asset_protocol_scope().is_allowed(&source) {
+        log::warn!(
+            "[sound] blocked recording sound outside the caller's file scope: {}",
+            source.display()
+        );
+        return sound_add_failed("That file is not accessible to this window");
+    }
+    match copy_sound_into_library(&app, &source, name.as_deref()) {
+        Ok(entry) => sound_add_success(entry),
+        Err(err) => sound_add_failed(err),
+    }
 }
 
 /// Open the native file picker in the backend, copy the selected .wav/.mp3 into
@@ -669,6 +717,36 @@ mod tests {
                 "context-playground",
             ],
             is_sound_library_operation_allowed,
+        );
+    }
+
+    fn write_test_wav(path: &Path, seconds: usize) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).expect("create wav");
+        for _ in 0..(16_000 * seconds) {
+            writer.write_sample(0_i16).expect("write sample");
+        }
+        writer.finalize().expect("finalize wav");
+    }
+
+    #[test]
+    fn sound_source_duration_is_validated_server_side() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let short = tmp.path().join("short.wav");
+        let long = tmp.path().join("long.wav");
+        write_test_wav(&short, 1);
+        write_test_wav(&long, 4);
+
+        assert!(validate_sound_source(&short).is_ok());
+        assert!(
+            validate_sound_source(&long)
+                .expect_err("long sound must be rejected")
+                .contains("3 seconds")
         );
     }
 }

@@ -13,6 +13,7 @@ export function DialogHeader({ t, tc, onClose }: DialogHeaderProps) {
 			closeLabel={tc("close")}
 			description={t("manageModelsDescription")}
 			onClose={onClose}
+			rail
 			title={t("manageModelsTitle")}
 		/>
 	);

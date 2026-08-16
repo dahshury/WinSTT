@@ -73,7 +73,32 @@ pub(super) fn apply_wakeword_runtime_settings(
         return;
     }
 
+    // A mode CHANGE is owned end-to-end by `recording_mode.rs`: it disarms at the
+    // teardown boundary and arms on its preparation worker, so the mode switcher
+    // can hold a spinner across the KWS session build instead of blocking the
+    // settings-save command on it. Arming from both handlers on the same patch
+    // would race for the wake-word microphone stream. Config-only edits made while
+    // ALREADY in wakeword mode (`Refresh`) still belong here.
+    if previous.general.recording_mode != next.general.recording_mode {
+        return;
+    }
+
     apply_wakeword_runtime_transition(app, wakeword_runtime_transition(Some(previous), next), next);
+}
+
+/// Arm entry point for the recording-mode preparation worker. Blocking: it builds
+/// the KWS session and opens the listening microphone stream, which is exactly the
+/// work the switcher's spinner is covering.
+pub(super) fn arm_wakeword_runtime_for_mode_change(app: &AppHandle, settings: &WinsttSettings) {
+    if crate::winstt::commands::onboarding::is_onboarding_active() {
+        return;
+    }
+    arm_wakeword_runtime(app, settings);
+}
+
+/// Disarm entry point for the recording-mode teardown boundary.
+pub(super) fn disarm_wakeword_runtime_for_mode_change(app: &AppHandle) {
+    disarm_wakeword_runtime(app);
 }
 
 pub(crate) fn sync_wakeword_runtime_from_settings(app: &AppHandle) {

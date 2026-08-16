@@ -1,14 +1,11 @@
 import { useEffect } from "react";
 import {
-	ArrowDownUp,
 	Check,
 	ChevronsUpDown,
 	GripVertical,
-	ListFilter,
 	Trash2,
 } from "@/shared/ui/data-grid/primitives/icons";
 
-export { Badge } from "@/shared/ui/data-grid/primitives/badge";
 export { Button } from "@/shared/ui/data-grid/primitives/button";
 export {
 	Command,
@@ -37,9 +34,8 @@ export {
 	SortableContent,
 	SortableItem,
 	SortableItemHandle,
-	SortableOverlay,
 } from "@/shared/ui/data-grid/primitives/sortable";
-export { ArrowDownUp, Check, ChevronsUpDown, GripVertical, ListFilter, Trash2 };
+export { Check, ChevronsUpDown, GripVertical, Trash2 };
 
 export const REMOVE_MENU_ITEM_SHORTCUTS = new Set(["backspace", "delete"]);
 
@@ -51,9 +47,14 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 	);
 }
 
+/**
+ * Ctrl/Cmd+Shift+`shortcutKey` fires `onTrigger`. The grid's controls are one
+ * popover now, so this reports the intent ("show me filters") and the caller
+ * decides whether that means opening at a view or closing again.
+ */
 export function useDataGridMenuShortcut(
 	shortcutKey: string,
-	setOpen: (value: (prev: boolean) => boolean) => void,
+	onTrigger: () => void,
 ): void {
 	useEffect(() => {
 		function onKeyDown(event: KeyboardEvent) {
@@ -67,11 +68,11 @@ export function useDataGridMenuShortcut(
 				event.shiftKey
 			) {
 				event.preventDefault();
-				setOpen((prev) => !prev);
+				onTrigger();
 			}
 		}
 
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [shortcutKey, setOpen]);
+	}, [shortcutKey, onTrigger]);
 }

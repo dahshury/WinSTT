@@ -380,11 +380,6 @@ export function formatProcessingDuration(ms: number): string | null {
 }
 
 /**
- * LLM generation speed as `"<n> tok/s"`. One decimal under 10 tok/s, whole
- * numbers above. Returns `null` for non-positive input so the caller drops the
- * chip (the provider reported no usable token count).
- */
-/**
  * Compact USD formatter for the history cost chips. Typical per-run cloud
  * costs are fractions of a cent, so sub-cent values keep four decimals
  * ($0.0002); larger values tighten progressively toward whole cents. Values

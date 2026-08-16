@@ -21,12 +21,20 @@
      literal. Neutral black/white shadow & highlight alphas are the only
      exception (they are not brand colors). */
   --brand-accent: oklch(62% 0.19 260); /* app --color-accent */
-  --brand-accent-hover: oklch(70% 0.155 255); /* app --color-accent-hover — also "accent text" on dark */
+  --brand-accent-hover: oklch(
+    70% 0.155 255
+  ); /* app --color-accent-hover — also "accent text" on dark */
   --brand-accent-soft: oklch(62% 0.19 260 / 0.08);
-  --brand-accent-glow: oklch(62% 0.19 260 / 0.12); /* aligned to app --color-accent-glow */
-  --brand-accent-fg: oklch(7.5% 0.015 265); /* dark text on a solid accent fill */
+  --brand-accent-glow: oklch(
+    62% 0.19 260 / 0.12
+  ); /* aligned to app --color-accent-glow */
+  --brand-accent-fg: oklch(
+    7.5% 0.015 265
+  ); /* dark text on a solid accent fill */
   --brand-teal: oklch(71% 0.13 245); /* app --color-teal */
-  --brand-teal-hover: oklch(77% 0.1 245); /* app --color-teal-hover — "teal text" on dark */
+  --brand-teal-hover: oklch(
+    77% 0.1 245
+  ); /* app --color-teal-hover — "teal text" on dark */
   --brand-success: oklch(68% 0.17 150); /* app --color-success */
   --brand-success-soft: oklch(68% 0.17 150 / 0.1);
   --brand-warning: oklch(80% 0.17 90); /* app --color-warning */
@@ -67,15 +75,26 @@
   --border: oklch(19% 0.015 260);
   --divider: oklch(94% 0.015 265 / 0.08);
 
-  /* Typography — fonttrio "startup" trio (heading / body / mono).
-     Mirrors `shadcn add @fonttrio/startup`, wired for this TanStack Start
-     site (CDN @font-face + CSS vars) rather than next/font. The fonts load
-     in __root.tsx; the Tailwind `--font-sans` / `--font-mono` theme vars are
-     repointed so utilities and prose pick up the trio too. */
-  --font-heading: "Nunito", system-ui, -apple-system, sans-serif;
-  --font-body: "Nunito Sans", system-ui, -apple-system, sans-serif;
-  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Typography — one grotesque (Inter) across UI and prose, one mono
+     (JetBrains Mono) for code, eyebrows and metrics. Loaded in __root.tsx.
+     Inter carries an optical-size axis, so display sizes tighten on their own;
+     we add the tracking corrections below. A single crisp face in the
+     technical register — headings earn hierarchy from size, weight and
+     tracking rather than from a second typeface. */
+  --font-heading: "Inter", system-ui, -apple-system, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-sans: var(--font-body);
+
+  /* Measure — prose caps at ~72ch so long-form docs stay readable in the
+     900px content column instead of running the full width. */
+  --docs-measure: 72ch;
+
+  /* Shared easing + radius scale so every docs surface agrees. */
+  --docs-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
 
   /* Fumadocs token overrides */
   --color-fd-background: var(--surface-0);
@@ -103,13 +122,6 @@
   background-color: var(--surface-nav);
 }
 
-#nd-sidebar [data-active="true"],
-.bg-fd-primary\/10.text-fd-primary {
-  background-color: var(--surface-3);
-  color: var(--color-fd-foreground);
-  box-shadow: inset 2px 0 0 0 var(--brand-accent);
-}
-
 :root {
   --fd-layout-width: 1400px;
 }
@@ -118,9 +130,15 @@ body {
   font-family: var(--font-body);
   background: var(--surface-0);
   color: var(--fg-strong);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Headings use the display face of the trio (Nunito) across the whole site. */
+/* ── Type system ────────────────────────────────────────────────────
+   One face (Inter) across the site. Hierarchy comes from size, weight
+   and tracking: display sizes tighten (negative tracking) so large text
+   doesn't read as loose, and the small uppercase labels open up. */
 h1,
 h2,
 h3,
@@ -128,16 +146,18 @@ h4,
 h5,
 h6 {
   font-family: var(--font-heading);
+  color: var(--fg-strong);
+  font-weight: 600;
+  letter-spacing: -0.017em;
+  text-wrap: balance;
 }
 
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  opacity: 0.02;
-  filter: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E#n");
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-feature-settings: "calt" 1;
 }
 
 ::-webkit-scrollbar {
@@ -167,30 +187,412 @@ button[aria-label="Toggle Theme"] {
   display: none !important;
 }
 
+/* The floating "expand" pill fumadocs shows when the sidebar is collapsed.
+   The sidebar here is pinned open (collapsible: false), so it is dead chrome. */
 [data-sidebar-panel] {
   display: none !important;
 }
 
 [data-sidebar-placeholder] {
-  --fd-sidebar-width: 268px !important;
+  --fd-sidebar-width: 272px !important;
 }
 
+/* ── Sidebar ────────────────────────────────────────────────────────
+   Reads as a quiet rail beside the page, not a second panel: the nav
+   sits on the page surface with a single hairline edge, section labels
+   are mono micro-caps, and only the active item carries weight. */
 #nd-sidebar {
   translate: none !important;
+  background: var(--surface-0);
+  border-inline-end: 1px solid var(--divider);
 }
 
-#nd-sidebar [data-state] + [data-state],
-#nd-sidebar a + [data-state],
-#nd-sidebar [data-state] + a,
-#nd-sidebar p + [data-state],
-#nd-sidebar p + a {
-  margin-top: 6px;
+#nd-sidebar a {
+  border-radius: var(--radius-sm);
+  padding-block: 5px;
+  font-size: 0.8425rem;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  color: var(--fg-secondary);
 }
 
+#nd-sidebar a:hover {
+  background: color-mix(in oklab, var(--fg-strong) 5%, transparent);
+  color: var(--fg-strong);
+}
+
+/* Active page — a flush accent rail plus a faint accent wash. Overrides
+   fumadocs' `bg-fd-primary/10 text-fd-primary` pairing, which tinted the
+   label itself and left it hard to read. */
+#nd-sidebar [data-active="true"],
+.bg-fd-primary\/10.text-fd-primary {
+  background: color-mix(in oklab, var(--brand-accent) 12%, transparent);
+  color: var(--fg-strong);
+  font-weight: 550;
+  box-shadow: inset 2px 0 0 0 var(--brand-accent);
+}
+
+/* Section headings ("Getting Started", "Core Workflows", …). */
 #nd-sidebar p {
-  margin-top: 16px !important;
-  padding-top: 12px;
+  margin-top: 22px !important;
+  margin-bottom: 4px !important;
+  padding-top: 0;
+  padding-inline: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.6675rem;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+#nd-sidebar p:first-child {
+  margin-top: 4px !important;
+}
+
+/* Sidebar footer (repo link). */
+#nd-sidebar > div:last-child {
   border-top: 1px solid var(--divider);
+}
+
+/* ── Table of contents ──────────────────────────────────────────────
+   A hairline rail with the active heading marked on it, so the reader's
+   position is legible at a glance instead of relying on text colour. */
+#nd-toc [role="none"],
+#nd-toc a {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+#nd-toc a {
+  border-inline-start: 1px solid var(--divider);
+  padding-inline-start: 14px;
+  color: var(--fg-muted);
+  transition:
+    color 0.15s var(--docs-ease),
+    border-color 0.15s var(--docs-ease);
+}
+
+#nd-toc a:hover {
+  color: var(--fg-secondary);
+  border-inline-start-color: var(--fg-dim);
+}
+
+#nd-toc a[data-active="true"] {
+  color: var(--fg-strong);
+  border-inline-start-color: var(--brand-accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Article typography
+   Fumadocs ships a generic prose preset; this replaces its rhythm with a
+   proper scale. Rules of the system:
+     · measure — running text caps at --docs-measure (~72ch); full-bleed
+       elements (media, tables, cards, code) opt out and use the column.
+     · rhythm — space belongs ABOVE a heading, not below it, so a heading
+       binds visually to the text it introduces.
+     · h2 opens a section with a hairline rule; h3+ are weight-only steps.
+   ════════════════════════════════════════════════════════════════════ */
+
+#nd-page {
+  --fd-tocnav-height: 0px;
+}
+
+/* Page header — title, description, and the actions row, closed by a rule
+   that separates the header from the article body. */
+.docs-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--divider);
+  margin-bottom: 0.25rem;
+}
+
+.docs-header-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+#nd-page > h1:first-of-type,
+.docs-title {
+  font-size: clamp(2rem, 1.55rem + 1.5vw, 2.6rem);
+  line-height: 1.1;
+  font-weight: 640;
+  letter-spacing: -0.03em;
+  margin-bottom: 0;
+}
+
+.docs-description {
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  color: var(--fg-secondary);
+  max-width: var(--docs-measure);
+  letter-spacing: -0.006em;
+  text-wrap: pretty;
+}
+
+.prose {
+  font-size: 0.975rem;
+  line-height: 1.72;
+  color: var(--fg);
+  letter-spacing: -0.003em;
+}
+
+/* Measure — applies to running text only. */
+.prose > p,
+.prose > ul,
+.prose > ol,
+.prose > blockquote {
+  max-width: var(--docs-measure);
+}
+
+.prose > p {
+  text-wrap: pretty;
+  margin-block: 1.05em;
+}
+
+/* ── Heading scale ──
+   Every rule is scoped away from `.not-prose`, because the component
+   library builds its own headings (`.bento-title` is an h3, `.step-title`
+   an h4, `.hero-title` an h1). Without the exclusion the article scale
+   won the cascade and resized every card and step title on the page. */
+.prose :is(h2, h3, h4, h5, h6):not(.not-prose *) {
+  color: var(--fg-strong);
+  scroll-margin-top: 5rem;
+}
+
+.prose h2:not(.not-prose *) {
+  font-size: 1.4375rem;
+  line-height: 1.25;
+  font-weight: 620;
+  letter-spacing: -0.022em;
+  margin-top: 3.25rem;
+  margin-bottom: 0.9rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--divider);
+}
+
+/* The first h2 on a page follows the header divider already — no second rule. */
+.prose > h2:first-child {
+  margin-top: 0.5rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.prose h3:not(.not-prose *) {
+  font-size: 1.125rem;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  margin-top: 2.25rem;
+  margin-bottom: 0.6rem;
+}
+
+.prose h4:not(.not-prose *) {
+  font-size: 1rem;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose :is(h5, h6):not(.not-prose *) {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-secondary);
+  margin-top: 1.6rem;
+  margin-bottom: 0.45rem;
+}
+
+/* ── Links ──
+   `[data-card]` is fumadocs' marker on heading self-links, which must stay
+   invisible. The component library renders inside `.not-prose`, so its text
+   slots are listed explicitly — otherwise links in callouts, steps and
+   setting rows lose every affordance and read as plain body copy. */
+.prose a:not([data-card]):not(.not-prose a),
+.callout-content a,
+.step-body a,
+.bento-body a,
+.setting-desc a,
+.legend-note a,
+.shot-cap a {
+  color: var(--brand-accent-hover);
+  text-decoration: none;
+  border-bottom: 1px solid
+    color-mix(in oklab, var(--brand-accent-hover) 35%, transparent);
+  transition:
+    color 0.15s var(--docs-ease),
+    border-color 0.15s var(--docs-ease);
+}
+
+.prose a:not([data-card]):not(.not-prose a):hover,
+.callout-content a:hover,
+.step-body a:hover,
+.bento-body a:hover,
+.setting-desc a:hover,
+.legend-note a:hover,
+.shot-cap a:hover {
+  color: var(--brand-teal-hover);
+  border-bottom-color: var(--brand-teal-hover);
+}
+
+/* Heading self-links inherit the heading, never the link treatment. */
+.prose :is(h1, h2, h3, h4, h5, h6) a[data-card] {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 0;
+}
+
+/* ── Lists ── */
+.prose ul,
+.prose ol {
+  margin-block: 1.05em;
+  padding-inline-start: 1.35em;
+}
+
+.prose li {
+  margin-block: 0.4em;
+  padding-inline-start: 0.2em;
+}
+
+.prose li::marker {
+  color: var(--fg-dim);
+}
+
+.prose ul > li::marker {
+  font-size: 0.9em;
+}
+
+.prose li > ul,
+.prose li > ol {
+  margin-block: 0.4em;
+}
+
+/* ── Inline code ──
+   Scoped the same way as links: prose gets it automatically, and the
+   component library opts in per text slot. Without the `.not-prose`
+   exclusion this rule also repainted the chips those components style
+   themselves (`.setting-key`, `.setting-default code`), stacking two
+   backgrounds and two borders on the same element. */
+.prose :not(pre) > code:not(.not-prose *),
+.callout-content code,
+.step-body code,
+.bento-body code,
+.setting-desc code,
+.legend-note code {
+  font-size: 0.855em;
+  font-weight: 450;
+  padding: 0.14em 0.38em;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  color: var(--fg-strong);
+  /* Long dotted setting keys must be able to break rather than push the
+     column into a horizontal scroll. */
+  overflow-wrap: break-word;
+}
+
+.prose a > code {
+  color: inherit;
+}
+
+/* ── Code blocks ──
+   Fumadocs wraps every block in `figure.shiki.not-prose`, and that figure
+   owns the frame (border, radius, card surface). The <pre> inside must stay
+   unframed — giving it its own border drew a second rounded rectangle a
+   pixel inside the first on every block on the page. */
+.prose figure.shiki {
+  border-radius: var(--radius-lg);
+  border-color: var(--border);
+  background: var(--surface-1);
+  box-shadow: none;
+  margin-block: 1.5rem;
+}
+
+.prose figure.shiki pre {
+  font-size: 0.8375rem;
+  line-height: 1.65;
+  padding: 0.95rem 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.prose pre code {
+  font-weight: 450;
+}
+
+/* Filename / language header strip above a block. */
+.prose figure.shiki figcaption {
+  font-family: var(--font-mono);
+  font-size: 0.7188rem;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* ── Blockquote ── */
+.prose blockquote {
+  margin-block: 1.4em;
+  padding: 0.1em 0 0.1em 1.1em;
+  border-inline-start: 2px solid
+    color-mix(in oklab, var(--brand-accent) 45%, transparent);
+  color: var(--fg-secondary);
+  font-style: normal;
+}
+
+/* ── Rules ── */
+.prose hr {
+  margin-block: 2.75rem;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+
+/* ── Tables ──
+   Plain Markdown tables only. <ModelTable> renders inside `.not-prose` and
+   owns its own scale, sticky header and numeric columns. */
+.prose table:not(.not-prose *) {
+  font-size: 0.875rem;
+  border-collapse: collapse;
+  width: 100%;
+  margin-block: 1.5rem;
+}
+
+.prose th:not(.not-prose *) {
+  text-align: start;
+  font-weight: 570;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.prose td:not(.not-prose *) {
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--divider);
+  vertical-align: top;
+}
+
+.prose tbody tr:last-child td:not(.not-prose *) {
+  border-bottom: 0;
+}
+
+/* Images sit on the column, framed like the <Screenshot> component. */
+.prose > img,
+.prose p > img {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  display: block;
 }
 
 /* ── Voice-bar animations ──
@@ -312,46 +714,26 @@ button[aria-label="Toggle Theme"] {
   }
 }
 
-/* ── Landing page feature cards ── */
+/* ── Landing page feature cards ──
+   Hover is a surface and border change only. The previous treatment layered
+   a gradient border, an outer accent bloom and an icon glow on every card,
+   which turned a grid of six into a wall of halos. */
 .feature-card {
   position: relative;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.feature-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 12px;
-  padding: 1px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in oklab, var(--brand-accent) 0%, transparent) 0%,
-    color-mix(in oklab, var(--brand-accent) 0%, transparent) 100%
-  );
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  transition: background 0.3s ease;
+  transition:
+    background 0.18s var(--docs-ease),
+    border-color 0.18s var(--docs-ease);
 }
 
 .feature-card:hover {
-  border-color: color-mix(in oklab, var(--brand-accent) 25%, transparent) !important;
-  box-shadow: 0 0 30px -10px color-mix(in oklab, var(--brand-accent) 18%, transparent);
-}
-
-.feature-card:hover::before {
-  background: linear-gradient(
-    135deg,
-    color-mix(in oklab, var(--brand-accent) 28%, transparent) 0%,
-    color-mix(in oklab, var(--brand-accent) 0%, transparent) 50%,
-    color-mix(in oklab, var(--brand-accent) 14%, transparent) 100%
-  );
+  border-color: color-mix(
+    in oklab,
+    var(--brand-accent) 38%,
+    var(--border)
+  ) !important;
+  background: var(--surface-2);
 }
 
 .feature-card:hover .feature-icon {
-  background: color-mix(in oklab, var(--brand-accent) 16%, transparent) !important;
-  box-shadow: 0 0 20px color-mix(in oklab, var(--brand-accent) 12%, transparent);
+  color: var(--brand-accent-hover);
 }

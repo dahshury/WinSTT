@@ -40,6 +40,10 @@ describe("model assistance policy", () => {
 		expect(getModelAssistance(model({ id: "crisper-whisper" }))).toEqual([
 			{ kind: "dictationCleanup", reason: "verbatim" },
 		]);
+		// The 2.0 turbo variant is verbatim too.
+		expect(getModelAssistance(model({ id: "crisper-whisper-turbo" }))).toEqual([
+			{ kind: "dictationCleanup", reason: "verbatim" },
+		]);
 	});
 
 	test("uses streaming cleanup for native streaming or streaming-id rows", () => {

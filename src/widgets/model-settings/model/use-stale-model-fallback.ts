@@ -1,13 +1,16 @@
 import { useLayoutEffect } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
+import { useConnectionStore } from "@/entities/connection";
 import {
 	DEFAULT_STT_MODEL_ID,
 	isSelectableRealtimeModel,
+	isSelectionCached,
 	isVisibleSttModel,
 	modelSupportsSelectedSourceLanguages,
 	modelsHaveLanguageOverlap,
 	pickCachedSttModel,
 	pickDefaultSttModel,
+	reconcileQuantForModel,
 	type CatalogModels,
 	type ModelStatesById as StatesById,
 	type SourceLanguageSelection,
@@ -46,23 +49,52 @@ function cloudFallbackPatch(
 }
 
 /**
+ * A main-slot fallback patch that keeps the ``{ model, onnxQuantization }``
+ * couple VALID. Moving the model alone can strand a precision the incoming
+ * model doesn't publish (`int8` carried onto `tiny`), which the backend rejects
+ * wholesale — dropping this patch AND every later save of the model section.
+ * Mirrors the adoption path in ``useSyncActiveModel``.
+ */
+function mainFallbackPatch(
+	nextModel: string,
+	currentQuant: string,
+	catalogModels: CatalogModels,
+): ModelPatch {
+	const quant = reconcileQuantForModel(nextModel, currentQuant, catalogModels);
+	return quant === null
+		? { model: nextModel }
+		: { model: nextModel, onnxQuantization: quant };
+}
+
+/**
  * Pure decision for the main slot: returns the ``{ model }`` patch to apply,
  * or ``null`` when no fallback is warranted. Extracted from the effect so the
  * reactive body is a flat "compute patch → maybe apply" and the guard chain
- * (cloud id / not-stale / no pick / same pick / unknown entry) is testable
- * without a render.
+ * (cloud id / loaded-at-runtime / not-stale / no pick / same pick / unknown
+ * entry) is testable without a render.
  */
 function resolveMainPatch(
 	currentMainModel: string | undefined,
+	currentQuant: string,
 	catalogModels: CatalogModels,
 	statesById: StatesById,
 	statesLoaded: boolean,
 	cloudFallbackModel: string | null,
+	runtimeModel: string | null,
 ): ModelPatch | null {
 	if (providerOf(currentMainModel ?? "") !== null) {
 		return null;
 	}
 	if (!statesLoaded) {
+		return null;
+	}
+	// NEVER fall back off the model the backend currently has LOADED. It is
+	// demonstrably usable whatever the cache snapshot claims, and rewriting it
+	// starts an infinite ping-pong with `useSyncActiveModel` — mounted in this
+	// same window — which re-adopts the runtime model on every settings change:
+	// fallback writes `tiny`, adoption writes the runtime model back, repeat
+	// until React aborts with "Maximum update depth exceeded".
+	if (runtimeModel !== null && runtimeModel === currentMainModel) {
 		return null;
 	}
 	if (catalogModels.length === 0) {
@@ -71,7 +103,7 @@ function resolveMainPatch(
 	const current = catalogModels.find((m) => m.id === currentMainModel);
 	const currentValid = current !== undefined && isVisibleSttModel(current);
 	const currentCached =
-		currentValid && statesById[current.id]?.cache.state === "cached";
+		currentValid && isSelectionCached(statesById[current.id], currentQuant);
 	if (currentCached) {
 		return null;
 	}
@@ -96,7 +128,7 @@ function resolveMainPatch(
 	if (next === currentMainModel) {
 		return null;
 	}
-	return { model: next };
+	return mainFallbackPatch(next, currentQuant, catalogModels);
 }
 
 /**
@@ -106,6 +138,7 @@ function resolveMainPatch(
 function resolveRealtimePatch(
 	currentRealtimeModel: string | undefined,
 	currentMainModel: string | undefined,
+	currentQuant: string,
 	catalogModels: CatalogModels,
 	statesById: StatesById,
 	statesLoaded: boolean,
@@ -138,6 +171,12 @@ function resolveRealtimePatch(
 						effectiveMain,
 					)),
 	);
+	// Cached-ness is judged at the SELECTED precision, not the model's flat
+	// `cache` (= the AUTO recommendation's state). A main model downloaded at
+	// the user's explicit `int8` but recommended at an uncached fp32 otherwise
+	// reads "not cached" here, so the slot skipped the auto-reuse branch and
+	// picked a different streaming model — which the panel's slot-lock effect
+	// immediately snapped back to main, looping until React gave up.
 	if (
 		effectiveMain !== null &&
 		isSelectableRealtimeModel(effectiveMain) &&
@@ -146,7 +185,7 @@ function resolveRealtimePatch(
 			sourceLanguageSelection,
 			effectiveMain,
 		) &&
-		statesById[effectiveMain.id]?.cache.state === "cached"
+		isSelectionCached(statesById[effectiveMain.id], currentQuant)
 	) {
 		return currentRealtimeModel === effectiveMain.id
 			? null
@@ -157,7 +196,7 @@ function resolveRealtimePatch(
 	);
 	const currentRealtimeCached =
 		currentRealtime !== undefined &&
-		statesById[currentRealtime.id]?.cache.state === "cached";
+		isSelectionCached(statesById[currentRealtime.id], currentQuant);
 	if (currentRealtimeCached) {
 		return null;
 	}
@@ -204,6 +243,11 @@ function resolveEffectiveMainModel(
  * as missing during the boot race. Also skips when the active model is a
  * cloud `provider:*` id — those are never in the local catalog by design and
  * should not trigger a fallback.
+ *
+ * `currentQuant` is the persisted `onnxQuantization`: "is my selection
+ * downloaded" must be asked of the precision the selection actually loads at,
+ * and any fallback that moves the model must carry a precision that model
+ * publishes.
  */
 export function useStaleModelFallback(
 	catalogLoaded: boolean,
@@ -212,19 +256,26 @@ export function useStaleModelFallback(
 	statesLoaded: boolean,
 	currentMainModel: string | undefined,
 	currentRealtimeModel: string | undefined,
+	currentQuant: string,
 	sourceLanguageSelection?: SourceLanguageSelection,
 	cloudFallbackModel: string | null = null,
 ): void {
+	// The model the backend reports as LOADED. Subscribed (not read via
+	// getState) so the main effect re-evaluates when it arrives.
+	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
+
 	useLayoutEffect(() => {
 		if (!catalogLoaded) {
 			return;
 		}
 		const patch = resolveMainPatch(
 			currentMainModel,
+			currentQuant,
 			catalogModels,
 			statesById,
 			statesLoaded,
 			cloudFallbackModel,
+			runtimeModel,
 		);
 		if (patch) {
 			applyResolvedPatch(patch);
@@ -235,7 +286,9 @@ export function useStaleModelFallback(
 		statesById,
 		statesLoaded,
 		currentMainModel,
+		currentQuant,
 		cloudFallbackModel,
+		runtimeModel,
 	]);
 
 	// Same guard for the realtime model, narrowed to native-streaming entries.
@@ -246,6 +299,7 @@ export function useStaleModelFallback(
 		const patch = resolveRealtimePatch(
 			currentRealtimeModel,
 			currentMainModel,
+			currentQuant,
 			catalogModels,
 			statesById,
 			statesLoaded,
@@ -261,6 +315,7 @@ export function useStaleModelFallback(
 		statesLoaded,
 		currentMainModel,
 		currentRealtimeModel,
+		currentQuant,
 		sourceLanguageSelection,
 	]);
 }

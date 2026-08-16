@@ -35,8 +35,9 @@ import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 // Held in constants so they aren't flagged as user-facing literal JSX text.
 const PLUS_GLYPH = "＋";
 const WRAP_GLYPH = "↻";
-const BACKSPACE_GLYPH = "⌫";
 const ESCAPE_LABEL = "Esc";
+const ALT_LABEL = "Alt";
+const S_LABEL = "S";
 
 const MODE_CYCLE_ORDER: readonly RecordingMode[] = [
 	"ptt",
@@ -225,13 +226,10 @@ export function HotkeyShortcutsLegend({
 	const recordingMode = useSettingsStore<RecordingMode>(
 		(s) => (s.settings.general?.recordingMode as RecordingMode) ?? "ptt",
 	);
-	const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
-	const ttsHotkey = useSettingsStore((s) => s.settings.tts?.hotkey ?? "");
 
 	const hotkeyParts = pushToTalkKey
 		? pushToTalkKey.split("+").filter(Boolean)
 		: [];
-	const ttsHotkeyParts = ttsHotkey ? ttsHotkey.split("+").filter(Boolean) : [];
 	const placeholder = t("shortcutsLegendUnsetShort");
 
 	return (
@@ -309,26 +307,25 @@ export function HotkeyShortcutsLegend({
 				{null}
 			</ShortcutRow>
 
-			{/* ── TTS STOP ROW ─────────────────────────────────────────────
-			    The Text-to-Speech hotkey is already configured above
-			    ("Text-to-speech key" — it reads the active selection), so we
-			    don't repeat a "read selection" row here. Held together with
-			    Backspace it stops playback. Shown only when TTS is enabled so the legend stays
-			    literal to what's actually armed. */}
-			{ttsEnabled ? (
-				<ShortcutRow
-					hint={t("shortcutTtsStop")}
-					prefix={
-						<HotkeyPrefix
-							keys={ttsHotkeyParts}
-							placeholder={placeholder}
-							secondKey={<Keycap>{BACKSPACE_GLYPH}</Keycap>}
-						/>
-					}
-				>
-					{null}
-				</ShortcutRow>
-			) : null}
+			{/* Alt+S is registered only while an LLM clean-up pass is active. It
+			    pastes the raw transcript and skips the remaining post-processing. */}
+			<ShortcutRow
+				hint={t("shortcutSkipPostProcessing")}
+				prefix={
+					<span className="inline-flex items-center gap-1">
+						<Keycap emphasized>{ALT_LABEL}</Keycap>
+						<span
+							aria-hidden
+							className="px-0.5 text-[10px] text-foreground-dim"
+						>
+							{PLUS_GLYPH}
+						</span>
+						<Keycap emphasized>{S_LABEL}</Keycap>
+					</span>
+				}
+			>
+				{null}
+			</ShortcutRow>
 		</section>
 	);
 }

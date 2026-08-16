@@ -1,9 +1,7 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { cn } from "@/shared/lib/cn";
 
-export interface SpinnerProps extends ComponentPropsWithoutRef<"output"> {
-	/** Optional explicit size; defaults to inherited via className */
-}
+export interface SpinnerProps extends ComponentPropsWithoutRef<"output"> {}
 
 export function Spinner({ className, ...rest }: SpinnerProps) {
 	return (

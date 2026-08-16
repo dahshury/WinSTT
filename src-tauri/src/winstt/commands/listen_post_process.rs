@@ -116,7 +116,8 @@ fn post_processing_ready(settings: &WinsttSettings) -> Result<(), String> {
     let base = &settings.llm.dictation.base;
     let ready = match base.provider {
         LlmProvider::Openrouter => !settings.llm.openrouter_api_key.trim().is_empty(),
-        LlmProvider::Ollama | LlmProvider::AppleIntelligence => !base.model.trim().is_empty(),
+        LlmProvider::AppleIntelligence => true,
+        LlmProvider::Ollama => !base.model.trim().is_empty(),
     };
     if ready {
         Ok(())
@@ -188,7 +189,8 @@ fn selected_post_process_model(settings: &WinsttSettings) -> String {
                 primary.to_string()
             }
         }
-        LlmProvider::AppleIntelligence | LlmProvider::Ollama => base.model.trim().to_string(),
+        LlmProvider::AppleIntelligence => "apple-intelligence".to_string(),
+        LlmProvider::Ollama => base.model.trim().to_string(),
     }
 }
 
@@ -330,5 +332,15 @@ mod tests {
         assert!(!single.contains("part"));
         let multi = chunk_user_prompt("Summarize.", 1, 3, "text");
         assert!(multi.contains("part 2 of 3"));
+    }
+
+    #[test]
+    fn apple_intelligence_is_ready_without_a_model_id() {
+        let mut settings = WinsttSettings::default();
+        settings.llm.dictation.enabled = true;
+        settings.llm.dictation.base.provider = LlmProvider::AppleIntelligence;
+
+        assert!(post_processing_ready(&settings).is_ok());
+        assert_eq!(selected_post_process_model(&settings), "apple-intelligence");
     }
 }

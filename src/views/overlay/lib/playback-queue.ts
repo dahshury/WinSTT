@@ -23,6 +23,17 @@ export interface ChunkInput {
 	pcm: ArrayBuffer;
 	requestId: string;
 	sampleRate: number;
+	/** 0-based index of the sentence (in the read's `tts:script`) this chunk
+	 *  renders. Several chunks may share one index. Defaults to `0` for callers
+	 *  with no script — voice previews, and the queue's own tests. */
+	sentenceIndex?: number;
+}
+
+/** Where one script sentence sits on the playback timeline, in media seconds. */
+export interface SentenceSpan {
+	end: number;
+	index: number;
+	start: number;
 }
 
 /**
@@ -158,8 +169,11 @@ function invokeCallbacks(callbacks: ReadonlyArray<() => void>): void {
 	for (const cb of callbacks) {
 		try {
 			cb();
-		} catch {
-			/* ignored */
+		} catch (error) {
+			// Isolation is deliberate, silence is not: a throwing listener is a bug
+			// in that listener, and swallowing it without a trace made those bugs
+			// invisible. Report it, then carry on with the remaining callbacks.
+			console.warn("[playback-queue] listener threw", error);
 		}
 	}
 }
@@ -206,7 +220,11 @@ export class TtsPlaybackQueue {
 	 *  scheduled, with its cumulative start offset (seconds) within the read. NOT
 	 *  pruned on `onended`, so {@link seek} can re-address already-played audio.
 	 *  Reset per request (`claimRequestId`) and on {@link stop}. */
-	private timeline: Array<{ buffer: AudioBuffer; offset: number }> = [];
+	private timeline: Array<{
+		buffer: AudioBuffer;
+		offset: number;
+		sentenceIndex: number;
+	}> = [];
 	/** Total buffered media seconds = sum of `timeline` durations. Grows while
 	 *  streaming; final once `markComplete` arrives. Also the furthest seekable
 	 *  point (we only retain fully-decoded buffers). */
@@ -361,6 +379,35 @@ export class TtsPlaybackQueue {
 	 *  fully-decoded buffers). */
 	getBufferedEnd(): number {
 		return this.bufferedDuration;
+	}
+
+	/**
+	 * Where each script sentence sits on the timeline so far, in media seconds —
+	 * the bridge between the `tts:script` text and the audio clock that drives the
+	 * island's word highlight.
+	 *
+	 * Derived from the timeline rather than tracked incrementally so it stays
+	 * correct no matter how many chunks an engine emits per sentence (the span is
+	 * the union of every buffer stamped with that index). Only sentences whose
+	 * audio has actually been decoded appear; the rest are still synthesizing.
+	 */
+	getSentenceSpans(): SentenceSpan[] {
+		const byIndex = new Map<number, SentenceSpan>();
+		for (const entry of this.timeline) {
+			const end = entry.offset + entry.buffer.duration;
+			const existing = byIndex.get(entry.sentenceIndex);
+			if (existing === undefined) {
+				byIndex.set(entry.sentenceIndex, {
+					index: entry.sentenceIndex,
+					start: entry.offset,
+					end,
+				});
+				continue;
+			}
+			existing.start = Math.min(existing.start, entry.offset);
+			existing.end = Math.max(existing.end, end);
+		}
+		return [...byIndex.values()].sort((a, b) => a.index - b.index);
 	}
 
 	/** True once the server signalled `tts_complete` for the active read. */
@@ -611,7 +658,7 @@ export class TtsPlaybackQueue {
 		if (chunk.format === "f32le") {
 			const buffer = decodeFloat32(ctx, chunk);
 			if (buffer != null) {
-				this.scheduleDecodedBuffer(ctx, buffer);
+				this.scheduleDecodedBuffer(ctx, buffer, chunk.sentenceIndex ?? 0);
 			}
 			return;
 		}
@@ -622,10 +669,18 @@ export class TtsPlaybackQueue {
 	 * Schedule an already-decoded buffer at the running playhead and wire its
 	 * end → maybeFinish. Shared by the raw-f32le and async-decode paths.
 	 */
-	private scheduleDecodedBuffer(ctx: AudioContext, buffer: AudioBuffer): void {
+	private scheduleDecodedBuffer(
+		ctx: AudioContext,
+		buffer: AudioBuffer,
+		sentenceIndex: number,
+	): void {
 		// Record on the timeline (with its cumulative offset) BEFORE scheduling so
 		// `seek` can re-address it and `getDuration` grows as audio arrives.
-		this.timeline.push({ buffer, offset: this.bufferedDuration });
+		this.timeline.push({
+			buffer,
+			offset: this.bufferedDuration,
+			sentenceIndex,
+		});
 		this.bufferedDuration += buffer.duration;
 		const source = this.scheduleSource(ctx, buffer);
 		this.maybeFireStart();
@@ -651,6 +706,7 @@ export class TtsPlaybackQueue {
 	 */
 	private enqueueEncoded(ctx: AudioContext, chunk: ChunkInput): void {
 		const { requestId } = chunk;
+		const sentenceIndex = chunk.sentenceIndex ?? 0;
 		this.pendingDecodes += 1;
 		// `decodeAudioData` detaches its input buffer — hand it a copy so the
 		// original ArrayBuffer (and any other reader) stays intact.
@@ -659,7 +715,7 @@ export class TtsPlaybackQueue {
 			.then((buffer) => {
 				// Drop if the request was cancelled / superseded while decoding.
 				if (this.activeRequestId === requestId) {
-					this.scheduleDecodedBuffer(ctx, buffer);
+					this.scheduleDecodedBuffer(ctx, buffer, sentenceIndex);
 				}
 			})
 			.catch(() => {

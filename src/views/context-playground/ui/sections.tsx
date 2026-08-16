@@ -54,8 +54,6 @@ export function EmptyHint({
 	);
 }
 
-// --- Raw snapshot -------------------------------------------------------
-
 export function RawSnapshot({
 	snapshot,
 	metrics,
@@ -81,8 +79,6 @@ export function RawSnapshot({
 		</Section>
 	);
 }
-
-// --- Deep mode comparison ----------------------------------------------
 
 export function ModesComparison({ modes }: { modes: ContextModeResult[] }) {
 	return (
@@ -144,8 +140,6 @@ function MiniField({
 		</div>
 	);
 }
-
-// --- Metrics ------------------------------------------------------------
 
 export function Metrics({ report }: { report: ContextDebugReport }) {
 	const m = report.metrics;

@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { DeviceTypeSchema } from "@/shared/api/schema.zod";
+import {
+	fitsRustShortText,
+	fitsRustText,
+	VOCABULARY_LIMITS,
+} from "../vocabulary-limits";
 
 const modelUnloadTimeoutSchema = z
 	.enum(["immediately", "never", "min2", "min5", "min10", "min15", "hour1"])
@@ -117,27 +122,80 @@ export const hotkeySettingsSchema = z.object({
 //    The LLM is also told about the pair in its prompt so it can apply the
 //    correction with context awareness; the post-pass is the safety net.
 export const dictionaryEntrySchema = z.object({
-	id: z.string().min(1),
-	term: z.string().min(1, "Required"),
+	id: z
+		.string()
+		.min(1)
+		.refine(
+			(value) => fitsRustShortText(value, VOCABULARY_LIMITS.idBytes),
+			`Must be at most ${VOCABULARY_LIMITS.idBytes} UTF-8 bytes and contain no control characters`,
+		),
+	term: z
+		.string()
+		.refine((value) => value.trim().length > 0, "Required")
+		.refine(
+			(value) => fitsRustShortText(value, VOCABULARY_LIMITS.termOrTriggerBytes),
+			`Must be at most ${VOCABULARY_LIMITS.termOrTriggerBytes} UTF-8 bytes and contain no control characters`,
+		),
 	// True only for entries inserted by the LLM dictionary tool. Manual and
 	// manually added entries omit the field and render as "Manual" in Settings.
 	autoAdded: z.boolean().optional(),
-	replacement: z.string().optional(),
+	replacement: z
+		.string()
+		.refine(
+			(value) => fitsRustText(value, VOCABULARY_LIMITS.replacementBytes),
+			`Must be at most ${VOCABULARY_LIMITS.replacementBytes} UTF-8 bytes and contain no NUL bytes`,
+		)
+		.optional(),
 });
 export type DictionaryEntry = z.infer<typeof dictionaryEntrySchema>;
 
 export const addDictionaryEntrySchema = z.object({
-	term: z.string().trim().min(1, "Required"),
-	replacement: z.string().trim().optional(),
+	term: z
+		.string()
+		.trim()
+		.min(1, "Required")
+		.refine((value) =>
+			fitsRustShortText(value, VOCABULARY_LIMITS.termOrTriggerBytes),
+		),
+	replacement: z
+		.string()
+		.trim()
+		.refine((value) => fitsRustText(value, VOCABULARY_LIMITS.replacementBytes))
+		.optional(),
 });
 
 export const snippetEntrySchema = z.object({
-	id: z.string().min(1),
-	trigger: z.string().min(1, "Required"),
-	expansion: z.string().min(1, "Required"),
+	id: z
+		.string()
+		.min(1)
+		.refine((value) => fitsRustShortText(value, VOCABULARY_LIMITS.idBytes)),
+	trigger: z
+		.string()
+		.refine((value) => value.trim().length > 0, "Required")
+		.refine((value) =>
+			fitsRustShortText(value, VOCABULARY_LIMITS.termOrTriggerBytes),
+		),
+	expansion: z
+		.string()
+		.refine((value) => value.trim().length > 0, "Required")
+		.refine((value) =>
+			fitsRustText(value, VOCABULARY_LIMITS.snippetExpansionBytes),
+		),
 });
 
 export const addSnippetEntrySchema = z.object({
-	trigger: z.string().trim().min(1, "Required"),
-	expansion: z.string().trim().min(1, "Required"),
+	trigger: z
+		.string()
+		.trim()
+		.min(1, "Required")
+		.refine((value) =>
+			fitsRustShortText(value, VOCABULARY_LIMITS.termOrTriggerBytes),
+		),
+	expansion: z
+		.string()
+		.trim()
+		.min(1, "Required")
+		.refine((value) =>
+			fitsRustText(value, VOCABULARY_LIMITS.snippetExpansionBytes),
+		),
 });

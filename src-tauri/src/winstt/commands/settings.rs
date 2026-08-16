@@ -49,10 +49,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::winstt::settings_schema::{
-    AudioSettings, CustomModifier, DictionaryEntry, GeneralSettings, GlobalSettings,
-    HotkeySettings, IntegrationsSettings, LiveTranscriptionDisplay, LlmFeatureBase, LlmSettings,
-    ModelSettings, PresetEntry, PresetKey, QualitySettings, SECRET_KEYS, SnippetEntry,
-    SoundLibraryEntry, Transform, TtsCloud, TtsSettings, WinsttSettings, is_secret,
+    AppProfileRule, AudioSettings, CustomModifier, DictionaryEntry, GeneralSettings,
+    GlobalSettings, HotkeySettings, IntegrationsSettings, LiveTranscriptionDisplay, LlmFeatureBase,
+    LlmSettings, ModelSettings, PresetEntry, PresetKey, QualitySettings, SECRET_KEYS, SnippetEntry,
+    SoundLibraryEntry, TtsCloud, TtsSettings, WinsttSettings, is_secret,
 };
 
 use self::recording_mode::apply_recording_mode_runtime_settings;
@@ -86,9 +86,9 @@ pub(crate) use self::wakeword::{
 // The settings READ path + on-disk service now lives in the core
 // `crate::winstt::settings_store` module (managers depend on it DOWNWARD). These
 // re-exports provide the route-layer surface and secret sentinels.
-pub(crate) use crate::winstt::settings_store::SECRET_PRESENT_SENTINEL;
 pub use crate::winstt::settings_store::WINSTT_SETTINGS_KEY;
 pub(crate) use crate::winstt::settings_store::read_settings_raw;
+pub(crate) use crate::winstt::settings_store::{SECRET_PRESENT_SENTINEL, is_masked_secret};
 pub use crate::winstt::settings_store::{
     init_settings_store, read_settings, recording_mode, seed_defaults, write_core_settings,
 };
@@ -200,9 +200,16 @@ pub fn winstt_get_settings_snapshot(app: AppHandle) -> SettingsSnapshot {
     settings_snapshot(&app)
 }
 
+// ASYNC on purpose. A plain `#[tauri::command]` body runs INLINE on the thread
+// that pumps the window event loop, and the save fan-out below blocks: it takes
+// the settings write lock, rewrites the store, and — when `general.recordingMode`
+// changes — finalizes the old mode's capture, which joins the loopback consumer
+// and then waits up to 5 s for the transcription coordinator to acknowledge.
+// On the event-loop thread that is a multi-second freeze of every window, which
+// is what made leaving listen mode look like a hang.
 #[tauri::command]
 #[specta::specta]
-pub fn winstt_patch_settings(
+pub async fn winstt_patch_settings(
     app: AppHandle,
     window: tauri::Window,
     request: RevisionedSettingsPatch,
@@ -213,7 +220,20 @@ pub fn winstt_patch_settings(
         "[settings] revisioned save from window '{}' base={base_revision} sections=[{sections}]",
         window.label(),
     );
-    match apply_settings_patch_inner(&app, request.settings, true, Some(base_revision)) {
+    let app_for_patch = app.clone();
+    let patch = request.settings;
+    let applied = tauri::async_runtime::spawn_blocking(move || {
+        apply_settings_patch_inner(
+            &app_for_patch,
+            patch,
+            true,
+            Some(base_revision),
+            PatchOrigin::Renderer,
+        )
+    })
+    .await
+    .map_err(|error| format!("settings save task panicked: {error}"))?;
+    match applied {
         Ok(applied) => Ok(SettingsPatchResponse {
             applied: true,
             snapshot: SettingsSnapshot {
@@ -272,9 +292,39 @@ fn patch_section_names(patch: &PartialWinsttSettings) -> Vec<&'static str> {
 
 /// Internal patch entry point for backend-owned settings mutations.
 pub fn apply_settings_patch(app: &AppHandle, patch: PartialWinsttSettings) -> Result<(), String> {
-    apply_settings_patch_inner(app, patch, true, None)
+    apply_settings_patch_inner(app, patch, true, None, PatchOrigin::Backend)
         .map(|_| ())
         .map_err(ApplyPatchError::into_string)
+}
+
+/// Replace every renderer-owned settings section from a trusted import/reset.
+/// Unlike an ordinary renderer patch, a replacement may intentionally restore
+/// several customized sections to their defaults in one operation.
+pub(crate) fn apply_settings_replacement(
+    app: &AppHandle,
+    settings: &WinsttSettings,
+) -> Result<SettingsSnapshot, String> {
+    let applied = apply_settings_patch_inner(
+        app,
+        full_tree_patch(settings),
+        true,
+        None,
+        PatchOrigin::TrustedReplacement,
+    )
+    .map_err(ApplyPatchError::into_string)?;
+    Ok(SettingsSnapshot {
+        revision: applied.revision,
+        settings: applied.snapshot,
+    })
+}
+
+/// Reset every renderer-owned settings section through the trusted replacement
+/// path. The command broadcasts the canonical snapshot exactly like a normal
+/// save, but cannot be mistaken for an unhydrated renderer dumping defaults.
+#[tauri::command]
+#[specta::specta]
+pub fn settings_reset_defaults(app: AppHandle) -> Result<SettingsSnapshot, String> {
+    apply_settings_replacement(&app, &WinsttSettings::default())
 }
 
 /// Persist and broadcast a settings patch whose STT model lifecycle is already owned by the
@@ -283,7 +333,7 @@ pub(super) fn apply_settings_patch_after_stt_switch(
     app: &AppHandle,
     patch: PartialWinsttSettings,
 ) -> Result<(), String> {
-    apply_settings_patch_inner(app, patch, false, None)
+    apply_settings_patch_inner(app, patch, false, None, PatchOrigin::Backend)
         .map(|_| ())
         .map_err(ApplyPatchError::into_string)
 }
@@ -297,6 +347,19 @@ struct AppliedPatch {
 enum ApplyPatchError {
     Conflict { expected: u64, actual: u64 },
     Other(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PatchOrigin {
+    /// A current-schema patch sent by a renderer window. Invalid requested
+    /// values are rejected; the acknowledgement must never claim they applied.
+    Renderer,
+    /// A narrow mutation produced by backend-owned code. Legacy values in the
+    /// same whole section may be salvaged so an unrelated update can proceed.
+    Backend,
+    /// A user-confirmed import/reset. Full-tree defaults are intentional here,
+    /// not the unhydrated-renderer wipe shape guarded on ordinary patches.
+    TrustedReplacement,
 }
 
 impl ApplyPatchError {
@@ -321,12 +384,9 @@ fn apply_settings_patch_inner(
     patch: PartialWinsttSettings,
     apply_stt_model_runtime: bool,
     expected_revision: Option<u64>,
+    origin: PatchOrigin,
 ) -> Result<AppliedPatch, ApplyPatchError> {
     let section_names = patch_section_names(&patch);
-    let changed_sections = section_names
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect::<Vec<_>>();
     // The full read→merge→seal→write span runs UNDER the process-wide settings write
     // lock so two concurrent section patches (e.g. the renderer's per-utterance
     // `{audio}` save racing the LLM learning thread's `{dictation}` append) can't both
@@ -335,7 +395,7 @@ fn apply_settings_patch_inner(
     // renderer broadcast run AFTER the lock is released — they call back into
     // `get_settings` / `read_settings`, so keeping them outside the guard avoids any
     // nested settings-lock acquisition (the lock is non-reentrant).
-    let (previous, next, changed, revision, _recording_mode_guard) =
+    let (previous, next, changed, revision, _recording_mode_guard, changed_sections) =
         with_settings_write_lock(|| {
             let actual_revision = settings_revision();
             if let Some(expected) = expected_revision
@@ -351,11 +411,16 @@ fn apply_settings_patch_inner(
             // the reference's `snapshotSettings`, which decrypts before diffing.
             let previous = try_read_settings(app).map_err(ApplyPatchError::Other)?;
 
+            if origin == PatchOrigin::Renderer {
+                reject_renderer_wholesale_reset(&previous, &patch)
+                    .map_err(ApplyPatchError::Other)?;
+            }
+
             // Merge the partial patch over the persisted full snapshot, section by section
             // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
             // overwrites its counterpart wholesale; absent sections keep the persisted
             // value; `general` preserves the main-owned `onboarded*` fields.
-            let mut next = merge_patch_over(&previous, patch);
+            let mut next = merge_patch_over_with_origin(&previous, patch, origin);
             preserve_masked_secrets(&previous, &mut next);
 
             // (a) cross-field validation (the Zod `.refine` equivalents) — scoped to
@@ -365,11 +430,24 @@ fn apply_settings_patch_inner(
             //     app versions — catalogs, allowlists, numeric ranges — and a save must
             //     never be permanently wedged by state an older version wrote); only a
             //     section that is still invalid after salvage rejects the patch.
-            salvage_invalid_sections(&mut next, &previous, &section_names)
-                .map_err(ApplyPatchError::Other)?;
+            if origin == PatchOrigin::Renderer {
+                validate_sections(&next, &section_names).map_err(ApplyPatchError::Other)?;
+            } else {
+                salvage_invalid_sections(&mut next, &previous, &section_names)
+                    .map_err(ApplyPatchError::Other)?;
+            }
+
+            let changed_sections = changed_section_names(&previous, &next);
 
             if next == previous {
-                return Ok((previous, next, false, actual_revision, None));
+                return Ok((
+                    previous,
+                    next,
+                    false,
+                    actual_revision,
+                    None,
+                    changed_sections,
+                ));
             }
 
             // (c) seal the secret fields at rest, then persist. Clone so runtime
@@ -389,6 +467,7 @@ fn apply_settings_patch_inner(
                 true,
                 settings_revision(),
                 recording_mode_guard,
+                changed_sections,
             ))
         })?;
     if !changed {
@@ -432,6 +511,12 @@ fn apply_settings_patch_inner(
     apply_history_retention_settings(app, &previous, &next);
     apply_audio_runtime_settings(app, &previous, &next);
     apply_autostart_setting(app, &previous, &next);
+    if previous.general.overlay_mode != next.general.overlay_mode
+        || previous.general.overlay_position != next.general.overlay_position
+        || previous.general.show_recording_overlay != next.general.show_recording_overlay
+    {
+        crate::winstt::commands::overlay::reposition_overlay_if_visible(app);
+    }
     crate::tray::set_tray_visualizer_style_from_general(&next.general);
     if let Some(realtime) =
         app.try_state::<std::sync::Arc<crate::winstt::managers::RealtimeManager>>()
@@ -520,14 +605,23 @@ pub fn effective_realtime_with_focus(settings: &WinsttSettings, app_focused: boo
 /// OVERWRITES wholesale; a `None` section keeps the persisted value. For `general`,
 /// the main-owned `onboarded*` fields are restored from the persisted copy so a
 /// renderer round-trip can't revert them. Mirrors the reference's `applySettings`.
+#[cfg(test)]
 fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> WinsttSettings {
+    merge_patch_over_with_origin(current, patch, PatchOrigin::Backend)
+}
+
+fn merge_patch_over_with_origin(
+    current: &WinsttSettings,
+    patch: PartialWinsttSettings,
+    origin: PatchOrigin,
+) -> WinsttSettings {
     // The wholesale-reset guard (`accept_section`) only arms for FULL-TREE
     // patches: a diff-based renderer save posts a SUBSET of sections, and a
     // single section landing on exact defaults there is a legitimate edit
     // (e.g. toggling the one customized `llm` field back off). A patch posting
     // EVERY section is the "whole store dumped" shape — the only producer of
     // that with defaulted sections is an unhydrated/empty-cache window.
-    let full_tree = patch_is_full_tree(&patch);
+    let full_tree = patch_is_full_tree(&patch) && origin != PatchOrigin::TrustedReplacement;
     let mut next = current.clone();
     if let Some(global) = accept_section("global", &current.global, patch.global, full_tree) {
         next.global = global;
@@ -547,10 +641,16 @@ fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> W
     if let Some(hotkey) = accept_section("hotkey", &current.hotkey, patch.hotkey, full_tree) {
         next.hotkey = hotkey;
     }
-    if let Some(dictionary) = patch.dictionary {
+    if let Some(dictionary) = accept_section(
+        "dictionary",
+        &current.dictionary,
+        patch.dictionary,
+        full_tree,
+    ) {
         next.dictionary = dictionary;
     }
-    if let Some(snippets) = patch.snippets {
+    if let Some(snippets) = accept_section("snippets", &current.snippets, patch.snippets, full_tree)
+    {
         next.snippets = snippets;
     }
     if let Some(llm) = accept_section("llm", &current.llm, patch.llm, full_tree) {
@@ -559,12 +659,132 @@ fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> W
     if let Some(tts) = accept_section("tts", &current.tts, patch.tts, full_tree) {
         next.tts = tts;
     }
-    if let Some(integrations) = patch.integrations {
+    if let Some(integrations) = accept_section(
+        "integrations",
+        &current.integrations,
+        patch.integrations,
+        full_tree,
+    ) {
         next.integrations = integrations;
     }
     normalize_cross_field_settings(&mut next);
-    heal_model_quantization(&mut next);
+    if origin != PatchOrigin::Renderer {
+        heal_model_quantization(&mut next);
+    }
     next
+}
+
+fn full_tree_patch(settings: &WinsttSettings) -> PartialWinsttSettings {
+    PartialWinsttSettings {
+        global: Some(settings.global),
+        model: Some(settings.model.clone()),
+        quality: Some(settings.quality.clone()),
+        audio: Some(settings.audio.clone()),
+        general: Some(settings.general.clone()),
+        hotkey: Some(settings.hotkey.clone()),
+        dictionary: Some(settings.dictionary.clone()),
+        snippets: Some(settings.snippets.clone()),
+        llm: Some(settings.llm.clone()),
+        tts: Some(settings.tts.clone()),
+        integrations: Some(settings.integrations.clone()),
+    }
+}
+
+/// Sections that actually differ after merge, normalization, validation, and
+/// secret preservation. This is the only truthful value for acknowledgements
+/// and cross-window broadcasts: posted keys can be unchanged, and one posted
+/// section can canonically change a sibling through a cross-field invariant.
+fn changed_section_names(previous: &WinsttSettings, next: &WinsttSettings) -> Vec<String> {
+    [
+        ("global", previous.global != next.global),
+        ("model", previous.model != next.model),
+        ("quality", previous.quality != next.quality),
+        ("audio", previous.audio != next.audio),
+        ("general", previous.general != next.general),
+        ("hotkey", previous.hotkey != next.hotkey),
+        ("dictionary", previous.dictionary != next.dictionary),
+        ("snippets", previous.snippets != next.snippets),
+        ("llm", previous.llm != next.llm),
+        ("tts", previous.tts != next.tts),
+        ("integrations", previous.integrations != next.integrations),
+    ]
+    .into_iter()
+    .filter(|(_, changed)| *changed)
+    .map(|(name, _)| name.to_string())
+    .collect()
+}
+
+fn resets_customized_section<T: Default + PartialEq>(current: &T, incoming: Option<&T>) -> bool {
+    incoming.is_some_and(|value| *value == T::default() && *current != T::default())
+}
+
+/// A renderer full-tree defaults dump is the known unhydrated-cache corruption
+/// shape. Reject the command explicitly so its Result cannot claim `applied`
+/// after silently retaining persisted values. Confirmed reset/import actions
+/// use [`PatchOrigin::TrustedReplacement`] and never pass through this guard.
+fn reject_renderer_wholesale_reset(
+    current: &WinsttSettings,
+    patch: &PartialWinsttSettings,
+) -> Result<(), String> {
+    if !patch_is_full_tree(patch) {
+        return Ok(());
+    }
+    let rejected = [
+        (
+            "global",
+            resets_customized_section(&current.global, patch.global.as_ref()),
+        ),
+        (
+            "model",
+            resets_customized_section(&current.model, patch.model.as_ref()),
+        ),
+        (
+            "quality",
+            resets_customized_section(&current.quality, patch.quality.as_ref()),
+        ),
+        (
+            "audio",
+            resets_customized_section(&current.audio, patch.audio.as_ref()),
+        ),
+        (
+            "general",
+            resets_customized_section(&current.general, patch.general.as_ref()),
+        ),
+        (
+            "hotkey",
+            resets_customized_section(&current.hotkey, patch.hotkey.as_ref()),
+        ),
+        (
+            "dictionary",
+            resets_customized_section(&current.dictionary, patch.dictionary.as_ref()),
+        ),
+        (
+            "snippets",
+            resets_customized_section(&current.snippets, patch.snippets.as_ref()),
+        ),
+        (
+            "llm",
+            resets_customized_section(&current.llm, patch.llm.as_ref()),
+        ),
+        (
+            "tts",
+            resets_customized_section(&current.tts, patch.tts.as_ref()),
+        ),
+        (
+            "integrations",
+            resets_customized_section(&current.integrations, patch.integrations.as_ref()),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, reset)| reset.then_some(name))
+    .collect::<Vec<_>>();
+    if rejected.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "rejected full-tree settings patch that would reset customized section(s): {}; use the confirmed reset/import command",
+        rejected.join(", ")
+    ))
 }
 
 /// HEAL an unusable `{model.model, model.onnxQuantization}` couple instead of
@@ -867,7 +1087,7 @@ const MAX_SNIPPET_EXPANSION_LEN: usize = 16 * 1024;
 const MAX_DICTIONARY_ENTRIES: usize = 2_000;
 const MAX_SNIPPETS: usize = 1_000;
 const MAX_CUSTOM_MODIFIERS: usize = 128;
-const MAX_TRANSFORMS: usize = 128;
+const MAX_APP_PROFILES: usize = 128;
 const MAX_PRESETS: usize = 10;
 const MAX_SOUND_LIBRARY_ENTRIES: usize = 50;
 const MAX_CONTEXT_LIST_ENTRIES: usize = 256;
@@ -987,8 +1207,8 @@ fn validate_audio_settings(audio: &AudioSettings) -> Result<(), String> {
         (
             "audio.postSpeechSilenceDuration",
             audio.post_speech_silence_duration,
-            0.0,
-            30.0,
+            0.1,
+            10.0,
         ),
         (
             "audio.minGapBetweenRecordings",
@@ -1223,20 +1443,46 @@ fn validate_llm_settings(llm: &LlmSettings) -> Result<(), String> {
     )?;
     validate_i64_range("llm.timeout", llm.timeout, 1_000, 30_000)?;
     validate_hotkey("llm.profileSwapHotkey", &llm.profile_swap_hotkey, true)?;
+    validate_model_id("llm.localModel", &llm.local_model, false)?;
     validate_llm_feature_base("llm.dictation", &llm.dictation.base)?;
+    validate_short_text(
+        "llm.dictation.configurationId",
+        &llm.dictation.configuration_id,
+        MAX_ID_LEN,
+        false,
+    )?;
     validate_presets_len("llm.dictation.presets", &llm.dictation.presets)?;
     validate_custom_modifiers(
         "llm.dictation.customModifiers",
         &llm.dictation.custom_modifiers,
     )?;
+    validate_llm_feature_base("llm.readAloud", &llm.read_aloud.base)?;
+    validate_short_text(
+        "llm.readAloud.configurationId",
+        &llm.read_aloud.configuration_id,
+        MAX_ID_LEN,
+        false,
+    )?;
+    validate_presets_len("llm.readAloud.presets", &llm.read_aloud.presets)?;
+    validate_presets(&llm.read_aloud.presets)?;
+    validate_custom_modifiers(
+        "llm.readAloud.customModifiers",
+        &llm.read_aloud.custom_modifiers,
+    )?;
     validate_llm_feature_base("llm.transforms", &llm.transforms.base)?;
+    validate_short_text(
+        "llm.transforms.configurationId",
+        &llm.transforms.configuration_id,
+        MAX_ID_LEN,
+        false,
+    )?;
     validate_presets_len("llm.transforms.presets", &llm.transforms.presets)?;
     validate_custom_modifiers(
         "llm.transforms.customModifiers",
         &llm.transforms.custom_modifiers,
     )?;
     validate_hotkey("llm.transforms.hotkey", &llm.transforms.hotkey, true)?;
-    validate_transforms(&llm.transforms.prompts)?;
+    validate_app_profiles(&llm.app_profiles.rules)?;
     Ok(())
 }
 
@@ -1265,9 +1511,13 @@ fn validate_llm_feature_base(path: &str, base: &LlmFeatureBase) -> Result<(), St
 
 fn validate_custom_modifiers(path: &str, items: &[CustomModifier]) -> Result<(), String> {
     validate_collection_len(path, items.len(), MAX_CUSTOM_MODIFIERS)?;
+    let mut ids = std::collections::HashSet::new();
     for (index, modifier) in items.iter().enumerate() {
         let base = format!("{path}[{index}]");
         validate_short_text(&format!("{base}.id"), &modifier.id, MAX_ID_LEN, true)?;
+        if !ids.insert(modifier.id.as_str()) {
+            return Err(format!("{path}: duplicate modifier id `{}`", modifier.id));
+        }
         validate_short_text(
             &format!("{base}.name"),
             &modifier.name,
@@ -1287,19 +1537,53 @@ fn validate_custom_modifiers(path: &str, items: &[CustomModifier]) -> Result<(),
     Ok(())
 }
 
-fn validate_transforms(transforms: &[Transform]) -> Result<(), String> {
-    validate_collection_len("llm.transforms.prompts", transforms.len(), MAX_TRANSFORMS)?;
-    for (index, transform) in transforms.iter().enumerate() {
-        let base = format!("llm.transforms.prompts[{index}]");
-        validate_short_text(&format!("{base}.id"), &transform.id, MAX_ID_LEN, true)?;
+fn validate_app_profiles(rules: &[AppProfileRule]) -> Result<(), String> {
+    validate_collection_len("llm.appProfiles.rules", rules.len(), MAX_APP_PROFILES)?;
+    let mut ids = std::collections::HashSet::new();
+    for (index, rule) in rules.iter().enumerate() {
+        let path = format!("llm.appProfiles.rules[{index}]");
+        validate_short_text(&format!("{path}.id"), &rule.id, MAX_ID_LEN, true)?;
+        if !ids.insert(rule.id.as_str()) {
+            return Err(format!(
+                "llm.appProfiles.rules: duplicate rule id `{}`",
+                rule.id
+            ));
+        }
         validate_short_text(
-            &format!("{base}.name"),
-            &transform.name,
+            &format!("{path}.appExe"),
+            &rule.app_exe,
             MAX_SHORT_TEXT_LEN,
             false,
         )?;
-        validate_text(&format!("{base}.prompt"), &transform.prompt, MAX_PROMPT_LEN)?;
-        validate_hotkey(&format!("{base}.hotkey"), &transform.hotkey, false)?;
+        validate_text(
+            &format!("{path}.titlePattern"),
+            &rule.title_pattern,
+            MAX_SHORT_TEXT_LEN,
+        )?;
+        validate_text(
+            &format!("{path}.urlPattern"),
+            &rule.url_pattern,
+            MAX_ENDPOINT_LEN,
+        )?;
+        validate_short_text(
+            &format!("{path}.configurationId"),
+            &rule.configuration_id,
+            MAX_ID_LEN,
+            false,
+        )?;
+        validate_short_text(
+            &format!("{path}.configurationName"),
+            &rule.configuration_name,
+            MAX_SHORT_TEXT_LEN,
+            false,
+        )?;
+        validate_llm_feature_base(&format!("{path}.config"), &rule.config.base)?;
+        validate_presets_len(&format!("{path}.config.presets"), &rule.config.presets)?;
+        validate_presets(&rule.config.presets)?;
+        validate_custom_modifiers(
+            &format!("{path}.config.customModifiers"),
+            &rule.config.custom_modifiers,
+        )?;
     }
     Ok(())
 }
@@ -1314,7 +1598,9 @@ fn validate_tts_settings(tts: &TtsSettings) -> Result<(), String> {
     validate_model_id("tts.model", &tts.model, true)?;
     validate_short_text("tts.voice", &tts.voice, MAX_MODEL_ID_LEN, true)?;
     validate_short_text("tts.lang", &tts.lang, MAX_LANGUAGE_LEN, true)?;
-    validate_finite_range("tts.speed", tts.speed, 0.5, 2.0)?;
+    // Supertonic supports 0.4x; all other local engines clamp to their own
+    // narrower floor at synthesis time.
+    validate_finite_range("tts.speed", tts.speed, 0.4, 2.0)?;
     validate_hotkey("tts.hotkey", &tts.hotkey, true)?;
     validate_tts_cloud(&tts.cloud)?;
     Ok(())
@@ -1529,6 +1815,13 @@ fn validate_hotkey(path: &str, value: &str, required: bool) -> Result<(), String
         }
         seen.push(normalized);
     }
+    let binding_id = if path == "hotkey.pushToTalkKey" {
+        "transcribe"
+    } else {
+        "settingsHotkey"
+    };
+    crate::shortcut::validate_binding_for_active_backend(binding_id, value)
+        .map_err(|error| format!("{path} is not a usable global shortcut: {error}"))?;
     Ok(())
 }
 
@@ -1811,6 +2104,47 @@ mod tests {
     #[test]
     fn validates_default_settings() {
         assert!(validate_settings(&WinsttSettings::default()).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_read_aloud_presets() {
+        let mut settings = WinsttSettings::default();
+        settings.llm.read_aloud.presets = vec![p(PresetKey::Neutral), p(PresetKey::Formal)];
+        assert_validation_error(settings, "one tone preset");
+    }
+
+    #[test]
+    fn rejects_invalid_app_profile_snapshot() {
+        let mut settings = WinsttSettings::default();
+        let mut rule = AppProfileRule {
+            id: "editor".into(),
+            ..Default::default()
+        };
+        rule.config.base.max_output_tokens = Some(MAX_OUTPUT_TOKENS + 1);
+        settings.llm.app_profiles.rules.push(rule);
+        assert_validation_error(settings, "appProfiles.rules[0].config.maxOutputTokens");
+    }
+
+    #[test]
+    fn rejects_duplicate_app_profile_ids() {
+        let mut settings = WinsttSettings::default();
+        let rule = AppProfileRule {
+            id: "editor".into(),
+            ..Default::default()
+        };
+        settings.llm.app_profiles.rules = vec![rule.clone(), rule];
+        assert_validation_error(settings, "duplicate rule id");
+    }
+
+    #[test]
+    fn accepts_supertonic_minimum_speed() {
+        let mut settings = WinsttSettings::default();
+        settings.tts.model = "supertonic-3".into();
+        settings.tts.speed = 0.4;
+        assert!(validate_settings(&settings).is_ok());
+
+        settings.tts.speed = 0.39;
+        assert_validation_error(settings, "tts.speed");
     }
 
     #[test]
@@ -2260,6 +2594,81 @@ mod tests {
 
         assert_eq!(next.model.model, "nemo-canary-180m-flash");
         assert_eq!(next.general.wake_word, "terminator");
+    }
+
+    #[test]
+    fn renderer_full_tree_defaults_dump_returns_an_explicit_error() {
+        let mut current = WinsttSettings::default();
+        current.model.model = "nemo-canary-180m-flash".into();
+        current.dictionary.push(DictionaryEntry {
+            id: "term-1".into(),
+            term: "WinSTT".into(),
+            auto_added: None,
+            replacement: None,
+        });
+        let patch = full_tree_patch(&WinsttSettings::default());
+
+        let error = reject_renderer_wholesale_reset(&current, &patch)
+            .expect_err("unhydrated full defaults dump must be rejected");
+
+        assert!(error.contains("model"));
+        assert!(error.contains("dictionary"));
+    }
+
+    #[test]
+    fn trusted_replacement_can_restore_every_section_to_defaults() {
+        let mut current = WinsttSettings::default();
+        current.model.model = "nemo-canary-180m-flash".into();
+        current.general.wake_word = "terminator".into();
+        current.dictionary.push(DictionaryEntry {
+            id: "term-1".into(),
+            term: "WinSTT".into(),
+            auto_added: None,
+            replacement: None,
+        });
+
+        let next = merge_patch_over_with_origin(
+            &current,
+            full_tree_patch(&WinsttSettings::default()),
+            PatchOrigin::TrustedReplacement,
+        );
+
+        assert_eq!(next.model, WinsttSettings::default().model);
+        assert_eq!(
+            next.general.wake_word,
+            WinsttSettings::default().general.wake_word
+        );
+        assert!(next.dictionary.is_empty());
+    }
+
+    #[test]
+    fn renderer_invalid_value_is_rejected_instead_of_healed() {
+        let current = WinsttSettings::default();
+        let mut model = serde_json::to_value(&current.model).unwrap();
+        model["onnxQuantization"] = serde_json::json!("not-a-quantization");
+        let patch = patch_from_json(serde_json::json!({ "model": model }));
+
+        let next = merge_patch_over_with_origin(&current, patch, PatchOrigin::Renderer);
+        let error = validate_sections(&next, &["model"])
+            .expect_err("current-schema renderer input must be rejected");
+
+        assert!(error.contains("unknown model.onnxQuantization"));
+        assert_eq!(next.model.onnx_quantization, "not-a-quantization");
+    }
+
+    #[test]
+    fn changed_sections_report_the_canonical_before_after_diff() {
+        let mut previous = WinsttSettings::default();
+        previous.llm.dictation.enabled = true;
+        let mut next = previous.clone();
+        next.general.word_by_word_pasting = true;
+        normalize_cross_field_settings(&mut next);
+
+        assert_eq!(
+            changed_section_names(&previous, &next),
+            vec!["general".to_string(), "llm".to_string()]
+        );
+        assert!(changed_section_names(&next, &next).is_empty());
     }
 
     #[test]

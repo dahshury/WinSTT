@@ -24,6 +24,7 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { FavoritesGroupLabel } from "@/shared/ui/model-picker/core/model-card/FavoritesGroupLabel";
 import { GROUP_HEADER_CLASSES } from "@/shared/ui/model-picker/core/model-card/card-constants";
 import { MakerLogo } from "@/shared/ui/model-picker/ui/MakerLogo";
+import type { QuantDownloadCallbacks } from "@/shared/ui/model-picker/core/model-card/QuantShelf";
 import { publicAsset } from "@/shared/lib/public-asset";
 import {
 	bundleVariants,
@@ -35,32 +36,18 @@ import {
 	type SttListGroup,
 } from "../lib/family-helpers";
 import { STT_SORT_HEADER_LABEL, type SttSortKey } from "../lib/sort-state";
-import {
-	type QuantDownloadAction,
-	type QuantDownloadSnapshot,
-	SttModelCard,
-} from "./SttModelCard";
+import { SttModelCard } from "./SttModelCard";
 import { SttVariantBundle } from "./SttVariantBundle";
 
-export interface SttModelListProps {
+export interface SttModelListProps
+	extends QuantDownloadCallbacks<OnnxQuantization> {
+	compact?: boolean;
 	currentQuantization: OnnxQuantization;
 	/** Bundle base ids the user has currently expanded — owned by the selector. */
 	expandedBundles: ReadonlySet<string>;
-	/** Forwarded all the way down to ``PrecisionGroup``. */
-	getDownloadSnapshot?:
-		| ((
-				modelId: string,
-				quantization: OnnxQuantization,
-		  ) => QuantDownloadSnapshot | undefined)
-		| undefined;
 	/** Optional live RAM/VRAM fit assessment lookup per model row. */
 	getFitAssessment?:
 		| ((modelId: string) => FitAssessmentEntry | null)
-		| undefined;
-	/** Per-quant Suggested gating (only while the flag is ON): the fitting
-	 *  quant set per BACKING model id, `null` = no verdict for that model. */
-	getFittingQuants?:
-		| ((modelId: string) => ReadonlySet<string> | null)
 		| undefined;
 	hasActiveFilters: boolean;
 	/** Whether a text query is active. Base UI's `Combobox.Empty` only renders
@@ -76,27 +63,6 @@ export interface SttModelListProps {
 	suggestedHiddenCount?: number | undefined;
 	/** Whether a model id is starred — forwarded to every card's favorite toggle. */
 	isFavorite: (modelId: string) => boolean;
-	/** Forwarded all the way down to ``PrecisionGroup``. */
-	onDownloadAction?:
-		| ((
-				action: QuantDownloadAction,
-				modelId: string,
-				quantization: OnnxQuantization,
-		  ) => void)
-		| undefined;
-	/** Forwarded down to the per-quant trash icon in each ``SttModelCard``. */
-	onRequestDeleteQuant?:
-		| ((
-				modelId: string,
-				quantization: OnnxQuantization,
-				displayName: string,
-				quantLabel: string,
-		  ) => void)
-		| undefined;
-	/** Optional per-quant delete guard. */
-	canDeleteQuant?:
-		| ((modelId: string, quantization: OnnxQuantization) => boolean)
-		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	/** Toggle handler for the variant-bundle chevron. */
 	onToggleExpanded: (baseId: string) => void;
@@ -113,12 +79,18 @@ export interface SttModelListProps {
 	visibleModelCount: number;
 }
 
-function AuthorLabel({ family }: { family: FamilyKey }) {
+function AuthorLabel({
+	family,
+	compact = false,
+}: {
+	family: FamilyKey;
+	compact?: boolean;
+}) {
 	const config = getFamilyConfig(family);
 	const author = getAuthorLabel(family);
 	return (
 		<Combobox.GroupLabel
-			className={GROUP_HEADER_CLASSES}
+			className={cn(GROUP_HEADER_CLASSES, compact ? "h-7" : "h-8")}
 			data-rail-section={family}
 		>
 			<MakerLogo
@@ -152,6 +124,7 @@ interface FavoritesGroupProps {
 	selectedId: string | undefined;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
+	compact?: boolean;
 }
 
 /**
@@ -177,12 +150,14 @@ function FavoritesGroup({
 	selectedId,
 	statesById,
 	systemInfo,
+	compact = false,
 }: FavoritesGroupProps) {
 	return (
 		<Combobox.Group className="flex flex-col" items={items}>
-			<FavoritesGroupLabel count={items.length} />
+			<FavoritesGroupLabel count={items.length} compact={compact} />
 			{items.map((model) => (
 				<SttModelCard
+					compact={compact}
 					currentQuantization={currentQuantization}
 					fitAssessment={getFitAssessment?.(model.id) ?? null}
 					getDownloadSnapshot={getDownloadSnapshot}
@@ -214,9 +189,11 @@ function FavoritesGroup({
 function SortedLabel({
 	sortKey,
 	suggested = false,
+	compact = false,
 }: {
 	sortKey: SttSortKey | null;
 	suggested?: boolean;
+	compact?: boolean;
 }) {
 	const t = useTranslations("modelPicker");
 	// The Suggested flatten (flag ON, no explicit sort) carries its own header:
@@ -226,7 +203,9 @@ function SortedLabel({
 	// the scroll-spy from latching onto this header and leaving the rail with no
 	// active tile once the sort is cleared.
 	return (
-		<Combobox.GroupLabel className={GROUP_HEADER_CLASSES}>
+		<Combobox.GroupLabel
+			className={cn(GROUP_HEADER_CLASSES, compact ? "h-7" : "h-8")}
+		>
 			<span className="flex size-4 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted">
 				<HugeiconsIcon
 					className="size-3"
@@ -273,12 +252,14 @@ function SortedGroup({
 	statesById,
 	suggested,
 	systemInfo,
+	compact = false,
 }: FavoritesGroupProps & { sortKey: SttSortKey | null; suggested: boolean }) {
 	return (
 		<Combobox.Group className="flex flex-col" items={items}>
-			<SortedLabel sortKey={sortKey} suggested={suggested} />
+			<SortedLabel compact={compact} sortKey={sortKey} suggested={suggested} />
 			{items.map((model) => (
 				<SttModelCard
+					compact={compact}
 					currentQuantization={currentQuantization}
 					fitAssessment={getFitAssessment?.(model.id) ?? null}
 					getDownloadSnapshot={getDownloadSnapshot}
@@ -314,13 +295,14 @@ const handleOpenCustomModelsFolder = () => {
 	fireAndForget(openCustomModelsFolder(), "openCustomModelsFolder");
 };
 
-function OpenCustomModelsFolderRow() {
+function OpenCustomModelsFolderRow({ compact = false }: { compact?: boolean }) {
 	const t = useTranslations("modelPicker");
 	return (
 		<BaseButton
 			className={cn(
-				"mx-2 my-1 flex cursor-pointer items-center gap-2 rounded-lg",
-				"bg-foreground/[0.03] px-3 py-2.5 text-foreground-secondary text-sm outline-none transition-colors",
+				"mx-2 my-1 flex cursor-pointer items-center rounded-lg",
+				"bg-foreground/[0.03] text-foreground-secondary outline-none transition-colors",
+				compact ? "gap-1.5 px-2 py-1.5 text-xs" : "gap-2 px-3 py-2.5 text-sm",
 				"hover:bg-foreground/[0.06] hover:text-foreground",
 			)}
 			onClick={handleOpenCustomModelsFolder}
@@ -400,6 +382,7 @@ type SttModelGroupsProps = Omit<
  * from forming artificial combinations with per-model policy predicates.
  */
 function SttModelGroups({
+	compact = false,
 	statesById,
 	systemInfo,
 	selectedId,
@@ -419,7 +402,7 @@ function SttModelGroups({
 	suggestedFlattenActive = false,
 }: SttModelGroupsProps) {
 	return (
-		<Combobox.List className="p-0 pb-2">
+		<Combobox.List className={compact ? "p-0 pb-1" : "p-0 pb-2"}>
 			{(group: SttListGroup) => {
 				// An active sort flattens every maker into one ordered column —
 				// rendered solo (the selector hands us just this group + hides
@@ -427,6 +410,7 @@ function SttModelGroups({
 				if (isSortedGroup(group.value)) {
 					return (
 						<SortedGroup
+							compact={compact}
 							currentQuantization={currentQuantization}
 							getDownloadSnapshot={getDownloadSnapshot}
 							getFitAssessment={getFitAssessment}
@@ -452,6 +436,7 @@ function SttModelGroups({
 				if (isFavoritesGroup(group.value)) {
 					return (
 						<FavoritesGroup
+							compact={compact}
 							currentQuantization={currentQuantization}
 							getDownloadSnapshot={getDownloadSnapshot}
 							getFitAssessment={getFitAssessment}
@@ -482,9 +467,10 @@ function SttModelGroups({
 						items={group.items}
 						key={group.value}
 					>
-						<AuthorLabel family={family} />
+						<AuthorLabel compact={compact} family={family} />
 						{bundles.map((bundle) => (
 							<SttVariantBundle
+								compact={compact}
 								bundle={bundle}
 								currentQuantization={currentQuantization}
 								expanded={expandedBundles.has(bundle.baseId)}
@@ -499,12 +485,18 @@ function SttModelGroups({
 								onSelect={onSelect}
 								onToggleExpanded={onToggleExpanded}
 								onToggleFavorite={onToggleFavorite}
+								// The WHOLE group, not `bundle.variants`: two models in
+								// different bundles can still collide to the same name
+								// once their size token is stripped.
+								peers={group.items}
 								selectedId={selectedId}
 								statesById={statesById}
 								systemInfo={systemInfo}
 							/>
 						))}
-						{family === "custom" ? <OpenCustomModelsFolderRow /> : null}
+						{family === "custom" ? (
+							<OpenCustomModelsFolderRow compact={compact} />
+						) : null}
 					</Combobox.Group>
 				);
 			}}
@@ -515,6 +507,7 @@ function SttModelGroups({
 export function SttModelList({
 	hasActiveFilters,
 	hasSearch = false,
+	compact = false,
 	onShowAllSuggested,
 	suggestedHiddenCount = 0,
 	visibleModelCount,
@@ -534,15 +527,15 @@ export function SttModelList({
 			data-slot="stt-model-list-shell"
 			rubberBandOnTouch={false}
 			verticalOnly
-			verticalScrollbarClassName="mt-8 mb-1"
+			verticalScrollbarClassName={compact ? "mt-6 mb-0.5" : "mt-8 mb-1"}
 			viewportClassName="flex min-h-0 flex-col"
 		>
 			<div className="flex min-h-full flex-col" data-slot="stt-model-list">
 				{/* Live region for assistive tech — Combobox.Status content is
-			    announced politely (`aria-live="polite"`) every time the
-			    filtered count changes, so screen-reader users hear
-			    "3 models available" instead of guessing why their list
-			    shrank. Hidden visually via the `sr-only` utility. */}
+				announced politely (`aria-live="polite"`) every time the
+				filtered count changes, so screen-reader users hear
+				"3 models available" instead of guessing why their list
+				shrank. Hidden visually via the `sr-only` utility. */}
 				<Combobox.Status className="sr-only">
 					{visibleModelCount === 1
 						? "1 model available"
@@ -552,10 +545,10 @@ export function SttModelList({
 					<EmptyState reason={reason} suggestedHint={suggestedHint} />
 				</Combobox.Empty>
 				{/* Base UI's Combobox.Empty only shows for an empty SEARCH result;
-				    when the menu filters (typically Suggested) empty the list with
-				    no query active, surface the same empty state manually so the
-				    "N models hidden by Suggested — tap to show all" escape hatch
-				    stays reachable. */}
+					when the menu filters (typically Suggested) empty the list with
+					no query active, surface the same empty state manually so the
+					"N models hidden by Suggested — tap to show all" escape hatch
+					stays reachable. */}
 				{!hasSearch && visibleModelCount === 0 ? (
 					<EmptyState reason={reason} suggestedHint={suggestedHint} />
 				) : null}

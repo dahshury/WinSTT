@@ -4,6 +4,7 @@ import type { LoopbackDevice } from "../lib/loopback-devices";
 import {
 	buildOutputDeviceEntries,
 	type OutputDeviceEntry,
+	nativeOutputDeviceName,
 	outputSelectionPatch,
 	resolveCurrentId,
 } from "./use-output-device-picker";
@@ -94,6 +95,19 @@ describe("outputSelectionPatch", () => {
 			outputDeviceId: "sink-gone",
 			loopbackDeviceIndex: null,
 		});
+	});
+});
+
+describe("nativeOutputDeviceName", () => {
+	const entries: OutputDeviceEntry[] = [
+		{ id: "", isDefault: true, label: "System default", loopbackIndex: null },
+		{ id: "sink-tv", isDefault: false, label: "LG TV", loopbackIndex: 1 },
+	];
+
+	test("routes native chimes by CPAL name and clears to default", () => {
+		expect(nativeOutputDeviceName(entries, "sink-tv")).toBe("LG TV");
+		expect(nativeOutputDeviceName(entries, "")).toBe("default");
+		expect(nativeOutputDeviceName(entries, "unplugged")).toBe("default");
 	});
 });
 

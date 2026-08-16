@@ -46,7 +46,6 @@ pub fn is_clamshell() -> Result<bool, String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Look for "AppleClamshellState" = Yes in the output
     Ok(stdout.contains("\"AppleClamshellState\" = Yes"))
 }
 

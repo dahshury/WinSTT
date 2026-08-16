@@ -77,6 +77,33 @@ const SURFACE_ACTIVE_PSEUDO_BG: Record<Level, string> = {
 	8: "active:bg-surface-8",
 };
 
+// Lifted state for a row being drag-reordered: it leaves the flat list and
+// becomes a card, so it needs its own opaque plate (rows are transparent by
+// default and would otherwise let the rows it flies over show through) plus a
+// drop shadow to sell the height. See `SortableItem` in
+// shared/ui/data-grid/primitives/sortable.tsx.
+const SURFACE_DRAGGING_BG: Record<Level, string> = {
+	1: "data-dragging:bg-surface-1",
+	2: "data-dragging:bg-surface-2",
+	3: "data-dragging:bg-surface-3",
+	4: "data-dragging:bg-surface-4",
+	5: "data-dragging:bg-surface-5",
+	6: "data-dragging:bg-surface-6",
+	7: "data-dragging:bg-surface-7",
+	8: "data-dragging:bg-surface-8",
+};
+
+const SURFACE_DRAGGING_SHADOW: Record<Level, string> = {
+	1: "data-dragging:shadow-surface-1",
+	2: "data-dragging:shadow-surface-2",
+	3: "data-dragging:shadow-surface-3",
+	4: "data-dragging:shadow-surface-4",
+	5: "data-dragging:shadow-surface-5",
+	6: "data-dragging:shadow-surface-6",
+	7: "data-dragging:shadow-surface-7",
+	8: "data-dragging:shadow-surface-8",
+};
+
 const SURFACE_BG_90: Record<Level, string> = {
 	1: "bg-surface-1/90",
 	2: "bg-surface-2/90",
@@ -140,6 +167,14 @@ export function surfaceCheckedBg(level: number): string {
 
 export function surfaceSelectedBg(level: number): string {
 	return SURFACE_SELECTED_BG[clamp(level)];
+}
+
+export function surfaceDraggingBg(level: number): string {
+	return SURFACE_DRAGGING_BG[clamp(level)];
+}
+
+export function surfaceDraggingShadow(level: number): string {
+	return SURFACE_DRAGGING_SHADOW[clamp(level)];
 }
 
 export function surfacePopupOpenBg(level: number): string {

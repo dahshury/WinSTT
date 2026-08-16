@@ -3,6 +3,12 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Fragment, type ReactElement } from "react";
 import { cn } from "@/shared/lib/cn";
 import {
+	surfaceDraggingBg,
+	surfaceDraggingShadow,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
+import {
 	Sortable,
 	SortableContent,
 	SortableItem,
@@ -48,6 +54,16 @@ export function SortableOptionRows<T extends SortableOptionLike>({
 	// `GetItemValue<T>` for an unbound generic, and the dnd wiring only needs
 	// `id`.
 	const sortableRows: SortableOptionLike[] = options.filter((o) => o.sortable);
+	// A grabbed row leaves the list and becomes a card, so it needs its own
+	// plate (rows are transparent — without one the rows it flies over would
+	// read straight through it) plus a shadow a level further up to sell the
+	// height. Only this layer knows the popup's substrate, hence not in the
+	// `SortableItem` primitive.
+	const substrate = useSurface();
+	const liftClasses = cn(
+		surfaceDraggingBg(substrate + 2),
+		surfaceDraggingShadow(substrate + 3),
+	);
 	return (
 		<Sortable
 			getItemValue={(o: SortableOptionLike) => o.id}
@@ -60,7 +76,12 @@ export function SortableOptionRows<T extends SortableOptionLike>({
 			<SortableContent withoutSlot>
 				{options.map((opt) =>
 					opt.sortable ? (
-						<SortableItem asChild key={opt.id} value={opt.id}>
+						<SortableItem
+							asChild
+							className={liftClasses}
+							key={opt.id}
+							value={opt.id}
+						>
 							{renderRow(opt)}
 						</SortableItem>
 					) : (
@@ -74,13 +95,19 @@ export function SortableOptionRows<T extends SortableOptionLike>({
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+/** Footprint of the grip — non-sortable rows in the same list reserve exactly
+ *  this much so every label stays on one vertical line. */
+export const OPTION_DRAG_HANDLE_SIZE = "size-6";
+
 /**
  * Leading (left-side) grip that activates dnd-kit sorting. Always visible so
- * the sortability of the list is discoverable — muted at rest, full color on
- * hover/drag. Wrapped in a bubble-phase event fence: dnd-kit's own listeners
- * live on the handle button (target, fires first), then the fence stops
- * propagation so a popup menu's item handlers never see the press —
- * otherwise grabbing the handle would select the row and close the popup.
+ * the sortability of the list is discoverable — muted at rest, and it fills in
+ * to a real button (plate + full-color icon) on hover, focus and while held, so
+ * the target announces itself before you press it. Wrapped in a bubble-phase
+ * event fence: dnd-kit's own listeners live on the handle button (target, fires
+ * first), then the fence stops propagation so a popup menu's item handlers
+ * never see the press — otherwise grabbing the handle would select the row and
+ * close the popup.
  */
 export function OptionDragHandle({
 	className,
@@ -89,6 +116,7 @@ export function OptionDragHandle({
 	className?: string;
 	label?: string | undefined;
 }) {
+	const substrate = useSurface();
 	return (
 		// react-doctor-disable-next-line react-doctor/no-static-element-interactions -- not an interactive control: this span is a bubble-phase propagation fence, and the real interactive element (the SortableItemHandle button below) carries the aria-label/keyboard semantics. A role here would misrepresent it to assistive tech.
 		<span
@@ -102,7 +130,17 @@ export function OptionDragHandle({
 		>
 			<SortableItemHandle
 				aria-label={label}
-				className="flex size-5 items-center justify-center rounded text-foreground-dim transition-colors hover:text-foreground data-dragging:text-foreground"
+				className={cn(
+					`flex ${OPTION_DRAG_HANDLE_SIZE} items-center justify-center rounded-md text-foreground-dim`,
+					"transition-[color,background-color] duration-160 ease-[var(--drag-ease)]",
+					// The focus ring is load-bearing: keyboard reorder is "focus the
+					// grip → Space → arrows", so the ring is the only thing marking
+					// which row is about to move.
+					"hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent data-dragging:text-foreground",
+					// A step above the hover pill behind the row, so the grip still
+					// reads as a raised chip on a hovered or lifted row.
+					surfaceHoverBg(substrate + 3),
+				)}
 			>
 				<HugeiconsIcon
 					aria-hidden="true"

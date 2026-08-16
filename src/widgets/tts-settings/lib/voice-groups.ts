@@ -1,6 +1,5 @@
 import { DEFAULT_SETTINGS } from "@/entities/setting";
 import type { TtsVoiceCatalog } from "@/shared/api/ipc-client";
-import type { TranslateFn } from "@/shared/i18n/translation-types";
 import {
 	SUPERTONIC_TTS_MODEL_ID,
 	ttsSpeedRange,
@@ -10,7 +9,6 @@ import type { SelectOption } from "@/shared/ui/select";
 import { regionBadge, stripRegionSuffix } from "./voice-demo-text";
 
 export const SUPERTONIC_MODEL_ID = SUPERTONIC_TTS_MODEL_ID;
-export const SUPERTONIC_DEFAULT_VOICE = "M3";
 export const SUPERTONIC_DEFAULT_LANG = "en";
 // Slider bounds come from the shared per-model speed source (mirrored by the
 // `supertonic.rs` clamp). Supertonic caps the speed-UP at its officially
@@ -112,30 +110,8 @@ export function clampSupertonicSpeed(speed: number): number {
 	return Math.min(SUPERTONIC_SPEED_MAX, Math.max(SUPERTONIC_SPEED_MIN, speed));
 }
 
-// Sentinel option id: picking it opens a file dialog to clone from an audio clip.
-export const TTS_CLONE_ADD = "__tts_clone_add__";
-
-function fileBaseName(p: string): string {
-	const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-	return i >= 0 ? p.slice(i + 1) : p;
-}
-
-// Voice groups for a CLONING engine (Chatterbox): the same SearchableSelect the
-// preset-voice models use, but offering the bundled default voice, the currently
-// selected reference clip (if any), and a "clone from a file" action — so voice
-// selection is one unified control across every model.
-export function buildCloningVoiceGroups(
-	currentVoice: string,
-	t: TranslateFn,
-): SelectOptionGroup[] {
-	const opts: SelectOption[] = [{ id: "default", label: t("defaultVoice") }];
-	if (
-		currentVoice &&
-		currentVoice !== "default" &&
-		currentVoice !== "af_heart"
-	) {
-		opts.push({ id: currentVoice, label: fileBaseName(currentVoice) });
-	}
-	opts.push({ id: TTS_CLONE_ADD, label: t("cloneFromFile") });
-	return [{ value: "clone", label: t("voice"), options: opts }];
-}
+// A cloning engine no longer selects its voice through this dropdown: the
+// reference clips live in the voice card (`VoiceField`), which also hosts the
+// engine's preset voices. `buildCloningVoiceGroups` / `TTS_CLONE_ADD`
+// were removed with it — a sentinel option that opened a file dialog is not a
+// voice, and hiding the upload inside a select made drag-and-drop impossible.

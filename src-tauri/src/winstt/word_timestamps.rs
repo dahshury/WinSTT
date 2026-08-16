@@ -98,6 +98,48 @@ pub const MODEL_SIZE_BY_DIMS: &[((usize, usize), &str)] = &[
 /// Vocab size of the English-only Whisper variants (`*.en`).
 pub const EN_VOCAB_SIZE: usize = 51_864;
 
+/// Vocab size of CrisperWhisper 2.0 (nyralabs) — the extended verbatim vocab (event +
+/// mode + marker tokens on top of the multilingual 51,865) uniquely identifies the
+/// checkpoint among (32, 20)-dim larges, so the heads lookup can key on it.
+pub const CRISPER2_VOCAB_SIZE: usize = 51_896;
+
+/// CrisperWhisper 2.0's supervised alignment heads, copied VERBATIM from the checkpoint's
+/// `generation_config.json` `alignment_heads` (`(layer, head)` pairs). The model was
+/// trained with supervised cross-attention alignment on exactly these heads — the generic
+/// large-v3 table would silently degrade its ~30 ms word timing.
+pub const CRISPER2_ALIGNMENT_HEADS: &[(usize, usize)] = &[
+    (8, 8),
+    (10, 3),
+    (4, 11),
+    (9, 18),
+    (11, 16),
+    (18, 14),
+    (5, 16),
+    (15, 4),
+    (20, 16),
+    (16, 11),
+];
+
+/// Vocab size of CrisperWhisper 2.0 Turbo (nyralabs) — the large-v3-turbo-family variant
+/// (128 mel, 4 decoder layers) with the v3 token layout, so its extended vocab lands one
+/// id above the large's (51,897 vs 51,896).
+pub const CRISPER2_TURBO_VOCAB_SIZE: usize = 51_897;
+
+/// CrisperWhisper 2.0 Turbo's supervised alignment heads, verbatim from its
+/// `generation_config.json` `alignment_heads` (`(layer, head)` pairs; 4 decoder layers).
+pub const CRISPER2_TURBO_ALIGNMENT_HEADS: &[(usize, usize)] = &[
+    (2, 11),
+    (1, 1),
+    (2, 8),
+    (3, 12),
+    (3, 15),
+    (3, 6),
+    (3, 17),
+    (2, 4),
+    (3, 3),
+    (3, 18),
+];
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 2. Shared error — used by heads-decode, median_filter, and align_words.
 // ═════════════════════════════════════════════════════════════════════════════

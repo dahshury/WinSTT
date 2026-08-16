@@ -128,7 +128,17 @@ fn encode_base64(bytes: &[u8]) -> String {
 /// `ArrayBuffer` the playback queue consumes:
 ///   - "f32le": `new Float32Array(pcm)` reads it as little-endian f32 PCM.
 ///   - "mp3":   `decodeAudioData(pcm)` decodes the mp3 container.
-pub(super) fn chunk_payload(request_id: &str, chunk: &SynthesisChunk) -> serde_json::Value {
+///
+/// `sentence_index` is the 0-based position of the sentence this chunk belongs
+/// to within the `tts:script` the manager emitted for this read. The overlay
+/// island maps buffered audio back onto the script with it, so the spoken words
+/// can be highlighted as they play; an engine that streams several chunks per
+/// sentence tags all of them with the same index.
+pub(super) fn chunk_payload(
+    request_id: &str,
+    chunk: &SynthesisChunk,
+    sentence_index: u64,
+) -> serde_json::Value {
     let pcm_b64 = match chunk.format {
         Format::F32le => {
             let mut bytes = vec![0u8; chunk.audio.len() * 4];
@@ -143,6 +153,7 @@ pub(super) fn chunk_payload(request_id: &str, chunk: &SynthesisChunk) -> serde_j
         "requestId": request_id,
         "sampleRate": chunk.sample_rate,
         "seq": chunk.seq,
+        "sentenceIndex": sentence_index,
         "isFinal": chunk.is_final,
         "format": chunk.format.as_str(),
         "channels": chunk.channels,
@@ -163,6 +174,13 @@ pub(super) struct EmitChunkSink {
     pub(super) cancelled: CancellationToken,
     /// Monotonic per-read seq for the chunk stream.
     pub(super) seq: AtomicU64,
+    /// Index of the sentence currently being synthesized, within the `tts:script`
+    /// emitted for this read. Written by the manager's sentence loop before each
+    /// `synthesize_stream`; stamped onto every chunk that call produces so the
+    /// overlay can align the script with the audio timeline. Atomic because the
+    /// sink is shared behind `&self` — the loop is serial, so no ordering
+    /// stronger than `Relaxed` is needed.
+    pub(super) sentence: AtomicU64,
     /// Session-audio accumulator for history playback. `None` when history is
     /// disabled — capture then costs nothing.
     pub(super) capture: Option<TtsAudioCapture>,
@@ -187,9 +205,14 @@ impl ChunkSink for EmitChunkSink {
         if let Some(capture) = &self.capture {
             capture.push(&chunk);
         }
-        let _ = self
-            .app
-            .emit("tts:chunk", chunk_payload(&self.request_id, &chunk));
+        let _ = self.app.emit(
+            "tts:chunk",
+            chunk_payload(
+                &self.request_id,
+                &chunk,
+                self.sentence.load(Ordering::Relaxed),
+            ),
+        );
         true
     }
 

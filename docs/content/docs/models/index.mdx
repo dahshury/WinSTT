@@ -1,9 +1,9 @@
 ---
 title: Models
-description: Browse the full WinSTT speech-to-text catalog — 70+ on-device ONNX models across 11 families, with accuracy, speed, size, and language coverage so you can pick the right trade-off.
+description: Browse the full WinSTT speech-to-text catalog — 70+ on-device ONNX models across 12 families, with accuracy, speed, size, and language coverage so you can pick the right trade-off.
 ---
 
-WinSTT ships **70+ speech-to-text models** across 11 families, all running on a single
+WinSTT ships **70+ speech-to-text models** across 12 families, all running on a single
 ONNX engine on your own hardware. Pick one in the [Model tab](/docs/settings/model) and the
 app downloads it in the background — nothing about your audio leaves the machine.
 
@@ -26,12 +26,12 @@ chosen per-download via [quantization](/docs/models/compute-types).
 
 <StatGrid>
   <Stat value="73" label="models" />
-  <Stat value="11" label="families" />
+  <Stat value="12" label="families" />
   <Stat value="99" label="languages (Whisper)" />
   <Stat value="4.9" label="best WER (Granite 4.1 2B Plus)" />
 </StatGrid>
 
-## The 11 families
+## The 12 families
 
 Each row sums up one family: how many models it offers, the typical on-disk size at default
 precision, the languages it covers, and where it fits best. Lower **WER** (word error rate)
@@ -48,10 +48,11 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
     ["Cohere", "1", "~5.1 GB", "14", "Top-tier accuracy — near the top of the HF Open ASR leaderboard"],
     ["Granite Speech", "2", "2.5 – 16 GB", "en · fr · de · es · pt", "IBM autoregressive and non-autoregressive speech models with strong punctuation"],
     ["Qwen3-ASR", "2", "2.0 – 4.1 GB", "30", "Alibaba Qwen LLM-decoder ASR with auto language detection; int4-only downloads"],
+    ["Audio8-ASR / ARK-ASR", "3", "0.67 – 4.4 GB", "7 · 19", "LLM-decoder ASR at three sizes — the 0.1B runs on any CPU (non-commercial licence); the Apache-2.0 ARK-ASR pair tops the accuracy table at 3B"],
     ["SenseVoice", "1", "159 MB", "5 (zh/en/ja/ko/yue)", "Fast East-Asian multilingual in a tiny int8 graph"],
     ["Dolphin", "1", "104 MB", "15 Asian and Middle Eastern languages", "Compact multilingual CTC model for Eastern-language coverage"],
     ["GigaAM", "2", "~3.5 GB", "Russian", "Best-in-class Russian (CTC / RNNT)"],
-    ["Kaldi / Vosk / Zipformer", "4", "93 – 478 MB", "English + Russian", "Lightweight Vosk and Zipformer models for low-end hardware"],
+    ["Kaldi / Vosk / Zipformer", "5", "93 – 478 MB", "English + Russian + Arabic", "Lightweight Vosk and Zipformer models for low-end hardware, incl. Quranic Arabic phonemes"],
     ["T-One", "1", "144 MB", "Russian", "Compact Russian streaming ASR"],
   ]}
   caption="Sizes are representative downloads; smaller quantizations are usually available. The catalog totals 73 shipped entries plus user-dropped custom models."
@@ -70,6 +71,7 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
     ["Canary 1B v2", "978M", "6.4", "1821", "25", "4.0 GB"],
     ["Cohere Transcribe", "2.0B", "5.2", "916", "14", "5.1 GB"],
     ["Qwen3-ASR 0.6B", "600M", "5.6", "439", "30", "2.0 GB"],
+    ["ARK-ASR 3B", "4.06B", "4.8", "491", "19", "4.4 GB"],
     ["Granite Speech 4.1 2B Plus", "2.0B", "4.9", "547", "5", "4.1 GB int8"],
     ["SenseVoice Small", "234M", "10.6", "850", "5", "159 MB"],
   ]}
@@ -83,9 +85,9 @@ and **language**. Start from what matters most to you.
 
 <BentoGrid cols={2}>
   <BentoCell icon="quality" title="Maximum accuracy">
-    **Granite Speech 4.1 2B Plus** (WER 4.9) and **Cohere Transcribe** (5.2) lead, with
-    **Parakeet TDT 0.6B v3** close behind for European languages, or **Whisper Large v3**
-    for the widest language reach.
+    **ARK-ASR 3B** (WER 4.8) now leads, with **Granite Speech 4.1 2B Plus** (4.9) and
+    **Cohere Transcribe** (5.2) close behind, or **Whisper Large v3** for the widest
+    language reach.
   </BentoCell>
   <BentoCell icon="speed" title="Lowest latency">
     **Moonshine** (up to ~3700 RTFx) is built for real-time English on CPU. For accurate
@@ -139,7 +141,7 @@ pause, resume, or delete each one independently. See
     NVIDIA's high-accuracy Conformer models for English, multilingual, and Russian.
   </Card>
   <Card title="Other models" href="/docs/models/other">
-    Moonshine, Cohere, Granite, Qwen3-ASR, SenseVoice, Dolphin, GigaAM, Vosk/Kaldi, and T-One.
+    Moonshine, Cohere, Granite, Qwen3-ASR, Audio8-ASR, SenseVoice, Dolphin, GigaAM, Vosk/Kaldi, and T-One.
   </Card>
   <Card title="Compute & quantization" href="/docs/models/compute-types">
     What fp16, int8, q4, and q4f16 mean — and how to read the picker's badges.

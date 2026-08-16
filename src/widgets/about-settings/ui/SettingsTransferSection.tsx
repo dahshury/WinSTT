@@ -16,7 +16,7 @@ import { settingsLoadStrict } from "@/shared/api/ipc-client";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DialogActionButton, DialogClose } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
-import { AboutActionRow } from "./AboutActionRow";
+import { AboutActionButton } from "./AboutActionButton";
 
 // Saved LLM configurations live only in this localStorage key (a single combined
 // `{ version, configurations, seededBuiltinIds }` blob owned by
@@ -30,7 +30,14 @@ const LLM_CONFIGURATIONS_STORAGE_KEY = "winstt:llm-configurations";
 function readLlmConfigurationsBlob(): string | null {
 	try {
 		return localStorage.getItem(LLM_CONFIGURATIONS_STORAGE_KEY);
-	} catch {
+	} catch (error) {
+		// localStorage unavailable — the backend settings tree still exports fine,
+		// so failing the whole export over the configurations convenience blob
+		// would be worse than writing a backup without it.
+		console.warn(
+			"[settings-transfer] could not read saved LLM configurations for export",
+			error,
+		);
 		return null;
 	}
 }
@@ -44,9 +51,18 @@ function restoreLlmConfigurationsBlob(blob: string | null | undefined): void {
 	}
 	try {
 		localStorage.setItem(LLM_CONFIGURATIONS_STORAGE_KEY, blob);
-	} catch {
+	} catch (error) {
 		// localStorage unavailable / quota — configurations are a non-critical
-		// convenience, so a failed restore must not fail the whole import.
+		// convenience, so a failed restore must not fail the whole import. Throwing
+		// here would abort `runSettingsImport` AFTER the backend has already
+		// persisted and broadcast the imported tree, skipping both the hydration
+		// generation bump (letting a stale in-flight save clobber the import) and
+		// the local `setSettings`, and reporting "import failed" for an import that
+		// actually succeeded.
+		console.warn(
+			"[settings-transfer] could not restore saved LLM configurations after import",
+			error,
+		);
 	}
 }
 
@@ -393,28 +409,42 @@ export function SettingsTransferSection(): ReactNode {
 			/>
 			<SettingSection
 				boxed
-				divided
+				description={settingsT("settingsBackupDescription")}
 				icon={FileExportIcon}
-				title={`${settingsT("settingsExport")} / ${settingsT("settingsImport")}`}
+				title={settingsT("settingsBackupTitle")}
 			>
-				<AboutActionRow
-					buttonLabel={settingsT("settingsExport")}
-					disabled={exporting || importing}
-					icon={FileExportIcon}
-					iconClassName={exporting ? "animate-spin" : undefined}
-					onClick={handleExport}
-					title={settingsT("settingsExport")}
-				/>
-				<AboutActionRow
-					buttonLabel={settingsT("settingsImport")}
-					disabled={exporting || importing}
-					icon={FileImportIcon}
-					iconClassName={importing ? "animate-spin" : undefined}
-					onClick={() =>
-						dispatch({ open: true, type: "importConfirmOpenChanged" })
-					}
-					title={settingsT("settingsImport")}
-				/>
+				{/* Export and Import are the two halves of one round-trip, so they
+				    share a single row instead of each spending a whole row on a lone
+				    trailing button with an empty middle. `flex-1` on the children
+				    neutralises AboutActionButton's fixed `w-52` wrapper (as flex items
+				    their `flex-basis: 0` wins over `width`), so the pair splits the row
+				    evenly and neither reads as the primary action. AboutActionRow is
+				    deliberately NOT used here — it carries exactly one button — so the
+				    pair supplies its own labelled grouping for assistive tech. */}
+				<div
+					aria-label={settingsT("settingsBackupTitle")}
+					className="flex items-center gap-2 py-3 [&>*]:min-w-0 [&>*]:flex-1"
+					role="group"
+				>
+					<AboutActionButton
+						disabled={exporting || importing}
+						icon={FileExportIcon}
+						iconClassName={exporting ? "animate-spin" : undefined}
+						onClick={handleExport}
+					>
+						{settingsT("settingsExport")}
+					</AboutActionButton>
+					<AboutActionButton
+						disabled={exporting || importing}
+						icon={FileImportIcon}
+						iconClassName={importing ? "animate-spin" : undefined}
+						onClick={() =>
+							dispatch({ open: true, type: "importConfirmOpenChanged" })
+						}
+					>
+						{settingsT("settingsImport")}
+					</AboutActionButton>
+				</div>
 			</SettingSection>
 		</>
 	);

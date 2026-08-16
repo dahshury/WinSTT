@@ -300,7 +300,23 @@ export interface TtsChunkPayload {
 	pcm: ArrayBuffer;
 	requestId: string;
 	sampleRate: number;
+	/** 0-based index of the sentence in the read's {@link TtsScriptPayload} this
+	 *  chunk renders. Several chunks can share one index (an engine that streams
+	 *  sub-sentence audio); voice previews carry `0` with no script at all. */
+	sentenceIndex: number;
 	seq: number;
+}
+
+/**
+ * The FINAL text of a read — post modifiers, post inline-tag annotation — split
+ * into the same sentences the synthesizer renders one at a time. Emitted once,
+ * BEFORE the first sample exists, so the overlay island can show what is about
+ * to be spoken and then highlight it word-by-word as each sentence's audio lands
+ * (matched up through {@link TtsChunkPayload.sentenceIndex}).
+ */
+export interface TtsScriptPayload {
+	requestId: string;
+	sentences: string[];
 }
 
 export interface TtsStartedPayload {
@@ -607,12 +623,6 @@ export const ttsSpeak = (payload: {
 		{ requestId: "" },
 	);
 
-/**
- * Capture the active text selection in the focused window and speak it.
- * Mirrors the transforms "speak the highlight" flow but for TTS instead
- * of LLM rewrite. Empty selection broadcasts {@link onTtsFailed} with
- * reason "No text selected".
- */
 /** Cancel one or every active TTS request. */
 export const ttsCancel = (requestId?: string): void => {
 	void commandOrDefault(
@@ -727,6 +737,10 @@ export const onTtsStarted = (
 export const onTtsChunk = (
 	callback: (payload: TtsChunkPayload) => void,
 ): (() => void) => onCast<TtsChunkPayload>(IPC.TTS_CHUNK, callback);
+
+export const onTtsScript = (
+	callback: (payload: TtsScriptPayload) => void,
+): (() => void) => onCast<TtsScriptPayload>(IPC.TTS_SCRIPT, callback);
 
 export const onTtsCompleted = (
 	callback: (payload: TtsCompletedPayload) => void,

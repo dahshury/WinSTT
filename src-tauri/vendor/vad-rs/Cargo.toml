@@ -1,0 +1,36 @@
+# VENDORED from https://github.com/cjpais/vad-rs @ 2a412ed858695b9251f3f5a1a20d95b59fa7c498
+# (v0.1.6, MIT) with two changes:
+#   * the `ort = "=2.0.0-rc.12"` pin is relaxed to follow the workspace's ort
+#     (=2.0.0-rc.13) — upstream has no rc.13 bump yet, and the exact-version `=`
+#     requirement made the two unresolvable in one lockfile;
+#   * the optional `helpers` feature (samplerate/ebur128 — a C build we never enabled;
+#     the app consumed this crate with `default-features = false` from day one) is
+#     REMOVED rather than left default-on, because as an in-tree path crate its default
+#     features would otherwise activate and drag `libsamplerate-sys` into the build.
+# `src/` is byte-identical to the pinned rev (helpers.rs is feature-gated off in
+# lib.rs). Drop this vendor copy when upstream releases an rc.13-compatible tag.
+#
+# The empty [workspace] table keeps this crate OUT of the src-tauri workspace so its
+# feature set stays what the dependency edge declares.
+[workspace]
+
+[package]
+name = "vad-rs"
+version = "0.1.6"
+edition = "2021"
+description = "Speech detection using silero vad in Rust"
+license = "MIT"
+
+[dependencies]
+eyre = "0.6.12"
+ndarray = "0.17"
+ort = "=2.0.0-rc.13"
+ringbuffer = "0.15.0"
+
+[features]
+# Kept as an EMPTY feature so src/lib.rs stays byte-identical to upstream (its
+# `#[cfg(feature = "helpers")]` gates would otherwise trip `unexpected_cfgs`).
+helpers = []
+coreml = ["ort/coreml"]
+directml = ["ort/directml"]
+load-dynamic = ["ort/load-dynamic"]

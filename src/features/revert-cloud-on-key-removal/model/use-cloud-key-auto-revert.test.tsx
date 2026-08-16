@@ -10,7 +10,10 @@ import {
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { useRevertNoticeStore } from "./revert-notice-store";
-import { useCloudKeyAutoRevert } from "./use-cloud-key-auto-revert";
+import {
+	revertSurfacesForClearedProvider,
+	useCloudKeyAutoRevert,
+} from "./use-cloud-key-auto-revert";
 
 // Shrink the revert debounce so the timer fires within waitFor's budget; the
 // no-revert assertions wait a few multiples of this to prove nothing fired.
@@ -23,6 +26,7 @@ interface Overrides {
 	model?: string;
 	openrouterKey?: string;
 	transformsProvider?: "ollama" | "openrouter" | "apple-intelligence";
+	ttsProvider?: "elevenlabs" | "openrouter";
 	ttsSource?: "local" | "cloud";
 }
 
@@ -48,7 +52,14 @@ function buildSettings(over: Overrides): AppSettingsOutput {
 				provider: over.transformsProvider ?? "ollama",
 			},
 		},
-		tts: { ...DEFAULT_SETTINGS.tts, source: over.ttsSource ?? "local" },
+		tts: {
+			...DEFAULT_SETTINGS.tts,
+			cloud: {
+				...DEFAULT_SETTINGS.tts.cloud,
+				provider: over.ttsProvider ?? "elevenlabs",
+			},
+			source: over.ttsSource ?? "local",
+		},
 	};
 }
 
@@ -116,6 +127,18 @@ describe("useCloudKeyAutoRevert", () => {
 		).toEqual(["openrouter"]);
 	});
 
+	test("explicit removal reverts synchronously before a settings window can close", () => {
+		seed({ openrouterKey: "sk-or", dictationProvider: "openrouter" });
+
+		expect(revertSurfacesForClearedProvider("openrouter")).toBe(true);
+		const dictation = useSettingsStore.getState().settings.llm.dictation;
+		expect(dictation.provider).toBe("ollama");
+		expect(dictation.enabled).toBe(false);
+		expect(
+			useRevertNoticeStore.getState().notices.map((n) => n.provider),
+		).toEqual(["openrouter"]);
+	});
+
 	test("does not treat disabled hydration changes as user key removals", async () => {
 		seed({ openrouterKey: "sk-or", dictationProvider: "openrouter" });
 		const { rerender } = renderHook(
@@ -129,9 +152,9 @@ describe("useCloudKeyAutoRevert", () => {
 			await new Promise((r) => setTimeout(r, FAST_DEBOUNCE_MS * 6));
 		});
 
-		expect(useSettingsStore.getState().settings.llm.dictation.provider).toBe(
-			"openrouter",
-		);
+		const dictation = useSettingsStore.getState().settings.llm.dictation;
+		expect(dictation.provider).toBe("ollama");
+		expect(dictation.enabled).toBe(false);
 		expect(useRevertNoticeStore.getState().notices).toHaveLength(0);
 	});
 
@@ -163,6 +186,28 @@ describe("useCloudKeyAutoRevert", () => {
 		expect(
 			useRevertNoticeStore.getState().notices.map((n) => n.provider),
 		).toEqual(["elevenlabs"]);
+	});
+
+	test("clearing the OpenRouter key reverts OpenRouter cloud TTS", async () => {
+		seed({
+			openrouterKey: "sk-or",
+			ttsProvider: "openrouter",
+			ttsSource: "cloud",
+		});
+		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
+		act(() =>
+			seed({
+				openrouterKey: "",
+				ttsProvider: "openrouter",
+				ttsSource: "cloud",
+			}),
+		);
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.tts.source).toBe("local");
+		});
+		expect(
+			useRevertNoticeStore.getState().notices.map((n) => n.provider),
+		).toEqual(["openrouter"]);
 	});
 
 	test("clearing a key for an inactive provider does nothing", async () => {
@@ -207,7 +252,7 @@ describe("useCloudKeyAutoRevert", () => {
 		expect(useRevertNoticeStore.getState().notices).toHaveLength(0);
 	});
 
-	test("a whitespace-only previous key is not treated as a removal", async () => {
+	test("a whitespace-only previous key repairs silently, not as a removal", async () => {
 		seed({ openrouterKey: "   ", dictationProvider: "openrouter" });
 		renderHook(() => useCloudKeyAutoRevert(FAST_DEBOUNCE_MS));
 		act(() => seed({ openrouterKey: "", dictationProvider: "openrouter" }));
@@ -215,7 +260,7 @@ describe("useCloudKeyAutoRevert", () => {
 			await new Promise((r) => setTimeout(r, FAST_DEBOUNCE_MS * 6));
 		});
 		expect(useSettingsStore.getState().settings.llm.dictation.provider).toBe(
-			"openrouter",
+			"ollama",
 		);
 		expect(useRevertNoticeStore.getState().notices).toHaveLength(0);
 	});

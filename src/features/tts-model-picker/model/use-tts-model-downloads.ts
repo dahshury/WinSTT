@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTtsModelStateStore } from "@/entities/tts-catalog";
 import {
 	onTtsModelDownloadCompleteCatalog,
@@ -39,6 +39,10 @@ export function useTtsModelDownloads(): {
 	) => void;
 } {
 	const [snaps, setSnaps] = useState<Record<string, QuantDownloadSnapshot>>({});
+	// Tauri events are fire-and-forget, so a final queued progress notification
+	// can be delivered after the completion notification. Keep a tombstone for
+	// settled downloads so that late event cannot recreate a 100% live snapshot.
+	const settledDownloads = useRef(new Set<string>());
 	const statesById = useTtsModelStateStore((s) => s.statesById);
 	const states = statesById ?? {};
 	const refresh = useTtsModelStateStore((s) => s.refresh);
@@ -47,6 +51,9 @@ export function useTtsModelDownloads(): {
 		const offProgress = onTtsModelDownloadProgressCatalog((p) => {
 			const key = keyOf(p.model, p.quantization);
 			setSnaps((prev) => {
+				if (settledDownloads.current.has(key)) {
+					return prev;
+				}
 				const previous = prev[key];
 				// Backend sends a 0.0–1.0 fraction; the shared core scales to the
 				// 0–100 the QuantShelf renders and keeps the bar monotonic — without
@@ -63,6 +70,7 @@ export function useTtsModelDownloads(): {
 		const offComplete = onTtsModelDownloadCompleteCatalog(
 			(model, _cancelled, quantization) => {
 				const key = keyOf(model, quantization);
+				settledDownloads.current.add(key);
 				setSnaps((prev) => {
 					const next = { ...prev };
 					delete next[key];
@@ -93,6 +101,7 @@ export function useTtsModelDownloads(): {
 			states[modelId]?.cacheByQuantization?.[quant],
 		);
 		if (action === "start") {
+			settledDownloads.current.delete(key);
 			ttsPredownloadModel(modelId, quant);
 			setSnaps((prev) => ({
 				...prev,
@@ -111,6 +120,7 @@ export function useTtsModelDownloads(): {
 				},
 			}));
 		} else if (action === "resume") {
+			settledDownloads.current.delete(key);
 			ttsDownloadResume(modelId, quant);
 			setSnaps((prev) => {
 				const previous = prev[key];
@@ -128,6 +138,7 @@ export function useTtsModelDownloads(): {
 				};
 			});
 		} else {
+			settledDownloads.current.add(key);
 			ttsDownloadCancel(modelId, quant);
 			setSnaps((prev) => {
 				const next = { ...prev };

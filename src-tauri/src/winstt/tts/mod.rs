@@ -15,11 +15,14 @@
 //   tts:chunk { request_id, sample_rate, seq, is_final, format, channels, pcm }
 // where format == "f32le" (raw mono f32, local Kokoro) | "mp3" (cloud, renderer decodeAudioData's).
 
+pub mod audio8;
 pub mod catalog;
 pub mod chatterbox;
 pub mod kitten;
 pub mod kokoro;
 pub mod local_engines;
+pub mod neutts;
+pub mod omnivoice;
 pub mod orpheus;
 pub mod phonemize;
 pub mod piper;

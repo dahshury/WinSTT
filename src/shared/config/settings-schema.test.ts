@@ -106,25 +106,38 @@ describe("llm per-app profiles", () => {
 });
 
 describe("audioSettingsSchema bounds", () => {
-	test("clamps allowed sileroSensitivity range [0,1]", () => {
+	test("bounds sileroSensitivity and recovers an invalid persisted value", () => {
 		const ok = audioSettingsSchema.parse({ sileroSensitivity: 0.5 });
 		expect(ok.sileroSensitivity).toBe(0.5);
-		expect(() =>
-			audioSettingsSchema.parse({ sileroSensitivity: 1.5 }),
-		).toThrow();
-		expect(() =>
-			audioSettingsSchema.parse({ sileroSensitivity: -0.1 }),
-		).toThrow();
+		expect(
+			audioSettingsSchema.parse({ sileroSensitivity: 1.5 }).sileroSensitivity,
+		).toBe(0.7);
+		expect(
+			audioSettingsSchema.parse({ sileroSensitivity: -0.1 }).sileroSensitivity,
+		).toBe(0.7);
 	});
 
-	test("clamps allowed webrtcSensitivity range [0,3]", () => {
+	test("bounds webrtcSensitivity and recovers an invalid persisted value", () => {
 		expect(
 			audioSettingsSchema.parse({ webrtcSensitivity: 0 }).webrtcSensitivity,
 		).toBe(0);
 		expect(
 			audioSettingsSchema.parse({ webrtcSensitivity: 3 }).webrtcSensitivity,
 		).toBe(3);
-		expect(() => audioSettingsSchema.parse({ webrtcSensitivity: 4 })).toThrow();
+		expect(
+			audioSettingsSchema.parse({ webrtcSensitivity: 4 }).webrtcSensitivity,
+		).toBe(3);
+	});
+
+	test("bounds postSpeechSilenceDuration to the UI/runtime contract", () => {
+		expect(
+			audioSettingsSchema.parse({ postSpeechSilenceDuration: 0.1 })
+				.postSpeechSilenceDuration,
+		).toBe(0.1);
+		expect(
+			audioSettingsSchema.parse({ postSpeechSilenceDuration: 12 })
+				.postSpeechSilenceDuration,
+		).toBe(0.7);
 	});
 
 	test("inputDeviceIndex accepts null", () => {
@@ -445,7 +458,7 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 		expect(generalSettingsSchema.parse({}).startMinimized).toBe(false);
 	});
 
-	test("sendCrashReports defaults to true (opt-out model)", () => {
+	test("deprecated sendCrashReports compatibility leaf still decodes", () => {
 		expect(generalSettingsSchema.parse({}).sendCrashReports).toBe(true);
 	});
 
@@ -1004,14 +1017,30 @@ describe("explicit parse-time validation (kills `.default()` mutations that bypa
 		expect(generalSettingsSchema.parse({}).visualizerSize).toBe("xs");
 	});
 
-	test("llm.dictation.presets defaults to neutral plus clarity modifiers", () => {
+	// Every consumer starts ASSIGNED to the shipped "Default" configuration, and
+	// its resolved stack has to agree with what that configuration holds — the
+	// plainest one: base cleanup, neutral tone, no modifiers. A richer default
+	// here would put the persisted stack out of step with the assignment shown in
+	// the UI on a fresh install.
+	test("every consumer defaults to the Default configuration and its neutral stack", () => {
 		const out = llmSettingsSchema.parse({});
-		expect(out.dictation.presets).toEqual([
-			{ key: "neutral" },
-			{ key: "reorder" },
-			{ key: "restructure" },
-			{ key: "rewordForClarity" },
-		]);
+		for (const feature of [
+			out.dictation,
+			out.transforms,
+			out.readAloud,
+		] as const) {
+			expect(feature.configurationId).toBe("builtin:default");
+			expect(feature.presets).toEqual([{ key: "neutral" }]);
+		}
+	});
+
+	// An app RULE is not a feature assignment: an empty id means "this rule
+	// carries a hand-edited config", so it must NOT inherit the shipped default.
+	test("app-profile rules do not default to a configuration id", () => {
+		const out = llmSettingsSchema.parse({
+			appProfiles: { rules: [{ id: "r1" }] },
+		});
+		expect(out.appProfiles.rules[0]?.configurationId).toBe("");
 	});
 
 	test("llm thinking effort defaults to off for both feature configs", () => {

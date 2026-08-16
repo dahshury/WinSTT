@@ -136,13 +136,16 @@ export function usePushToTalk(): void {
 					isActiveRef.current = decision.micOn;
 					setActive(decision.micOn);
 				}
-				// PTT hard invariant: the key release is the ONLY thing that ends
-				// a PTT recording. Re-assert the recorder's auto-stop disables at the
-				// exact instant the recording starts so NEITHER the VAD silence
-				// endpoint NOR the smart-endpoint pause tuning can fire mid-hold —
-				// the "pastes before I lift my finger" bug. This is a recorder-CONFIG
-				// knob (sttSetParameter), NOT a mic dispatch — the backend owns the
-				// actual start/stop now. See memory/project_ptt_silence_endpoint_sync_race.md.
+				// PTT hard invariant: the key release is the ONLY thing that ends a PTT
+				// recording. That guarantee comes from the explicit-stop architecture —
+				// release stops the recorder directly, so the VAD silence endpoint never
+				// gets a chance to end a hold early. These two pushes are a structural
+				// ack of the invariant, NOT its mechanism: `winstt_set_parameter` accepts
+				// both keys as documented no-ops (see `apply_endpoint_flag` in
+				// src-tauri/src/winstt/commands/dictation.rs). They date from the
+				// out-of-process server port, where the flag really did gate auto-stop and
+				// racing it caused the "pastes before I lift my finger" bug — which is the
+				// architecture memory/project_ptt_silence_endpoint_sync_race.md describes.
 				if (mode === "ptt" && decision.micOn) {
 					sttSetParameter("silence_endpoint_enabled", false);
 					sttSetParameter("silence_timing", false);

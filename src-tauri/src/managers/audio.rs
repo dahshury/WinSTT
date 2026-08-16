@@ -1,7 +1,7 @@
 use crate::audio_toolkit::{
     AudioRecorder, CapturedAudio, CpalDeviceInfo, RealtimeAudioProgress, SileroVad,
     list_input_devices,
-    vad::{SmoothedVad, VAD_SPEECH_THRESHOLD},
+    vad::{LiveVad, SmoothedVad, VAD_SPEECH_THRESHOLD, VadRuntimeConfig},
 };
 use crate::helpers::clamshell;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
@@ -27,13 +27,38 @@ const TOGGLE_SILENCE_STOP_BINDING: &str = "transcribe";
 const TOGGLE_NO_SPEECH_WATCHDOG: Duration = Duration::from_secs(15);
 
 pub(crate) fn silence_auto_stop_delay(settings: &WinsttSettings) -> Option<Duration> {
+    endpoint_auto_stop_delay(settings, "")
+}
+
+/// Resolve the live silence deadline for Toggle/Wakeword recordings. Smart
+/// endpointing uses the configured speed as a patience multiplier around the
+/// existing post-speech baseline; when it is disabled, the persisted sentence
+/// pause controls classify the latest realtime transcript by punctuation.
+pub(crate) fn endpoint_auto_stop_delay(
+    settings: &WinsttSettings,
+    latest_text: &str,
+) -> Option<Duration> {
     match settings.general.recording_mode {
         RecordingMode::Toggle if settings.general.manual_toggle_stop => return None,
         RecordingMode::Toggle | RecordingMode::Wakeword => {}
         _ => return None,
     }
 
-    let raw_seconds = settings.audio.post_speech_silence_duration;
+    let raw_seconds = if settings.general.recording_mode == RecordingMode::Wakeword {
+        settings.audio.post_speech_silence_duration
+    } else if settings.quality.smart_endpoint {
+        let speed = finite_or(settings.quality.smart_endpoint_speed, 2.0).clamp(0.5, 3.0);
+        settings.audio.post_speech_silence_duration * (speed / 2.0)
+    } else {
+        let text = latest_text.trim_end();
+        if text.ends_with("...") || text.ends_with('…') {
+            settings.quality.mid_sentence_detection_pause
+        } else if text.ends_with('.') || text.ends_with('!') || text.ends_with('?') {
+            settings.quality.end_of_sentence_detection_pause
+        } else {
+            settings.quality.unknown_sentence_detection_pause
+        }
+    };
     let seconds = if raw_seconds.is_finite() {
         raw_seconds
     } else {
@@ -45,6 +70,10 @@ pub(crate) fn silence_auto_stop_delay(settings: &WinsttSettings) -> Option<Durat
     );
 
     Some(Duration::from_millis((seconds * 1000.0).round() as u64))
+}
+
+fn finite_or(value: f64, fallback: f64) -> f64 {
+    if value.is_finite() { value } else { fallback }
 }
 
 pub(crate) fn microphone_mode_from_settings(settings: &WinsttSettings) -> MicrophoneMode {
@@ -69,10 +98,11 @@ fn schedule_toggle_silence_stop(
     speech_token: u64,
 ) {
     let settings = read_settings_raw(app_handle);
-    let Some(delay) = silence_auto_stop_delay(&settings) else {
+    let Some(audio) = app_handle.try_state::<Arc<AudioRecordingManager>>() else {
         return;
     };
-    let Some(audio) = app_handle.try_state::<Arc<AudioRecordingManager>>() else {
+    let latest_text = audio.latest_endpoint_text();
+    let Some(delay) = endpoint_auto_stop_delay(&settings, &latest_text) else {
         return;
     };
     if !audio.is_recording() {
@@ -88,7 +118,7 @@ fn schedule_toggle_silence_stop(
         }
 
         let settings = read_settings_raw(&app);
-        if silence_auto_stop_delay(&settings).is_none() {
+        if endpoint_auto_stop_delay(&settings, "").is_none() {
             return;
         }
 
@@ -292,13 +322,15 @@ pub enum MicrophoneMode {
 fn create_audio_recorder(
     vad_path: &str,
     app_handle: &tauri::AppHandle,
+    vad_config: Arc<VadRuntimeConfig>,
     speech_seen: Arc<AtomicBool>,
     speech_active: Arc<AtomicBool>,
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let silero = SileroVad::new(vad_path, VAD_SPEECH_THRESHOLD)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
-    let smoothed_vad = SmoothedVad::new(Box::new(silero), 15, 15, 2);
+    let live_vad = LiveVad::new(silero, vad_config);
+    let smoothed_vad = SmoothedVad::new(Box::new(live_vad), 15, 15, 2);
 
     // Recorder with VAD plus a spectrum-level callback that forwards updates to
     // the frontend.
@@ -442,6 +474,13 @@ pub struct AudioRecordingManager {
     /// the (ungated) live mirror grows or resets, so native streaming can sleep on audio events
     /// instead of polling the mirror.
     realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
+    /// Live VAD controls. Shared with the detector worker so settings changes
+    /// apply immediately without re-opening the microphone or rebuilding ONNX.
+    vad_config: Arc<VadRuntimeConfig>,
+    /// Latest stable realtime text for punctuation-based silence timing. It is
+    /// cleared at every recording boundary so one utterance cannot influence
+    /// the next one's endpoint.
+    endpoint_text: Arc<Mutex<String>>,
 }
 
 /// Position of the first entry in `priority` (mic NAMES, highest-priority
@@ -471,6 +510,11 @@ impl AudioRecordingManager {
     pub fn new(app: &tauri::AppHandle) -> Result<Self, anyhow::Error> {
         let settings = read_settings_raw(app);
         let mode = microphone_mode_from_settings(&settings);
+        let vad_config = Arc::new(VadRuntimeConfig::new(
+            settings.audio.silero_deactivity_detection,
+            settings.audio.silero_sensitivity,
+            settings.audio.webrtc_sensitivity,
+        ));
 
         let manager = Self {
             state: Arc::new(Mutex::new(RecordingState::Idle)),
@@ -490,6 +534,8 @@ impl AudioRecordingManager {
                 Mutex::new(RealtimeAudioProgress::default()),
                 Condvar::new(),
             )),
+            vad_config,
+            endpoint_text: Arc::new(Mutex::new(String::new())),
         };
 
         // Always-on? Open immediately unless onboarding owns the launch. The
@@ -717,6 +763,7 @@ impl AudioRecordingManager {
             *recorder_opt = Some(create_audio_recorder(
                 vad_str,
                 &self.app_handle,
+                Arc::clone(&self.vad_config),
                 Arc::clone(&self.speech_seen),
                 Arc::clone(&self.speech_active),
                 Arc::clone(&self.realtime_audio_signal),
@@ -891,6 +938,7 @@ impl AudioRecordingManager {
             if let Some(rec) = self.recorder.lock_recover().as_ref() {
                 self.speech_seen.store(false, Ordering::SeqCst);
                 self.speech_active.store(false, Ordering::SeqCst);
+                self.endpoint_text.lock_recover().clear();
                 if rec.start().is_ok() {
                     *self.is_recording.lock_recover() = true;
                     // Bump the recording generation so the realtime worker treats
@@ -928,6 +976,26 @@ impl AudioRecordingManager {
             self.start_microphone_stream()?;
         }
         Ok(())
+    }
+
+    /// Apply the recording VAD controls to the already-open detector. The
+    /// capture worker reads this lock-free snapshot on its next 30 ms frame.
+    pub fn apply_vad_settings(&self, settings: &WinsttSettings) {
+        self.vad_config.update(
+            settings.audio.silero_deactivity_detection,
+            settings.audio.silero_sensitivity,
+            settings.audio.webrtc_sensitivity,
+        );
+    }
+
+    pub fn set_latest_endpoint_text(&self, text: &str) {
+        let mut latest = self.endpoint_text.lock_recover();
+        latest.clear();
+        latest.push_str(text);
+    }
+
+    fn latest_endpoint_text(&self) -> String {
+        self.endpoint_text.lock_recover().clone()
     }
 
     pub fn stop_recording(&self, binding_id: &str) -> Option<CapturedAudio> {
@@ -1250,6 +1318,45 @@ mod tests {
         assert_eq!(
             silence_auto_stop_delay(&too_high),
             Some(Duration::from_secs(10))
+        );
+    }
+
+    #[test]
+    fn smart_endpoint_speed_changes_toggle_patience() {
+        let mut fast = settings_with(RecordingMode::Toggle, false, 1.0);
+        fast.quality.smart_endpoint_speed = 0.5;
+        let mut patient = fast.clone();
+        patient.quality.smart_endpoint_speed = 3.0;
+
+        assert_eq!(
+            endpoint_auto_stop_delay(&fast, "unfinished"),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(
+            endpoint_auto_stop_delay(&patient, "unfinished"),
+            Some(Duration::from_millis(1500))
+        );
+    }
+
+    #[test]
+    fn sentence_pause_settings_drive_non_smart_endpointing() {
+        let mut settings = settings_with(RecordingMode::Toggle, false, 0.7);
+        settings.quality.smart_endpoint = false;
+        settings.quality.end_of_sentence_detection_pause = 0.4;
+        settings.quality.mid_sentence_detection_pause = 2.2;
+        settings.quality.unknown_sentence_detection_pause = 1.3;
+
+        assert_eq!(
+            endpoint_auto_stop_delay(&settings, "Done."),
+            Some(Duration::from_millis(400))
+        );
+        assert_eq!(
+            endpoint_auto_stop_delay(&settings, "Maybe..."),
+            Some(Duration::from_millis(2200))
+        );
+        assert_eq!(
+            endpoint_auto_stop_delay(&settings, "still thinking"),
+            Some(Duration::from_millis(1300))
         );
     }
 

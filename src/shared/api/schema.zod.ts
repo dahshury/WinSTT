@@ -104,6 +104,8 @@ export const ModelFamilySchema = z.enum([
 	"sense_voice",
 	"dolphin",
 	"qwen3",
+	"vibevoice",
+	"audio8",
 	"custom",
 ]);
 export type ModelFamily = z.infer<typeof ModelFamilySchema>;

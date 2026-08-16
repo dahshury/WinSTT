@@ -13,6 +13,10 @@ import { ButtonGroup } from "@/shared/ui/button-group";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { CLEAR_ACTION_SEGMENT_CLASS } from "../lib/clear-action-segment";
+import {
+	buildHistoryKindOptions,
+	type HistoryKind,
+} from "../lib/history-kinds";
 import { filterEntriesByDateRange } from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { HistoryDashboardSections } from "./HistoryDashboardSections";
@@ -37,11 +41,31 @@ export function TranscriptionHistoryPanel() {
 	);
 	const clearTtsLocal = useTranscriptionHistoryStore((s) => s.clearTts);
 	const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
+	const [deleteAllError, setDeleteAllError] = useState<string | null>(null);
+	const [deleteAllPending, setDeleteAllPending] = useState(false);
 	const [selectedRange, setSelectedRange] = useState<DateRange | null>(null);
+	// Date range and kind are the tab's two scope dimensions, picked together in
+	// the dashboard header's filters menu. They live here because the range
+	// scopes every section while the kind scopes the table, and both are read in
+	// more than one child.
+	const [historyKind, setHistoryKind] = useState<HistoryKind>("all");
 	const historyEnabled = useSettingsStore(
 		(s) => s.settings.general?.historyEnabled ?? true,
 	);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	// Counts are over the WHOLE history, not the date-filtered slice: they drive
+	// the Clear button, which deletes a kind outright rather than a window of it.
+	const historyKindOptions = buildHistoryKindOptions({
+		labels: {
+			all: t("filterAll"),
+			history: t("tableTitle"),
+			transforms: t("transformTableTitle"),
+			tts: t("kindTextToSpeech"),
+		},
+		transcriptionCount: entries.length,
+		transformCount: transformEntries.length,
+		ttsCount: ttsEntries.length,
+	});
 
 	const filteredEntries = filterEntriesByDateRange(
 		entries,
@@ -87,15 +111,26 @@ export function TranscriptionHistoryPanel() {
 	// silently — this explicit, confirmed action is the only way old rows,
 	// transforms, read-aloud runs, and recordings leave the disk.
 	const handleDeleteAll = () => {
-		Promise.all([
+		setDeleteAllError(null);
+		setDeleteAllPending(true);
+		void Promise.all([
 			clearTranscriptionHistory(),
 			clearTransformHistory(),
 			clearTtsHistory(),
-		]).then(() => {
-			clearLocal();
-			clearTransformLocal();
-			clearTtsLocal();
-		});
+		])
+			.then(() => {
+				clearLocal();
+				clearTransformLocal();
+				clearTtsLocal();
+			})
+			.catch((error: unknown) => {
+				setDeleteAllError(
+					error instanceof Error ? error.message : String(error),
+				);
+			})
+			.finally(() => {
+				setDeleteAllPending(false);
+			});
 	};
 
 	const masterSection = (
@@ -111,6 +146,11 @@ export function TranscriptionHistoryPanel() {
 						<p className="min-w-0 flex-1 text-foreground-muted text-xs-tight">
 							{t("disabledHint")}
 						</p>
+						{deleteAllError ? (
+							<p className="w-full text-body-sm text-error" role="alert">
+								{deleteAllError}
+							</p>
+						) : null}
 						<ConfirmDialog
 							confirmLabel={t("clearConfirm")}
 							description={t("deleteAllDescription")}
@@ -125,6 +165,7 @@ export function TranscriptionHistoryPanel() {
 						<ButtonGroup connected>
 							<Button
 								className={CLEAR_ACTION_SEGMENT_CLASS}
+								disabled={deleteAllPending}
 								onClick={() => setConfirmDeleteAllOpen(true)}
 							>
 								<HugeiconsIcon icon={Delete02Icon} size={14} />
@@ -153,11 +194,16 @@ export function TranscriptionHistoryPanel() {
 				entries={entries}
 				filteredEntries={filteredEntries}
 				filteredTtsEntries={filteredTtsEntries}
+				historyKind={historyKind}
+				historyKindOptions={historyKindOptions}
+				onHistoryKindChange={setHistoryKind}
 				onRangeChange={setSelectedRange}
 				selectedRange={selectedRange}
 			/>
 			<HistoryTableSection
 				combinedHistoryEntries={combinedHistoryEntries}
+				historyKind={historyKind}
+				historyKindOptions={historyKindOptions}
 				selectedRange={selectedRange}
 			/>
 			<HistoryLimitsSection />

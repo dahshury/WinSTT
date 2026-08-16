@@ -54,7 +54,7 @@ describe("GpuModelBreakdown", () => {
 			'[data-slot="footprint-resource-segment"]',
 		);
 		expect(segments.length).toBe(1);
-		expect(segments[0]?.dataset.section).toBe("system");
+		expect(segments[0]?.dataset["section"]).toBe("system");
 		expect(segments[0]?.style.width).toBe("25.00%");
 		// Opening snapshots paint at their final width instead of visibly
 		// transitioning from the hidden window's older sample.

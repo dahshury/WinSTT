@@ -115,6 +115,25 @@ pub async fn tts_speak_selection(
         return Ok(SpeakResult::default());
     }
     reserve_tts_playback_layer(&app);
+    // Track the id before annotating so the read is cancellable during the
+    // round-trip: the renderer holds no id yet (this command has not returned),
+    // so Escape / `ttsCancel()` reaches it only through `cancel_all`, which can
+    // only mark ids the registry already knows. Mirrors `ReadAloudAction`.
+    let cancel = mgr.track_request(&request_id);
+    // Same post-processing the hotkey path runs (`ReadAloudAction`): both are
+    // "read this selection", so both must run the modifier + inline-tag passes, or
+    // the feature would depend on which of the two fired. Fail-soft — see
+    // `prepare_read_aloud_text`.
+    let text =
+        crate::winstt::commands::tts_voice::prepare_read_aloud_text(&app, &text, &cancel).await;
+    if mgr.is_cancelled(&request_id) {
+        // Cancelled mid-preparation: `cancel_all` already emitted the terminal
+        // `tts:completed`, so report "nothing started" (the same empty result the
+        // no-selection branch returns) rather than handing back an id for a read
+        // that will never emit anything.
+        mgr.release_request(&request_id);
+        return Ok(SpeakResult::default());
+    }
     let rid = request_id.clone();
     let voice = voice.unwrap_or_default();
     let lang = lang.unwrap_or_default();
@@ -463,7 +482,8 @@ pub async fn tts_preview_openrouter(
 // ===========================================================================
 // Multi-provider TTS catalog (the model-aware picker). Mirrors the STT
 // stt_list_models / stt_list_models_with_state + per-quant download lifecycle, but for
-// the TTS_CATALOG (Kokoro / Kitten / Piper / Supertonic) downloaded from HF.
+// every TTS_CATALOG row (Kokoro / Kitten / Piper / Supertonic / Chatterbox /
+// Qwen3-TTS / Orpheus / Spark), downloaded on demand from HF.
 // ===========================================================================
 
 use std::collections::HashMap;
@@ -482,9 +502,32 @@ pub struct TtsModelInfoDto {
     pub languages: Vec<String>,
     pub num_voices: u32,
     pub cloning: String,
+    /// The row ERRORS instead of synthesizing until a reference clip (and, when
+    /// `cloning == "zero_shot_audio_transcript"`, its transcript) is supplied →
+    /// `requiresReferenceClip`. Drives the "not usable yet" warning on the clone
+    /// field. NOT derivable from `num_voices` + `cloning`: OmniVoice and Audio8
+    /// agree on both and disagree on this.
+    pub requires_reference_clip: bool,
     /// Voice-design capability: the voice is chosen by a text prompt (→ `voiceDesign`
     /// on the frontend). Drives the picker's VoiceDesign badge + prompt dialog.
     pub voice_design: bool,
+    /// Character budget for the design prompt, `0` when the row takes neither a
+    /// design prompt nor an instruct. The UI must read the cap from here rather
+    /// than re-typing the number.
+    pub voice_design_max_chars: u32,
+    /// The row takes a style instruction ALONGSIDE its voice (→ `voiceInstruct`),
+    /// stored in `tts.voice_instruct`. Unlike `voice_design` — where the prompt IS
+    /// the voice and overloads `tts.voice` — this renders as an EXTRA field, because
+    /// these rows also clone and need `tts.voice` for the reference-clip path.
+    pub voice_instruct: bool,
+    /// Longest cloning reference clip in seconds, `0` when the row does not
+    /// clone. Longer clips are trimmed by `tts_prepare_reference_clip`.
+    pub max_ref_clip_secs: u32,
+    /// `"none" | "angle" | "square"` — the delimiter style for `tags`. Angle and
+    /// square are NOT interchangeable; render tags from this, never hardcoded.
+    pub tag_syntax: catalog::TagSyntax,
+    /// BARE inline paralinguistic tag names (no delimiters), empty when unsupported.
+    pub tags: Vec<String>,
     pub sample_rate: u32,
     pub param_count_m: u32,
     pub size_label: String,
@@ -494,6 +537,35 @@ pub struct TtsModelInfoDto {
     pub speed_score: f32,
     pub description: String,
     pub available: bool,
+}
+
+/// The exact set of `TtsModelInfoDto` wire keys (snake_case), sorted, serialized to the committed
+/// parity fixture (`spec/fixtures/tts-model-info.fields.json`). The TTS twin of
+/// `catalog_data::dto::catalog_dto_fields_json`, and for the same reason: the renderer does NOT
+/// consume the generated `TtsModelInfoDto` binding at runtime — `tts-catalog-store.ts` re-parses
+/// the payload through a HAND-WRITTEN zod schema (`rawTtsModelSchema`) whose input is typed
+/// `unknown[]`, so `tsc` cannot see drift between the two.
+///
+/// That drift is worse here than on the STT side: `applyRaw` uses `safeParse` and SILENTLY DROPS
+/// any row that fails, so a field this struct renames (or an enum variant zod doesn't list) empties
+/// the model picker at runtime with no error anywhere. The Rust test
+/// `tts_model_dto_fields_match_committed` asserts the fixture is current and the TS test
+/// `tts-model-info.parity.test.ts` asserts the zod schema's keys reproduce it, so a one-sided edit
+/// fails CI instead of shipping an empty picker. Regenerate via
+/// `cargo run --example export_catalog_parity_fixtures`.
+pub fn tts_model_info_fields_json() -> Result<String, serde_json::Error> {
+    // A defaulted sample: the struct carries no `skip_serializing_if`, so the object's key set is
+    // exactly the wire surface. Derived from a real serialized instance (not a hand-list) so the
+    // fixture cannot lie about what the struct emits.
+    let sample = TtsModelInfoDto::default();
+    let serde_json::Value::Object(map) = serde_json::to_value(&sample)? else {
+        unreachable!("a struct always serializes to a JSON object");
+    };
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort();
+    let mut json = serde_json::to_string_pretty(&keys)?;
+    json.push('\n');
+    Ok(json)
 }
 
 /// Per-quant cache state, camelCase (matches the renderer's `TtsModelCacheInfo`).
@@ -547,7 +619,13 @@ fn to_model_info(m: &TtsModelEntry) -> TtsModelInfoDto {
         languages: m.languages.iter().map(|s| s.to_string()).collect(),
         num_voices: m.num_voices,
         cloning: m.cloning.as_str().to_string(),
+        requires_reference_clip: m.requires_reference_clip,
         voice_design: m.voice_design,
+        voice_design_max_chars: m.voice_design_max_chars,
+        voice_instruct: m.voice_instruct,
+        max_ref_clip_secs: m.max_ref_clip_secs,
+        tag_syntax: m.tag_syntax,
+        tags: m.tags.iter().map(|t| (*t).to_string()).collect(),
         sample_rate: m.sample_rate,
         param_count_m: m.param_count_m,
         size_label: human_size(default_size),
@@ -563,7 +641,8 @@ fn to_model_info(m: &TtsModelEntry) -> TtsModelInfoDto {
 /// The precision the engine will actually load for a model: the user's persisted
 /// `tts.quantization` when it's a concrete pick the model publishes, else the
 /// catalog default. Mirrors `build_local_engine_for`'s resolution so the badge
-/// matches what loads (only Qwen3-TTS ships a real ladder today).
+/// matches what loads (Qwen3-TTS and Chatterbox Turbo are the rows with a real
+/// multi-rung ladder today; the rest publish a single quant).
 fn resolve_tts_effective_quant(m: &TtsModelEntry, settings_quant: &str) -> String {
     if !settings_quant.is_empty() && m.quant(settings_quant).is_some() {
         settings_quant.to_string()
@@ -758,7 +837,54 @@ pub fn tts_delete_model(
 
 #[cfg(test)]
 mod tests {
-    use super::is_tts_cache_mutation_allowed;
+    use super::{is_tts_cache_mutation_allowed, to_model_info, tts_model_info_fields_json};
+
+    #[test]
+    fn tts_model_dto_fields_match_committed() {
+        // The committed fixture is the byte bridge to the renderer's `rawTtsModelSchema`. If this
+        // fails, a field was added/removed/renamed on TtsModelInfoDto — regenerate with
+        // `cargo run --example export_catalog_parity_fixtures` and update the zod schema to match,
+        // or the picker silently empties (applyRaw drops rows that fail to parse).
+        let committed = include_str!("../../../../spec/fixtures/tts-model-info.fields.json");
+        let generated = tts_model_info_fields_json().expect("serialize tts dto fields");
+        assert_eq!(
+            committed, generated,
+            "spec/fixtures/tts-model-info.fields.json is stale — rerun export_catalog_parity_fixtures"
+        );
+    }
+
+    #[test]
+    fn every_catalog_row_serializes_a_tag_syntax_the_renderer_accepts() {
+        // `tag_syntax` is the one new field carrying an ENUM rather than a scalar, and zod's
+        // `.default()` does NOT rescue a present-but-unlisted value — it only fills `undefined`.
+        // So a variant whose wire form drifts from the renderer's `["none","angle","square"]`
+        // fails the WHOLE row and drops the model from the picker. Assert the real wire strings
+        // for every shipped row rather than trusting the `rename_all` attribute by eye.
+        const RENDERER_ACCEPTS: [&str; 3] = ["none", "angle", "square"];
+        for entry in crate::winstt::tts::catalog::TTS_CATALOG {
+            let dto = to_model_info(entry);
+            let serde_json::Value::String(wire) =
+                serde_json::to_value(dto.tag_syntax).expect("serialize tag syntax")
+            else {
+                panic!("{}: tag_syntax must serialize to a JSON string", entry.id);
+            };
+            assert!(
+                RENDERER_ACCEPTS.contains(&wire.as_str()),
+                "{}: tag_syntax serializes as {wire:?}, which rawTtsModelSchema does not list — \
+                 the row would be dropped and the picker would lose this model",
+                entry.id
+            );
+            // The catalog's own invariant, restated on the wire: a delimiter style with no
+            // vocabulary (or vice versa) renders an empty tag list and a dead capability chip.
+            assert_eq!(
+                wire == "none",
+                dto.tags.is_empty(),
+                "{}: tag_syntax {wire:?} and {} tag(s) disagree — `TagSyntax::None` iff `tags` is empty",
+                entry.id,
+                dto.tags.len()
+            );
+        }
+    }
 
     #[test]
     fn tts_cache_mutation_authorization_matches_renderer_flows() {

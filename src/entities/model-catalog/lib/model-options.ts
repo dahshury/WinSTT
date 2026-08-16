@@ -14,6 +14,8 @@ const FAMILY_LABELS: Record<string, string> = {
 	cohere: "Cohere",
 	sense_voice: "SenseVoice",
 	dolphin: "Dolphin",
+	vibevoice: "VibeVoice",
+	audio8: "Audio8-ASR",
 };
 
 function getFamilyLabel(family: string): string {

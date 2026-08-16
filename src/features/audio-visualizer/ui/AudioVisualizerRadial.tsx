@@ -69,7 +69,6 @@ export interface AudioVisualizerRadialProps {
 	size?: VisualizerSize;
 }
 
-// `radialVariants` (icon 24, sm 56, md 112, lg 224, xl 448) — keep in sync.
 export function AudioVisualizerRadial({
 	size = "md",
 	color,

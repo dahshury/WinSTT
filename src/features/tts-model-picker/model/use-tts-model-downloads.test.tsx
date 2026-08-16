@@ -102,6 +102,18 @@ function fireProgress(payload: ProgressPayload): void {
 	});
 }
 
+function fireComplete(
+	model: string,
+	cancelled: boolean,
+	quantization: string,
+): void {
+	act(() => {
+		for (const listener of completeListeners) {
+			listener(model, cancelled, quantization);
+		}
+	});
+}
+
 beforeEach(() => {
 	progressListeners = [];
 	completeListeners = [];
@@ -183,5 +195,50 @@ describe("useTtsModelDownloads", () => {
 		});
 
 		expect(result.current.getSnapshot("kokoro", "fp16")?.totalBytes).toBe(1200);
+	});
+
+	test("does not resurrect a completed download from a late 100% progress event", () => {
+		const { result } = renderHook(() => useTtsModelDownloads());
+
+		fireProgress({
+			model: "kitten-tts-nano",
+			quantization: "fp32",
+			progress: 0.99,
+			downloadedBytes: 990,
+			totalBytes: 1000,
+		});
+		fireComplete("kitten-tts-nano", false, "fp32");
+		fireProgress({
+			model: "kitten-tts-nano",
+			quantization: "fp32",
+			progress: 1,
+			downloadedBytes: 1000,
+			totalBytes: 1000,
+		});
+
+		expect(refreshSpy).toHaveBeenCalledTimes(1);
+		expect(
+			result.current.getSnapshot("kitten-tts-nano", "fp32"),
+		).toBeUndefined();
+	});
+
+	test("accepts progress again after an explicit restart", () => {
+		const { result } = renderHook(() => useTtsModelDownloads());
+
+		fireComplete("kitten-tts-nano", false, "fp32");
+		act(() =>
+			result.current.onDownloadAction("start", "kitten-tts-nano", "fp32"),
+		);
+		fireProgress({
+			model: "kitten-tts-nano",
+			quantization: "fp32",
+			progress: 0.25,
+			downloadedBytes: 250,
+			totalBytes: 1000,
+		});
+
+		expect(
+			result.current.getSnapshot("kitten-tts-nano", "fp32")?.progress,
+		).toBe(25);
 	});
 });

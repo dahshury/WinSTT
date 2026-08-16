@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import {
-	type ModelInfo,
+	reconcileQuantForModel,
 	useCatalogStore,
 	useModelSwapStore,
 } from "@/entities/model-catalog";
@@ -94,67 +94,6 @@ function shouldAdoptRuntimeModel(
 	);
 }
 
-/**
- * Build the ``ModelPatch`` that adopts a just-completed swap's model into
- * settings, or ``null`` when nothing should change.
- *
- * This is the fix for the "all surfaces stuck on the previous model after a
- * detached-picker swap" bug. The detached picker window commits the pick on
- * its OWN stores and closes the instant the swap starts — so its debounced
- * ``settings:changed`` broadcast is raced/lost and the other windows never
- * learn the new ``settings.model``. They DO receive the global
- * ``model-swap-completed`` event (``app.emit`` reaches every window) which
- * carries the authoritative loaded model ``name`` — but the runtime-info
- * reconciler below can't act on it: it reads ``activeMain`` via ``getState()``
- * (not a dependency) precisely so it never re-fires on the ``true → false``
- * clear transition, so the adoption that should flip the picker to the new
- * model never runs. Driving the adoption straight off the completion event
- * makes every window converge on the loaded model deterministically.
- *
- * - No-op when the slot already shows ``name`` (the initiating window).
- * - No-op for an empty ``name`` (e.g. a realtime clear — handled by the
- *   normal broadcast path; we never write a bare ``{ model }`` couple).
- * - Main picks resolve their paired ``backend`` from the catalog (cloud ids
- *   have no entry → the benign cloud backend); a genuinely-unknown local id
- *   yields ``null`` rather than an inconsistent ``{ model }``-without-backend.
- */
-/**
- * The precision override to fold into a main-model adoption patch, or ``null``
- * when the carried quantization is already valid for the model being adopted.
- *
- * The persisted ``onnxQuantization`` belongs to the PREVIOUS main model. When a
- * different main model is adopted (post-swap completion, or a runtime fallback)
- * the catalog list for the NEW model may not offer that precision — e.g. a
- * ``fp16`` carried onto a model that only ships ``["", "int8"]``. Writing
- * ``{ model }`` without reconciling the quant persists an invalid
- * ``{ model, onnxQuantization }`` couple, which the backend's
- * ``validate_quantization`` (checked against ``model.model``) REJECTS — silently
- * dropping the WHOLE model-section save so the model change never reaches disk.
- * That is the "chosen main model reverts to the old one after restart" bug: the
- * detached picker resolves the quant in its own store, but the main window
- * adopts via the completion event and kept the stale precision.
- *
- * Returns ``""`` (the universal default — every catalog entry ships it and the
- * server re-resolves it per model) to reset an unavailable precision; ``null``
- * to leave the carried value untouched. The ``""``/``auto`` sentinels are always
- * valid, and an unknown/cloud id (no catalog entry / no precision list) can't be
- * proven invalid, so both keep the carried value.
- */
-function reconcileAdoptedQuant(
-	modelId: string,
-	currentQuant: string,
-	catalogModels: readonly ModelInfo[],
-): "" | null {
-	if (currentQuant === "" || currentQuant === "auto") {
-		return null;
-	}
-	const entry = catalogModels.find((m) => m.id === modelId);
-	if (!(entry && Array.isArray(entry.availableQuantizations))) {
-		return null;
-	}
-	return entry.availableQuantizations.includes(currentQuant) ? null : "";
-}
-
 export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
@@ -184,7 +123,7 @@ export function useSyncActiveModel(): void {
 				// adoption does: a fallback model that doesn't offer the persisted
 				// quant would otherwise persist an invalid pair that
 				// `validate_quantization` rejects (dropping the whole save).
-				const quantOverride = reconcileAdoptedQuant(
+				const quantOverride = reconcileQuantForModel(
 					runtimeModel,
 					useSettingsStore.getState().settings.model?.onnxQuantization ?? "",
 					catalogModels,

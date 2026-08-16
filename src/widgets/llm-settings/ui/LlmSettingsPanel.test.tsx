@@ -1,16 +1,29 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	mock,
+	spyOn,
+	test,
+} from "bun:test";
 import { asInvalid } from "@test/lib/cast";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
+import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import * as helpers from "../lib/llm-settings-panel-test-helpers";
 import type { FeatureToggleDeps } from "../lib/llm-settings-panel-test-helpers";
 import {
+	DEFAULT_CONFIGURATION_ID,
 	type LlmConfiguration,
 	type SavedConfiguration,
 	useLlmConfigurationsStore,
 } from "../model/configurations";
+import { useSmartEndpointDisabledNoticeStore } from "../model/use-llm-settings-panel";
+import { useWarmupStatusStore } from "../model/warmup-status-store";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
 
 // `readLlmSnapshot` accepts a forgiving partial input at runtime (it re-defaults
@@ -24,6 +37,24 @@ beforeEach(() => {
 		activeConfigurationId: null,
 		configurations: [],
 	});
+	// The Ollama catalog drives the reconcile effect that can disable a local
+	// feature out from under a test, so it is reset alongside the other stores —
+	// a leftover installed model from a previous test changes the outcome here.
+	useLlmCatalogStore.setState({ isLoaded: false, models: [] });
+	// Both are process-global singletons: a leaked warm-up failure paints banners
+	// onto an unrelated test's rows, and a leaked picker session makes the
+	// read-aloud routing assertion pass for the wrong reason.
+	useWarmupStatusStore.setState({ status: null });
+	useLlmModelPickerStore.setState({
+		enableOnInstall: false,
+		feature: null,
+		open: false,
+		pendingFeature: null,
+	});
+	// Enabling dictation legitimately raises this toast (Smart Endpoint is
+	// mutually exclusive with it), and the store is a process-global singleton —
+	// left set, it renders into an unrelated test file's fixture.
+	useSmartEndpointDisabledNoticeStore.getState().clear();
 });
 
 afterEach(() => {
@@ -32,6 +63,18 @@ afterEach(() => {
 		activeConfigurationId: null,
 		configurations: [],
 	});
+	useLlmCatalogStore.setState({ isLoaded: false, models: [] });
+	useWarmupStatusStore.setState({ status: null });
+	useLlmModelPickerStore.setState({
+		enableOnInstall: false,
+		feature: null,
+		open: false,
+		pendingFeature: null,
+	});
+	// Enabling dictation legitimately raises this toast (Smart Endpoint is
+	// mutually exclusive with it), and the store is a process-global singleton —
+	// left set, it renders into an unrelated test file's fixture.
+	useSmartEndpointDisabledNoticeStore.getState().clear();
 });
 
 function savedConfiguration(
@@ -60,202 +103,657 @@ function savedConfiguration(
 	};
 }
 
+/** Two saved configurations, with the first assigned to every feature — the
+ *  normal state, since the app seeds built-ins on first load. */
+function seedConfigurations(patch: Partial<LlmConfiguration> = {}): void {
+	useLlmConfigurationsStore.setState({
+		activeConfigurationId: "first",
+		configurations: [
+			savedConfiguration("first", "First", patch),
+			savedConfiguration("second", "Second", {
+				...patch,
+				presets: [{ key: "technical" }],
+			}),
+		],
+	});
+	const llm = useSettingsStore.getState().settings.llm;
+	useSettingsStore.setState({
+		settings: {
+			...useSettingsStore.getState().settings,
+			llm: {
+				...llm,
+				dictation: { ...llm.dictation, ...patch, configurationId: "first" },
+				transforms: { ...llm.transforms, ...patch, configurationId: "first" },
+				readAloud: { ...llm.readAloud, ...patch, configurationId: "first" },
+			},
+		},
+	});
+}
+
+/** The three consumers, by the label the rows and the editor both use. */
+const FEATURE_NAMES = ["Dictation", "Transformations", "Read aloud"] as const;
+
+/** One consumer's enable switch (WHETHER it runs). Every row renders one, on or
+ *  off — there is no separate chip strip any more, so this is unambiguous
+ *  document-wide. */
+function featureSwitch(name: string): HTMLElement {
+	return screen.getByRole("switch", { name: `Turn ${name} on or off` });
+}
+
+/** The per-feature profile picker (WHICH profile that consumer runs). Scoped to
+ *  the row's own group, because all three pickers are always mounted now. */
+function profilePicker(name: string): HTMLElement {
+	return within(screen.getByRole("group", { name })).getByRole("combobox");
+}
+
+/** Prev/next on one consumer's picker — they cycle THAT feature's profile. */
+function profileArrow(
+	name: string,
+	direction: "Next" | "Previous",
+): HTMLElement {
+	return within(screen.getByRole("group", { name })).getByRole("button", {
+		name: `${direction} profile`,
+	});
+}
+
+/** Base UI's Switch renders a `<span role="switch">`, not a `<button>`, so there
+ *  is no `disabled` DOM property to read — the blocked state shows up as
+ *  `aria-disabled` (and is asserted behaviourally by clicking as well). */
+function switchIsBlocked(name: string): boolean {
+	return featureSwitch(name).getAttribute("aria-disabled") === "true";
+}
+
+/** Warm-up spinners badging the feature switches. Scoped to each switch's own
+ *  `PendingBadge` wrapper (its direct parent): an unrelated catalog scan
+ *  elsewhere on the page has its own spinner, which would make a document-wide
+ *  query meaningless. */
+function featureRowSpinners(): number {
+	return FEATURE_NAMES.reduce((total, name) => {
+		const badge = featureSwitch(name).parentElement;
+		return total + (badge?.querySelectorAll(".animate-spin").length ?? 0);
+	}, 0);
+}
+
+/** Which consumers' switches live in the nearest row-level ancestor of `el`.
+ *  A feature EXTRA (dictionary auto-add, warm-up banner) must nest under its own
+ *  row, so exactly one name comes back; a page-level sibling would sit in the
+ *  container that holds all three and return all of them. */
+function nearestFeatureScope(el: HTMLElement): string[] {
+	for (let node = el.parentElement; node; node = node.parentElement) {
+		const current = node;
+		const owned = FEATURE_NAMES.filter((name) =>
+			current.contains(featureSwitch(name)),
+		);
+		if (owned.length > 0) {
+			return [...owned];
+		}
+	}
+	return [];
+}
+
+/** A cloud configuration plus a key, used wherever a test is about the tab's own
+ *  behaviour rather than the Ollama preflight: a LOCAL feature enabled with no
+ *  installed model is immediately switched back off by the catalog reconcile,
+ *  which would mask what the test is actually asserting. */
+function seedCloudConfigurations(): void {
+	seedConfigurations({
+		openrouterModel: "vendor/fast",
+		provider: "openrouter",
+	});
+	useSettingsStore.setState({
+		settings: {
+			...useSettingsStore.getState().settings,
+			llm: {
+				...useSettingsStore.getState().settings.llm,
+				openrouterApiKey: "sk-test",
+			},
+		},
+	});
+}
+
+function renderPanel() {
+	return render(
+		<IntlProvider>
+			<LlmSettingsPanel />
+		</IntlProvider>,
+	);
+}
+
 describe("LlmSettingsPanel", () => {
 	test("renders without crashing", () => {
-		const { container } = render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
+		const { container } = renderPanel();
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
-	test("keeps the four-level Caveman switcher in one dense row", () => {
-		render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
+	// Tone and modifiers define a PROFILE, so they live in the profile editor
+	// (which is also where you try it) — never half-copied onto the tab.
+	test("keeps tone and modifiers off the tab", () => {
+		seedConfigurations();
+		renderPanel();
+		expect(screen.queryByText("Tone")).toBeNull();
+		expect(screen.queryByText("Modifiers")).toBeNull();
+	});
+
+	test("the profile editor holds one copy of tone and modifiers", () => {
+		seedConfigurations();
+		renderPanel();
+		fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
+
+		expect(screen.getAllByText("Tone")).toHaveLength(1);
+		expect(screen.getAllByText("Modifiers")).toHaveLength(1);
+		// Wide enough to hold all four `sm`-sized segments in one row without
+		// clipping "Caveman" (see modifier-presets.tsx).
 		const caveman = screen.getAllByText("Caveman")[0];
 		const group = caveman?.closest("button")?.parentElement;
-		expect(group?.className).toContain("flex");
-		// Wide enough to hold all four `sm`-sized segments in one row without
-		// clipping "Caveman" (see modifier-presets.tsx) — NOT the compact `xs`
-		// row, whose segments read smaller than the 3-option Summarize switcher.
 		expect(group?.className).toContain("w-[21rem]");
-		expect(group?.className).not.toContain("grid-cols-2");
 	});
 
-	test("disables profile presets and playground while post-processing is off and shows one title", () => {
-		render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
+	test("gives every consumer its own enable switch", () => {
+		seedConfigurations();
+		renderPanel();
+		// Transformations in particular: it had no control of its own at all
+		// before, because it silently shadowed dictation.
+		for (const name of FEATURE_NAMES) {
+			expect(featureSwitch(name).getAttribute("aria-checked")).toBe("false");
+		}
+	});
 
-		expect(screen.getAllByText("LLM Post-Processing")).toHaveLength(1);
+	// Every row is present whether or not its feature runs. Hiding the off ones
+	// meant the tab could show nothing at all and needed an empty state to explain
+	// itself — and it hid the very switch you came to find.
+	test("renders all three rows when nothing is enabled", () => {
+		seedConfigurations();
+		renderPanel();
+		for (const name of FEATURE_NAMES) {
+			expect(featureSwitch(name)).not.toBeNull();
+			expect(profilePicker(name)).not.toBeNull();
+		}
+		// No empty state, and no separate assignment section to send the user to.
 		expect(
-			(
-				screen.getByPlaceholderText(
-					"Select or create preset…",
-				) as HTMLInputElement
-			).disabled,
-		).toBe(true);
-		expect(
-			(screen.getByRole("button", { name: "Playground" }) as HTMLButtonElement)
-				.disabled,
-		).toBe(true);
-		// With fewer than two saved presets there is nothing to cycle to — the
-		// nav arrows are not rendered at all (permanently-disabled arrows read
-		// as broken segments beside the combobox).
-		expect(
-			screen.queryByRole("button", { name: "Previous preset" }),
+			screen.queryByText(
+				"No mode is on. Turn one on above to give it a profile.",
+			),
 		).toBeNull();
-		expect(screen.queryByRole("button", { name: "Next preset" })).toBeNull();
+		expect(screen.queryByText("Applies to")).toBeNull();
 	});
 
-	test("shows nav arrows disabled while post-processing is off once two presets exist", () => {
+	test("a switch writes only that feature's enabled flag", () => {
+		seedCloudConfigurations();
+		renderPanel();
+		fireEvent.click(featureSwitch("Transformations"));
+		const { llm } = useSettingsStore.getState().settings;
+		expect(llm.transforms.enabled).toBe(true);
+		// The old mirror would have dragged dictation along with it.
+		expect(llm.dictation.enabled).toBe(false);
+		expect(llm.readAloud.enabled).toBe(false);
+	});
+
+	// Multi-select: any combination is reachable, and each switch reports only its
+	// own consumer. There is no master switch — one could only mean "any of
+	// them", which either misreports what is running or needs an arbitrary rule
+	// for what turning it on should start.
+	test("the switches reflect which consumers are on, independently", () => {
+		seedCloudConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: { ...llm, readAloud: { ...llm.readAloud, enabled: true } },
+			},
+		});
+		renderPanel();
+		expect(featureSwitch("Read aloud").getAttribute("aria-checked")).toBe(
+			"true",
+		);
+		expect(featureSwitch("Dictation").getAttribute("aria-checked")).toBe(
+			"false",
+		);
+		expect(featureSwitch("Transformations").getAttribute("aria-checked")).toBe(
+			"false",
+		);
+	});
+
+	// Turning OFF has to signal that the model is being unloaded from VRAM, which
+	// only happens if the flow goes through the per-feature controller — a direct
+	// `enabled: false` write skips `beginUnload` and the spinner never appears.
+	test("turning a switch off routes through the controller so unload is signalled", async () => {
+		// Cloud + key so the Ollama catalog reconcile can't disable the feature out
+		// from under the click.
+		seedCloudConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: { ...llm, dictation: { ...llm.dictation, enabled: true } },
+			},
+		});
+		const seen: boolean[] = [];
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (next: boolean, deps: FeatureToggleDeps) => {
+				seen.push(next);
+				deps.apply({ enabled: next });
+				return Promise.resolve();
+			},
+		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Dictation"));
+		await Promise.resolve();
+
+		expect(seen).toEqual([false]);
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			false,
+		);
+		spy.mockRestore();
+	});
+
+	test("turning one switch off leaves the other consumers running", () => {
+		seedCloudConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					dictation: { ...llm.dictation, enabled: true },
+					readAloud: { ...llm.readAloud, enabled: true },
+				},
+			},
+		});
+		renderPanel();
+		fireEvent.click(featureSwitch("Dictation"));
+		const after = useSettingsStore.getState().settings.llm;
+		expect(after.dictation.enabled).toBe(false);
+		// Independent switches: turning one off is not a master-off.
+		expect(after.readAloud.enabled).toBe(true);
+	});
+
+	// Every consumer ships assigned to "Default" (base cleanup, neutral tone), so
+	// a feature is never enableable with nothing to run and the picker never shows
+	// an empty "choose one" state.
+	test("each consumer starts assigned to the shipped Default preset", () => {
+		const { llm } = useSettingsStore.getState().settings;
+		for (const feature of [llm.dictation, llm.transforms, llm.readAloud]) {
+			expect(feature.configurationId).toBe(DEFAULT_CONFIGURATION_ID);
+		}
+	});
+
+	test("a consumer cannot be enabled when no preset resolves at all", () => {
+		// Configurations deleted down to nothing: enabling would arm a feature with
+		// no prompt, so the row refuses and says why.
 		useLlmConfigurationsStore.setState({
 			activeConfigurationId: null,
-			configurations: [
-				savedConfiguration("first", "First", {}),
-				savedConfiguration("second", "Second", {}),
-			],
+			configurations: [],
 		});
-		render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
-
-		expect(
-			(
-				screen.getByRole("button", {
-					name: "Previous preset",
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
-		expect(
-			(
-				screen.getByRole("button", {
-					name: "Next preset",
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
-	});
-
-	test("enables the playground button while post-processing is on", () => {
-		useSettingsStore.setState({
-			settings: {
-				...DEFAULT_SETTINGS,
-				llm: {
-					...DEFAULT_SETTINGS.llm,
-					openrouterApiKey: "sk-test",
-					dictation: {
-						...DEFAULT_SETTINGS.llm.dictation,
-						enabled: true,
-						openrouterModel: "openai/gpt-4o-mini",
-						provider: "openrouter",
-					},
-				},
-			},
-		});
-		render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
-
-		expect(
-			(screen.getByRole("button", { name: "Playground" }) as HTMLButtonElement)
-				.disabled,
-		).toBe(false);
-	});
-
-	test("orders header actions as playground, presets, then toggle", () => {
-		render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
-
-		const playground = screen.getByRole("button", { name: "Playground" });
-		const preset = screen.getByPlaceholderText("Select or create preset…");
-		const toggle = screen.getByRole("switch", {
-			name: "Toggle post-processing",
-		});
-
-		expect(
-			Boolean(
-				playground.compareDocumentPosition(preset) &
-					Node.DOCUMENT_POSITION_FOLLOWING,
-			),
-		).toBe(true);
-		expect(
-			Boolean(
-				preset.compareDocumentPosition(toggle) &
-					Node.DOCUMENT_POSITION_FOLLOWING,
-			),
-		).toBe(true);
-	});
-
-	test("navigates post-processing profiles from the header buttons", () => {
-		const first = savedConfiguration("first", "First", {
-			openrouterModel: "openrouter/first",
-			presets: [{ key: "formal" }],
-			provider: "openrouter",
-		});
-		const second = savedConfiguration("second", "Second", {
-			openrouterModel: "openrouter/second",
-			presets: [{ key: "technical" }],
-			provider: "openrouter",
-		});
-		useLlmConfigurationsStore.setState({
-			activeConfigurationId: "first",
-			configurations: [first, second],
-		});
-		useSettingsStore.setState({
-			settings: {
-				...DEFAULT_SETTINGS,
-				llm: {
-					...DEFAULT_SETTINGS.llm,
-					openrouterApiKey: "sk-test",
-					dictation: {
-						...DEFAULT_SETTINGS.llm.dictation,
-						enabled: true,
-						openrouterModel: "openrouter/first",
-						presets: [{ key: "formal" }],
-						provider: "openrouter",
-					},
-				},
-			},
-		});
-		render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
-
-		fireEvent.click(screen.getByRole("button", { name: "Next preset" }));
-
-		expect(
-			useSettingsStore.getState().settings.llm.dictation.openrouterModel,
-		).toBe("openrouter/second");
+		renderPanel();
+		fireEvent.click(featureSwitch("Dictation"));
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			false,
+		);
+		expect(switchIsBlocked("Dictation")).toBe(true);
+	});
+
+	// The preflight resolves the cloud model when the feature has none, and the
+	// whole patch has to survive the commit: narrowing it to `{enabled, model}`
+	// dropped `openrouterModel`, so the feature came on with nothing to call.
+	test("enabling a cloud feature keeps the model the preflight resolved", async () => {
+		seedCloudConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					transforms: { ...llm.transforms, openrouterModel: "" },
+				},
+			},
+		});
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (_next: boolean, deps: FeatureToggleDeps) => {
+				deps.apply({ openrouterModel: "vendor/default", enabled: true });
+				return Promise.resolve();
+			},
+		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Transformations"));
+		await Promise.resolve();
+
+		const after = useSettingsStore.getState().settings.llm.transforms;
+		expect(after.enabled).toBe(true);
+		expect(after.openrouterModel).toBe("vendor/default");
+		spy.mockRestore();
+	});
+
+	// The heal re-resolves the feature from the RENDER-TIME context, so running it
+	// after the model write overwrote the model the preflight had just picked —
+	// with the stale shared model, or with "" for a preset that names none.
+	test("healing a dangling assignment does not clobber the preflight's model", async () => {
+		seedConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					localModel: "",
+					// Points at a configuration that was deleted, and no feature holds a
+					// local model yet — so the heal has nothing but "" to resolve to.
+					dictation: { ...llm.dictation, configurationId: "gone", model: "" },
+				},
+			},
+		});
+		useLlmCatalogStore.setState({
+			isLoaded: true,
+			models: [asInvalid({ name: "llama3.2:1b", size: 1 })],
+		});
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (_next: boolean, deps: FeatureToggleDeps) => {
+				deps.apply({ model: "llama3.2:1b", enabled: true });
+				return Promise.resolve();
+			},
+		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Dictation"));
+		await Promise.resolve();
+
+		const after = useSettingsStore.getState().settings.llm.dictation;
+		expect(after.enabled).toBe(true);
+		expect(after.configurationId).toBe("first");
+		// Never enabled with an empty model id — that is the state the preflight
+		// exists to prevent, and the reconcile would switch the feature straight
+		// back off.
+		expect(after.model).toBe("llama3.2:1b");
+		spy.mockRestore();
+	});
+
+	// One warm-up broadcast describes the DAEMON, not a consumer. With the shared
+	// local model on (the default) every enabled row resolves to the same model,
+	// so a per-row banner rendered the identical failure two or three times, each
+	// with its own Retry button.
+	test("shows one warm-up banner when several consumers share the failure", () => {
+		seedConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					localModel: "qwen3:4b",
+					dictation: { ...llm.dictation, enabled: true, model: "qwen3:4b" },
+					readAloud: { ...llm.readAloud, enabled: true, model: "qwen3:4b" },
+				},
+			},
+		});
+		useLlmCatalogStore.setState({
+			isLoaded: true,
+			models: [asInvalid({ name: "qwen3:4b", size: 1 })],
+		});
+		useWarmupStatusStore.setState({
+			status: {
+				endpoint: "http://localhost:11434",
+				inProgress: false,
+				models: [],
+				ollamaInstalled: true,
+				reachable: false,
+				timestamp: 1,
+			},
+		});
+		renderPanel();
+
+		expect(screen.getAllByText("Ollama is not responding")).toHaveLength(1);
+		expect(screen.getAllByRole("button", { name: "Retry now" })).toHaveLength(
+			1,
+		);
+	});
+
+	// The banner names the consumer in its "install Ollama" copy. Read aloud used
+	// to borrow dictation's name, so the banner under the Read aloud row read
+	// "…to use the dictation model."
+	test("the warm-up banner names the consumer it sits under", () => {
+		seedConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					localModel: "qwen3:4b",
+					readAloud: { ...llm.readAloud, enabled: true, model: "qwen3:4b" },
+				},
+			},
+		});
+		useLlmCatalogStore.setState({
+			isLoaded: true,
+			models: [asInvalid({ name: "qwen3:4b", size: 1 })],
+		});
+		useWarmupStatusStore.setState({
+			status: {
+				endpoint: "http://localhost:11434",
+				inProgress: false,
+				models: [],
+				ollamaInstalled: false,
+				reachable: false,
+				timestamp: 1,
+			},
+		});
+		renderPanel();
+
+		const banner = screen.getByText(/Install it to use the/);
+		expect(banner.textContent).toContain("read aloud");
+		expect(nearestFeatureScope(banner as HTMLElement)).toEqual(["Read aloud"]);
+	});
+
+	// The preflight dialogs commit `enabled`, so routing read aloud's through
+	// dictation's turned DICTATION on when the user asked for read aloud.
+	test("a read-aloud turn-on opens the picker for read aloud", async () => {
+		seedConfigurations();
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (_next: boolean, deps: FeatureToggleDeps) => {
+				deps.setShowModelPicker(true);
+				return Promise.resolve();
+			},
+		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Read aloud"));
+		await Promise.resolve();
+
+		expect(useLlmModelPickerStore.getState().feature).toBe("readAloud");
+		spy.mockRestore();
+	});
+
+	test("enabling heals an assignment whose preset no longer exists", () => {
+		seedCloudConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					// Points at a configuration that was deleted.
+					transforms: { ...llm.transforms, configurationId: "gone" },
+				},
+			},
+		});
+		renderPanel();
+		fireEvent.click(featureSwitch("Transformations"));
+		const after = useSettingsStore.getState().settings.llm.transforms;
+		expect(after.enabled).toBe(true);
+		// Written down before the flag flipped — never enabled while dangling.
+		expect(after.configurationId).toBe("first");
+	});
+
+	// Every locally-running consumer shares one model, so the SECOND one you
+	// switch on loads nothing. Arming a warm-up spinner there would promise work
+	// that never happens and then hang until its timeout, because no warmup
+	// broadcast is coming.
+	test("enabling a second consumer on the same model arms no warm-up", async () => {
+		seedConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					localModel: "qwen3:4b",
+					// Dictation is already running the shared model.
+					dictation: { ...llm.dictation, enabled: true, model: "qwen3:4b" },
+					readAloud: { ...llm.readAloud, model: "qwen3:4b" },
+				},
+			},
+		});
+		// The model has to count as INSTALLED, or the catalog reconcile disables
+		// dictation on mount and read-aloud legitimately becomes the first loader.
+		useLlmCatalogStore.setState({
+			isLoaded: true,
+			models: [asInvalid({ name: "qwen3:4b", size: 1 })],
+		});
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (next: boolean, deps: FeatureToggleDeps) => {
+				deps.apply({ enabled: next });
+				return Promise.resolve();
+			},
+		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Read aloud"));
+		await Promise.resolve();
+
+		expect(useSettingsStore.getState().settings.llm.readAloud.enabled).toBe(
 			true,
 		);
-		expect(useLlmConfigurationsStore.getState().activeConfigurationId).toBe(
-			"second",
+		// No pending badge on any row's switch: the model is already resident.
+		expect(featureRowSpinners()).toBe(0);
+		spy.mockRestore();
+	});
+
+	// Regression: a bare `enabled: true` write skipped the model preflight, so a
+	// local feature could be switched on with an empty model id — nothing to load,
+	// and the catalog reconcile then silently switched it back off. Enabling must
+	// go through `performFeatureToggle`, which opens the picker instead.
+	test("enabling a local feature with no model installed opens the picker, not an empty load", async () => {
+		seedConfigurations();
+		const openedPicker: boolean[] = [];
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (next: boolean, deps: FeatureToggleDeps) => {
+				openedPicker.push(next);
+				// Stand in for the real preflight: no installed model → picker, and
+				// crucially NO `enabled` commit.
+				deps.setShowModelPicker(true);
+				return Promise.resolve();
+			},
 		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Dictation"));
+		await Promise.resolve();
 
-		fireEvent.click(screen.getByRole("button", { name: "Previous preset" }));
+		expect(openedPicker).toEqual([true]);
+		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
+			false,
+		);
+		spy.mockRestore();
+	});
 
+	test("a switch routes ON through the model preflight", async () => {
+		seedConfigurations();
+		const calls: boolean[] = [];
+		const spy = spyOn(helpers, "performFeatureToggle").mockImplementation(
+			async (next: boolean) => {
+				calls.push(next);
+				return Promise.resolve();
+			},
+		);
+		renderPanel();
+		fireEvent.click(featureSwitch("Dictation"));
+		await Promise.resolve();
+
+		// It must not be a shortcut that writes `enabled` directly.
+		expect(calls).toEqual([true]);
+		spy.mockRestore();
+	});
+
+	test("Manage profiles opens the editor regardless of what is enabled", () => {
+		renderPanel();
+		const open = screen.getByRole("button", { name: "Manage profiles" });
+		// Profiles are worth editing whether or not anything is running them.
+		expect((open as HTMLButtonElement).disabled).toBe(false);
+		fireEvent.click(open);
+		// The editor's own tone row proves the modal mounted.
+		expect(screen.getAllByText("Tone")).toHaveLength(1);
+	});
+
+	// Configure-then-enable is a normal order of operations, so an OFF feature's
+	// picker stays live: the row dims its identity only, and the write lands.
+	// Hiding the picker until the feature was on forced the reverse order.
+	test("an off consumer still has a usable profile picker", () => {
+		seedCloudConfigurations();
+		renderPanel();
+		// Read aloud is off and stays off — assigning a profile is not enabling.
+		expect(featureSwitch("Read aloud").getAttribute("aria-checked")).toBe(
+			"false",
+		);
+		expect((profilePicker("Read aloud") as HTMLInputElement).disabled).toBe(
+			false,
+		);
+		fireEvent.click(profileArrow("Read aloud", "Next"));
+
+		const after = useSettingsStore.getState().settings.llm;
+		expect(after.readAloud.configurationId).toBe("second");
+		expect(after.readAloud.enabled).toBe(false);
+	});
+
+	// The prev/next arrows sit on the per-feature picker, where they cycle THAT
+	// feature's profile rather than a global "current preset".
+	test("the per-feature picker steps that feature's profile", () => {
+		seedCloudConfigurations();
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: { ...llm, dictation: { ...llm.dictation, enabled: true } },
+			},
+		});
+		renderPanel();
+		fireEvent.click(profileArrow("Dictation", "Next"));
 		expect(
-			useSettingsStore.getState().settings.llm.dictation.openrouterModel,
-		).toBe("openrouter/first");
-		expect(useLlmConfigurationsStore.getState().activeConfigurationId).toBe(
-			"first",
-		);
+			useSettingsStore.getState().settings.llm.dictation.configurationId,
+		).toBe("second");
+		// Only dictation moved — the arrows are per feature.
+		expect(
+			useSettingsStore.getState().settings.llm.readAloud.configurationId,
+		).toBe("first");
+	});
+
+	// Feature extras belong to their feature, not to the page: the dictionary
+	// switch is a dictation-pipeline control, so it nests under dictation's row
+	// and only while dictation is actually running on Ollama (tool-calling is an
+	// Ollama capability).
+	test("nests the dictionary auto-add control under a running Ollama dictation", () => {
+		seedConfigurations();
+		const { unmount } = renderPanel();
+		expect(
+			screen.queryByRole("switch", { name: "Auto-add dictionary words" }),
+		).toBeNull();
+		unmount();
+
+		const llm = useSettingsStore.getState().settings.llm;
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				llm: {
+					...llm,
+					localModel: "qwen3:4b",
+					dictation: { ...llm.dictation, enabled: true, model: "qwen3:4b" },
+				},
+			},
+		});
+		// Installed, so the reconcile leaves the enabled local feature alone.
+		useLlmCatalogStore.setState({
+			isLoaded: true,
+			models: [asInvalid({ name: "qwen3:4b", size: 1 })],
+		});
+		renderPanel();
+		const autoAdd = screen.getByRole("switch", {
+			name: "Auto-add dictionary words",
+		});
+		expect(nearestFeatureScope(autoAdd)).toEqual(["Dictation"]);
 	});
 
 	test("forces LLM features off in listen mode without overwriting saved settings", () => {
@@ -284,16 +782,18 @@ describe("LlmSettingsPanel", () => {
 				},
 			} as typeof DEFAULT_SETTINGS,
 		});
-		const { unmount } = render(
-			<IntlProvider>
-				<LlmSettingsPanel />
-			</IntlProvider>,
-		);
+		const { unmount } = renderPanel();
 
-		const postProcessingToggle = screen.getByRole("switch", {
-			name: "Toggle post-processing",
-		});
-		expect(postProcessingToggle.getAttribute("aria-checked")).toBe("false");
+		// Rows stay VISIBLE but inert — the disable-don't-hide rule — and the saved
+		// settings underneath are untouched, so leaving listen mode restores
+		// exactly what the user had. Asserted behaviourally on top of the
+		// `aria-disabled` flag: the switch is a span with no `disabled` DOM
+		// property, so clicking and observing no write is the real check (the same
+		// shape `Toggle`'s own disabled test uses).
+		for (const name of ["Dictation", "Transformations"]) {
+			expect(switchIsBlocked(name)).toBe(true);
+			fireEvent.click(featureSwitch(name));
+		}
 		expect(useSettingsStore.getState().settings.llm.dictation.enabled).toBe(
 			true,
 		);
@@ -879,6 +1379,14 @@ describe("LlmSettingsPanel helpers — performFeatureToggle", () => {
 		const deps = makeDeps({ provider: "openrouter" });
 		await helpers.performFeatureToggle(true, deps);
 		expect(deps.setShowApiKeyDialog).toHaveBeenCalledWith(true);
+	});
+
+	test("enables Apple Intelligence without an Ollama model or cloud key", async () => {
+		const deps = makeDeps({ provider: "apple-intelligence" });
+		await helpers.performFeatureToggle(true, deps);
+		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
+		expect(deps.checkOllamaReachable).not.toHaveBeenCalled();
+		expect(deps.setShowApiKeyDialog).not.toHaveBeenCalled();
 	});
 });
 

@@ -10,11 +10,13 @@ export {
 	type OutputDevice,
 	useOutputDevices,
 } from "./model/use-output-devices";
-export type {
-	InputDevicePickerModel,
-	InputDevicePickerModelOptions,
+export {
+	type InputDevicePickerModel,
+	type InputDevicePickerModelOptions,
+	useInputDevicePickerModel,
 } from "./model/use-input-device-picker-model";
 export { useMicrophoneLevels } from "./model/use-microphone-levels";
+export { InlineInputDeviceList } from "./ui/InlineInputDeviceList";
 export { InputDeviceSelect } from "./ui/InputDeviceSelect";
 export type { InputDeviceSelectProps } from "./ui/input-device-select.types";
 export { MicrophoneLevelMeter } from "./ui/MicrophoneLevelMeter";

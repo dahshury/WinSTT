@@ -32,6 +32,7 @@ type SttModelChange = (
 
 export interface SttModelSelectorViewProps {
 	activeRailId: string | null;
+	compact?: boolean;
 	availableLanguages: string[];
 	baseModels: readonly ModelInfo[];
 	currentQuantization: OnnxQuantization;
@@ -127,6 +128,7 @@ export function SttModelSelectorView(
 ): ReactNode {
 	const {
 		activeRailId,
+		compact = false,
 		availableLanguages,
 		baseModels,
 		currentQuantization,
@@ -180,6 +182,7 @@ export function SttModelSelectorView(
 	} = props;
 	return (
 		<ModelPicker<ModelInfo, ModelInfo | null>
+			compact={compact}
 			disabled={disabled || isLoading}
 			filter={filter}
 			inputValue={inputValue}
@@ -219,6 +222,7 @@ export function SttModelSelectorView(
 			itemToStringLabel={(item) => item?.displayName ?? ""}
 			list={
 				<SttModelList
+					compact={compact}
 					currentQuantization={currentQuantization}
 					expandedBundles={expandedBundles}
 					getDownloadSnapshot={onDownloadSnapshot}

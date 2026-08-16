@@ -142,7 +142,6 @@ fn persist_history_after_wav(
     });
 }
 
-// Transcribe Action
 pub(super) struct TranscribeAction;
 
 impl ShortcutAction for TranscribeAction {

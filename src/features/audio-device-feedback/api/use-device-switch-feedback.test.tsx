@@ -47,7 +47,7 @@ const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
 // Capture mock-call records so each test can assert.
 const settingsSaveCalls: Array<{
 	audio?: { inputDeviceIndex: number | null };
-	general?: { outputDeviceId?: string };
+	general?: { loopbackDeviceIndex?: number | null; outputDeviceId?: string };
 }> = [];
 let onDeviceSwitchFailedCb:
 	| ((payload: {
@@ -64,6 +64,7 @@ let outputEnumerateResult: Array<{
 	kind: MediaDeviceKind;
 	label: string;
 }> = [];
+const nativeOutputDeviceCalls: string[] = [];
 
 function installNativeBridgeStub(): void {
 	window.nativeBridge = {
@@ -75,9 +76,16 @@ function installNativeBridgeStub(): void {
 				settingsSaveCalls.push(settings as (typeof settingsSaveCalls)[number]);
 			}
 		},
-		invoke: async (channel: string) => {
+		invoke: async (channel: string, payload?: unknown) => {
 			if (channel === IPC.AUDIO_GET_DEVICES) {
 				return audioGetDevicesImpl();
+			}
+			if (channel === "set_selected_output_device") {
+				const deviceName = (payload as { deviceName?: unknown } | undefined)
+					?.deviceName;
+				if (typeof deviceName === "string") {
+					nativeOutputDeviceCalls.push(deviceName);
+				}
 			}
 			return undefined;
 		},
@@ -117,6 +125,7 @@ function freshSettings() {
 
 beforeEach(() => {
 	settingsSaveCalls.length = 0;
+	nativeOutputDeviceCalls.length = 0;
 	audioGetDevicesImpl = async () => [];
 	outputEnumerateResult = [];
 	onDeviceSwitchFailedCb = null;
@@ -232,7 +241,11 @@ describe("useDeviceSwitchFeedback", () => {
 			settings: {
 				...freshSettings(),
 				audio: { ...freshSettings().audio, inputDeviceIndex: null },
-				general: { ...freshSettings().general, outputDeviceId: "bt-headset" },
+				general: {
+					...freshSettings().general,
+					loopbackDeviceIndex: 4,
+					outputDeviceId: "bt-headset",
+				},
 			},
 		});
 
@@ -244,6 +257,10 @@ describe("useDeviceSwitchFeedback", () => {
 			);
 		});
 		expect(settingsSaveCalls.at(-1)?.general?.outputDeviceId).toBe("");
+		expect(
+			useSettingsStore.getState().settings.general?.loopbackDeviceIndex,
+		).toBeNull();
+		expect(nativeOutputDeviceCalls).toContain("default");
 	});
 
 	test("does not touch the saved output device when it is still in the live list", async () => {

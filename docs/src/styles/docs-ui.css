@@ -4,38 +4,11 @@
    CSS-only motion, gated by prefers-reduced-motion.
    ════════════════════════════════════════════════════════════════════ */
 
-:root {
-  --docs-ease: cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* ── Gradient headings ──────────────────────────────────────────────
-   Every docs heading (page title + Markdown h1–h6) is painted with the
-   brand gradient: bright foreground → teal → Docker-blue accent. The
-   gradient is clipped to the glyphs via background-clip:text. Applied
-   through <GradientHeading>, which keeps fumadocs' anchor self-link and
-   hover copy button working — both are reset below so they stay readable. */
-.gradient-heading {
-  background-image: linear-gradient(
-    115deg,
-    var(--fg-strong) 0%,
-    var(--brand-teal) 52%,
-    var(--brand-accent) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-}
-.gradient-heading,
-.gradient-heading > a[data-card] {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-}
-/* The hover copy-link button must not inherit the transparent text fill. */
-.gradient-heading > button {
-  color: var(--fg-muted);
-  -webkit-text-fill-color: var(--fg-muted);
-}
-
-/* ── Screenshot frame ───────────────────────────────────────────── */
+/* ── Screenshot frame ─────────────────────────────────────────────
+   Media is framed, not spotlit: a flat surface, a hairline border and one
+   soft drop shadow to lift it off the page. No accent glow and no hover
+   lift — a figure in an article is not an interactive card, and animating
+   it on hover made every page twitch under the cursor. */
 .shot {
   margin-block: 1.75rem;
 }
@@ -44,54 +17,40 @@
 }
 .shot-frame {
   position: relative;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   background: var(--surface-1);
   border: 1px solid var(--border);
-  box-shadow:
-    0 0 0 1px oklch(0% 0 0 / 0.5),
-    0 24px 60px -20px oklch(0% 0 0 / 0.7),
-    0 0 50px -20px var(--brand-accent-glow);
-  transition:
-    box-shadow 0.3s var(--docs-ease),
-    transform 0.3s var(--docs-ease);
-}
-.shot-frame:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px oklch(0% 0 0 / 0.5),
-    0 30px 70px -20px oklch(0% 0 0 / 0.75),
-    0 0 60px -16px var(--brand-accent-glow);
+  box-shadow: 0 14px 40px -24px oklch(0% 0 0 / 0.85);
 }
 .shot-frame--none {
   border: none;
   box-shadow: none;
   background: transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 .shot-bar {
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 30px;
+  height: 32px;
   padding-inline: 13px;
-  background: linear-gradient(var(--surface-3), var(--surface-2));
-  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--divider);
 }
 .shot-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   flex: none;
+  background: var(--surface-4);
 }
-.shot-dot--r {
-  background: #ff5f57;
-}
-.shot-dot--y {
-  background: #febc2e;
-}
+/* Traffic lights read as neutral chrome here — colouring them pulled three
+   extra hues into a palette that otherwise runs on a single accent. */
+.shot-dot--r,
+.shot-dot--y,
 .shot-dot--g {
-  background: #28c840;
+  background: var(--surface-4);
 }
 .shot-title {
   margin-inline-start: 10px;
@@ -138,21 +97,20 @@
   object-position: var(--shot-focus, center);
 }
 .shot--strip .shot-frame {
-  box-shadow:
-    0 0 0 1px oklch(0% 0 0 / 0.45),
-    0 18px 44px -22px oklch(0% 0 0 / 0.7),
-    0 0 40px -22px var(--brand-accent-glow);
+  box-shadow: 0 10px 30px -22px oklch(0% 0 0 / 0.8);
 }
 .shot--section {
   max-width: min(100%, 760px);
   margin-inline: auto;
 }
+/* Caption — set apart from body copy by size and a mono-ish restraint, and
+   left-aligned under the frame so it reads as a label, not a pull quote. */
 .shot-cap {
   margin-top: 0.7rem;
-  text-align: center;
-  font-size: 0.8rem;
-  line-height: 1.5;
+  font-size: 0.8125rem;
+  line-height: 1.55;
   color: var(--fg-muted);
+  text-wrap: pretty;
 }
 
 .media-grid {
@@ -463,15 +421,27 @@ a.hero-badge:hover {
 .bento-cell {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.15rem 1.2rem;
-  border-radius: 13px;
+  gap: 0.4rem;
+  padding: 1.15rem 1.2rem 1.2rem;
+  border-radius: var(--radius-lg);
   background: var(--surface-1);
   border: 1px solid var(--border);
   text-decoration: none;
   color: inherit;
   position: relative;
   overflow: hidden;
+  transition:
+    background 0.18s var(--docs-ease),
+    border-color 0.18s var(--docs-ease);
+}
+a.bento-cell:hover {
+  background: var(--surface-2);
+  border-color: color-mix(in oklab, var(--brand-accent) 40%, var(--border));
+}
+/* MDX links inside a card must not pick up the prose link underline. */
+.bento-cell,
+.bento-cell:hover {
+  border-bottom-style: solid;
 }
 .bento-cell[data-span="2"] {
   grid-column: span 2;
@@ -483,48 +453,59 @@ a.hero-badge:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: var(--brand-accent-soft);
-  color: var(--cell-accent, var(--brand-accent));
-  border: 1px solid var(--border);
-  margin-bottom: 0.25rem;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in oklab,
+    var(--cell-accent, var(--brand-accent)) 13%,
+    transparent
+  );
+  color: var(--cell-accent, var(--brand-accent-hover));
+  border: 1px solid
+    color-mix(
+      in oklab,
+      var(--cell-accent, var(--brand-accent)) 22%,
+      transparent
+    );
+  margin-bottom: 0.45rem;
 }
 .bento-title {
-  font-size: 0.98rem;
+  font-size: 0.9375rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   color: var(--fg-strong);
   margin: 0;
+  /* Leave room for the arrow so long titles never collide with it. */
+  padding-inline-end: 1.25rem;
 }
 .bento-body {
   font-size: 0.85rem;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--fg-muted);
+  text-wrap: pretty;
 }
 .bento-body p {
   margin: 0;
 }
+/* The arrow is always visible (a card that only reveals its affordance on
+   hover is invisible to touch and keyboard users) — hover just advances it. */
 .bento-arrow {
   position: absolute;
-  top: 1.15rem;
+  top: 1.25rem;
   inset-inline-end: 1.1rem;
   color: var(--fg-dim);
-  opacity: 0;
-  transform: translateX(-4px);
   transition:
-    opacity 0.2s var(--docs-ease),
     transform 0.2s var(--docs-ease),
     color 0.2s var(--docs-ease);
 }
 a.bento-cell:hover .bento-arrow {
-  opacity: 1;
-  transform: translateX(0);
-  color: var(--brand-accent);
+  transform: translateX(3px);
+  color: var(--brand-accent-hover);
 }
-a.bento-cell:active {
-  transform: scale(0.992);
+a.bento-cell:focus-visible {
+  outline: 2px solid var(--brand-accent);
+  outline-offset: 2px;
 }
 @media (max-width: 720px) {
   .bento {
@@ -537,16 +518,17 @@ a.bento-cell:active {
 
 /* ── ModelTable ─────────────────────────────────────────────────── */
 .mtable-wrap {
-  margin-block: 1.4rem;
+  margin-block: 1.5rem;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--surface-1);
 }
 .mtable {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.86rem;
+  font-size: 0.8438rem;
+  letter-spacing: -0.003em;
 }
 .mtable caption.mtable-cap {
   caption-side: bottom;
@@ -559,13 +541,14 @@ a.bento-cell:active {
   position: sticky;
   top: 0;
   background: var(--surface-2);
-  color: var(--fg-secondary);
-  font-weight: 600;
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.6875rem;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   text-align: start;
-  padding: 0.6rem 0.9rem;
+  padding: 0.65rem 0.9rem;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -590,22 +573,27 @@ a.bento-cell:active {
   padding: 0.4rem 0.75rem;
 }
 
-/* ── Kbd / combos ───────────────────────────────────────────────── */
+/* ── Kbd / combos ─────────────────────────────────────────────────
+   Keycaps read as physical keys: a raised surface with a bottom bevel,
+   in neutral greys. They were previously accent-blue, which put every
+   hotkey in the docs at the same visual weight as a link. */
 .kbd {
   display: inline-flex;
   align-items: center;
-  min-width: 1.4em;
+  min-width: 1.6em;
   justify-content: center;
-  padding: 0.12em 0.5em;
+  padding: 0.15em 0.45em;
   font-family: var(--font-mono);
-  font-size: 0.8em;
+  font-size: 0.78em;
   font-weight: 500;
   line-height: 1.5;
-  color: color-mix(in oklab, var(--brand-accent-hover) 95%, transparent);
-  background: var(--brand-accent-soft);
-  border: 1px solid color-mix(in oklab, var(--brand-accent) 22%, transparent);
-  border-radius: 6px;
-  box-shadow: 0 1px 0 0 oklch(0% 0 0 / 0.35);
+  color: var(--fg-strong);
+  background: var(--surface-3);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-sm);
+  box-shadow:
+    inset 0 1px 0 0 oklch(100% 0 0 / 0.06),
+    0 1px 0 0 oklch(0% 0 0 / 0.45);
 }
 .combo {
   display: inline-flex;
@@ -682,14 +670,16 @@ a.bento-cell:active {
   padding: 0 0 1.5rem 3.1rem;
   margin: 0;
 }
+/* The rail runs the full gap between markers at a constant weight — the
+   old gradient faded out mid-step, so the connector looked broken. */
 .step::before {
   content: "";
   position: absolute;
-  inset-inline-start: 15px;
-  top: 1.9rem;
-  bottom: -0.4rem;
-  width: 2px;
-  background: linear-gradient(var(--border), transparent);
+  inset-inline-start: 14px;
+  top: 2.1rem;
+  bottom: 0.2rem;
+  width: 1px;
+  background: var(--divider);
 }
 .step:last-child {
   padding-bottom: 0;
@@ -701,32 +691,34 @@ a.bento-cell:active {
   position: absolute;
   inset-inline-start: 0;
   top: 0;
-  width: 32px;
-  height: 32px;
+  width: 29px;
+  height: 29px;
   border-radius: 50%;
-  background: var(--brand-accent-soft);
-  border: 1px solid color-mix(in oklab, var(--brand-accent) 30%, transparent);
+  background: color-mix(in oklab, var(--brand-accent) 14%, var(--surface-0));
+  border: 1px solid color-mix(in oklab, var(--brand-accent) 32%, transparent);
   display: grid;
   place-items: center;
 }
 .step-marker::after {
   content: counter(step);
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--brand-accent);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--brand-accent-hover);
 }
 .step-title {
-  margin: 0.3rem 0 0;
-  font-size: 1rem;
+  margin: 0.22rem 0 0;
+  font-size: 0.9688rem;
   font-weight: 600;
+  letter-spacing: -0.014em;
   color: var(--fg-strong);
 }
 .step-body {
-  margin-top: 0.45rem;
-  font-size: 0.9rem;
-  line-height: 1.6;
+  margin-top: 0.4rem;
+  font-size: 0.8875rem;
+  line-height: 1.65;
   color: var(--fg-secondary);
+  text-wrap: pretty;
 }
 .step-body :first-child {
   margin-top: 0;
@@ -756,44 +748,59 @@ a.bento-cell:active {
   box-shadow: 0 0 7px var(--mode-color);
 }
 
-/* ── SettingRow ─────────────────────────────────────────────────── */
+/* ── SettingRow ───────────────────────────────────────────────────
+   A settings page is a reference list, so consecutive rows collapse into
+   one bordered table rather than each floating as its own card. */
 .setting-row {
-  padding: 0.85rem 0;
+  padding: 0.95rem 0;
   border-bottom: 1px solid var(--divider);
+  max-width: var(--docs-measure);
+}
+.setting-row + .setting-row {
+  margin-top: 0;
+}
+.setting-row:last-of-type {
+  border-bottom: 0;
 }
 .setting-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   flex-wrap: wrap;
-  gap: 0.6rem;
+  gap: 0.55rem;
 }
 .setting-label {
-  font-size: 0.95rem;
+  font-size: 0.9375rem;
   font-weight: 600;
+  letter-spacing: -0.012em;
   color: var(--fg-strong);
 }
 .setting-default {
-  font-size: 0.78rem;
+  font-size: 0.775rem;
   color: var(--fg-muted);
 }
 .setting-default code,
 .setting-key {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.775rem;
+}
+.setting-default code {
+  color: var(--fg-secondary);
 }
 .setting-key {
   display: inline-block;
-  margin-top: 0.3rem;
-  color: var(--fg-dim);
+  margin-top: 0.35rem;
+  color: var(--fg-muted);
   background: var(--surface-2);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
   padding: 0.1rem 0.4rem;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
 }
 .setting-desc {
-  margin-top: 0.4rem;
-  font-size: 0.88rem;
-  line-height: 1.55;
+  margin-top: 0.45rem;
+  font-size: 0.875rem;
+  line-height: 1.62;
   color: var(--fg-secondary);
+  text-wrap: pretty;
 }
 .setting-desc :first-child {
   margin-top: 0;
@@ -802,12 +809,14 @@ a.bento-cell:active {
   margin-bottom: 0;
 }
 .pill {
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  padding: 0.12rem 0.45rem;
-  border-radius: 5px;
+  padding: 0.14rem 0.45rem;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 .pill--warn {
   color: var(--brand-warning);
@@ -815,31 +824,39 @@ a.bento-cell:active {
   border: 1px solid color-mix(in oklab, var(--brand-warning) 30%, transparent);
 }
 
-/* ── Callout ────────────────────────────────────────────────────── */
+/* ── Callout ──────────────────────────────────────────────────────
+   Each type carries a faint wash of its own hue rather than a grey card
+   with a coloured edge, so severity is readable from across the page.
+   `--callout-color` is the single per-type knob; everything below derives
+   from it, so adding a type means adding one rule. */
 .callout {
+  --callout-color: var(--brand-accent);
   display: flex;
   gap: 0.7rem;
   padding: 0.85rem 1rem;
-  margin-block: 1.25rem;
-  border-radius: 11px;
-  border: 1px solid var(--border);
-  border-inline-start-width: 3px;
-  background: var(--surface-1);
+  margin-block: 1.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in oklab, var(--callout-color) 26%, transparent);
+  background: color-mix(in oklab, var(--callout-color) 7%, var(--surface-1));
+  max-width: var(--docs-measure);
 }
 .callout-icon {
   flex: none;
-  margin-top: 1px;
+  margin-top: 2px;
+  color: var(--callout-color);
 }
 .callout-title {
   margin: 0 0 0.2rem;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
+  letter-spacing: -0.01em;
   color: var(--fg-strong);
 }
 .callout-content {
-  font-size: 0.88rem;
-  line-height: 1.6;
+  font-size: 0.875rem;
+  line-height: 1.62;
   color: var(--fg-secondary);
+  text-wrap: pretty;
 }
 .callout-content :first-child {
   margin-top: 0;
@@ -848,34 +865,19 @@ a.bento-cell:active {
   margin-bottom: 0;
 }
 .callout--info {
-  border-inline-start-color: var(--brand-accent);
-}
-.callout--info .callout-icon {
-  color: var(--brand-accent);
+  --callout-color: var(--brand-accent);
 }
 .callout--warn {
-  border-inline-start-color: var(--brand-warning);
-}
-.callout--warn .callout-icon {
-  color: var(--brand-warning);
+  --callout-color: var(--brand-warning);
 }
 .callout--error {
-  border-inline-start-color: var(--brand-error);
-}
-.callout--error .callout-icon {
-  color: var(--brand-error);
+  --callout-color: var(--brand-error);
 }
 .callout--restart {
-  border-inline-start-color: var(--brand-teal);
-}
-.callout--restart .callout-icon {
-  color: var(--brand-teal);
+  --callout-color: var(--brand-teal);
 }
 .callout--success {
-  border-inline-start-color: var(--brand-success);
-}
-.callout--success .callout-icon {
-  color: var(--brand-success);
+  --callout-color: var(--brand-success);
 }
 
 /* ── Stat tiles ─────────────────────────────────────────────────── */
@@ -886,21 +888,28 @@ a.bento-cell:active {
   margin-block: 1.4rem;
 }
 .stat {
-  padding: 1rem 1.1rem;
-  border-radius: 12px;
+  padding: 0.95rem 1.05rem 1rem;
+  border-radius: var(--radius-md);
   background: var(--surface-1);
   border: 1px solid var(--border);
 }
 .stat-value {
-  font-size: 1.6rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: 1.5rem;
+  font-weight: 620;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
   color: var(--fg-strong);
   font-variant-numeric: tabular-nums;
 }
+/* Label reads as a caption under the figure: mono micro-caps, like the
+   sidebar section headings, so the two label systems agree. */
 .stat-label {
-  margin-top: 0.2rem;
-  font-size: 0.78rem;
+  margin-top: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.675rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--fg-muted);
 }
 
@@ -1235,7 +1244,8 @@ a.bento-cell:active {
   border-radius: 8px;
   background: var(--surface-1);
   border: 1px solid color-mix(in oklab, var(--brand-accent) 45%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand-accent) 10%, transparent);
+  box-shadow: 0 0 0 3px
+    color-mix(in oklab, var(--brand-accent) 10%, transparent);
   font-size: 10px;
   color: var(--fg-muted);
 }
@@ -1404,7 +1414,11 @@ a.bento-cell:active {
 .sc-del {
   color: var(--brand-error);
   text-decoration: line-through;
-  text-decoration-color: color-mix(in oklab, var(--brand-error) 70%, transparent);
+  text-decoration-color: color-mix(
+    in oklab,
+    var(--brand-error) 70%,
+    transparent
+  );
   opacity: 0.82;
 }
 .sc-add {
@@ -3121,7 +3135,11 @@ a.bento-cell:active {
   width: 68%;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--brand-accent), var(--brand-accent-hover));
+  background: linear-gradient(
+    90deg,
+    var(--brand-accent),
+    var(--brand-accent-hover)
+  );
 }
 .ins-checks {
   list-style: none;
@@ -3739,7 +3757,8 @@ a.bento-cell:active {
   border-radius: 3px;
   padding: 1px 2px;
   background: color-mix(in oklab, var(--brand-accent) 32%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand-accent) 45%, transparent);
+  box-shadow: 0 0 0 1px
+    color-mix(in oklab, var(--brand-accent) 45%, transparent);
   color: var(--fg-strong);
 }
 /* Step 2 — the on-device synth card */

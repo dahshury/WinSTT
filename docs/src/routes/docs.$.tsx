@@ -72,19 +72,23 @@ function DocsContent({ toc, frontmatter, default: MDX }: DocsClientPage) {
 
   return (
     <DocsPage toc={toc}>
-      <DocsTitle className="gradient-heading">{frontmatter.title}</DocsTitle>
-      <DocsDescription className="mb-0">
-        {frontmatter.description}
-      </DocsDescription>
-      {meta ? (
-        <div className="flex flex-row gap-2 items-center border-b pb-6">
-          <LLMCopyButton markdownUrl={meta.markdownUrl} />
-          <ViewOptions
-            markdownUrl={meta.markdownUrl}
-            githubUrl={meta.githubUrl}
-          />
-        </div>
-      ) : null}
+      <header className="docs-header">
+        <DocsTitle className="docs-title">{frontmatter.title}</DocsTitle>
+        {frontmatter.description ? (
+          <DocsDescription className="docs-description mb-0">
+            {frontmatter.description}
+          </DocsDescription>
+        ) : null}
+        {meta ? (
+          <div className="docs-header-actions">
+            <LLMCopyButton markdownUrl={meta.markdownUrl} />
+            <ViewOptions
+              markdownUrl={meta.markdownUrl}
+              githubUrl={meta.githubUrl}
+            />
+          </div>
+        ) : null}
+      </header>
       <DocsBody>
         <MDX components={components} />
       </DocsBody>

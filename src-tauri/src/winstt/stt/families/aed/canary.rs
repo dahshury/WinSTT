@@ -272,6 +272,7 @@ impl CanaryEngine {
         // empty (shape[2]==0, i.e. step 0), then only the last token. EOS breaks BEFORE it's appended.
         // (The prior code re-fed zero mems every step → no context after token 0 → output "And".)
         let mut batch_tokens: Vec<i64> = prompt;
+        let prompt_len = batch_tokens.len();
         let decoder = self.decoder.as_mut().ok_or_else(|| {
             SttError::Inference("canary legacy decoder session not loaded".into())
         })?;
@@ -411,6 +412,12 @@ impl CanaryEngine {
                 break;
             }
             batch_tokens.push(next);
+            // Phrase-loop guard (shared with the other maskless AED decodes): keep one occurrence
+            // of a verbatim-repeated cycle and stop — see `phrase_loop_truncation`.
+            if let Some(keep) = phrase_loop_truncation(&batch_tokens[prompt_len..]) {
+                batch_tokens.truncate(prompt_len + keep);
+                break;
+            }
 
             // Carry decoder_hidden_states (device) → next step's decoder_mems input. The extracted
             // value is session-owned and survives the binding drop, so it rebinds next step with no
@@ -440,6 +447,7 @@ impl CanaryEngine {
         let profile = std::env::var("WINSTT_CANARY_PROFILE").is_ok();
         let t0 = std::time::Instant::now();
         let mut batch_tokens: Vec<i64> = prompt;
+        let prompt_len = batch_tokens.len();
 
         // Cross-KV hoist: once per utterance, pulled to caller-owned host arrays and re-bound as
         // zero-copy TensorRef views every step.
@@ -629,6 +637,12 @@ impl CanaryEngine {
                 break;
             }
             batch_tokens.push(next);
+            // Phrase-loop guard (shared with the other maskless AED decodes): keep one occurrence
+            // of a verbatim-repeated cycle and stop — see `phrase_loop_truncation`.
+            if let Some(keep) = phrase_loop_truncation(&batch_tokens[prompt_len..]) {
+                batch_tokens.truncate(prompt_len + keep);
+                break;
+            }
 
             let mut carried = Vec::with_capacity(2 * layers);
             for name in &out_names {

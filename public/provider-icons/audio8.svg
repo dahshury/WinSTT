@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="#fff" role="img" aria-label="Audio8">
+	<!--
+		Audio8 waveform mark, traced from the vendor's HF avatar (public/provider-icons/audio8.webp).
+		The avatar is a FULL-BLEED OPAQUE BLACK TILE with white bars, so at chip size on the dark UI
+		it renders as a solid rectangle with the mark invisible. Same defect GigaAM hit — see the
+		note on `gigaam` in entities/model-catalog/lib/family-metadata.ts — and the same fix:
+		a transparent single-colour SVG.
+
+		Bars are capsules (rx = half-width) on a 200x200 grid, vertically centred on y=100, with
+		the measured heights 20/38/76/38/20/38/76/38/20. Filled #fff rather than currentColor
+		because this is loaded through an <img> tag, where currentColor has no inherited context
+		and would resolve to black. The app has no light theme (globals.css declares no
+		prefers-color-scheme / data-theme block), so white is safe.
+	-->
+	<rect x="26" y="90" width="9" height="20" rx="4.5" />
+	<rect x="43" y="81" width="9" height="38" rx="4.5" />
+	<rect x="60.5" y="62" width="9" height="76" rx="4.5" />
+	<rect x="78" y="81" width="9" height="38" rx="4.5" />
+	<rect x="95" y="90" width="9" height="20" rx="4.5" />
+	<rect x="113" y="81" width="9" height="38" rx="4.5" />
+	<rect x="130" y="62" width="9" height="76" rx="4.5" />
+	<rect x="148" y="81" width="9" height="38" rx="4.5" />
+	<rect x="165" y="90" width="9" height="20" rx="4.5" />
+</svg>

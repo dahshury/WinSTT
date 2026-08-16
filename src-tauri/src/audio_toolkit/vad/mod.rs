@@ -65,9 +65,11 @@ pub trait VoiceActivityDetector: Send + Sync {
     fn reset(&mut self) {}
 }
 
+mod live;
 mod silero;
 mod smoothed;
 
+pub use live::{LiveVad, VadRuntimeConfig};
 pub use silero::SileroVad;
 pub use smoothed::SmoothedVad;
 

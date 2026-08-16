@@ -10,6 +10,11 @@
 //       TS:   `src/entities/model-catalog/model/catalog-model-info.parity.test.ts`
 //              (asserts `rawModelInfoSchema`'s keys reproduce it)
 //
+//   - `tts-model-info.fields.json` — the sorted `TtsModelInfoDto` wire-key set.
+//       Rust: `winstt::commands::tts::tests::tts_model_dto_fields_match_committed`
+//       TS:   `src/entities/tts-catalog/model/tts-model-info.parity.test.ts`
+//              (asserts `rawTtsModelSchema`'s keys reproduce it)
+//
 //   - `cloud-stt-models.json` — the curated cloud-STT catalog in the renderer's
 //     camelCase `CloudModel` shape.
 //       Rust: `winstt::cloud_stt::tests::cloud_models_fixture_matches_committed`
@@ -17,12 +22,14 @@
 //              (asserts `CURATED_CLOUD_MODELS` reproduces it)
 //
 // The generation logic lives next to each data source (`catalog_dto_fields_json`,
-// `cloud_models_fixture_json`) so this example and the Rust tests stay in lockstep.
+// `tts_model_info_fields_json`, `cloud_models_fixture_json`) so this example and the
+// Rust tests stay in lockstep.
 
 use std::path::{Path, PathBuf};
 
 use winstt_app_lib::winstt::cloud_stt::cloud_models_fixture_json;
 use winstt_app_lib::winstt::commands::catalog_data::catalog_dto_fields_json;
+use winstt_app_lib::winstt::commands::tts::tts_model_info_fields_json;
 
 fn fixtures_dir() -> PathBuf {
     // `CARGO_MANIFEST_DIR` is `src-tauri`; the fixtures live at the repo root.
@@ -46,6 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &dir,
         "catalog-model-info.fields.json",
         &catalog_dto_fields_json()?,
+    )?;
+    write(
+        &dir,
+        "tts-model-info.fields.json",
+        &tts_model_info_fields_json()?,
     )?;
     write(&dir, "cloud-stt-models.json", &cloud_models_fixture_json()?)?;
     Ok(())

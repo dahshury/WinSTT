@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MutableRefObject } from "react";
 import type { TtsChunkPayload } from "@/shared/api/ipc-client";
-import type { TtsPlaybackQueue } from "../lib/playback-queue";
+import type { SentenceSpan, TtsPlaybackQueue } from "../lib/playback-queue";
 import {
 	handleTtsPausePlaybackControl,
 	handleTtsChunkPayload,
@@ -33,6 +33,9 @@ interface QueueCalls {
 interface StubQueue {
 	readonly currentRequestId: string | null;
 	enqueue: (chunk: TtsChunkPayload) => void;
+	/** The handlers republish the script's sentence spans after every chunk and
+	 *  on completion; the stub reports "nothing decoded yet". */
+	getSentenceSpans?: () => SentenceSpan[];
 	markComplete: (id: string) => void;
 	pause?: () => void;
 	resume?: () => void;
@@ -87,6 +90,7 @@ function makeStubQueue(currentRequestId: string | null = "r"): {
 		enqueue: (chunk: TtsChunkPayload) => {
 			calls.enqueue.push(chunk);
 		},
+		getSentenceSpans: () => [],
 		markComplete: (id: string) => {
 			calls.markComplete.push(id);
 		},
@@ -113,6 +117,7 @@ function makeChunk(
 		pcm: new Float32Array([0.1]).buffer,
 		isFinal: false,
 		seq: 0,
+		sentenceIndex: 0,
 		...overrides,
 	};
 }
@@ -126,13 +131,14 @@ describe("handleTtsChunkPayload", () => {
 		expect(calls.enqueue).toHaveLength(1);
 		expect(calls.enqueue[0]?.requestId).toBe("req-1");
 		// Reshapes payload to drop seq / isFinal (queue only needs the
-		// audio-shaped fields).
+		// audio-shaped fields, plus the script index it files the buffer under).
 		expect(Object.keys(calls.enqueue[0] ?? {}).sort()).toEqual([
 			"channels",
 			"format",
 			"pcm",
 			"requestId",
 			"sampleRate",
+			"sentenceIndex",
 		]);
 	});
 

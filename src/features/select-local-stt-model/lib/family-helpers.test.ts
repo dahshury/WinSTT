@@ -273,6 +273,43 @@ describe("variantDisplayName", () => {
 		// Without peers (collision unknown) the size is always stripped.
 		expect(variantDisplayName(flash180)).toBe("Canary Flash");
 	});
+
+	test("the peer set must span the whole group, not one bundle", () => {
+		// REGRESSION: the Audio8 group renders three cards. `ARK-ASR 0.6B` and
+		// `ARK-ASR 3B` do NOT share a base id, so they land in SEPARATE bundles —
+		// yet both collapse to "ARK-ASR" once the size token is stripped. The picker
+		// used to hand each card only its own `bundle.variants` as peers, so neither
+		// could see the other and the list showed two rows literally named "ARK-ASR".
+		const tiny = {
+			...model("audio8-asr-0.1b", "audio8"),
+			displayName: "Audio8-ASR 0.1B",
+		};
+		const ark06 = {
+			...model("ark-asr-0.6b", "audio8"),
+			displayName: "ARK-ASR 0.6B",
+		};
+		const ark3b = {
+			...model("ark-asr-3b", "audio8"),
+			displayName: "ARK-ASR 3B",
+		};
+		const group = [tiny, ark06, ark3b];
+
+		// They really are separate bundles — this is what makes a bundle-local peer
+		// set insufficient rather than merely redundant.
+		expect(bundleVariants(group).length).toBe(3);
+
+		// A bundle-local peer set (the model alone) cannot see the collision.
+		expect(variantDisplayName(ark06, [ark06])).toBe("ARK-ASR");
+		expect(variantDisplayName(ark3b, [ark3b])).toBe("ARK-ASR");
+
+		// The whole-group peer set disambiguates both.
+		expect(variantDisplayName(ark06, group)).toBe("ARK-ASR 0.6B");
+		expect(variantDisplayName(ark3b, group)).toBe("ARK-ASR 3B");
+
+		// The 0.1B is unaffected: stripping the family label AND the size would empty
+		// its name, so it falls back to the full display name either way.
+		expect(variantDisplayName(tiny, group)).toBe("Audio8-ASR 0.1B");
+	});
 });
 
 describe("parseParameterSize", () => {

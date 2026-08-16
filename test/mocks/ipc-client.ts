@@ -219,6 +219,8 @@ export function ipcClientMock(): Record<string, unknown> {
 			on(IPC.AUDIO_DEVICECHANGE_DETECTED, cb),
 		audioGetOutputDevices: () =>
 			invokeOrDefault<unknown[]>(IPC.AUDIO_GET_OUTPUT_DEVICES, []),
+		audioSetSelectedOutputDevice: (deviceName: string) =>
+			invoke("set_selected_output_device", { deviceName }),
 		audioRefreshOutputDevices: () =>
 			invokeOrDefault<unknown[]>(IPC.AUDIO_REFRESH_OUTPUT_DEVICES, []),
 		onAudioOutputDevicesChanged: (cb: (devices: unknown[]) => void) =>

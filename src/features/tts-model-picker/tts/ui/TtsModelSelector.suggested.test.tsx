@@ -20,12 +20,18 @@ function model(
 		languages: ["en-us"],
 		numVoices: 1,
 		cloning: "none",
+		maxRefClipSecs: 0,
+		tagSyntax: "none",
+		tags: [],
 		voiceDesign: false,
+		voiceDesignMaxChars: 0,
+		voiceInstruct: false,
 		sampleRate: 24_000,
 		paramCountM: 82,
 		availableQuantizations: ["fp16"],
 		sizeBytesByQuantization: { fp16: 169_869_312 },
 		sizeLabel: "82M",
+		requiresReferenceClip: false,
 		qualityScore: 0.5,
 		speedScore: 0.5,
 		description: "",
@@ -177,6 +183,7 @@ describe("TtsModelSelector suggested filter", () => {
 		);
 		// Activate the "Name" sort via the menu.
 		fireEvent.click(screen.getByRole("button", { name: /Sort & filter/ }));
+		fireEvent.click(screen.getByRole("button", { name: /^Sort by/ }));
 		fireEvent.click(screen.getByRole("button", { name: "Name" }));
 		// Header flips to the sorted label, order is A→Z, hidden stays hidden.
 		expect(screen.getByText("Name · A–Z")).toBeDefined();

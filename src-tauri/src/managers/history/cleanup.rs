@@ -31,7 +31,6 @@ impl HistoryManager {
                 self.cleanup_tts_by_count(limit)
             }
             _ => {
-                // Use time-based logic
                 self.cleanup_by_time(retention_period)?;
                 self.cleanup_transforms_by_time(retention_period)?;
                 self.cleanup_tts_by_time(retention_period)

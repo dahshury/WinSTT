@@ -5,7 +5,6 @@ import {
 } from "@/entities/model-catalog";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import {
-	canDeleteSttQuant,
 	resolveSttDeleteRecovery,
 	useQuantActions,
 } from "@/features/model-download";
@@ -77,7 +76,17 @@ export function useQuantDeletion({
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
 		useQuantActions();
 	const canDeleteQuant = (modelId: string, quantization: OnnxQuantization) =>
-		canDeleteSttQuant(catalogModels, statesById, modelId, quantization);
+		resolveSttDeleteRecovery({
+			currentMainModel: selectedModel,
+			currentQuantization,
+			currentRealtimeModel: settings?.realtimeModel,
+			mainModelInfo: selectedInfo,
+			modelId,
+			models: catalogModels,
+			previousModelIds: readLastLocalSttModelHistory(),
+			quantization,
+			statesById,
+		}).canDelete;
 	const handleGuardedDeleteQuant = (
 		modelId: string,
 		quantization: OnnxQuantization,

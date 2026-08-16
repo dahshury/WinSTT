@@ -1,19 +1,13 @@
 import type { Table } from "@tanstack/react-table";
 import {
 	AlignVerticalSpaceAroundIcon,
+	Check,
 	ChevronsDownUpIcon,
 	EqualIcon,
 	MinusIcon,
 } from "@/shared/ui/data-grid/primitives/icons";
-import type * as React from "react";
-import {
-	Select,
-	SelectContent,
-	SelectGroup,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/shared/ui/data-grid/primitives/select";
+import { cn } from "@/shared/lib/cn";
+import type { RowHeightValue } from "./types";
 
 const rowHeights = [
 	{
@@ -38,54 +32,48 @@ const rowHeights = [
 	},
 ] as const;
 
-interface DataGridRowHeightMenuProps<TData>
-	extends React.ComponentProps<typeof SelectContent> {
-	table: Table<TData>;
-	disabled?: boolean;
+/** Label of the active row height — the summary the table-controls root row
+ *  shows so the setting is legible without opening its view. */
+export function rowHeightLabel(value: RowHeightValue | undefined): string {
+	return rowHeights.find((option) => option.value === value)?.label ?? "Short";
 }
 
-export function DataGridRowHeightMenu<TData>({
+/**
+ * The row-height view of the shared table-controls popover. It was a `Select`
+ * when it had its own trigger; inside the popover the options are plain rows,
+ * so picking a height is one click rather than opening a dropdown inside a
+ * dropdown.
+ */
+export function DataGridRowHeightPanel<TData>({
 	table,
-	disabled,
-	...props
-}: DataGridRowHeightMenuProps<TData>) {
+}: {
+	table: Table<TData>;
+}) {
 	const rowHeight = table.options.meta?.rowHeight;
 	const onRowHeightChange = table.options.meta?.onRowHeightChange;
 
-	const selectedRowHeight = rowHeights.find(
-		(opt) => opt.value === rowHeight,
-	) ?? {
-		label: "Short",
-		value: "short" as const,
-		icon: MinusIcon,
-	};
-
 	return (
-		<Select
-			value={rowHeight}
-			onValueChange={onRowHeightChange}
-			disabled={disabled}
-		>
-			<SelectTrigger>
-				<SelectValue placeholder="Row height">
-					<span className="flex items-center gap-2">
-						<selectedRowHeight.icon />
-						{selectedRowHeight.label}
-					</span>
-				</SelectValue>
-			</SelectTrigger>
-			<SelectContent {...props}>
-				<SelectGroup>
-					{rowHeights.map((option) => (
-						<SelectItem key={option.value} value={option.value}>
-							<span className="flex items-center gap-2">
-								<option.icon />
-								{option.label}
-							</span>
-						</SelectItem>
-					))}
-				</SelectGroup>
-			</SelectContent>
-		</Select>
+		<div className="flex flex-col gap-0.5 p-1 pt-0" data-nav-initial-focus>
+			{rowHeights.map((option) => {
+				const isSelected = option.value === (rowHeight ?? "short");
+				return (
+					<button
+						aria-pressed={isSelected}
+						className={cn(
+							"flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-body-sm outline-none transition-colors",
+							"hover:bg-foreground/[0.045] focus-visible:ring-2 focus-visible:ring-accent",
+							isSelected && "bg-accent/10 text-accent",
+						)}
+						key={option.value}
+						onClick={() => onRowHeightChange?.(option.value)}
+						type="button"
+					>
+						<option.icon />
+						<span className="flex-1 truncate">{option.label}</span>
+						{isSelected ? <Check className="size-4" /> : null}
+					</button>
+				);
+			})}
+		</div>
 	);
 }

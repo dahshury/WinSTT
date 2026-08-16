@@ -278,7 +278,13 @@ function GroupRailTile({
 						</BaseButton>
 					)}
 				/>
-				<TooltipContent side="right">{item.label}</TooltipContent>
+				<TooltipContent
+					className="rounded-md px-2.5 py-1.5 font-medium shadow-model-picker-popup"
+					side="right"
+					sideOffset={8}
+				>
+					{item.label}
+				</TooltipContent>
 			</Tooltip>
 			{onToggleFavorite ? (
 				<BaseButton

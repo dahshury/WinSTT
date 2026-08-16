@@ -1,6 +1,5 @@
 import type { ColumnSort, SortDirection, Table } from "@tanstack/react-table";
 import {
-	ArrowDownUp,
 	ChevronsUpDown,
 	Command,
 	CommandEmpty,
@@ -23,42 +22,36 @@ import {
 	SortableContent,
 	SortableItem,
 	SortableItemHandle,
-	SortableOverlay,
 	Trash2,
-	useDataGridMenuShortcut,
 	useDirection,
-	Badge,
 	Button,
 } from "@/shared/ui/data-grid/data-grid-menu-common";
 import * as React from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 
-const SORT_SHORTCUT_KEY = "s";
 const SORT_ORDERS = [
 	{ label: "Asc", value: "asc" },
 	{ label: "Desc", value: "desc" },
 ];
 
-interface DataGridSortMenuProps<TData>
-	extends React.ComponentProps<typeof PopoverContent> {
-	table: Table<TData>;
-	disabled?: boolean;
+/** Reset a grid's sorting back to its initial state — see
+ *  {@link import("./data-grid-filter-menu").resetDataGridFilters}. */
+export function resetDataGridSorting<TData>(table: Table<TData>): void {
+	table.setSorting(table.initialState.sorting);
 }
 
-export function DataGridSortMenu<TData>({
-	table,
-	disabled,
-	className,
-	...props
-}: DataGridSortMenuProps<TData>) {
+/**
+ * The sort-builder view of the shared table-controls popover: a reorderable
+ * list of "<field> <asc|desc>" rules, plus add/reset. The surrounding popover
+ * and badge now live in `DataGridTableControls`.
+ */
+export function DataGridSortPanel<TData>({ table }: { table: Table<TData> }) {
 	const t = useTranslations("dataGrid");
 	const dir = useDirection();
 	const id = React.useId();
 	const labelId = React.useId();
 	const descriptionId = React.useId();
-	const [open, setOpen] = React.useState(false);
-	const addButtonRef = React.useRef<HTMLButtonElement>(null);
 
 	const sorting = table.getState().sorting;
 	const onSortingChange = table.setSorting;
@@ -116,120 +109,74 @@ export function DataGridSortMenu<TData>({
 		);
 	};
 
-	const onSortingReset = () => onSortingChange(table.initialState.sorting);
-
-	useDataGridMenuShortcut(SORT_SHORTCUT_KEY, setOpen);
-
-	const onTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-		if (
-			REMOVE_MENU_ITEM_SHORTCUTS.has(event.key.toLowerCase()) &&
-			sorting.length > 0
-		) {
-			event.preventDefault();
-			onSortingReset();
-		}
-	};
+	const onSortingReset = () => resetDataGridSorting(table);
 
 	return (
+		// dnd-kit's context wraps only the rule list now that the popover is
+		// hoisted out — every draggable item is still inside it.
 		<Sortable
 			value={sorting}
 			onValueChange={onSortingChange}
 			getItemValue={(item) => item.id}
 		>
-			<Popover open={open} onOpenChange={setOpen}>
-				<PopoverTrigger asChild>
-					<Button
-						dir={dir}
-						variant="outline"
-						className="font-normal"
-						onKeyDown={onTriggerKeyDown}
-						disabled={disabled}
-					>
-						<ArrowDownUp className="text-muted-foreground" />
-						{t("sort")}
-						{sorting.length > 0 && (
-							<Badge
-								variant="secondary"
-								className="h-[18.24px] rounded-[3.2px] px-[5.12px] font-mono font-normal text-[10.4px]"
-							>
-								{sorting.length}
-							</Badge>
+			<div
+				aria-describedby={descriptionId}
+				aria-labelledby={labelId}
+				className="flex flex-col gap-3.5 p-3 pt-1"
+				dir={dir}
+			>
+				<div className="flex flex-col gap-1">
+					<h4 className="font-medium leading-none" id={labelId}>
+						{sorting.length > 0 ? t("sortByTitle") : t("noSortsTitle")}
+					</h4>
+					<p
+						className={cn(
+							"text-muted-foreground text-sm",
+							sorting.length > 0 && "sr-only",
 						)}
+						id={descriptionId}
+					>
+						{sorting.length > 0 ? t("modifySortingHint") : t("addSortingHint")}
+					</p>
+				</div>
+				{sorting.length > 0 && (
+					<SortableContent asChild>
+						<ul className="flex max-h-[300px] flex-col gap-2 overflow-y-auto p-1">
+							{sorting.map((sort) => (
+								<DataTableSortItem
+									key={sort.id}
+									sort={sort}
+									sortItemId={`${id}-sort-${sort.id}`}
+									dir={dir}
+									columns={columns}
+									columnLabels={columnLabels}
+									onSortUpdate={onSortUpdate}
+									onSortRemove={onSortRemove}
+								/>
+							))}
+						</ul>
+					</SortableContent>
+				)}
+				<div className="flex w-full items-center gap-2">
+					<Button
+						className="rounded"
+						data-nav-initial-focus
+						disabled={columns.length === 0}
+						onClick={onSortAdd}
+					>
+						{t("addSort")}
 					</Button>
-				</PopoverTrigger>
-				<PopoverContent
-					aria-labelledby={labelId}
-					aria-describedby={descriptionId}
-					dir={dir}
-					className={cn(
-						"flex w-full max-w-(--radix-popover-content-available-width) flex-col gap-3.5 p-4 sm:min-w-[380px]",
-						className,
-					)}
-					{...props}
-				>
-					<div className="flex flex-col gap-1">
-						<h4 id={labelId} className="font-medium leading-none">
-							{sorting.length > 0 ? t("sortByTitle") : t("noSortsTitle")}
-						</h4>
-						<p
-							id={descriptionId}
-							className={cn(
-								"text-muted-foreground text-sm",
-								sorting.length > 0 && "sr-only",
-							)}
-						>
-							{sorting.length > 0
-								? t("modifySortingHint")
-								: t("addSortingHint")}
-						</p>
-					</div>
 					{sorting.length > 0 && (
-						<SortableContent asChild>
-							<ul className="flex max-h-[300px] flex-col gap-2 overflow-y-auto p-1">
-								{sorting.map((sort) => (
-									<DataTableSortItem
-										key={sort.id}
-										sort={sort}
-										sortItemId={`${id}-sort-${sort.id}`}
-										dir={dir}
-										columns={columns}
-										columnLabels={columnLabels}
-										onSortUpdate={onSortUpdate}
-										onSortRemove={onSortRemove}
-									/>
-								))}
-							</ul>
-						</SortableContent>
-					)}
-					<div className="flex w-full items-center gap-2">
 						<Button
 							className="rounded"
-							ref={addButtonRef}
-							onClick={onSortAdd}
-							disabled={columns.length === 0}
+							onClick={onSortingReset}
+							variant="outline"
 						>
-							{t("addSort")}
+							{t("resetSorting")}
 						</Button>
-						{sorting.length > 0 && (
-							<Button
-								variant="outline"
-								className="rounded"
-								onClick={onSortingReset}
-							>
-								{t("resetSorting")}
-							</Button>
-						)}
-					</div>
-				</PopoverContent>
-			</Popover>
-			<SortableOverlay>
-				<div dir={dir} className="flex items-center gap-2">
-					<div className="h-8 w-44 rounded-sm bg-primary/10" />
-					<div className="h-8 w-24 rounded-sm bg-primary/10" />
-					<div className="size-8 shrink-0 rounded-sm bg-primary/10" />
-					<div className="size-8 shrink-0 rounded-sm bg-primary/10" />
+					)}
 				</div>
-			</SortableOverlay>
+			</div>
 		</Sortable>
 	);
 }
@@ -281,7 +228,14 @@ function DataTableSortItem({
 	};
 
 	return (
-		<SortableItem value={sort.id} asChild>
+		// The rule row itself is the card that lifts (there is no drag overlay):
+		// while held it gets an opaque plate two steps above the popover's
+		// `bg-surface-5` and a shadow to match — see `SortableItem`.
+		<SortableItem
+			asChild
+			className="rounded-md data-dragging:bg-surface-7 data-dragging:shadow-surface-8"
+			value={sort.id}
+		>
 			<div
 				id={sortItemId}
 				// eslint-disable-next-line react-doctor/prefer-tag-over-role -- element is interactive (tabIndex + onKeyDown); the ARIA role is correct, a semantic <li> tag would be non-interactive

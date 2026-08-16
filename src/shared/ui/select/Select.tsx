@@ -5,7 +5,11 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { useRef, useState } from "react";
-import { OptionDragHandle, SortableOptionRows } from "./sortable-option-rows";
+import {
+	OPTION_DRAG_HANDLE_SIZE,
+	OptionDragHandle,
+	SortableOptionRows,
+} from "./sortable-option-rows";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import { GroupHeaderContent } from "./group-header";
@@ -156,7 +160,10 @@ function SelectRow({
 				option.sortable ? (
 					<OptionDragHandle className="-ml-1" label={handleLabel} />
 				) : (
-					<span aria-hidden="true" className="-ml-1 size-5 shrink-0" />
+					<span
+						aria-hidden="true"
+						className={`-ml-1 ${OPTION_DRAG_HANDLE_SIZE} shrink-0`}
+					/>
 				)
 			) : null}
 			<SelectOptionContent active={active} option={option} />
@@ -275,6 +282,7 @@ export function Select({
 								>
 									<MenuHighlightLayer
 										containerRef={radioGroupRef}
+										suppressed={dragSorting}
 										value={value}
 									/>
 									{groups ? (

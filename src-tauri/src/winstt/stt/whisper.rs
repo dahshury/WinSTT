@@ -157,9 +157,9 @@ struct DecodeState {
     /// Number of decoder-prompt tokens at the head of `tokens` (the generated region starts here).
     prompt_len: usize,
     /// Device `MemoryInfo` for re-binding the `present.*` outputs each step (CPU when no GPU EP).
-    dev_mem: MemoryInfo,
+    dev_mem: MemoryInfo<'static>,
     /// Host `MemoryInfo` for the logits (argmax) and, when collecting, the cross-attention.
-    cpu_mem: MemoryInfo,
+    cpu_mem: MemoryInfo<'static>,
     /// ONE IoBinding reused for every step of this decode (optimum keeps one per session;
     /// the old fresh-binding-per-step pattern re-bound all ~20 inputs + ~17 outputs each token).
     /// Rebinding by name REPLACES the prior entry, so each step rebinds only what changed:
@@ -451,7 +451,7 @@ impl WhisperEngine {
 
     /// Device `MemoryInfo` for binding the encoder output + KV-cache resident on the session's
     /// device (CPU when no GPU EP). Cheap to build; one per encode + one per decode call.
-    fn device_mem(&self) -> SttResult<MemoryInfo> {
+    fn device_mem(&self) -> SttResult<MemoryInfo<'static>> {
         MemoryInfo::new(
             self.device,
             self.device_id,
@@ -466,6 +466,12 @@ impl WhisperEngine {
     /// Multilingual: `[sot, <lang|eos-sentinel>, transcribe|translate, (notimestamps?)]`.
     /// `.en` exports keep the eos sentinel in position 1 — writing a language token there
     /// corrupts the prompt (memory project_whisper_incomplete_vocab...; §6.3).
+    ///
+    /// CrisperWhisper 2.0 prepends its five `[verbatim_N]` mode tags BEFORE `<|sot|>`
+    /// (the trained layout is `{mode_tags} <|sot|> ...`; nyrahealth prompt.py builds
+    /// `prompt_ids + decoder_prefix`). The tags are decode-skipped by the tokenizer, so
+    /// nothing downstream needs to strip them; the language SLOT moves to
+    /// `crisper_prefix_len() + 1` — always index via `lang_slot()`.
     fn build_prompt(&self, opts: &TranscribeOptions) -> Vec<i64> {
         let tk = &self.tokenizer;
         let task = if opts.translate && tk.is_multilingual {
@@ -473,23 +479,24 @@ impl WhisperEngine {
         } else {
             tk.transcribe_token_id
         };
-        let mut prompt = if opts.return_timestamps {
-            vec![tk.bos_token_id, tk.eos_token_id, task]
-        } else {
-            vec![
-                tk.bos_token_id,
-                tk.eos_token_id,
-                task,
-                tk.notimestamps_token_id,
-            ]
-        };
+        let mut prompt = tk.crisper_verbatim_prefix.clone();
+        prompt.extend([tk.bos_token_id, tk.eos_token_id, task]);
+        if !opts.return_timestamps {
+            prompt.push(tk.notimestamps_token_id);
+        }
         if tk.is_multilingual
             && let Some(lang) = opts.language.as_deref().filter(|l| !l.is_empty())
             && let Some(tok) = tk.language_token(lang)
         {
-            prompt[1] = tok;
+            prompt[self.lang_slot()] = tok;
         }
         prompt
+    }
+
+    /// Index of the language slot in a `build_prompt` result (position 1 of the classic
+    /// Whisper prompt, shifted past the CrisperWhisper 2.0 mode tags when present).
+    fn lang_slot(&self) -> usize {
+        self.tokenizer.crisper_verbatim_prefix.len() + 1
     }
 
     fn candidate_language_tokens(&self, candidates: &[String]) -> Vec<i64> {
@@ -504,16 +511,28 @@ impl WhisperEngine {
         out
     }
 
-    /// Short 3-token decode from `[sot]`; position-1 argmax = detected language token.
+    /// Short decode from `[(mode tags,) sot]`; the argmax at the slot right after `<|sot|>`
+    /// is the detected language token. CrisperWhisper 2.0 keeps its mode tags in front so
+    /// the detection prompt matches the trained layout.
     fn detect_language(&mut self, encoder_out: &DynValue, candidates: &[String]) -> SttResult<i64> {
-        let prompt = vec![self.tokenizer.bos_token_id];
+        let mut prompt = self.tokenizer.crisper_verbatim_prefix.clone();
+        prompt.push(self.tokenizer.bos_token_id);
+        let lang_index = prompt.len(); // first generated position, right after <|sot|>
+        let max_length = prompt.len() + 2;
         let candidate_tokens = self.candidate_language_tokens(candidates);
         let tokens = if candidate_tokens.is_empty() {
-            self.decode_greedy(encoder_out, prompt, 3)?
+            self.decode_greedy(encoder_out, prompt, max_length)?
         } else {
-            self.decode_greedy_with_first_step_allowed(encoder_out, prompt, 3, &candidate_tokens)?
+            self.decode_greedy_with_first_step_allowed(
+                encoder_out,
+                prompt,
+                max_length,
+                &candidate_tokens,
+            )?
         };
-        Ok(*tokens.get(1).unwrap_or(&self.tokenizer.eos_token_id))
+        Ok(*tokens
+            .get(lang_index)
+            .unwrap_or(&self.tokenizer.eos_token_id))
     }
 
     /// The greedy autoregressive KV-cache loop. Returns the full token sequence
@@ -1114,9 +1133,10 @@ impl Transcriber for WhisperEngine {
         let mut prompt = self.build_prompt(opts);
         if self.tokenizer.is_multilingual {
             let no_lang = opts.language.as_deref().is_none_or(|l| l.is_empty());
-            if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
+            let slot = self.lang_slot();
+            if no_lang && prompt.get(slot).copied() == Some(self.tokenizer.eos_token_id) {
                 let lang_tok = self.detect_language(&encoder_out, &opts.language_candidates)?;
-                prompt[1] = lang_tok;
+                prompt[slot] = lang_tok;
             }
         }
 
@@ -1170,15 +1190,35 @@ impl Transcriber for WhisperEngine {
         let mut prefix_len = 0usize;
         let mut max_length = MAX_LENGTH;
         if let Some(prompt_text) = opts.initial_prompt_text.as_deref() {
-            let prefix = self.tokenizer.initial_prompt_prefix(prompt_text);
-            if !prefix.is_empty() {
-                prefix_len = prefix.len();
-                // Allow the prefix tokens up to the 448 positional cap (we're already at
-                // the cap, so the prefix shares the budget — Python: min(448, ml+prefix)).
-                max_length = (MAX_LENGTH + prefix_len).min(MAX_LENGTH);
-                let mut full = prefix;
-                full.extend(prompt);
-                prompt = full;
+            let tags_len = self.tokenizer.crisper_verbatim_prefix.len();
+            if tags_len > 0 {
+                // CrisperWhisper 2.0: the trained biasing channel is the hotword block
+                // `<htx> words <ehtx>` placed AFTER the mode tags and BEFORE `<|sot|>`
+                // (nyrahealth prompt.py `_build`; `<|startofprev|>` is NOT how this model
+                // was trained). The head region [tags + block] is stripped before decode
+                // like the classic prefix — the block's word tokens are plain BPE and
+                // would otherwise bleed into the transcript.
+                let block = self.tokenizer.crisper_hotword_block(prompt_text);
+                if !block.is_empty() {
+                    prefix_len = tags_len + block.len();
+                    max_length = (MAX_LENGTH + prefix_len).min(MAX_LENGTH);
+                    let mut full = Vec::with_capacity(prompt.len() + block.len());
+                    full.extend_from_slice(&prompt[..tags_len]);
+                    full.extend(block);
+                    full.extend_from_slice(&prompt[tags_len..]);
+                    prompt = full;
+                }
+            } else {
+                let prefix = self.tokenizer.initial_prompt_prefix(prompt_text);
+                if !prefix.is_empty() {
+                    prefix_len = prefix.len();
+                    // Allow the prefix tokens up to the 448 positional cap (we're already at
+                    // the cap, so the prefix shares the budget — Python: min(448, ml+prefix)).
+                    max_length = (MAX_LENGTH + prefix_len).min(MAX_LENGTH);
+                    let mut full = prefix;
+                    full.extend(prompt);
+                    prompt = full;
+                }
             }
         }
 
@@ -1227,9 +1267,10 @@ impl Transcriber for WhisperEngine {
         let mut prompt = self.build_prompt(opts);
         if self.tokenizer.is_multilingual {
             let no_lang = opts.language.as_deref().is_none_or(|l| l.is_empty());
-            if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
+            let slot = self.lang_slot();
+            if no_lang && prompt.get(slot).copied() == Some(self.tokenizer.eos_token_id) {
                 let lang_tok = self.detect_language(&encoder_out, &opts.language_candidates)?;
-                prompt[1] = lang_tok;
+                prompt[slot] = lang_tok;
             }
         }
 

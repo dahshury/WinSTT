@@ -632,6 +632,12 @@ fn recover_wedged_stage(
             *stage = Stage::Idle;
             *processing_since = None;
             DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
+            // The recorder closed itself, so `TranscribeAction::stop` — the only
+            // thing that emits `stt:recording-stop` — will never run for this take.
+            // Without this the tray kept animating the recording visualizer (and the
+            // overlay pill kept its armed state) until the NEXT dictation happened to
+            // finish, because nothing else in the pipeline knows the take is over.
+            reset_ui_after_silent_stage_recovery(app);
         }
         Stage::Processing { .. }
             if processing_since.is_some_and(|t| t.elapsed() >= PROCESSING_WEDGE_TIMEOUT) =>
@@ -643,9 +649,27 @@ fn recover_wedged_stage(
             *stage = Stage::Idle;
             *processing_since = None;
             DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
+            // Same reasoning for a decode that never returned — but this wedge is a
+            // GUESS (45 s is reachable by a long take on a slow CPU), so only the tray
+            // is reset. A decode that is merely slow still owns its pill and will
+            // paste and paint its own terminal; broadcasting `session-aborted` here
+            // would tear down a session that is alive.
+            crate::tray::on_tray_idle(app);
         }
         _ => {}
     }
+}
+
+/// Drop the recording UI after the Stage machine healed itself out of a wedge.
+///
+/// Reserved for the unambiguous case: the recorder is definitively closed, so
+/// `TranscribeAction::stop` will never run and no terminal event is coming. This
+/// stands in for it — overlay down, tray back to the static idle icon, and
+/// `stt:session-aborted` so the renderer clears its armed pill exactly as the
+/// user-initiated cancel does.
+fn reset_ui_after_silent_stage_recovery(app: &AppHandle) {
+    crate::utils::hide_recording_overlay(app);
+    crate::winstt::commands::dictation::SttEvents::session_aborted(app);
 }
 
 fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
@@ -664,6 +688,13 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         };
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
+        // `TranscribeAction::start` emits `stt:recording-start` (arming the tray
+        // visualizer) as soon as the mic opens without error. If the recorder is
+        // already closed again by the time we look — a device that opened and
+        // immediately dropped, or a cancel that raced the start — the stage stays
+        // Idle and no stop will EVER be issued for that take, so the armed tray had
+        // no way home. Undo the arm here rather than leaving it to the next dictation.
+        crate::tray::on_tray_idle(app);
         crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
     }
 }

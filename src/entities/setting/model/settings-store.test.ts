@@ -187,18 +187,17 @@ describe("useSettingsStore mutators", () => {
 		expect(useSettingsStore.getState().settings.llm.dictation.model).toBe("");
 	});
 
-	test("updateLlmPostProcessing mirrors shared profile fields into dictation and transforms", () => {
+	// Transformations used to be a SHADOW of dictation — `updateLlmPostProcessing`
+	// copied provider/model/tone/modifiers/`enabled` into both, so the two could
+	// never be configured apart (which is why there was nothing to configure for
+	// transformations at all). They are independent consumers now: each is
+	// ASSIGNED a saved configuration, so writing one must not disturb the other.
+	test("updateLlmPostProcessing writes dictation ONLY, leaving transformations alone", () => {
 		useSettingsStore.getState().updateLlmTransforms({
 			hotkey: "LCtrl+LAlt+T",
-			prompts: [
-				{
-					id: "p1",
-					name: "Keep",
-					prompt: "keep",
-					hotkey: "LCtrl+LAlt+K",
-					builtin: false,
-				},
-			],
+			enabled: false,
+			model: "transform-model",
+			presets: [{ key: "friendly" }],
 		});
 
 		useSettingsStore.getState().updateLlmPostProcessing({
@@ -211,23 +210,68 @@ describe("useSettingsStore mutators", () => {
 
 		const { dictation, transforms } = useSettingsStore.getState().settings.llm;
 		expect(dictation.enabled).toBe(true);
-		expect(transforms.enabled).toBe(true);
 		expect(dictation.model).toBe("llama3");
-		expect(transforms.model).toBe("llama3");
 		expect(dictation.presets).toEqual([{ key: "formal" }]);
-		expect(transforms.presets).toEqual([{ key: "formal" }]);
 		expect(dictation.dictionaryAutoAddEnabled).toBe(true);
-		expect("dictionaryAutoAddEnabled" in transforms).toBe(false);
+
+		expect(transforms.enabled).toBe(false);
+		expect(transforms.model).toBe("transform-model");
+		expect(transforms.presets).toEqual([{ key: "friendly" }]);
 		expect(transforms.hotkey).toBe("LCtrl+LAlt+T");
-		expect(transforms.prompts).toEqual([
-			{
-				id: "p1",
-				name: "Keep",
-				prompt: "keep",
-				hotkey: "LCtrl+LAlt+K",
-				builtin: false,
-			},
-		]);
+		// Dictation-only field, never mirrored anywhere.
+		expect("dictionaryAutoAddEnabled" in transforms).toBe(false);
+	});
+
+	test("updateLlmReadAloud patches only the read-aloud consumer", () => {
+		useSettingsStore.getState().updateLlmReadAloud({
+			enabled: true,
+			configurationId: "cfg-read",
+			provider: "openrouter",
+			openrouterModel: "vendor/fast",
+		});
+		const { dictation, readAloud, transforms } =
+			useSettingsStore.getState().settings.llm;
+		expect(readAloud.enabled).toBe(true);
+		expect(readAloud.configurationId).toBe("cfg-read");
+		// A cloud read-aloud pass alongside a local dictation pass is supported.
+		expect(readAloud.provider).toBe("openrouter");
+		expect(dictation.provider).toBe("ollama");
+		expect(transforms.provider).toBe("ollama");
+	});
+
+	// The one-shared-local-model rule spans four slices, so it is upheld here
+	// rather than by each caller: the model picker used to write `localModel` and
+	// the feature it was opened from, leaving the others on the previous model —
+	// two models resident in VRAM, which is what the rule exists to prevent.
+	test("updateLlmSharedLocalModel moves every local consumer onto the model", () => {
+		useSettingsStore.getState().updateLlmPostProcessing({ model: "old:1b" });
+		useSettingsStore.getState().updateLlmTransforms({ model: "old:1b" });
+		useSettingsStore.getState().updateLlmReadAloud({
+			model: "cloud-untouched",
+			provider: "openrouter",
+		});
+
+		useSettingsStore.getState().updateLlmSharedLocalModel("new:4b");
+
+		const { llm } = useSettingsStore.getState().settings;
+		expect(llm.localModel).toBe("new:4b");
+		expect(llm.dictation.model).toBe("new:4b");
+		expect(llm.transforms.model).toBe("new:4b");
+		// Cloud consumers are unconstrained — their model costs no VRAM.
+		expect(llm.readAloud.model).toBe("cloud-untouched");
+	});
+
+	test("updateLlmSharedLocalModel leaves per-feature models alone while the power toggle is on", () => {
+		useSettingsStore.getState().updateLlmSettings({
+			allowMultipleLocalModels: true,
+		});
+		useSettingsStore.getState().updateLlmPostProcessing({ model: "own:1b" });
+
+		useSettingsStore.getState().updateLlmSharedLocalModel("new:4b");
+
+		const { llm } = useSettingsStore.getState().settings;
+		expect(llm.localModel).toBe("new:4b");
+		expect(llm.dictation.model).toBe("own:1b");
 	});
 
 	test("updateDictionary replaces the dictionary list wholesale", () => {
@@ -282,18 +326,24 @@ describe("useSettingsStore mutators", () => {
 		expect(useSettingsStore.getState().settings).toBe(snapshot);
 	});
 
-	test("resetSettings restores defaults but PRESERVES dictionary and snippets", () => {
+	test("resetSettings restores the complete renderer settings tree", () => {
 		useSettingsStore
 			.getState()
 			.updateGeneralSettings({ recordingMode: "toggle" });
 		useSettingsStore
 			.getState()
 			.updateDictionary([{ id: "1", term: "Kubernetes" }]);
+		useSettingsStore
+			.getState()
+			.updateSnippets([
+				{ id: "1", trigger: "/sig", expansion: "Kind regards" },
+			]);
 
 		useSettingsStore.getState().resetSettings();
 		const settings = useSettingsStore.getState().settings;
 		expect(settings.general.recordingMode).toBe("ptt"); // back to default
-		expect(settings.dictionary).toHaveLength(1); // preserved
+		expect(settings.dictionary).toEqual([]);
+		expect(settings.snippets).toEqual([]);
 	});
 
 	test("persists state under the EXACT key 'winstt-settings' (kills `name: \"\"` and storage-name mutants)", () => {

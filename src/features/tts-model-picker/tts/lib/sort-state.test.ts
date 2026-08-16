@@ -12,14 +12,20 @@ const BASE: TtsModelInfo = {
 	id: "model",
 	languages: ["en"],
 	maker: "Maker",
+	maxRefClipSecs: 0,
 	numVoices: 1,
 	paramCountM: 1,
+	requiresReferenceClip: false,
 	qualityScore: 0.5,
 	sampleRate: 24_000,
 	sizeBytesByQuantization: {},
 	sizeLabel: "",
 	speedScore: 0.5,
+	tagSyntax: "none",
+	tags: [],
 	voiceDesign: false,
+	voiceDesignMaxChars: 0,
+	voiceInstruct: false,
 };
 
 const model = (overrides: Partial<TtsModelInfo>): TtsModelInfo => ({

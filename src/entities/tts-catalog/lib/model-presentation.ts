@@ -6,7 +6,8 @@ import {
 	WaterfallUp01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import type { TtsModelInfo } from "@/entities/tts-catalog";
+import type { TtsModelInfo, TtsTagSyntax } from "../model/tts-catalog-store";
+import type { ModelPickerTranslateFn } from "@/shared/i18n/translation-types";
 import {
 	type FAVORITES_GROUP_VALUE,
 	withFavoritesGroup as withCoreFavoritesGroup,
@@ -105,6 +106,33 @@ const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
 		logoSrc: "/provider-icons/sparkaudio.jpg",
 		chip: "bg-tts-engine-spark/15 text-tts-engine-spark",
 	},
+	// Neither vendor publishes an SVG mark (checked neuphonic.com, k2-fsa.github.io and
+	// both GitHub orgs), so these are the canonical Hugging Face org avatars — the same
+	// PNG fallback `funaudiollm`/`alpindale` already use.
+	neutts: {
+		icon: VoiceIcon,
+		label: "NeuTTS",
+		maker: "Neuphonic",
+		logoSrc: "/provider-icons/neuphonic.png",
+		chip: "bg-tts-engine-neutts/15 text-tts-engine-neutts",
+	},
+	omnivoice: {
+		icon: VoiceIcon,
+		label: "OmniVoice",
+		maker: "k2-fsa",
+		logoSrc: "/provider-icons/k2-fsa.png",
+		chip: "bg-tts-engine-omnivoice/15 text-tts-engine-omnivoice",
+	},
+	// Audio8 publishes no standalone SVG mark — this is the canonical Hugging Face
+	// org avatar (a webp despite the CDN's .jpeg URL), like neuphonic/k2-fsa.
+	audio8: {
+		icon: VoiceIcon,
+		label: "Audio8",
+		maker: "Audio8",
+		// Same traced SVG the STT Audio8 family uses — the vendor avatar renders as a solid tile.
+		logoSrc: "/provider-icons/audio8.svg",
+		chip: "bg-tts-engine-audio8/15 text-tts-engine-audio8",
+	},
 };
 
 const DEFAULT_ENGINE_CONFIG: TtsEngineConfig = {
@@ -163,6 +191,37 @@ const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
 		"qwen",
 		"voice creation",
 		"clone",
+	],
+	neutts: [
+		"neuphonic",
+		"neutts",
+		"neutts-2e",
+		"neucodec",
+		"emotion",
+		"emotional",
+		"expressive",
+		"qwen3",
+	],
+	omnivoice: [
+		"k2-fsa",
+		"k2fsa",
+		"sherpa",
+		"omni",
+		"omnivoice",
+		"voice cloning",
+		"voice design",
+		"multilingual",
+	],
+	audio8: [
+		"audio8",
+		"audio 8",
+		"ark",
+		"arktts",
+		"dualar",
+		"fish",
+		"voice cloning",
+		"zero-shot",
+		"multilingual",
 	],
 };
 
@@ -267,29 +326,41 @@ export function withTtsFavoritesGroup(
 	return withCoreFavoritesGroup(groups, isFavorite, (model) => model.id);
 }
 
-/**
- * Human label for a model's voice-cloning capability. `'none'` returns `null`
- * (no chip rendered); the two zero-shot tiers spell out what the user can
- * provide so the affordance is legible at a glance.
- */
-export function cloningLabel(cloning: TtsModelInfo["cloning"]): {
+/** Label + tooltip for one voice capability. `null` from a builder means the
+ *  model does not advertise that capability, so no chip is rendered. */
+export interface TtsCapabilityCopy {
 	label: string;
 	tooltip: string;
-} | null {
-	if (cloning === "zero_shot_audio") {
-		return {
-			label: "Voice cloning",
-			tooltip: "Zero-shot voice cloning from a short reference audio clip",
-		};
+}
+
+/**
+ * Human label for a model's voice-cloning capability. `'none'` returns `null`
+ * (no chip rendered); the two zero-shot tiers are labelled DIFFERENTLY because
+ * they change what the user has to supply — a clip alone (Chatterbox) versus a
+ * clip *and* its exact transcript (Spark). The reference-clip budget comes from
+ * the catalog row (`maxRefClipSecs`), never from a number typed into the UI.
+ */
+export function cloningLabel(
+	model: Pick<TtsModelInfo, "cloning" | "maxRefClipSecs">,
+	t: ModelPickerTranslateFn,
+): TtsCapabilityCopy | null {
+	if (model.cloning === "none") {
+		return null;
 	}
-	if (cloning === "zero_shot_audio_transcript") {
-		return {
-			label: "Voice cloning",
-			tooltip:
-				"Zero-shot voice cloning from a short reference audio clip and its transcript",
-		};
-	}
-	return null;
+	const needsTranscript = model.cloning === "zero_shot_audio_transcript";
+	const base = needsTranscript
+		? t("ttsCloningTranscriptTip")
+		: t("ttsCloningTip");
+	// The trim budget is a second, self-contained sentence so translators are
+	// never handed a fragment to splice.
+	const tooltip =
+		model.maxRefClipSecs > 0
+			? `${base} ${t("ttsCloningClipLimitTip", { seconds: model.maxRefClipSecs })}`
+			: base;
+	return {
+		label: needsTranscript ? t("ttsCloningTranscript") : t("ttsCloning"),
+		tooltip,
+	};
 }
 
 /**
@@ -299,13 +370,69 @@ export function cloningLabel(cloning: TtsModelInfo["cloning"]): {
  * clip, so the chip advertises that the voice is customizable by text. Returned
  * shape mirrors `cloningLabel` so `TtsModelCard` composes both chips uniformly.
  */
-export function voiceDesignLabel(): {
-	label: string;
-	tooltip: string;
-} {
+export function voiceDesignLabel(t: ModelPickerTranslateFn): TtsCapabilityCopy {
 	return {
-		label: "Voice design",
-		tooltip: "Customize the voice with a text prompt",
+		label: t("ttsVoiceDesign"),
+		tooltip: t("ttsVoiceDesignTip"),
+	};
+}
+
+/** Delimiters per {@link TtsTagSyntax}. The ONE place either style is written
+ *  down — Orpheus's `<laugh>` and Chatterbox Turbo's `[laugh]` are not
+ *  interchangeable, so no call site may hardcode a bracket. */
+const TAG_DELIMITERS: Record<TtsTagSyntax, readonly [string, string] | null> = {
+	none: null,
+	angle: ["<", ">"],
+	square: ["[", "]"],
+};
+
+/** Render one BARE tag name in the model's own syntax (`laugh` → `<laugh>` /
+ *  `[laugh]`). A `none`-syntax model has no delimiters, so the bare name is
+ *  returned unchanged. Deliberately module-private: every surface that shows a
+ *  tag goes through {@link inlineTagsLabel}, which is what keeps the two
+ *  incompatible syntaxes from being picked apart at a call site. */
+function formatInlineTag(syntax: TtsTagSyntax, tag: string): string {
+	const delimiters = TAG_DELIMITERS[syntax];
+	return delimiters ? `${delimiters[0]}${tag}${delimiters[1]}` : tag;
+}
+
+/**
+ * The model's whole tag vocabulary rendered in ITS OWN delimiters, space
+ * separated (`"<laugh> <sigh> <gasp>"`), or `""` when the row ships no tags.
+ *
+ * The one exported way to show a tag outside the picker chip: every surface that
+ * quotes the vocabulary — the card tooltip via {@link inlineTagsLabel}, the
+ * read-aloud "Inline tags" setting — reads it from here, so neither syntax is
+ * ever spelled out at a call site.
+ */
+export function formatInlineTagList(
+	model: Pick<TtsModelInfo, "tagSyntax" | "tags">,
+): string {
+	if (model.tagSyntax === "none" || model.tags.length === 0) {
+		return "";
+	}
+	return model.tags
+		.map((tag) => formatInlineTag(model.tagSyntax, tag))
+		.join(" ");
+}
+
+/**
+ * Human label for a model's inline paralinguistic-tag support — the third voice
+ * capability alongside cloning and design. `null` (no chip) unless the row ships
+ * BOTH a syntax and a vocabulary; the tooltip spells the tags out in the model's
+ * own delimiters so the user can copy one straight into their text.
+ */
+export function inlineTagsLabel(
+	model: Pick<TtsModelInfo, "tagSyntax" | "tags">,
+	t: ModelPickerTranslateFn,
+): TtsCapabilityCopy | null {
+	const rendered = formatInlineTagList(model);
+	if (rendered === "") {
+		return null;
+	}
+	return {
+		label: t("ttsInlineTags"),
+		tooltip: t("ttsInlineTagsTip", { tags: rendered }),
 	};
 }
 

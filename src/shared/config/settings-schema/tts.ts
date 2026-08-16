@@ -2,14 +2,13 @@ import { z } from "zod";
 
 // Kokoro-82M ONNX text-to-speech. Opt-in feature — `enabled` defaults to
 // false; the engine only loads on first synthesis request. `voice` and
-// `lang` mirror the Kokoro voice catalog (see
-// ``server/src/synthesizer/infrastructure/voice_catalog.py``); `speed` is
-// a multiplier clamped 0.5..2.0. `hotkey` is the global combo that
+// `lang` mirror the Kokoro voice catalog; `speed` is
+// a multiplier clamped to the active engine (0.4..1.3 for Supertonic,
+// otherwise 0.5..2.0). `hotkey` is the global combo that
 // captures the active selection and reads it aloud; defaults to
 // LCtrl+Space so the binding is always present when TTS is enabled
 // (users can rebind from settings). There is no per-TTS compute device:
-// the synthesizer shares the main STT model's device (`model.device`),
-// which the spawn layer mirrors onto the server's `--tts-device` flag.
+// the synthesizer shares the main STT model's device (`model.device`).
 export const ttsSettingsSchema = z.object({
 	enabled: z.boolean().default(false),
 	// Local TTS catalog id selecting WHICH engine/model synthesizes (Kokoro,
@@ -22,6 +21,12 @@ export const ttsSettingsSchema = z.object({
 	// uploaded reference with the selected STT model, then user-editable. Mirrors
 	// the Rust `TtsSettings.clone_ref_text` default (empty) for the parity gate.
 	cloneRefText: z.string().default(""),
+	// Natural-language style instruction for rows whose prompt carries a dedicated
+	// instruct span ALONGSIDE the voice (catalog `voiceInstruct`, e.g. OmniVoice).
+	// Voice-DESIGN rows are different: there the prompt IS the voice and overloads
+	// `voice`, which a cloning row cannot use because it holds the clip path.
+	// Mirrors the Rust `TtsSettings.voice_instruct` default for the parity gate.
+	voiceInstruct: z.string().default(""),
 	// Selected weight precision for the local TTS model (mirrors the STT
 	// `model.onnxQuantization` field). Empty string = the model's own default
 	// quant, resolved server-side (e.g. Qwen3-TTS-VoiceDesign → "int4"); concrete
@@ -31,6 +36,15 @@ export const ttsSettingsSchema = z.object({
 	// enforced by the Rust↔zod parity gate (`defaults-parity.test.ts`).
 	quantization: z.string().default(""),
 	lang: z.string().default("en-us"),
+	// Route the read-aloud text through the post-processing LLM first, so it can
+	// insert the selected model's INLINE PARALINGUISTIC TAGS (`<laugh>`, `[sigh]`,
+	// …) where the delivery calls for them. Off by default: it costs an LLM
+	// round-trip before the first word is spoken, and only two shipped engines
+	// (Orpheus, Chatterbox Turbo) have a tag vocabulary at all. The allowed tags
+	// AND their delimiters come from the selected model's catalog row — this flag
+	// only says "do it", never which syntax. Mirrors the Rust
+	// `TtsSettings.inline_tags` default (false) for the parity gate.
+	inlineTags: z.boolean().default(false),
 	// Floor 0.4 matches Supertonic's widened slider (SUPERTONIC_SPEED_MIN); other
 	// engines' sliders still start at 0.5, but the stored value must accept 0.4 so
 	// a Supertonic selection persists without being rejected back to the default.

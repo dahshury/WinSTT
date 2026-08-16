@@ -1,8 +1,6 @@
 /* eslint-disable i18next/no-literal-string -- debug-only window, not user-facing/shipped */
 import { cn } from "@/shared/lib/cn";
 
-// --- Primitives ---------------------------------------------------------
-
 export function Section({
 	title,
 	subtitle,

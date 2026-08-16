@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import { ModelPickerShortcutContext } from "./model-picker-shortcuts";
 import { ModelPickerPanelBody } from "./ModelPickerPanelBody";
 import { useScrollSelectedIntoView } from "./use-scroll-selected-into-view";
 
@@ -12,6 +13,7 @@ export interface ModelPickerProps<TItem, TValue> {
 	activeFiltersSlot?: ReactNode;
 	belowListSlot?: ReactNode;
 	disabled?: boolean;
+	compact?: boolean;
 	filter?: (item: TItem, query: string) => boolean;
 	/** Rendered in the search shell just before the filter trigger (no
 	 *  icon-button chrome) — e.g. the STT "Suggested" chip. */
@@ -50,9 +52,128 @@ const PANEL_SURFACE_CLASSES = cn(
 );
 const POPUP_BASE_CLASSES = cn("t-dropdown", PANEL_SURFACE_CLASSES);
 
+const MODEL_SHORTCUT_COUNT = 9;
+const HIDDEN_SHORTCUT_LABELS: ReadonlyMap<string, string> = new Map();
+
+function flattenPickerItems<TItem>(
+	items: readonly unknown[] | undefined,
+): TItem[] {
+	if (!items) {
+		return [];
+	}
+	const flattened: TItem[] = [];
+	for (const item of items) {
+		if (
+			typeof item === "object" &&
+			item !== null &&
+			"items" in item &&
+			Array.isArray(item.items)
+		) {
+			flattened.push(...flattenPickerItems<TItem>(item.items));
+		} else {
+			flattened.push(item as TItem);
+		}
+	}
+	return flattened;
+}
+
+function defaultItemKey<TItem>(
+	item: TItem,
+	itemToStringLabel: ((item: TItem | null) => string) | undefined,
+): string {
+	if (typeof item === "string") {
+		return item;
+	}
+	if (typeof item === "object" && item !== null) {
+		if ("id" in item && typeof item.id === "string") {
+			return item.id;
+		}
+		if ("name" in item && typeof item.name === "string") {
+			return item.name;
+		}
+	}
+	return itemToStringLabel?.(item) ?? String(item);
+}
+
+function selectableItemMap<TItem>(
+	items: readonly unknown[] | undefined,
+	filter: (item: TItem, query: string) => boolean,
+	query: string,
+	itemToStringLabel: ((item: TItem | null) => string) | undefined,
+): Map<string, TItem> {
+	const itemByKey = new Map<string, TItem>();
+	for (const item of flattenPickerItems<TItem>(items)) {
+		if (!filter(item, query)) {
+			continue;
+		}
+		const key = defaultItemKey(item, itemToStringLabel);
+		if (!itemByKey.has(key)) {
+			itemByKey.set(key, item);
+		}
+	}
+	return itemByKey;
+}
+
+function renderedModelKeys(
+	root: HTMLElement | null,
+	selectableKeys?: ReadonlySet<string>,
+): string[] {
+	if (!root) {
+		return [];
+	}
+	const keys: string[] = [];
+	const seen = new Set<string>();
+	for (const node of root.querySelectorAll<HTMLElement>("[data-model-id]")) {
+		if (
+			node.closest("[inert]") ||
+			node.closest('[aria-disabled="true"]') ||
+			node.closest("[data-disabled]")
+		) {
+			continue;
+		}
+		const key = node.dataset["modelId"]?.trim();
+		if (!key || seen.has(key) || (selectableKeys && !selectableKeys.has(key))) {
+			continue;
+		}
+		seen.add(key);
+		keys.push(key);
+		if (keys.length === MODEL_SHORTCUT_COUNT) {
+			break;
+		}
+	}
+	return keys;
+}
+
+function shortcutLabelsForKeys(
+	keys: readonly string[],
+): ReadonlyMap<string, string> {
+	return new Map(
+		keys
+			.slice(0, MODEL_SHORTCUT_COUNT)
+			.map((key, index) => [key, `Ctrl+${index + 1}`]),
+	);
+}
+
+function mapsEqual(
+	a: ReadonlyMap<string, string>,
+	b: ReadonlyMap<string, string>,
+): boolean {
+	if (a.size !== b.size) {
+		return false;
+	}
+	for (const [key, value] of a) {
+		if (b.get(key) !== value) {
+			return false;
+		}
+	}
+	return true;
+}
+
 export function ModelPicker<TItem, TValue = TItem | null>({
 	activeFiltersSlot,
 	belowListSlot,
+	compact = false,
+	disabled = false,
 	filter,
 	filtersLeadingSlot,
 	filtersMenuSlot,
@@ -81,6 +202,10 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	const [internalSearch, setInternalSearch] = useState("");
 	const popupNodeRef = useRef<HTMLElement | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
+	const [shortcutLabels, setShortcutLabels] = useState<
+		ReadonlyMap<string, string>
+	>(new Map());
+	const [isControlPressed, setIsControlPressed] = useState(false);
 
 	const isOpenControlled = controlledOpen !== undefined;
 	const isSearchControlled = inputValue !== undefined;
@@ -139,11 +264,81 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 
 	const renderCollection = inline || hasRenderedCollection;
 
+	useEffect(() => {
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Control" || event.ctrlKey) {
+				setIsControlPressed(true);
+			}
+		};
+		const handleKeyUp = (event: KeyboardEvent) => {
+			if (event.key === "Control" || !event.ctrlKey) {
+				setIsControlPressed(false);
+			}
+		};
+		const handleBlur = () => setIsControlPressed(false);
+		window.addEventListener("keydown", handleKeyDown, true);
+		window.addEventListener("keyup", handleKeyUp, true);
+		window.addEventListener("blur", handleBlur);
+		return () => {
+			window.removeEventListener("keydown", handleKeyDown, true);
+			window.removeEventListener("keyup", handleKeyUp, true);
+			window.removeEventListener("blur", handleBlur);
+		};
+	}, []);
+
 	useScrollSelectedIntoView(popupNodeRef, {
 		effectiveOpen,
 		renderCollection,
 		selectedItemKey,
 	});
+
+	useLayoutEffect(() => {
+		if (!(effectiveOpen && renderCollection)) {
+			setShortcutLabels((current) =>
+				current.size === 0 ? current : new Map(),
+			);
+			return;
+		}
+		const updateShortcutLabels = () => {
+			const selectableKeys = new Set(
+				selectableItemMap(
+					items,
+					effectiveFilter,
+					effectiveSearch,
+					itemToStringLabel,
+				).keys(),
+			);
+			const next = shortcutLabelsForKeys(
+				renderedModelKeys(popupNodeRef.current, selectableKeys),
+			);
+			setShortcutLabels((current) =>
+				mapsEqual(current, next) ? current : next,
+			);
+		};
+		updateShortcutLabels();
+		const frame = requestAnimationFrame(updateShortcutLabels);
+		const observer = new MutationObserver(updateShortcutLabels);
+		if (popupNodeRef.current) {
+			observer.observe(popupNodeRef.current, {
+				attributes: true,
+				attributeFilter: ["aria-disabled", "data-model-id", "inert"],
+				childList: true,
+				subtree: true,
+			});
+		}
+		return () => {
+			cancelAnimationFrame(frame);
+			observer.disconnect();
+		};
+	}, [
+		effectiveFilter,
+		effectiveOpen,
+		effectiveSearch,
+		itemToStringLabel,
+		items,
+		list,
+		renderCollection,
+	]);
 
 	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
 		if (inline) {
@@ -175,26 +370,93 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		}
 	};
 
+	useEffect(() => {
+		if (!(effectiveOpen && renderCollection) || disabled) {
+			return;
+		}
+		const handleShortcut = (event: KeyboardEvent) => {
+			if (
+				event.defaultPrevented ||
+				event.repeat ||
+				!event.ctrlKey ||
+				event.altKey ||
+				event.metaKey ||
+				event.shiftKey ||
+				!/^[1-9]$/.test(event.key)
+			) {
+				return;
+			}
+			const shortcutIndex = Number(event.key) - 1;
+			const itemByKey = selectableItemMap(
+				items,
+				effectiveFilter,
+				effectiveSearch,
+				itemToStringLabel,
+			);
+			const renderedKeys = renderedModelKeys(
+				popupNodeRef.current,
+				new Set(itemByKey.keys()),
+			);
+			const fallbackKeys = [...itemByKey.keys()].slice(0, MODEL_SHORTCUT_COUNT);
+			const key = (renderedKeys.length > 0 ? renderedKeys : fallbackKeys)[
+				shortcutIndex
+			];
+			const item = key ? itemByKey.get(key) : undefined;
+			if (item === undefined) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+			const details = {
+				reason: "keyboard-shortcut",
+				shortcut: `Ctrl+${event.key}`,
+			};
+			handleValueChange(item as TValue, details);
+			if (!inline) {
+				handleOpenChange(false, details);
+			}
+		};
+		window.addEventListener("keydown", handleShortcut, true);
+		return () => {
+			window.removeEventListener("keydown", handleShortcut, true);
+		};
+	}, [
+		disabled,
+		effectiveFilter,
+		effectiveOpen,
+		effectiveSearch,
+		inline,
+		itemToStringLabel,
+		items,
+		renderCollection,
+	]);
+
 	const panelBody = (
-		<ModelPickerPanelBody
-			activeFiltersSlot={activeFiltersSlot}
-			effectiveSearch={effectiveSearch}
-			filtersLeadingSlot={filtersLeadingSlot}
-			filtersMenuSlot={filtersMenuSlot}
-			isLoading={isLoading}
-			list={list}
-			onClearSearch={() => handleInputValueChange("")}
-			renderCollection={renderCollection}
-			renderPanelControls={renderPanelControls}
-			searchInputRef={searchInputRef}
-			searchPlaceholder={searchPlaceholder}
-			sidebarSlot={sidebarSlot}
-		/>
+		<ModelPickerShortcutContext.Provider
+			value={isControlPressed ? shortcutLabels : HIDDEN_SHORTCUT_LABELS}
+		>
+			<ModelPickerPanelBody
+				activeFiltersSlot={activeFiltersSlot}
+				compact={compact}
+				effectiveSearch={effectiveSearch}
+				filtersLeadingSlot={filtersLeadingSlot}
+				filtersMenuSlot={filtersMenuSlot}
+				isLoading={isLoading}
+				list={list}
+				onClearSearch={() => handleInputValueChange("")}
+				renderCollection={renderCollection}
+				renderPanelControls={renderPanelControls}
+				searchInputRef={searchInputRef}
+				searchPlaceholder={searchPlaceholder}
+				sidebarSlot={sidebarSlot}
+			/>
+		</ModelPickerShortcutContext.Provider>
 	);
 
 	return (
 		<div className="flex flex-col gap-2" data-slot="model-picker">
 			<Combobox.Root
+				disabled={disabled}
 				filter={effectiveFilter as never}
 				inputValue={effectiveSearch}
 				isItemEqualToValue={isItemEqualToValue as never}

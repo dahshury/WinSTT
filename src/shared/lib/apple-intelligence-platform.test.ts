@@ -42,6 +42,15 @@ describe("classifyAppleIntelligencePlatform", () => {
 		).toBe("apple-silicon");
 	});
 
+	test("uses the native architecture even when Chromium reports MacIntel", () => {
+		expect(
+			classifyAppleIntelligencePlatform({
+				architecture: "aarch64",
+				platform: "macOS MacIntel",
+			}),
+		).toBe("apple-silicon");
+	});
+
 	test("returns 'intel-mac' on Intel Mac userAgent", () => {
 		expect(
 			classifyAppleIntelligencePlatform({

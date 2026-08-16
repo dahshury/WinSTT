@@ -1122,7 +1122,11 @@ pub(crate) fn engine_kind_for(
             | EngineKind::GraniteSpeechAr
             | EngineKind::GraniteSpeechNar
             | EngineKind::Qwen3Asr
+            | EngineKind::VibeVoiceAsr
+            | EngineKind::Audio8Asr
+            | EngineKind::ArkAsr
             | EngineKind::KaldiTransducer
+            | EngineKind::KaldiCtc
             | EngineKind::DolphinCtc
             | EngineKind::GigaamCtc
             | EngineKind::GigaamRnnt

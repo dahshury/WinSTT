@@ -50,6 +50,19 @@ pub fn handle_shortcut_event(
         use crate::winstt::commands::hotkey::HotkeyEvents;
         use crate::winstt::settings_schema::RecordingMode;
 
+        // A recording-mode change is committed but its model isn't loaded yet. The
+        // engine is mid-swap, so a press here would either block on the load or
+        // capture audio the old model can't decode — and a RELEASE that reaches the
+        // coordinator without a matching start leaves the PTT state machine skewed.
+        // Drop the whole event: the mode switcher's spinner is the user-facing
+        // signal that the hotkey is briefly inert.
+        if crate::winstt::commands::mode_transition::is_preparing() {
+            log::debug!(
+                "[shortcut] transcribe hotkey ignored: a recording-mode switch is still preparing"
+            );
+            return;
+        }
+
         match crate::winstt::commands::settings::recording_mode(app) {
             // PTT: press starts, release stops (the key hold IS the recording boundary).
             RecordingMode::Ptt => {

@@ -284,6 +284,53 @@ describe("ModelSettingsPanel", () => {
 		expect(realtimeButton.disabled).toBe(false);
 	});
 
+	test("builds realtime language choices from the realtime model", async () => {
+		useCatalogStore.getState().setModels([
+			rawModel("main-en", false, { languages: ["en"] }),
+			rawModel("streaming-de-fr", true, {
+				languages: ["de", "fr"],
+				supports_language_detection: true,
+			}),
+		]);
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "main-en",
+					realtimeModel: "streaming-de-fr",
+					realtimeLanguage: "de",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>,
+		);
+		fireEvent.click(
+			screen.getByRole("combobox", { name: "Realtime Language" }),
+		);
+		await act(async () => {
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+		});
+
+		// Base UI's aria-labelledby currently wins the computed accessible name;
+		// the per-option contract is the explicit aria-label used elsewhere in this
+		// suite as well.
+		const optionLabels = screen
+			.getAllByRole("checkbox")
+			.map((checkbox) => checkbox.getAttribute("aria-label"));
+		expect(optionLabels).toContain("German");
+		expect(optionLabels).toContain("French");
+		expect(optionLabels).not.toContain("English");
+	});
+
 	test("hides update interval for a native-streaming realtime model in dictation modes", () => {
 		useSettingsStore.setState({
 			settings: {

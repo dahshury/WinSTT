@@ -278,7 +278,6 @@ export interface InputDeviceResult {
 	deviceOptions: InputDeviceOption[];
 }
 
-/** Resolves the selected device's name from the device list. */
 function resolveSelectedName(
 	devices: readonly AudioDevice[],
 	inputDeviceIndex: number | null,

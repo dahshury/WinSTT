@@ -4,7 +4,10 @@
 
 use ndarray::Array2;
 
-use super::{ALIGNMENT_HEADS, EN_VOCAB_SIZE, MODEL_SIZE_BY_DIMS, WordTsError};
+use super::{
+    ALIGNMENT_HEADS, CRISPER2_ALIGNMENT_HEADS, CRISPER2_TURBO_ALIGNMENT_HEADS,
+    CRISPER2_TURBO_VOCAB_SIZE, CRISPER2_VOCAB_SIZE, EN_VOCAB_SIZE, MODEL_SIZE_BY_DIMS, WordTsError,
+};
 
 /// Decode a base85-gzipped flat bool array into a `(num_layers, num_heads)` mask.
 /// Mirrors `decode_alignment_heads` / `Whisper.set_alignment_heads`.
@@ -56,6 +59,24 @@ pub fn lookup_alignment_heads(
     num_heads: usize,
     vocab_size: usize,
 ) -> Array2<bool> {
+    // CrisperWhisper 2.0 (large + turbo): supervised heads from each checkpoint's own
+    // generation_config, keyed by their unique extended vocabs — the generic large-v3 /
+    // large-v3-turbo tables are the wrong masks for these fine-tunes.
+    let crisper_heads: Option<&[(usize, usize)]> =
+        if vocab_size == CRISPER2_VOCAB_SIZE && num_layers == 32 && num_heads == 20 {
+            Some(CRISPER2_ALIGNMENT_HEADS)
+        } else if vocab_size == CRISPER2_TURBO_VOCAB_SIZE && num_layers == 4 && num_heads == 20 {
+            Some(CRISPER2_TURBO_ALIGNMENT_HEADS)
+        } else {
+            None
+        };
+    if let Some(heads) = crisper_heads {
+        let mut mask = Array2::from_elem((num_layers, num_heads), false);
+        for &(l, h) in heads {
+            mask[[l, h]] = true;
+        }
+        return mask;
+    }
     if let Some(size) = MODEL_SIZE_BY_DIMS
         .iter()
         .find(|((l, h), _)| *l == num_layers && *h == num_heads)
@@ -96,4 +117,39 @@ fn fallback_mask(num_layers: usize, num_heads: usize) -> Array2<bool> {
         }
     }
     mask
+}
+
+#[cfg(test)]
+mod crisper_tests {
+    use super::*;
+
+    #[test]
+    fn crisper2_turbo_vocab_selects_supervised_heads() {
+        let mask = lookup_alignment_heads(4, 20, CRISPER2_TURBO_VOCAB_SIZE);
+        assert_eq!(
+            mask.iter().filter(|&&b| b).count(),
+            CRISPER2_TURBO_ALIGNMENT_HEADS.len()
+        );
+        for &(l, h) in CRISPER2_TURBO_ALIGNMENT_HEADS {
+            assert!(mask[[l, h]], "turbo head ({l},{h}) must be selected");
+        }
+        // The stock large-v3-turbo vocab still routes to the turbo blob table.
+        let stock = lookup_alignment_heads(4, 20, 51_866);
+        assert_ne!(mask, stock);
+    }
+
+    #[test]
+    fn crisper2_vocab_selects_supervised_heads() {
+        let mask = lookup_alignment_heads(32, 20, CRISPER2_VOCAB_SIZE);
+        assert_eq!(
+            mask.iter().filter(|&&b| b).count(),
+            CRISPER2_ALIGNMENT_HEADS.len()
+        );
+        for &(l, h) in CRISPER2_ALIGNMENT_HEADS {
+            assert!(mask[[l, h]], "head ({l},{h}) must be selected");
+        }
+        // The classic multilingual large vocab still routes to the large-v3 table.
+        let large = lookup_alignment_heads(32, 20, 51_866);
+        assert_ne!(mask, large);
+    }
 }

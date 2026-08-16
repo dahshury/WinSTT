@@ -24,7 +24,12 @@ export {
 	type FamilyKey,
 } from "./lib/family-metadata";
 export { variantDisplayName } from "./lib/family-display-name";
-export { resolveEffectiveQuant, resolveQuantCache } from "./lib/quant-cache";
+export {
+	isSelectionCached,
+	reconcileQuantForModel,
+	resolveEffectiveQuant,
+	resolveQuantCache,
+} from "./lib/quant-cache";
 export {
 	isSelectableRealtimeModel,
 	isVisibleSttModel,

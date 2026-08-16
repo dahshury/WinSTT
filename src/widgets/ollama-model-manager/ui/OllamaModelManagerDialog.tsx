@@ -5,6 +5,7 @@ import {
 	useLlmCatalogStore,
 } from "@/entities/llm-catalog";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { DialogBody as SharedDialogBody } from "@/shared/ui/dialog";
 import { Modal } from "@/shared/ui/modal";
 import { Switcher } from "@/shared/ui/switcher";
 import { buildPullsMap } from "../lib/dialog-helpers";
@@ -89,16 +90,21 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 	return (
 		<>
 			<Modal isOpen={isOpen} onClose={onClose}>
-				<div className="flex w-[640px] max-w-[90vw] flex-col gap-4 p-6">
+				{/* Header rail → pinned search + tab switcher → scrolling list →
+				    footer rail. The filters stay put while the list moves under
+				    them, which is the whole point of a browse dialog. */}
+				<div className="flex max-h-[86vh] w-[640px] max-w-[90vw] flex-col">
 					<DialogHeader onClose={onClose} t={t} tc={tc} />
-					<DialogSearch onChange={actions.setQuery} query={query} t={t} />
-					<Switcher
-						fullWidth={true}
-						onChange={actions.setTab}
-						options={buildTabOptions(t)}
-						value={tab}
-					/>
-					<div className="max-h-[420px] overflow-y-auto pr-1">
+					<div className="flex shrink-0 flex-col gap-3 px-5 pt-4">
+						<DialogSearch onChange={actions.setQuery} query={query} t={t} />
+						<Switcher
+							fullWidth={true}
+							onChange={actions.setTab}
+							options={buildTabOptions(t)}
+							value={tab}
+						/>
+					</div>
+					<SharedDialogBody className="flex-1" maxHeight="none">
 						<DialogBody
 							current={currentModel}
 							deletingName={deletingName}
@@ -113,7 +119,7 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 							t={t}
 							tab={tab}
 						/>
-					</div>
+					</SharedDialogBody>
 					<DialogFooter t={t} />
 				</div>
 			</Modal>

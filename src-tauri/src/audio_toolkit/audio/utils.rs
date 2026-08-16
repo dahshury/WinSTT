@@ -48,7 +48,6 @@ pub fn verify_wav_file<P: AsRef<Path>>(file_path: P, expected_samples: usize) ->
     Ok(())
 }
 
-/// Save audio samples as a WAV file
 pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()> {
     save_wav_file_with_spec(file_path, samples, 16000, 1)
 }

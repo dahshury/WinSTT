@@ -2,6 +2,16 @@
 
 > Generated 2026-07-14 by a Fable planning agent from repository analysis. Status: NOT implemented.
 
+> **STALE — historical record, do not follow the IPC steps.** This shipped:
+> `history_search` exists in `src-tauri/src/winstt/commands/history.rs`, is exposed as
+> `commands.historySearch`, and is consumed by
+> `src/widgets/transcription-history-settings/api/use-history-search.ts`.
+> The "IPC plumbing" steps below (§140-141, §209, §241) edit `ipc-channels.ts` /
+> `ipc-transport.ts` `COMMAND_INVOKERS` / the ROUTES map — **all three files were deleted
+> in `720890c6`** (2026-07-15, one day after this plan was written). A new command now
+> needs only the `#[tauri::command]` fn plus its `collect_commands![]` entry; the renderer
+> calls `commands.*` directly. See the IPC section of AGENTS.md.
+
 ## 0. Verified context (corrections to the brief)
 
 The brief said history is stored via node:sqlite with a Node-side layer. **That is wrong — verified reality:**

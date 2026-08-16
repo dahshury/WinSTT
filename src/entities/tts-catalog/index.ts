@@ -1,4 +1,8 @@
-export type { TtsCloning, TtsModelInfo } from "./model/tts-catalog-store";
+export type {
+	TtsCloning,
+	TtsModelInfo,
+	TtsTagSyntax,
+} from "./model/tts-catalog-store";
 export type { TtsModelStateEntry as TtsModelState } from "@/shared/api/ipc-client";
 export {
 	useTtsCatalogStore,
@@ -11,12 +15,15 @@ export {
 export {
 	buildTtsSearchCorpus,
 	cloningLabel,
+	formatInlineTagList,
 	getEngineConfig,
 	getEngineLabel,
 	getEngineLogoSrc,
 	getEngineMaker,
 	groupModelsByEngine,
+	inlineTagsLabel,
 	ttsLanguageMeta,
+	type TtsCapabilityCopy,
 	type TtsEngineGroup,
 	type TtsEngineKey,
 	type TtsListGroup,

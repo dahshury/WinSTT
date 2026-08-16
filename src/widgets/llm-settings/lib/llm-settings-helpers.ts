@@ -7,10 +7,7 @@
 
 import { canonicalOllamaTag, isSameOllamaTag } from "@/shared/lib/ollama-tag";
 
-/**
- * Determine whether the submit button in the API-key dialog should be enabled.
- * Returns true when the trimmed key is non-empty.
- */
+/** Determine whether the submit button in the API-key dialog should be enabled. */
 export function isApiKeyValid(key: string): boolean {
 	return key.trim().length > 0;
 }
@@ -51,10 +48,6 @@ export function buildOllamaStartError(
 	return { started: false, errorMessage: error ?? fallbackKey };
 }
 
-/**
- * Read an optional input element's current value, returning an empty string
- * when the element is not yet mounted.
- */
 export function readInputValue(
 	element: HTMLInputElement | null | undefined,
 ): string {
@@ -104,7 +97,6 @@ function ollamaTagBase(name: string): string {
 	return canonicalOllamaTag(name).toLowerCase().split(":")[0] ?? "";
 }
 
-/** Length of the shared leading run of two strings. */
 function commonPrefixLength(a: string, b: string): number {
 	const max = Math.min(a.length, b.length);
 	let i = 0;

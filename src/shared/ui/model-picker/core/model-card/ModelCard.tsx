@@ -20,10 +20,13 @@ import {
 	RECESSED_SHELF_CLASSES,
 } from "./card-constants";
 import { FavoriteToggle } from "./FavoriteToggle";
+import { useModelPickerShortcut } from "../model-picker-shortcuts";
 
 export interface ModelCardProps {
 	/** Right-aligned action slot (e.g. expand chevron / "+N variants"). */
 	actions?: ReactNode;
+	/** Dense mode for compact pickers: tighter text and metadata rhythm. */
+	compact?: boolean;
 	/** Outer element. `combobox-item` = a selectable row (STT, OR model, Ollama
 	 *  installed); `div` = a non-selectable / pull-only row (Ollama recommended,
 	 *  library, custom). Default `combobox-item`. */
@@ -102,6 +105,7 @@ interface IdentityColumnProps {
 	badges?: ReactNode;
 	description?: ReactNode;
 	errorMessage?: string | null | undefined;
+	compact?: boolean;
 	indicator: ReactNode;
 	makerIcon?: ReactNode;
 	metaRow: ReactNode;
@@ -127,6 +131,7 @@ function IdentityColumn({
 	badges,
 	description,
 	errorMessage,
+	compact = false,
 	indicator,
 	makerIcon,
 	metaRow,
@@ -134,8 +139,15 @@ function IdentityColumn({
 	unavailable,
 	unavailableLabel,
 }: IdentityColumnProps) {
+	const metaRowHeightClass = compact ? "min-h-[18px]" : "min-h-[20px]";
+	const descriptionClass = compact
+		? "line-clamp-1 min-h-[17px]"
+		: "line-clamp-2 min-h-[30px]";
+	const rootGapClass = compact ? "gap-1" : "gap-1.5";
+	const metaGapClass = compact ? "gap-x-1.5" : "gap-x-2";
+	const descriptionLeadingClass = compact ? "leading-tight" : "leading-snug";
 	return (
-		<div className="flex min-w-0 flex-1 flex-col gap-1.5">
+		<div className={cn("flex min-w-0 flex-1 flex-col", rootGapClass)}>
 			<div className="flex min-w-0 items-center gap-1.5">
 				{indicator}
 				{makerIcon}
@@ -163,7 +175,13 @@ function IdentityColumn({
 					    and to a fixed height (`min-h-[20px]`, tall enough for a badge
 					    pill) so a card WITH badges is the exact same height as one with
 					    only the plain meta text. */}
-					<div className="flex min-h-[20px] min-w-0 items-center gap-x-2 overflow-hidden">
+					<div
+						className={cn(
+							"flex min-w-0 items-center overflow-hidden",
+							metaRowHeightClass,
+							metaGapClass,
+						)}
+					>
 						<div className="min-w-0 flex-1 overflow-hidden">{metaRow}</div>
 						{badges ? (
 							<div className="flex shrink-0 items-center gap-1">{badges}</div>
@@ -171,7 +189,13 @@ function IdentityColumn({
 					</div>
 					{/* Description reserves two lines of height unconditionally, so the
 					    card's footprint doesn't change with the length of the copy. */}
-					<p className="line-clamp-2 min-h-[30px] text-[11px] text-foreground-muted leading-snug">
+					<p
+						className={cn(
+							"text-[11px] text-foreground-muted",
+							descriptionClass,
+							descriptionLeadingClass,
+						)}
+					>
 						{description}
 					</p>
 				</>
@@ -182,10 +206,12 @@ function IdentityColumn({
 
 interface RightClusterProps {
 	actions?: ReactNode;
+	compact?: boolean;
 	favorite?:
 		| { isFavorited: boolean; label: string; onToggle: () => void }
 		| undefined;
 	perf?: { accuracyScore: number; speedScore: number } | null | undefined;
+	shortcutLabel?: string | undefined;
 	trailing?: ReactNode;
 	unavailable: boolean;
 }
@@ -194,12 +220,16 @@ interface RightClusterProps {
 function RightCluster({
 	actions,
 	favorite,
+	compact = false,
 	perf,
+	shortcutLabel,
 	trailing,
 	unavailable,
 }: RightClusterProps) {
 	return (
-		<div className="flex shrink-0 items-start gap-3">
+		<div
+			className={cn("flex shrink-0 items-start", compact ? "gap-2" : "gap-3")}
+		>
 			{!unavailable && perf ? (
 				<PerfBars
 					accuracyScore={perf.accuracyScore}
@@ -207,6 +237,14 @@ function RightCluster({
 				/>
 			) : null}
 			<div className="flex items-center gap-0.5">
+				{shortcutLabel ? (
+					<kbd
+						aria-label={`Keyboard shortcut ${shortcutLabel}`}
+						className="me-1 inline-flex h-4 min-w-0 select-none items-center justify-center rounded-sm border border-divider bg-foreground/[0.045] px-1.5 font-mono font-medium text-[9px] text-foreground-dim tabular-nums leading-none"
+					>
+						{shortcutLabel}
+					</kbd>
+				) : null}
 				{actions}
 				{favorite && !unavailable ? (
 					<FavoriteToggle
@@ -233,6 +271,7 @@ function RightCluster({
  */
 export function ModelCard({
 	as = "combobox-item",
+	compact = false,
 	value,
 	className,
 	"data-model-id": dataModelId,
@@ -257,7 +296,8 @@ export function ModelCard({
 	trailing,
 	shelf,
 }: ModelCardProps) {
-	// A `div` card becomes body-clickable (select/pull the recommended tag) only
+	const shortcutLabel = useModelPickerShortcut(dataModelId);
+	// A `div` card becomes body-clickable (rather than just exposing actions)
 	// when given a handler and not unavailable — `combobox-item` rows select via
 	// Base UI and ignore `onBodyClick`.
 	const bodyClickable =
@@ -287,9 +327,15 @@ export function ModelCard({
 
 	const body = (
 		<>
-			<div className="flex items-start justify-between gap-3">
+			<div
+				className={cn(
+					"flex items-start justify-between",
+					compact ? "gap-2" : "gap-3",
+				)}
+			>
 				<IdentityColumn
 					badges={badges}
+					compact={compact}
 					description={description}
 					errorMessage={errorMessage}
 					indicator={indicator}
@@ -300,15 +346,24 @@ export function ModelCard({
 					unavailableLabel={unavailableLabel}
 				/>
 				<RightCluster
+					compact={compact}
 					actions={actions}
 					favorite={favorite}
 					perf={perf}
+					shortcutLabel={shortcutLabel}
 					trailing={trailing}
 					unavailable={unavailable}
 				/>
 			</div>
 			{!unavailable && footer ? (
-				<div className="flex items-center justify-end">{footer}</div>
+				<div
+					className={cn(
+						"flex items-center justify-end",
+						compact ? "mt-0.5" : null,
+					)}
+				>
+					{footer}
+				</div>
 			) : null}
 			{!unavailable && shelf ? (
 				<div className={RECESSED_SHELF_CLASSES}>{shelf}</div>

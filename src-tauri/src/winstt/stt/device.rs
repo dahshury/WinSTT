@@ -24,6 +24,11 @@ pub enum Quantization {
     /// (`*.int4.onnx` + `decoder_weights.int4.data`); the fp default of that model is 4–10 GB,
     /// so int4 is the only practical ship target for it.
     Int4,
+    /// int8 weights over a **growing** KV cache (`past_* -> present_*`) rather than a fixed
+    /// buffer re-fed each token. Same weights and the same accuracy as `Int8`; it is a different
+    /// DECODE CONTRACT, exposed as a precision because that is the axis the picker and the
+    /// resolver already select on. Only the `arkasr` re-exports publish it.
+    Int8g,
 }
 
 impl Quantization {
@@ -41,6 +46,7 @@ impl Quantization {
             Quantization::Bnb4 => "bnb4",
             Quantization::Uint8 => "uint8",
             Quantization::Int4 => "int4",
+            Quantization::Int8g => "int8g",
         }
     }
 
@@ -55,6 +61,7 @@ impl Quantization {
             "bnb4" => Quantization::Bnb4,
             "uint8" => Quantization::Uint8,
             "int4" => Quantization::Int4,
+            "int8g" => Quantization::Int8g,
             _ => return None,
         })
     }

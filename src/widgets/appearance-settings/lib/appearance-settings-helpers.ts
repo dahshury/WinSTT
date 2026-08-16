@@ -247,7 +247,6 @@ export function pickVisualizerType(value: string, update: UpdateFn): void {
 	}
 }
 
-/** Resolves the active visualizer type, defaulting to "bar" when unset. */
 export function getVisualizerType(
 	general: GeneralSettings | undefined,
 ): VisualizerType {

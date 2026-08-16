@@ -7,23 +7,27 @@ import {
 	Delete02Icon,
 	File01Icon,
 	Folder01Icon,
+	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import type { AppDataUsageEntry } from "@/bindings";
 import { commands } from "@/bindings";
 import { appDataUsage, removeAppDataCategory } from "@/shared/api/ipc-client";
+import { emitAppDataCategoryRemoved } from "@/shared/lib/app-data-events";
 import type { SettingsTranslateFn } from "@/shared/i18n/translation-types";
+import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { Tooltip } from "@/shared/ui/tooltip";
+import { ABOUT_ACTION_WIDTH, AboutActionButton } from "./AboutActionButton";
+import { AboutRow } from "./AboutActionRow";
 
 /** Category glyphs reuse the model-footprint / settings vocabulary so the
  *  storage view reads with the same language as the rest of the app. */
 const CATEGORY_ICON = {
 	stt: AiChat02Icon,
 	tts: AiVoiceGeneratorIcon,
+	voices: VoiceIdIcon,
 	dictionary: Books02Icon,
 	wakeword: AiMicIcon,
 	history: Calendar03Icon,
@@ -34,6 +38,7 @@ const CATEGORY_ICON = {
 const CATEGORY_LABEL = {
 	stt: "appDataUsageStt",
 	tts: "appDataUsageTts",
+	voices: "appDataUsageVoices",
 	dictionary: "appDataUsageDictionary",
 	wakeword: "appDataUsageWakeword",
 	history: "appDataUsageHistory",
@@ -44,7 +49,7 @@ const CATEGORY_LABEL = {
 type CategoryKey = keyof typeof CATEGORY_ICON;
 
 // "Other" is settings + misc cache — removing it would reset the app, so it has
-// no per-row trash (the Rust command rejects it too). Use "Reset to defaults".
+// no per-row action (the Rust command rejects it too). Use "Reset to defaults".
 function isRemovable(key: string): boolean {
 	return key !== "other" && key in CATEGORY_ICON;
 }
@@ -62,6 +67,23 @@ function sizeText(bytes: number): string {
 
 function categoryLabel(key: string, t: SettingsTranslateFn): string {
 	return key in CATEGORY_LABEL ? t(CATEGORY_LABEL[key as CategoryKey]) : key;
+}
+
+/** Holds the trailing action column open on rows that carry no action, so every
+ *  size, share and meter in the list ends on the same vertical. */
+function ActionColumnSpacer(): ReactNode {
+	return (
+		<div aria-hidden="true" className={cn(ABOUT_ACTION_WIDTH, "shrink-0")} />
+	);
+}
+
+/** Sizes read as data, not prose: one muted, tabular, right-aligned column. */
+function SizeText({ children }: { children: ReactNode }): ReactNode {
+	return (
+		<span className="shrink-0 text-body-sm text-foreground-secondary tabular-nums">
+			{children}
+		</span>
+	);
 }
 
 function refetchAppDataUsage(
@@ -96,49 +118,49 @@ function UsageRow({
 	const percent = total > 0 ? Math.round((entry.bytes / total) * 100) : 0;
 	const label = categoryLabel(entry.key, t);
 	return (
-		<div className="flex items-center gap-3">
-			<HugeiconsIcon
-				aria-hidden="true"
-				className="shrink-0 text-foreground-muted"
-				disableSecondaryOpacity={true}
-				icon={known ? CATEGORY_ICON[entry.key as CategoryKey] : Folder01Icon}
-				size={16}
-			/>
-			<div className="flex min-w-0 flex-1 flex-col gap-1.5">
-				<div className="flex items-baseline justify-between gap-2">
-					<span className="truncate text-body-sm text-foreground">{label}</span>
-					<span className="shrink-0 text-body-sm text-foreground-secondary tabular-nums">
-						{sizeText(entry.bytes)}
-						<span className="ml-1.5 text-foreground-muted">{percent}%</span>
-					</span>
-				</div>
-				<div className="h-1.5 overflow-hidden rounded-full bg-foreground/[0.06]">
-					<div
-						className="h-full rounded-full bg-gradient-to-r from-foreground/25 to-foreground/40"
-						style={{ width: `${percent}%` }}
-					/>
-				</div>
-			</div>
-			{isRemovable(entry.key) ? (
-				<Tooltip content={t("appDataUsageRemoveAria", { item: label })}>
-					<button
-						aria-label={t("appDataUsageRemoveAria", { item: label })}
-						className="-mr-1 shrink-0 cursor-pointer rounded-xs p-1 text-foreground-muted outline-none transition-colors hover:text-error focus-visible:ring-1 focus-visible:ring-accent"
+		<AboutRow
+			action={
+				isRemovable(entry.key) ? (
+					<AboutActionButton
+						ariaLabel={t("appDataUsageRemoveAria", { item: label })}
+						icon={Delete02Icon}
 						onClick={() => onRemove(entry)}
-						type="button"
 					>
-						<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={15} />
-					</button>
-				</Tooltip>
-			) : null}
-		</div>
+						{t("appDataUsageRemove")}
+					</AboutActionButton>
+				) : (
+					<ActionColumnSpacer />
+				)
+			}
+			ariaLabel={label}
+			leadingIcon={
+				known ? CATEGORY_ICON[entry.key as CategoryKey] : Folder01Icon
+			}
+			title={label}
+			value={
+				<SizeText>
+					{sizeText(entry.bytes)}
+					<span className="ml-1.5 text-foreground-muted">{percent}%</span>
+				</SizeText>
+			}
+		>
+			<div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-foreground/[0.06]">
+				<div
+					className="h-full rounded-full bg-gradient-to-r from-foreground/25 to-foreground/40"
+					style={{ width: `${percent}%` }}
+				/>
+			</div>
+		</AboutRow>
 	);
 }
 
 /**
- * A read-only disk-usage distribution shown in the About tab above the removal
- * actions, with a per-row trash that frees just that category — so the user can
- * see *and* clear what each thing costs. Sibling of the model-footprint
+ * The disk-usage half of the Application data section: a total, then one row
+ * per non-empty category carrying its share and its own removal action.
+ *
+ * Rendered as a bare fragment of rows — NOT a self-contained card — so the rows
+ * land directly in the section's divided list and read as the same kind of
+ * thing as the destructive rows below them. Sibling of the model-footprint
  * breakdown, applied to on-disk app data.
  */
 export function AppDataUsageBreakdown(): ReactNode {
@@ -170,6 +192,9 @@ export function AppDataUsageBreakdown(): ReactNode {
 			} else {
 				await removeAppDataCategory(key);
 			}
+			// The files are gone; whoever keeps a record of them has to drop it too,
+			// or the feature goes on offering entries that name nothing on disk.
+			emitAppDataCategoryRemoved(key);
 		} catch {
 			// Best-effort: the refetch below reflects whatever was actually freed.
 		}
@@ -180,8 +205,8 @@ export function AppDataUsageBreakdown(): ReactNode {
 	const total = all.reduce((acc, e) => acc + e.bytes, 0);
 	const rows = all.filter((e) => e.bytes > 0).sort((a, b) => b.bytes - a.bytes);
 
-	// Still loading, or nothing on disk yet — render nothing rather than an empty
-	// shell (the removal buttons below already convey the section's purpose).
+	// Still loading, or nothing on disk yet — contribute no rows. The section
+	// itself does not collapse: its destructive group renders regardless.
 	if (entries === null || total <= 0) {
 		return null;
 	}
@@ -215,27 +240,28 @@ export function AppDataUsageBreakdown(): ReactNode {
 				open={pending !== null}
 				title={t("appDataUsageRemoveTitle", { item: pendingLabel })}
 			/>
-			<div className="my-3 flex flex-col gap-3 rounded-md border border-divider bg-foreground/5 p-3">
-				<div className="flex items-baseline justify-between gap-2">
-					<span className="font-medium text-body-sm text-foreground">
-						{t("appDataUsageTitle")}
-					</span>
-					<span className="shrink-0 text-body-sm text-foreground-secondary tabular-nums">
-						{sizeText(total)}
-					</span>
-				</div>
-				<div className="flex flex-col gap-2.5">
-					{rows.map((entry) => (
-						<UsageRow
-							entry={entry}
-							key={entry.key}
-							onRemove={setPending}
-							t={t}
-							total={total}
-						/>
-					))}
-				</div>
-			</div>
+			{/* The total is a row like any other (minus the category glyph, so it
+			    reads as the parent of the indented rows under it) — that keeps it
+			    on the same baseline grid and its size in the same column as the
+			    per-category sizes. */}
+			<AboutRow
+				action={<ActionColumnSpacer />}
+				title={t("appDataUsageTitle")}
+				value={
+					<SizeText>
+						{t("appDataTotalUsed", { size: sizeText(total) })}
+					</SizeText>
+				}
+			/>
+			{rows.map((entry) => (
+				<UsageRow
+					entry={entry}
+					key={entry.key}
+					onRemove={setPending}
+					t={t}
+					total={total}
+				/>
+			))}
 		</>
 	);
 }
