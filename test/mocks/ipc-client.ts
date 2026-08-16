@@ -1070,7 +1070,7 @@ export function ipcClientMock(): Record<
 
 		// Diagnostics + About
 		diagOpenLogsFolder: () =>
-			invokeOrDefault<unknown>(IPC.DIAG_OPEN_LOGS_FOLDER, {
+			commandOrDefault<unknown>(() => callPlugin("opener:logs", undefined), {
 				ok: false,
 				error: "IPC unavailable",
 			}),

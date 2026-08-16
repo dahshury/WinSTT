@@ -262,6 +262,7 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
     use super::validate_shortcut;
 
     #[cfg(target_os = "windows")]

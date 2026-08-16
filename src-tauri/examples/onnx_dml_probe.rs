@@ -15,9 +15,12 @@
 // LAST dynamic axis (covers NeMo-style `length` inputs); dynamic dims resolve as batch→1,
 // seq-like→PROBE_SEQ.
 
+#[cfg(target_os = "windows")]
 use ort::session::Session;
+#[cfg(target_os = "windows")]
 use ort::value::{DynValue, Tensor};
 
+#[cfg(target_os = "windows")]
 fn main() {
     let model = std::env::var("PROBE_MODEL").expect("PROBE_MODEL required");
     let provider = std::env::var("PROBE_PROVIDER").unwrap_or_else(|_| "dml".into());
@@ -186,4 +189,9 @@ fn main() {
             std::process::exit(7);
         }
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn main() {
+    eprintln!("onnx_dml_probe is only available on Windows");
 }
