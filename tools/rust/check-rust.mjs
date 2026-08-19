@@ -36,14 +36,16 @@ function findVcvars() {
 		"Microsoft Visual Studio/Installer/vswhere.exe",
 	);
 	if (existsSync(vswhere)) {
+		// `-products *` is required or vswhere silently ignores standalone Build Tools
+		// installs, which is the only "Visual Studio" on plenty of build machines.
 		const found = spawnSync(
 			vswhere,
-			["-latest", "-property", "installationPath"],
+			["-latest", "-products", "*", "-property", "installationPath"],
 			{
 				encoding: "utf8",
 			},
 		);
-		const root = found.stdout?.trim();
+		const root = found.stdout?.trim().split(/\r?\n/)[0];
 		if (root) {
 			const bat = join(root, "VC/Auxiliary/Build/vcvars64.bat");
 			if (existsSync(bat)) {
@@ -51,15 +53,22 @@ function findVcvars() {
 			}
 		}
 	}
-	// vswhere is itself optional; fall back to the conventional layout.
-	for (const version of ["18", "2022", "17"]) {
-		for (const edition of VS_EDITIONS) {
-			const bat = join(
-				process.env.ProgramFiles ?? "C:\\Program Files",
-				`Microsoft Visual Studio/${version}/${edition}/VC/Auxiliary/Build/vcvars64.bat`,
-			);
-			if (existsSync(bat)) {
-				return bat;
+	// vswhere is itself optional; fall back to the conventional layout. Build Tools
+	// installs under Program Files (x86), so both roots have to be searched.
+	const programRoots = [
+		process.env.ProgramFiles ?? "C:\\Program Files",
+		process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+	];
+	for (const programRoot of programRoots) {
+		for (const version of ["18", "2022", "17"]) {
+			for (const edition of VS_EDITIONS) {
+				const bat = join(
+					programRoot,
+					`Microsoft Visual Studio/${version}/${edition}/VC/Auxiliary/Build/vcvars64.bat`,
+				);
+				if (existsSync(bat)) {
+					return bat;
+				}
 			}
 		}
 	}
@@ -75,13 +84,19 @@ function runWindows(check) {
 		process.env.ProgramFiles ?? "C:\\Program Files",
 		"LLVM/bin",
 	);
+	// .cargo/config.toml selects lld-link.exe purely because it links this binary far
+	// faster than the MSVC linker. Without LLVM installed that is a hard "linker not
+	// found" error, so fall back to the link.exe vcvars64 just put on PATH.
+	const llvmInstalled = existsSync(join(llvm, "lld-link.exe"));
 	const script = join(mkdtempSync(join(tmpdir(), "winstt-rust-")), "check.bat");
 	writeFileSync(
 		script,
 		[
 			"@echo off",
 			`call "${vcvars}" >nul 2>&1`,
-			`set PATH=${llvm};%PATH%`,
+			...(llvmInstalled
+				? [`set PATH=${llvm};%PATH%`]
+				: ["set CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe"]),
 			`cd /d "${crateDir}"`,
 			`cargo ${check.args}`,
 		].join("\r\n"),
