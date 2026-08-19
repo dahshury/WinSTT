@@ -450,6 +450,23 @@ pub struct AudioRecordingManager {
     mode: Arc<Mutex<MicrophoneMode>>,
     app_handle: tauri::AppHandle,
 
+    /// Serializes "open the microphone for a new recording" against "close the idle
+    /// microphone" so a lazy close can never land on a stream a press just opened.
+    ///
+    /// That mutual exclusion used to be provided by holding `state` across the whole
+    /// device open/close, which froze the UI: Tauri runs SYNCHRONOUS commands on the main
+    /// thread, and `is_recording` / `stt_recording_snapshot` both read `state`. The overlay
+    /// invokes `stt_recording_snapshot` as soon as a recording produces its terminal event —
+    /// precisely when the post-recording close worker was inside `stop_microphone_stream`.
+    /// A Bluetooth teardown there takes seconds (and `set_mute`'s COM call on a
+    /// transitioning LE Audio endpoint can take far longer), so the main thread parked on
+    /// `state` and the whole app stopped responding until it was killed.
+    ///
+    /// This lock is deliberately NEVER taken by anything reachable from a synchronous
+    /// command, so blocking native work can be held under it without touching the UI. Keep
+    /// it that way: `state` is for reading recording status cheaply, this is for lifecycle.
+    stream_lifecycle: Arc<Mutex<()>>,
+
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
     is_open: Arc<Mutex<bool>>,
     is_recording: Arc<Mutex<bool>>,
@@ -520,6 +537,8 @@ impl AudioRecordingManager {
             state: Arc::new(Mutex::new(RecordingState::Idle)),
             mode: Arc::new(Mutex::new(mode.clone())),
             app_handle: app.clone(),
+
+            stream_lifecycle: Arc::new(Mutex::new(())),
 
             recorder: Arc::new(Mutex::new(None)),
             is_open: Arc::new(Mutex::new(false)),
@@ -686,16 +705,24 @@ impl AudioRecordingManager {
                 std::thread::sleep(delay);
             }
             let rm = app.state::<Arc<AudioRecordingManager>>();
-            // Hold state lock across the check AND close to serialize against
-            // try_start_recording, preventing a race where the stream is closed
-            // under an active recording.
-            let state = rm.state.lock_recover();
-            if rm.close_generation.load(Ordering::SeqCst) == generation
-                && matches!(*state, RecordingState::Idle)
-                && !rm.wakeword_mode_active()
-            {
-                // stop_microphone_stream does not acquire the state lock,
-                // so holding it here is safe (no deadlock).
+            // Serialize against `try_start_recording`'s open through the lifecycle lock,
+            // NOT through `state`. Holding `state` across the close is what froze the UI:
+            // synchronous Tauri commands run on the main thread and read `state`, and the
+            // overlay reconciles recording status the moment a recording ends — exactly
+            // when this worker is inside a multi-second Bluetooth teardown. See
+            // `stream_lifecycle`.
+            let _lifecycle = rm.stream_lifecycle.lock_recover();
+
+            // `state` is held only long enough to read it. `close_generation` is what
+            // actually makes a press cancel a pending close, and the lifecycle lock keeps
+            // an open that already started from being torn down underneath.
+            let should_close = {
+                let state = rm.state.lock_recover();
+                rm.close_generation.load(Ordering::SeqCst) == generation
+                    && matches!(*state, RecordingState::Idle)
+            } && !rm.wakeword_mode_active();
+
+            if should_close {
                 if delay > Duration::from_millis(0) {
                     debug!("Closing idle microphone stream after {:?}", delay);
                 } else {
@@ -719,16 +746,31 @@ impl AudioRecordingManager {
 
     /* ---------- microphone life-cycle -------------------------------------- */
 
-    /// Applies mute if mute_while_recording is enabled and stream is open
+    /// Applies mute if mute_while_recording is enabled and stream is open.
+    ///
+    /// LOCK ORDER: `is_open` → `did_mute`, matching `start_microphone_stream` and
+    /// `stop_microphone_stream`. This used to take them the other way round, which
+    /// deadlocked the whole app: the first-frame worker (spawned from
+    /// `with_capture_live_callback`) held `did_mute` while waiting on `is_open`, and
+    /// the hotkey thread inside `stop_microphone_stream` held `is_open` while waiting
+    /// on `did_mute`. Neither side could ever finish, so every later audio call piled
+    /// up behind `is_open` and the process had to be killed from Task Manager. A
+    /// Bluetooth capture device is what made it reproducible — its multi-hundred-ms
+    /// open/close widened both critical sections enough for the two to overlap.
     pub fn apply_mute(&self) {
         let settings = read_settings_raw(&self.app_handle).core;
-        let mut did_mute_guard = self.did_mute.lock_recover();
-
-        if settings.mute_while_recording && *self.is_open.lock_recover() {
-            set_mute(true);
-            *did_mute_guard = true;
-            debug!("Mute applied");
+        if !settings.mute_while_recording {
+            return;
         }
+
+        let open_flag = self.is_open.lock_recover();
+        if !*open_flag {
+            return;
+        }
+        let mut did_mute_guard = self.did_mute.lock_recover();
+        set_mute(true);
+        *did_mute_guard = true;
+        debug!("Mute applied");
     }
 
     /// Removes mute if it was applied
@@ -847,6 +889,8 @@ impl AudioRecordingManager {
     pub fn stop_microphone_stream(&self) {
         let mut open_flag = self.is_open.lock_recover();
         if !*open_flag {
+            drop(open_flag);
+            crate::audio_feedback::release_prepared_audio_output();
             return;
         }
 
@@ -862,11 +906,21 @@ impl AudioRecordingManager {
                 let _ = rec.stop();
                 *self.is_recording.lock_recover() = false;
             }
+        }
+
+        if let Some(rec) = self.recorder.lock_recover().as_mut() {
             let _ = rec.close();
         }
 
+        // Close capture first, then retire the silent renderer. Dropping render
+        // underneath a live capture client caused an extra topology transition
+        // that appeared as the small microphone reopen/tail after key-up.
+        crate::audio_feedback::release_prepared_audio_output();
+
         *open_flag = false;
-        debug!("Microphone stream stopped");
+        drop(open_flag);
+
+        log::info!("Communications render and microphone stream stopped");
     }
 
     /* ---------- mode switching --------------------------------------------- */
@@ -921,51 +975,86 @@ impl AudioRecordingManager {
             return Err("Onboarding is active; recording is disabled".to_string());
         }
 
-        let mut state = self.state.lock_recover();
+        // Serialize the whole open against the idle-close worker WITHOUT holding `state`.
+        // Opening a Bluetooth capture device takes 0.5–2 s (bounded at `OPEN_TIMEOUT`), and
+        // `state` is read by synchronous Tauri commands on the main thread — holding it
+        // across the open froze the UI for the entire device open. See `stream_lifecycle`.
+        let _lifecycle = self.stream_lifecycle.lock_recover();
 
-        if let RecordingState::Idle = *state {
-            // Ensure microphone is open in on-demand mode
-            if matches!(*self.mode.lock_recover(), MicrophoneMode::OnDemand) {
-                // Cancel any pending lazy close
-                self.close_generation.fetch_add(1, Ordering::SeqCst);
-                if let Err(e) = self.start_microphone_stream() {
-                    let msg = format!("{e}");
-                    error!("Failed to open microphone stream: {msg}");
-                    return Err(msg);
-                }
-            }
-
-            if let Some(rec) = self.recorder.lock_recover().as_ref() {
-                self.speech_seen.store(false, Ordering::SeqCst);
-                self.speech_active.store(false, Ordering::SeqCst);
-                self.endpoint_text.lock_recover().clear();
-                if rec.start().is_ok() {
-                    *self.is_recording.lock_recover() = true;
-                    // Bump the recording generation so the realtime worker treats
-                    // this as a fresh utterance even when the previous one ended
-                    // moments ago (press→release→press) and it never saw the gap.
-                    let generation = self.recording_generation.fetch_add(1, Ordering::SeqCst) + 1;
-                    *state = RecordingState::Recording {
-                        binding_id: binding_id.to_string(),
-                    };
-                    // The idle watcher checks recording state while holding its
-                    // lifecycle lock. Release the audio-state lock before taking
-                    // that lifecycle lock so the global order cannot invert.
-                    drop(state);
-                    self.notify_transcription_recording_activity();
-                    self.signal_recording_transition();
-                    // Arm the no-speech watchdog for Toggle/Wakeword: with no onset ever, the
-                    // offset-armed silence auto-stop never arms, so an untouched session would
-                    // record forever. Keyed on this generation so it can't kill a newer take.
-                    schedule_toggle_no_speech_watchdog(&self.app_handle, generation);
-                    debug!("Recording started for binding {binding_id}");
-                    return Ok(());
-                }
-            }
-            Err("Recorder not available".to_string())
-        } else {
-            Err("Already recording".to_string())
+        // Read the current state, then release it immediately.
+        if !matches!(*self.state.lock_recover(), RecordingState::Idle) {
+            return Err("Already recording".to_string());
         }
+
+        // Ensure microphone is open in on-demand mode
+        let on_demand = matches!(*self.mode.lock_recover(), MicrophoneMode::OnDemand);
+        if on_demand {
+            // Cancel any pending lazy close
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+
+            // Capture first, then the silent Communications renderer the chime plays
+            // through. `examples/le_audio_capture_timeline.rs` measured both orders on
+            // an LE Audio headset: adding the renderer never interrupted capture that
+            // was already delivering audio (longest post-live dead window: 0 ms in every
+            // run), while opening the renderer first cost roughly an extra second before
+            // capture was open and armed. What made the renderer look guilty was the
+            // device's own warm-up — see `CAPTURE_LIVE_SILENCE_GRACE` in the recorder.
+            //
+            // Ordering it this way also keeps the renderer's lifetime equal to the
+            // microphone's (`stop_microphone_stream` retires it, and preparing is a
+            // no-op while a live one exists), so a renderer is only ever opened
+            // alongside a microphone that just opened — never underneath a warm,
+            // already-capturing stream.
+            if let Err(e) = self.start_microphone_stream() {
+                crate::audio_feedback::release_prepared_audio_output();
+                let msg = format!("{e}");
+                error!("Failed to open microphone stream: {msg}");
+                return Err(msg);
+            }
+
+            crate::winstt::commands::sound::prepare_recording_chime_output(&self.app_handle);
+            log::info!("On-demand Communications capture and render route prepared");
+        } else {
+            // Always-on / wakeword: the capture stream is already open and the headset
+            // is already in its bidirectional configuration, so there is no transition
+            // to sequence — but the chime still needs a renderer to play through, and
+            // without one `play_audio_file_using_prepared_output` refuses (by design,
+            // rather than falling back to a playback-only client). Preparing is a no-op
+            // once a live renderer for this device exists.
+            crate::winstt::commands::sound::prepare_recording_chime_output(&self.app_handle);
+        }
+
+        if let Some(rec) = self.recorder.lock_recover().as_ref() {
+            self.speech_seen.store(false, Ordering::SeqCst);
+            self.speech_active.store(false, Ordering::SeqCst);
+            self.endpoint_text.lock_recover().clear();
+            if rec.start().is_ok() {
+                *self.is_recording.lock_recover() = true;
+                // Bump the recording generation so the realtime worker treats
+                // this as a fresh utterance even when the previous one ended
+                // moments ago (press→release→press) and it never saw the gap.
+                let generation = self.recording_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                // Re-take `state` only to publish the transition. Nothing else can have
+                // moved it off `Idle` meanwhile: the other writer that starts a recording
+                // is this function, and the lifecycle lock above excludes it, while
+                // stop/cancel only act on a recording that has not started yet.
+                *self.state.lock_recover() = RecordingState::Recording {
+                    binding_id: binding_id.to_string(),
+                };
+                self.notify_transcription_recording_activity();
+                self.signal_recording_transition();
+                // Arm the no-speech watchdog for Toggle/Wakeword: with no onset ever, the
+                // offset-armed silence auto-stop never arms, so an untouched session would
+                // record forever. Keyed on this generation so it can't kill a newer take.
+                schedule_toggle_no_speech_watchdog(&self.app_handle, generation);
+                debug!("Recording started for binding {binding_id}");
+                return Ok(());
+            }
+        }
+        if on_demand {
+            self.stop_microphone_stream();
+        }
+        Err("Recorder not available".to_string())
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {

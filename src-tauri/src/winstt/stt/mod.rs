@@ -37,6 +37,9 @@ pub mod mel;
 pub mod moonshine;
 /// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
 pub mod resolver;
+/// Startup reconciliation of the persisted STT selection against the weights actually on disk
+/// (auto-switch to an installed model, or re-run first-run setup when nothing is installed).
+pub mod startup_recovery;
 /// Unlimited-length FINAL decode via Silero-VAD segmentation (beats Whisper's 30 s window etc.).
 pub mod vad_segment;
 /// Whisper / lite-whisper / distil-whisper ONNX engine (encoder + merged-decoder KV-cache).

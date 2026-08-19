@@ -302,6 +302,20 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 	});
 
+	test("quantization fallback shows the backend message without ending transcription", () => {
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_QUANTIZATION_FALLBACK, {
+			message: "Parakeet fp16 was unavailable · switched to int8",
+		});
+		const state = useTranscriptionStore.getState();
+		expect(state.ephemeral?.text).toContain("switched to int8");
+		expect(state.ephemeral?.kind).toBe("info");
+		expect(state.isRecordingActive).toBe(true);
+	});
+
 	test("recording_start clears stale state and arms isRecordingActive", () => {
 		// Prime the store with a previous session's text (and a stale ephemeral
 		// from a prior no_audio_detected) so we can verify recording_start wipes

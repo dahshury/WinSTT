@@ -70,6 +70,7 @@ export const NATIVE_EVENTS = {
 	STT_MODEL_SWAP_COMPLETED: "stt:model-swap-completed",
 	STT_MODEL_SWAP_FAILED: "stt:model-swap-failed",
 	STT_MODEL_SWAP_STARTED: "stt:model-swap-started",
+	STT_QUANTIZATION_FALLBACK: "stt:quantization-fallback",
 	STT_NO_AUDIO_DETECTED: "stt:no-audio-detected",
 	STT_PIPELINE_UNAVAILABLE: "stt:pipeline-unavailable",
 	STT_PREVIEW_READY: "stt:preview-ready",

@@ -161,7 +161,10 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
     }
 }
 
-#[tauri::command]
+// `(async)` keeps device enumeration off the main thread. Enumerating WASAPI endpoints
+// blocks while a Bluetooth device is changing state, and the device pickers call this while
+// the user is interacting with the window — as a synchronous command that froze the UI.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
     let devices =
@@ -169,7 +172,8 @@ pub fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
     Ok(audio_devices_with_default(devices))
 }
 
-#[tauri::command]
+// `(async)` for the same reason as `get_available_microphones`.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn get_available_output_devices() -> Result<Vec<AudioDevice>, String> {
     let devices =
@@ -218,7 +222,10 @@ pub async fn play_test_sound(app: AppHandle, sound_type: String) {
     .await;
 }
 
-#[tauri::command]
+// `(async)` keeps this off the main thread: it reads the audio manager's recording state,
+// and a synchronous command would park the UI thread on that lock behind whatever audio
+// work currently holds it.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn is_recording(app: AppHandle) -> bool {
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();

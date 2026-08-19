@@ -38,36 +38,32 @@ pub const STT_PIPELINE_UNAVAILABLE: &str = "stt:pipeline-unavailable";
 pub async fn resolve_local_stt_fallback_async(downloads: &DownloadManager) -> Option<String> {
     let cache = crate::winstt::commands::runtime::probe_cache_states(downloads).await;
 
-    let mut best: Option<(u64, String)> = None;
-    for (model_id, by_quant) in &cache {
-        // Only fall back to a model whose Rust engine is actually validated — a cached but
-        // unwired family (e.g. an experimental export) would decode to a clean "no Rust engine
-        // yet" error, defeating the salvage.
-        let decodable = crate::winstt::catalog::find(model_id)
-            .and_then(crate::winstt::stt::backend::engine_kind_for)
-            .is_some();
-        if !decodable {
-            continue;
-        }
-        let is_default = crate::winstt::catalog::canonical_model_id(model_id)
-            == crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID;
-        for info in by_quant.values() {
-            if info.state != "cached" {
-                continue;
-            }
-            // The cached factory default wins outright; size only breaks ties
-            // among the non-default candidates.
-            if is_default {
-                return Some(crate::winstt::settings_schema::DEFAULT_STT_MODEL_ID.to_string());
-            }
-            let size = info.total_bytes.max(info.downloaded_bytes);
-            if best.as_ref().is_none_or(|(best_size, _)| size < *best_size) {
-                best = Some((size, model_id.clone()));
-            }
-        }
-    }
+    // Only fall back to a model whose Rust engine is actually validated — a cached but unwired
+    // family (e.g. an experimental export) would decode to a clean "no Rust engine yet" error,
+    // defeating the salvage. The RANKING itself (cached default first, else smallest cached) is
+    // shared with the startup recovery pass so the two can't drift apart.
+    let candidates = cache
+        .iter()
+        .filter(|(model_id, _)| {
+            crate::winstt::catalog::find(model_id.as_str())
+                .and_then(crate::winstt::stt::backend::engine_kind_for)
+                .is_some()
+        })
+        .flat_map(|(model_id, by_quant)| {
+            by_quant
+                .iter()
+                .filter(|(_, info)| info.state == "cached")
+                .map(
+                    move |(quantization, info)| super::startup_recovery::CachedSelection {
+                        model_id: model_id.clone(),
+                        quantization: quantization.clone(),
+                        bytes: info.total_bytes.max(info.downloaded_bytes),
+                    },
+                )
+        });
 
-    best.map(|(_, id)| crate::winstt::catalog::canonical_model_id(&id).to_string())
+    super::startup_recovery::pick_cached_selection(candidates)
+        .map(|pick| crate::winstt::catalog::canonical_model_id(&pick.model_id).to_string())
 }
 
 /// Sync wrapper over [`resolve_local_stt_fallback_async`] safe from BOTH a tokio worker (actions'

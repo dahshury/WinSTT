@@ -321,7 +321,12 @@ pub(crate) fn apply_settings_replacement(
 /// Reset every renderer-owned settings section through the trusted replacement
 /// path. The command broadcasts the canonical snapshot exactly like a normal
 /// save, but cannot be mistaken for an unhydrated renderer dumping defaults.
-#[tauri::command]
+///
+/// `(async)` keeps it off the main thread: resetting can change the microphone release
+/// policy or input device, which restarts the capture stream — seconds of blocking device
+/// work that must not run on the UI thread. The normal settings-patch command is already
+/// async for the same reason.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn settings_reset_defaults(app: AppHandle) -> Result<SettingsSnapshot, String> {
     apply_settings_replacement(&app, &WinsttSettings::default())

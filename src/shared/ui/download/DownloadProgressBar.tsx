@@ -9,6 +9,10 @@ import { AnimatedValueText } from "@/shared/ui/animated-value";
 type DownloadProgressVariant = "active" | "paused";
 
 export interface DownloadProgressBarProps {
+	/** Caption numbers animate (digit roll / text swap) by default. Set false
+	 *  where the caption updates every progress frame and the churn reads as
+	 *  jitter rather than motion. */
+	animateCaption?: boolean;
 	/** Left-side caption, e.g. `"45% — Downloading"` or `"Paused at 60%"`.
 	 *  Caller builds this so wording / i18n stays local. */
 	label?: string;
@@ -40,6 +44,7 @@ export function DownloadProgressBar({
 	statsLabel,
 	variant,
 	trackClassName,
+	animateCaption = true,
 }: DownloadProgressBarProps): ReactNode {
 	const hasCaption = !!(label || statsLabel);
 	// Substrate-aware default: track lifts one step above the surrounding
@@ -59,10 +64,24 @@ export function DownloadProgressBar({
 			</Progress.Track>
 			{hasCaption ? (
 				<div className="flex items-center justify-between text-foreground-muted text-xs tabular-nums">
-					<span>{label ? <AnimatedValueText text={label} /> : ""}</span>
+					<span>
+						{label ? (
+							animateCaption ? (
+								<AnimatedValueText text={label} />
+							) : (
+								label
+							)
+						) : (
+							""
+						)}
+					</span>
 					{statsLabel ? (
 						<span className="font-mono">
-							<AnimatedValueText text={statsLabel} />
+							{animateCaption ? (
+								<AnimatedValueText text={statsLabel} />
+							) : (
+								statsLabel
+							)}
 						</span>
 					) : null}
 				</div>

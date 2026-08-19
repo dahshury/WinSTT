@@ -49,6 +49,25 @@ pub fn is_onboarding_active() -> bool {
     ONBOARDING_ACTIVE.load(Ordering::SeqCst)
 }
 
+/// Set by the startup pass (`stt::startup_recovery`) when the persisted STT selection has no
+/// weights on disk AND no other installed model exists to switch to. The app cannot dictate at
+/// all in that state, so the wizard must run again to download one — this is the third input to
+/// `should_show_onboarding` (alongside `!onboarded` and permission recovery) and it also makes a
+/// native close of the wizard quit rather than drop the user into a model-free app.
+///
+/// Deliberately NOT persisted: it is re-derived from the cache on every launch, so a user who
+/// quits mid-setup gets it again, and `onboarding_finish` clears it once a model has landed.
+static MODEL_SETUP_REQUIRED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_model_setup_required(required: bool) {
+    MODEL_SETUP_REQUIRED.store(required, Ordering::SeqCst);
+}
+
+/// True when this launch found no usable STT model and must route into the wizard.
+pub fn is_model_setup_required() -> bool {
+    MODEL_SETUP_REQUIRED.load(Ordering::SeqCst)
+}
+
 /// True while the first-run wizard window is up (created AND visible). Distinct
 /// from `is_onboarding_active`, which the recording-mode demo lifts early to enable
 /// dictation — this stays true until `onboarding_finish` HIDES the window. Used to
@@ -146,6 +165,11 @@ pub fn onboarding_finish(app: AppHandle, args: OnboardingFinishArgs) -> Result<(
     //    needs no local load; a local track loads + warms the selected model. This
     //    also fires the TTS/encoder/LLM background warmups and wakeword arming that
     //    were held back while the wizard was open.
+    //
+    //    A run forced by "no model installed" ends here too: the wizard's model step could not be
+    //    advanced without a completed download (or cloud keys), so the condition that set the flag
+    //    no longer holds.
+    set_model_setup_required(false);
     set_onboarding_active(false);
     crate::bootstrap::state::activate_runtime_after_onboarding(&app);
     Ok(())

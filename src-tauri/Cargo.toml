@@ -16,7 +16,7 @@ path = "src/main.rs"
 members = ["context-sidecar"]
 # vendor/vad-rs is its own root (it declares an empty [workspace] so its default
 # features stay off) — exclude it here or cargo sees two roots in one tree.
-exclude = ["vendor/vad-rs"]
+exclude = ["vendor/vad-rs", "vendor/cpal"]
 default-members = ["."]
 resolver = "3"
 
@@ -305,3 +305,10 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "unwind"
+
+# Local 0.17.1 fork: on Windows, capture clients declare the Communications
+# audio category before WASAPI initialization so Bluetooth LE capture and the
+# recording chime participate in the same bidirectional audio scenario. Patch
+# crates.io globally so Rodio and WinSTT share the exact same CPAL Device type.
+[patch.crates-io]
+cpal = { path = "vendor/cpal" }

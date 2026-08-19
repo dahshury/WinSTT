@@ -70,7 +70,12 @@ function Import-Llvm {
         }
     }
 
-    throw "Could not find lld-link.exe. Install LLVM and ensure C:\Program Files\LLVM\bin is available."
+    # LLVM is a link-time optimization here, not a requirement: .cargo/config.toml selects
+    # lld-link.exe because it links this binary several times faster than the MSVC linker.
+    # Without LLVM installed that setting is a hard "linker not found" failure, so fall back
+    # to the link.exe that Import-VcVars just put on PATH. Slower to link, but it builds.
+    Write-Host "LLVM not found; using the MSVC linker (link.exe) instead of lld-link."
+    $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "link.exe"
 }
 
 function Assert-NonEmptyFile {

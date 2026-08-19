@@ -54,6 +54,8 @@ pub mod names {
     pub const STT_MODEL_LIFECYCLE: &str = "stt:model-lifecycle";
     /// Authoritative selected/resident STT runtime snapshot.
     pub const STT_RUNTIME_INFO: &str = "stt:runtime-info";
+    /// Selected STT precision was unavailable and a cached precision of the same model was used.
+    pub const STT_QUANTIZATION_FALLBACK: &str = "stt:quantization-fallback";
     /// The shared overlay window was shown.
     pub const OVERLAY_SHOW: &str = "overlay:show";
     /// The shared overlay window should animate out; payload is its hide generation.

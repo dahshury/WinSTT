@@ -20,6 +20,9 @@ import {
 interface PipelineUnavailablePayload {
 	reason?: string;
 }
+interface QuantizationFallbackPayload {
+	message?: string;
+}
 /** How long the offline "no internet & no local model" pill stays up (matches the backend hide). */
 const OFFLINE_NOTICE_HOLD_MS = 4000;
 
@@ -264,6 +267,16 @@ export function useTranscriptionFeed(): void {
 			showEphemeral(message, OFFLINE_NOTICE_HOLD_MS, "error");
 		});
 
+		const unsubQuantizationFallback = ipcOn(
+			IPC.STT_QUANTIZATION_FALLBACK,
+			(data) => {
+				const message = (data as QuantizationFallbackPayload).message?.trim();
+				if (message) {
+					showEphemeral(message);
+				}
+			},
+		);
+
 		return () => {
 			unsubStart();
 			unsubStop();
@@ -275,6 +288,7 @@ export function useTranscriptionFeed(): void {
 			unsubTranscriptionFailed();
 			unsubAborted();
 			unsubUnavailable();
+			unsubQuantizationFallback();
 		};
 	}, [
 		addFinalSentence,

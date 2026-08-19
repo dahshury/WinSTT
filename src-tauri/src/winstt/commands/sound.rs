@@ -515,6 +515,21 @@ fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
     default_recording_sound_path(app)
 }
 
+/// Prepare a silent Communications renderer after Communications capture opens
+/// but before the recording is armed. The chime itself is queued only from the
+/// first-frame callback. Capture and render therefore remain in one combined
+/// Bluetooth topology instead of creating a playback-only client that replaces
+/// an already-running capture stream.
+pub(crate) fn prepare_recording_chime_output(app: &AppHandle) {
+    if active_recording_sound_path(app).is_none() {
+        return;
+    }
+    let selected_device = crate::settings::get_settings(app).selected_output_device;
+    if let Err(e) = crate::audio_feedback::prepare_audio_output(selected_device) {
+        log::warn!("Failed to prepare recording chime output: {e}");
+    }
+}
+
 /// `sound_get_data` — serve the ACTIVE recording chime's bytes to the renderer's
 /// Web Audio preloader. Returns `None` when the chime is disabled or the file is
 /// missing/unreadable (the renderer treats null as "no sound"). Mirrors the
@@ -640,7 +655,11 @@ pub fn duck_then_play_recording_chime(app: &AppHandle, recording_generation: u64
         let Some(path) = path else {
             return;
         };
-        if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
+        if let Err(e) = crate::audio_feedback::play_audio_file_using_prepared_output(
+            &path,
+            selected_device,
+            1.0,
+        ) {
             log::error!("Failed to play recording chime '{}': {e}", path.display());
         }
     });

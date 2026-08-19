@@ -139,6 +139,26 @@ pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     }
 }
 
+/// Resolve exactly one quantization from the existing Hub cache without a network heal.
+///
+/// Runtime quantization fallback uses this after the selected tier fails: an alternate is only
+/// usable when it is already complete on disk. This deliberately differs from [`resolve`], whose
+/// cache miss performs one metadata/network pass and reports an actionable download error.
+pub async fn resolve_cached(req: &ResolveRequest) -> SttResult<ResolvedModel> {
+    if let Some(dir) = &req.local_dir {
+        return resolve_local_dir(dir, &req.model_id, req.kind, req.effective_quant);
+    }
+    let resolved = resolve_cached_offline(req).await?;
+    if all_onnx_complete(&resolved) {
+        Ok(resolved)
+    } else {
+        Err(SttError::Resolve(format!(
+            "cached external-data shards incomplete for {}",
+            req.model_id
+        )))
+    }
+}
+
 /// Blocking convenience for callers without an async context (engine load on a worker thread).
 /// Drives `resolve` on the supplied tokio runtime handle. The coordinator owns a `Handle` (Tauri's
 /// async runtime); pass `tokio::runtime::Handle::current()` from inside Tauri, or a dedicated

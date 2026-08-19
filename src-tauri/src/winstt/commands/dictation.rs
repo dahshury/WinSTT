@@ -123,7 +123,12 @@ pub struct SttRecordingSnapshot {
 /// `stt_recording_snapshot` — read-only reconciliation surface for the current
 /// dictation. Events remain the low-latency path; this snapshot recovers any
 /// start/VAD edge emitted before a newly-created overlay registered listeners.
-#[tauri::command]
+///
+/// `(async)` keeps it off the main thread. The overlay invokes this the moment a recording
+/// produces its terminal event, which is exactly when the idle-close worker is tearing the
+/// microphone down; as a synchronous command it parked the UI thread on the recording-state
+/// lock for the length of a Bluetooth teardown.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn stt_recording_snapshot(app: AppHandle) -> SttRecordingSnapshot {
     let audio = app.try_state::<Arc<AudioRecordingManager>>();
@@ -156,7 +161,11 @@ fn apply_endpoint_flag(_rm: &AudioRecordingManager, _parameter: &str, _enabled: 
 /// `set_microphone(true)` server-side; here `set_microphone(true)` starts the
 /// dictation recording through the coordinator (which runs the TranscribeAction
 /// = model preload + overlay + paste pipeline) and `set_microphone(false)` stops it.
-#[tauri::command]
+///
+/// `(async)` keeps it off the main thread: `abort`/`stop`/`shutdown`/`clear_audio_queue`
+/// route into the same recorder teardown as `cancel_current_operation`, which blocks for
+/// seconds on a Bluetooth device and would otherwise freeze the window.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn winstt_call_method(app: AppHandle, method: String, args: Option<Vec<serde_json::Value>>) {
     let args = args.unwrap_or_default();

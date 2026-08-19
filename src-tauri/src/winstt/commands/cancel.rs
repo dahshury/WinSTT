@@ -29,7 +29,13 @@ use crate::winstt::commands::dictation::SttEvents;
 /// renderer state. Routes from `STT_ABORT_OPERATION` (overlay X / Escape).
 /// Runs the centralized cancel path, then broadcasts `stt:session-aborted` so the
 /// renderer drops its local "session active" state. Mirrors `handleAbortOperation`.
-#[tauri::command]
+// `(async)` keeps this OFF the main thread. Tauri runs a plain synchronous command on the
+// main thread, and this one stops the recorder, tears down the microphone stream and may
+// unload the STT model — seconds of blocking work on a Bluetooth device, during which the
+// window would not repaint or accept input. The body is already thread-safe: the same
+// `utils::cancel_current_operation` runs from the toggle watchdog and CLI worker threads,
+// and its tray/overlay calls hop to the main thread themselves.
+#[tauri::command(async)]
 #[specta::specta]
 pub fn cancel_current_operation(app: AppHandle) {
     // The single source-of-truth cancel: stop recording, reset tray+overlay,

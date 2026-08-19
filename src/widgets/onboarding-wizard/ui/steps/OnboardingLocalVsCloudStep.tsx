@@ -52,6 +52,19 @@ const TRACKS: readonly TrackOption[] = [
 const MotionRadioRoot = m.create(Radio.Root);
 
 /**
+ * Outer-corner radii per segment, matching the group's `rounded-xl`. The
+ * selected state paints an INSET ring, and the group clips with
+ * `overflow-hidden` — without these the ring is a square drawn under a rounded
+ * clip, so its corners get sliced off and the card reads as "cropped". The
+ * seam-side corners stay square so the two segments still join flush. Layout
+ * flips at `sm`: stacked (top/bottom halves) below it, side-by-side above.
+ */
+const SEGMENT_CORNERS: Record<Exclude<OnboardingTrack, "">, string> = {
+	local: "rounded-t-xl sm:rounded-tr-none sm:rounded-bl-xl",
+	cloud: "rounded-b-xl sm:rounded-bl-none sm:rounded-tr-xl",
+};
+
+/**
  * Step 1: pick the STT track for the user's first dictation. Renders as a
  * joined two-segment button group: one shared rounded ring around both
  * options with a hairline seam between them, the accent fill sliding to
@@ -132,6 +145,7 @@ function TrackCard({ option, selected }: TrackCardProps) {
 			className={cn(
 				"group relative flex cursor-pointer flex-col items-start gap-3 px-5 py-5 text-left outline-none transition-[background-color] duration-200 ease-out",
 				"focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent",
+				SEGMENT_CORNERS[option.id],
 				selected ? "bg-accent/[0.08]" : "hover:bg-surface-5",
 			)}
 			layout
@@ -141,7 +155,10 @@ function TrackCard({ option, selected }: TrackCardProps) {
 			{selected ? (
 				<m.span
 					aria-hidden
-					className="pointer-events-none absolute inset-0 bg-accent/[0.07] ring-1 ring-accent ring-inset"
+					className={cn(
+						"pointer-events-none absolute inset-0 bg-accent/[0.07] ring-1 ring-accent ring-inset",
+						SEGMENT_CORNERS[option.id],
+					)}
 					layoutId="onboarding-track-selected-surface"
 					transition={springs.moderate}
 				/>

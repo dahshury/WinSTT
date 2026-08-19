@@ -298,6 +298,9 @@ function CardProgress({
 		percent === null ? t("progressPaused") : t("progressPausedAt", { percent });
 	return (
 		<DownloadProgressBar
+			// Percent / MB / speed all retick every progress frame here; the digit-roll
+			// animation on a first-run screen reads as jitter, so the caption stays plain.
+			animateCaption={false}
 			label={phase === "active" ? activeLabel : pausedLabel}
 			percent={percent}
 			statsLabel={statsLine(

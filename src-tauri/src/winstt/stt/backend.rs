@@ -48,7 +48,7 @@ use crate::winstt::stt::{
 use anyhow::Result;
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const STT_SAMPLE_RATE: usize = 16_000;
 const SLOW_BACKEND_SETUP_PHASE_MS: u128 = 1_000;
@@ -321,6 +321,38 @@ fn quantization_log_label_raw(raw: &str) -> &str {
     if raw.is_empty() { "default" } else { raw }
 }
 
+/// Prefer smaller/equal cached tiers before larger ones. If a tier was removed, this keeps the
+/// app usable without risking an unexpected memory increase; larger tiers remain a last resort.
+fn quantization_fallback_order(
+    requested: crate::winstt::stt::Quantization,
+    available: &[crate::winstt::stt::Quantization],
+) -> Vec<crate::winstt::stt::Quantization> {
+    use crate::winstt::stt::Quantization;
+    let rank = |q| -> u32 {
+        match q {
+            Quantization::Default => 32,
+            Quantization::Fp16 | Quantization::Fp16w => 16,
+            Quantization::Int8 | Quantization::Uint8 | Quantization::Int8g => 8,
+            Quantization::Q4f16 => 6,
+            Quantization::Q4 | Quantization::Bnb4 | Quantization::Int4 => 4,
+        }
+    };
+    let requested_rank = rank(requested);
+    let mut candidates: Vec<_> = available
+        .iter()
+        .copied()
+        .filter(|q| *q != requested)
+        .collect();
+    candidates.sort_by_key(|q| {
+        let candidate_rank = rank(*q);
+        (
+            candidate_rank > requested_rank,
+            requested_rank.abs_diff(candidate_rank),
+        )
+    });
+    candidates
+}
+
 fn samples_to_ms(samples: usize) -> u64 {
     ((samples as u128 * 1000) / STT_SAMPLE_RATE as u128) as u64
 }
@@ -444,7 +476,7 @@ impl SttBackend for WinsttSttBackend {
                 vram,
             )
         };
-        let effective = if raw.eq_ignore_ascii_case("auto") {
+        let mut effective = if raw.eq_ignore_ascii_case("auto") {
             auto_quant()
         } else {
             let requested = Quantization::parse(raw).unwrap_or(Quantization::Default);
@@ -467,6 +499,66 @@ impl SttBackend for WinsttSttBackend {
             }
         };
 
+        // Resolve the selected tier first. If cleanup removed it, degrade to an already-complete
+        // cached tier of this SAME model. Never start a surprise weight download on the hot path.
+        let mut req = ResolveRequest {
+            model_id: entry.onnx_model_name.to_string(),
+            kind,
+            effective_quant: effective,
+            local_dir: None,
+            local_files_only: true,
+        };
+        macro_rules! block_on_resolve {
+            ($future:expr) => {{
+                if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::task::block_in_place(|| tauri::async_runtime::block_on($future))
+                } else {
+                    tauri::async_runtime::block_on($future)
+                }
+            }};
+        }
+        let resolved = match block_on_resolve!(resolver::resolve(&req)) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let mut fallback = None;
+                for quant in quantization_fallback_order(effective, &available) {
+                    req.effective_quant = quant;
+                    if let Ok(resolved) = block_on_resolve!(resolver::resolve_cached(&req)) {
+                        fallback = Some((quant, resolved));
+                        break;
+                    }
+                }
+                match fallback {
+                    Some((quant, resolved)) => {
+                        let from = quantization_log_label(effective);
+                        let to = quantization_log_label(quant);
+                        log::warn!(
+                            "[stt] '{}' precision '{}' unavailable; using cached '{}' precision: {}",
+                            model_id,
+                            from,
+                            to,
+                            error
+                        );
+                        let _ = app.emit(
+                            crate::winstt::commands::events::names::STT_QUANTIZATION_FALLBACK,
+                            serde_json::json!({
+                                "modelId": model_id,
+                                "fromQuantization": effective.suffix(),
+                                "toQuantization": quant.suffix(),
+                                "message": format!(
+                                    "{} {} was unavailable · switched to {}",
+                                    entry.display_name, from, to
+                                ),
+                            }),
+                        );
+                        effective = quant;
+                        resolved
+                    }
+                    None => return Err(anyhow::anyhow!("resolve {}: {}", model_id, error)),
+                }
+            }
+        };
+
         // provider list (primary + CPU fallback), then the DML-incompatible-ENGINE override.
         // EngineKind-based (empirical), NOT family-based: parakeet-ctc/tdt/rnnt + gigaam + t-one
         // run 2-3× faster on DML; only the AED decoders (canary/cohere) + sherpa graphs
@@ -483,25 +575,6 @@ impl SttBackend for WinsttSttBackend {
             );
             providers = vec![stt::Accelerator::Cpu];
         }
-
-        // resolve the on-disk file set (cache-first; one network refetch if a shard is missing).
-        // OFFLINE-FIRST (`local_files_only: true`, no network, no ORT session) — the riskiest step
-        // that can still fail without having torn anything down. The core only unloads the old
-        // engine AFTER this returns Ok.
-        let req = ResolveRequest {
-            model_id: entry.onnx_model_name.to_string(),
-            kind,
-            effective_quant: effective,
-            local_dir: None,
-            local_files_only: true,
-        };
-        let resolve_result = if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| tauri::async_runtime::block_on(resolver::resolve(&req)))
-        } else {
-            tauri::async_runtime::block_on(resolver::resolve(&req))
-        };
-        let resolved =
-            resolve_result.map_err(|e| anyhow::anyhow!("resolve {}: {}", model_id, e))?;
 
         // Cohere's blanket DML→CPU pin (`is_dml_incompatible`) is CONSERVATIVE: it fires before the
         // files are on disk, because the crash is specific to exports that bake in the fused
@@ -1519,6 +1592,34 @@ mod tests {
         assert_eq!(
             ensure_min_decode_len(long.clone(), EngineKind::SenseVoiceCtc).len(),
             long.len()
+        );
+    }
+
+    #[test]
+    fn quant_fallback_prefers_a_smaller_cached_tier_before_a_larger_one() {
+        use crate::winstt::stt::Quantization;
+
+        assert_eq!(
+            quantization_fallback_order(
+                Quantization::Fp16,
+                &[
+                    Quantization::Default,
+                    Quantization::Fp16,
+                    Quantization::Int8,
+                ],
+            ),
+            vec![Quantization::Int8, Quantization::Default]
+        );
+        assert_eq!(
+            quantization_fallback_order(
+                Quantization::Default,
+                &[
+                    Quantization::Default,
+                    Quantization::Fp16,
+                    Quantization::Int8,
+                ],
+            ),
+            vec![Quantization::Fp16, Quantization::Int8]
         );
     }
 }

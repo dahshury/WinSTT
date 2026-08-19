@@ -22,9 +22,22 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8NoBom
 $OutputEncoding = $utf8NoBom
 
-$vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
-if (-not (Test-Path $vcvars)) {
-    throw "vcvars64.bat not found at '$vcvars'. Edit `$vcvars in this script to point at your VS install."
+# Locate Visual Studio through vswhere (shipped with every VS 2017+ install at a fixed
+# path) rather than a hardcoded edition/version directory. Any edition works — Community,
+# Professional, or the standalone Build Tools — and an upgrade no longer breaks the launcher.
+$vsRoot = $null
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    $vsRoot = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath |
+        Select-Object -First 1
+    if (-not $vsRoot) {
+        # Older/partial installs may not report the VC component id; fall back to any install.
+        $vsRoot = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
+    }
+}
+$vcvars = if ($vsRoot) { Join-Path $vsRoot 'VC\Auxiliary\Build\vcvars64.bat' } else { $null }
+if (-not $vcvars -or -not (Test-Path $vcvars)) {
+    throw "vcvars64.bat not found (vswhere reported '$vsRoot'). Install the 'Desktop development with C++' workload."
 }
 
 # Import the MSVC build environment (INCLUDE / LIB / PATH / ...) that vcvars64.bat exports,
@@ -34,16 +47,26 @@ if (-not (Test-Path $vcvars)) {
     if ($pair.Count -eq 2) { Set-Item -Path ("Env:" + $pair[0]) -Value $pair[1] }
 }
 
-# Prepend the toolchain dirs (bun / cargo / LLVM / CMake / Ninja) — same as the old .bat.
+# Prepend the toolchain dirs (bun / cargo / LLVM / CMake / Ninja). CMake and Ninja ship
+# inside the located VS install; LLVM is a separate optional install.
+$llvmBin = 'C:\Program Files\LLVM\bin'
 $prepend = @(
     (Join-Path $env:USERPROFILE '.bun\bin')
     (Join-Path $env:USERPROFILE '.cargo\bin')
-    'C:\Program Files\LLVM\bin'
-    'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
-    'C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
-) -join ';'
-$env:PATH = "$prepend;$env:PATH"
-$env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
+    $llvmBin
+    (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin')
+    (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja')
+) | Where-Object { Test-Path $_ }
+$env:PATH = "$($prepend -join ';');$env:PATH"
+if (Test-Path $llvmBin) {
+    $env:LIBCLANG_PATH = $llvmBin
+} else {
+    # .cargo/config.toml asks for lld-link.exe purely as a link-time optimization. Without
+    # LLVM installed that is a hard "linker not found" failure, so fall back to the MSVC
+    # linker vcvars64 just put on PATH — slower to link, but it builds.
+    Write-Host "LLVM not found at $llvmBin; using the MSVC linker (link.exe) instead of lld-link."
+    $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = 'link.exe'
+}
 # Cargo's in-place progress bar is built from carriage returns. PowerShell's
 # native-output pipeline cannot preserve that terminal behavior reliably, so
 # request stable line-oriented build output instead.

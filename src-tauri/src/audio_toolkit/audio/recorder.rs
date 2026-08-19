@@ -89,6 +89,25 @@ enum WorkerMsg {
 /// whatever arrived; it must exceed the worst realistic device lag or the tail is lost again.
 const STOP_DRAIN_BUDGET: Duration = Duration::from_millis(1500);
 
+/// Upper bound on how long the mic-is-live signal (and therefore the start chime) waits for
+/// the input to deliver a non-zero sample before firing anyway. A Bluetooth LE Audio headset
+/// streams bit-exact digital silence at a perfect buffer cadence while its isochronous link
+/// comes up; measured warm-up on a WH-1000XM6 was ~0.4–2.0 s from the first callback
+/// (`examples/le_audio_capture_timeline.rs`). This must exceed that, or the chime goes back
+/// to inviting the user to speak into a microphone that is not capturing yet. It only ever
+/// bites on an input that is genuinely delivering silence, where the wait is capped so a
+/// muted device still produces a (logged) chime rather than none.
+const CAPTURE_LIVE_SILENCE_GRACE: Duration = Duration::from_millis(2500);
+
+/// Upper bound on how long `open` waits for the worker to report that the native input
+/// stream is running. This exists ONLY to convert a driver that never returns into a
+/// bounded error instead of an application hang — it is not a latency target, so it must
+/// sit well above the slowest legitimate device. A Bluetooth LE Audio headset regularly
+/// takes 0.5–2.1 s to open from an idle link (measured on a WH-1000XM6), and a 3 s bound
+/// tripped on it in practice: the press was rejected with "timed out initializing
+/// microphone worker" and nothing recorded.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Drain audio messages from `worker_rx` until the input callback's `EndOfStream` sentinel arrives
 /// or `budget`
 /// elapses, invoking `on_samples` for each captured chunk. Returns `true` when the sentinel
@@ -554,7 +573,7 @@ impl AudioRecorder {
             }
         });
 
-        match init_rx.recv() {
+        match init_rx.recv_timeout(OPEN_TIMEOUT) {
             Ok(Ok(())) => {
                 self.device = Some(device);
                 self.worker_tx = Some(public_worker_tx);
@@ -565,10 +584,21 @@ impl AudioRecorder {
                 let _ = worker.join();
                 Err(AudioDeviceError::classify(&error_message).into())
             }
-            Err(recv_error) => {
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
                 let _ = worker.join();
+                Err(AudioRecorderError::ResponseChannel(
+                    "microphone worker disconnected during initialization".to_string(),
+                ))
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Never join an audio worker whose native stream-open call is
+                // still blocked. Queue shutdown for when it returns and detach;
+                // the UI gets a bounded error instead of an application hang.
+                let _ = public_worker_tx.send(WorkerMsg::Command(Cmd::Shutdown));
+                drop(worker);
                 Err(AudioRecorderError::ResponseChannel(format!(
-                    "Failed to initialize microphone worker: {recv_error}"
+                    "timed out after {}s initializing microphone worker",
+                    OPEN_TIMEOUT.as_secs()
                 )))
             }
         }
@@ -594,7 +624,7 @@ impl AudioRecorder {
             return Ok(CapturedAudio::default());
         }
         resp_rx
-            .recv()
+            .recv_timeout(STOP_DRAIN_BUDGET + Duration::from_millis(250))
             .map_err(|err| AudioRecorderError::ResponseChannel(err.to_string()))
     }
 
@@ -610,7 +640,18 @@ impl AudioRecorder {
             let _ = tx.send(WorkerMsg::Command(Cmd::Shutdown));
         }
         if let Some(h) = self.worker_handle.take() {
-            let _ = h.join();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !h.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            } else {
+                log::error!(
+                    "Microphone worker did not close within 1s; detaching it to keep the UI responsive"
+                );
+                drop(h);
+            }
         }
         self.device = None;
         Ok(())
@@ -666,6 +707,7 @@ impl AudioRecorder {
     {
         let mut output_buffer = Vec::new();
         let mut eos_sent = false;
+        let mut last_callback_at: Option<Instant> = None;
 
         // Channel-aware downmix calibration: accumulate per-channel sum-of-squares over the
         // first ~500 ms, then decide ONCE whether a channel is dead/broken (>20 dB below the
@@ -681,6 +723,18 @@ impl AudioRecorder {
         let mut downmix_mode = DownmixMode::Mean;
 
         let stream_cb = move |data: &[T], info: &cpal::InputCallbackInfo| {
+            let callback_at = Instant::now();
+            if let Some(previous) = last_callback_at {
+                let gap = callback_at.saturating_duration_since(previous);
+                if gap >= Duration::from_millis(100) {
+                    log::warn!(
+                        "[audio] capture callback gap={}ms while stream remained open",
+                        gap.as_millis()
+                    );
+                }
+            }
+            last_callback_at = Some(callback_at);
+
             let stop_requested = stop_flag.load(Ordering::Acquire);
             if stop_requested && eos_sent {
                 return;
@@ -1675,9 +1729,12 @@ fn run_consumer(
     // hotkey press is not lost, then cleared. Bounded to `PREROLL_RING_FRAMES`.
     let mut preroll_ring: VecDeque<Vec<f32>> = VecDeque::with_capacity(PREROLL_RING_FRAMES);
     let mut recording = false;
-    // Armed on Cmd::Start, disarmed by the first captured frame of that recording so
+    // Armed on Cmd::Start, disarmed by the first frame carrying real audio so
     // `capture_live_cb` fires exactly once per recording (the mic-is-live signal).
     let mut awaiting_first_capture = false;
+    // When the first chunk of this recording arrived, i.e. when the silence grace
+    // period below starts counting. `None` until that chunk lands.
+    let mut first_capture_chunk_at: Option<Instant> = None;
     // Last surfaced SMOOTHED-VAD speech state, so we fire `speech_cb` only on
     // transitions (not every frame). Reset to `false` on each Cmd::Start.
     let mut vad_speaking = false;
@@ -1706,14 +1763,45 @@ fn run_consumer(
         match message {
             WorkerMsg::Audio(AudioChunk::Samples(raw)) => {
                 // ---------- mic-is-live signal ----------------------------------- //
-                // A raw chunk arriving while `recording` is set means the OS finished opening
-                // the device and it is actually delivering audio (vs. `stream.play()` merely
-                // having returned). Fire once per recording so the UI can switch from
-                // "opening mic…" to a real recording state. See managers::audio.
+                // Fires once per recording; the UI switches from "opening mic…" to a real
+                // recording state on it and, more importantly, it is what plays the start
+                // chime — WinSTT's "speak now" signal. See managers::audio.
+                //
+                // The arrival of a chunk is NOT sufficient evidence that the microphone is
+                // capturing. A Bluetooth LE Audio headset hands WASAPI perfectly-cadenced
+                // buffers of BIT-EXACT digital silence for the first ~0.4–2 s while its
+                // isochronous link is still coming up. Firing on the first chunk chimed
+                // "speak now" up to two seconds before the device produced any audio, and
+                // everything said in that window was captured as pure silence — which reads
+                // exactly like the chime having cut the microphone off.
+                //
+                // So wait for a chunk that actually contains a non-zero sample. A healthy
+                // analog/USB microphone always has a noise floor, so its very first chunk
+                // passes and behaviour there is unchanged. `CAPTURE_LIVE_SILENCE_GRACE`
+                // bounds the wait, so a genuinely mute input still chimes (late, and
+                // logged) instead of never signalling at all.
                 if recording && awaiting_first_capture {
-                    awaiting_first_capture = false;
-                    if let Some(cb) = &capture_live_cb {
-                        cb();
+                    let waited_since = *first_capture_chunk_at.get_or_insert_with(Instant::now);
+                    let has_signal = raw.iter().any(|sample| *sample != 0.0);
+                    let grace_expired = waited_since.elapsed() >= CAPTURE_LIVE_SILENCE_GRACE;
+                    if has_signal || grace_expired {
+                        awaiting_first_capture = false;
+                        if grace_expired && !has_signal {
+                            log::warn!(
+                                "[audio] input delivered only digital silence for {}ms after \
+                                 recording started; signalling capture-live anyway (a muted or \
+                                 non-capturing device will record nothing)",
+                                waited_since.elapsed().as_millis()
+                            );
+                        } else {
+                            log::debug!(
+                                "[audio] capture live after {}ms of device warm-up silence",
+                                waited_since.elapsed().as_millis()
+                            );
+                        }
+                        if let Some(cb) = &capture_live_cb {
+                            cb();
+                        }
                     }
                 }
 
@@ -1811,6 +1899,7 @@ fn run_consumer(
                     recording = true;
                     // Arm the once-per-recording "mic is live" signal for this take.
                     awaiting_first_capture = true;
+                    first_capture_chunk_at = None;
                     // Fresh utterance: the next real speech onset re-fires speech_cb(true).
                     vad_speaking = false;
                     visualizer.reset();

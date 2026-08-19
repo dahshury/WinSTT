@@ -373,6 +373,18 @@ fn initialize_model_runtime(
         log::info!("[permissions] audio device watcher deferred until access is restored");
     }
 
+    // Settings travel between machines (portable installs, exported settings, a reinstall on a
+    // fresh OS); the model cache does not. Reconcile the persisted STT selection against the
+    // weights actually on disk BEFORE anything schedules a model load, opens the mic, or decides
+    // which window to show: a selection with no weights auto-switches to an installed model, and
+    // "nothing installed at all" re-arms the first-run wizard (both consumed below and by
+    // `should_show_onboarding`). Skipped when the wizard already owns this launch — there is no
+    // prior configuration to recover.
+    if !winstt::commands::onboarding::is_onboarding_active() {
+        winstt::stt::startup_recovery::recover_stt_selection_at_startup(app_handle);
+    }
+    advance_startup_phase(startup, app_handle, "STT model availability reconciled");
+
     let core_managers = bootstrap::state::construct_core_managers(app_handle)?;
     advance_startup_phase(startup, app_handle, "core managers constructed");
 
@@ -739,8 +751,11 @@ fn continue_startup_after_splash_paint(
     advance_startup_phase(&mut startup, &app_handle, "tray CLI visibility applied");
 
     let visibility_settings = winstt::commands::settings::read_settings_raw(&app_handle);
+    // Third gate alongside first-run and permission recovery: this launch found no usable STT
+    // model on disk, so the wizard has to run again to download one.
     let should_show_onboarding = !visibility_settings.general.onboarded
-        || winstt::commands::permission::is_recovery_active();
+        || winstt::commands::permission::is_recovery_active()
+        || winstt::commands::onboarding::is_model_setup_required();
     let should_hide = visibility_settings.general.start_minimized || cli_args.start_hidden;
     let tray_available = visibility_settings.core.show_tray_icon && !cli_args.no_tray;
     let will_show_main = !should_show_onboarding && (!should_hide || !tray_available);
@@ -774,7 +789,10 @@ fn continue_startup_after_splash_paint(
                 // The wizard never opened, so `onboarding_finish` will never run to
                 // lift the model gate. Drop straight into normal-launch behaviour:
                 // un-gate and warm the configured model so the user isn't stranded
-                // on a model-free app.
+                // on a model-free app. (A launch forced here by "no model installed"
+                // clears that flag too — a wizard that cannot open must not leave the
+                // main window permanently unreachable.)
+                winstt::commands::onboarding::set_model_setup_required(false);
                 winstt::commands::onboarding::set_onboarding_active(false);
                 bootstrap::state::activate_runtime_after_onboarding(&app_handle);
                 let fallback_will_show = !should_hide || !tray_available;
@@ -985,6 +1003,9 @@ pub fn run(cli_args: CliArgs) {
                 // a relaunch resumes onboarding where it left off, so there is no
                 // "close to skip" path. Once onboarding has finished (`onboarded`), the
                 // window is reused like any other secondary window (falls through to hide).
+                // A re-run forced by "no STT model installed" is held to the same rule: that
+                // launch has no dictatable model, so hiding the wizard would leave a running
+                // app with no reachable main window.
                 if window.label() == "onboarding" {
                     let onboarded =
                         winstt::commands::settings::read_settings_raw(window.app_handle())
@@ -992,6 +1013,7 @@ pub fn run(cli_args: CliArgs) {
                             .onboarded;
                     if !onboarded
                         || winstt::commands::permission::is_recovery_active()
+                        || winstt::commands::onboarding::is_model_setup_required()
                     {
                         request_app_exit(
                             window.app_handle(),
