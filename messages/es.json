@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Tras dispararse la palabra de activación, el grabador espera este tiempo a que empieces a hablar. Si no lo haces, la puerta se cierra y debes decir la palabra de activación de nuevo. Evita que ruidos aleatorios desencadenen una grabación accidental minutos después.",
     "speakerDiarization": "Diarización de hablantes",
     "speakerDiarizationCaption": "Colorear el texto por hablante en grabaciones largas",
-    "speakerDiarizationTooltip": "Cuando está activado, cada enunciado finalizado pasa por un modelo de hablantes en el dispositivo (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB descargados la primera vez, sin torch). Las palabras se colorean por hablante en la superposición en vivo; los IDs de hablante se mantienen estables durante toda la sesión.",
+    "speakerDiarizationTooltip": "Cuando está activado, cada enunciado finalizado pasa por un modelo de hablantes en el dispositivo (NVIDIA Nemotron-3-Diarization, ~104 MB descargados la primera vez, sin torch). Las palabras se colorean por hablante en la superposición en vivo; los IDs de hablante se mantienen estables durante toda la sesión.",
     "loopbackDevice": "Dispositivo de bucle invertido",
     "loopbackDeviceCaption": "Dispositivo de bucle invertido WASAPI a capturar",
     "loopbackDeviceTooltip": "Selecciona el dispositivo de salida de audio a capturar. La aplicación transcribirá todo el audio que se reproduzca a través de este dispositivo.",

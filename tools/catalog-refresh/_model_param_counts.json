@@ -161,11 +161,17 @@
     "approximate": false,
     "note": "NVIDIA NeMo parakeet_rnnt_0.6b card"
   },
-  "nemo-parakeet-tdt-0.6b-v3": {
+  "nemo-parakeet-tdt-0.6b-ultra": {
     "params": 626983558,
     "source": "measured",
     "approximate": false,
     "note": "from default fp32 graph"
+  },
+  "nemo-parakeet-tdt-0.6b-redux": {
+    "params": 626983558,
+    "source": "published",
+    "approximate": false,
+    "note": "same graph as Parakeet Ultra fp32 (measured)"
   },
   "nemo-canary-1b-v2": {
     "params": 978000000,

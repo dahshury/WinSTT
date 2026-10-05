@@ -34,6 +34,8 @@ import { RECOMMENDED_OLLAMA_MODELS } from "./recommended-models";
 
 export type OllamaThinkingMode = "none" | "toggle" | "levels" | "always-on";
 
+const SUPERWHISPER_S1_PREFIX = "hf.co/superwhisper/s1-mini-gguf";
+
 function baseSlug(model: string): string {
 	const trimmed = model.trim().toLowerCase();
 	const colon = trimmed.indexOf(":");
@@ -85,6 +87,12 @@ export function ollamaThinkingMode(
 	model: string,
 	capabilities: readonly string[] | null | undefined,
 ): OllamaThinkingMode {
+	// S1-mini inherits Qwen3's thinking-aware template, so `/api/show` may
+	// advertise `thinking`; the fine-tune was trained exclusively with thinking
+	// disabled and produces unusable/blank output when it is enabled.
+	if (model.trim().toLowerCase().startsWith(SUPERWHISPER_S1_PREFIX)) {
+		return "none";
+	}
 	const fromCatalog = catalogThinking(model);
 	if (fromCatalog !== undefined) {
 		return fromCatalog;

@@ -44,18 +44,18 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
     ["Whisper", "12", "149 MB – 4.5 GB", "99 (multilingual + EN-only)", "The all-rounder — accuracy at every size, broadest language reach"],
     ["Lite-Whisper", "3", "~1.1 GB", "99", "Compressed Whisper Large v3 Turbo — large-model quality at smaller size"],
     ["NeMo", "34", "0.1 – 4 GB", "English, Russian, and 25-lang multilingual", "Fast offline Parakeet / Canary plus native streaming exports"],
-    ["Moonshine", "10", "0.1 – 0.7 GB", "EN + per-language fine-tunes", "Lowest-latency real-time on CPU; tiny footprint"],
+    ["Moonshine", "17", "0.1 – 1.1 GB", "EN + per-language fine-tunes", "v2 streaming (tiny / small / medium) — constant-latency real-time on CPU; tiny footprint"],
     ["Cohere", "1", "~5.1 GB", "14", "Top-tier accuracy — near the top of the HF Open ASR leaderboard"],
     ["Granite Speech", "2", "2.5 – 16 GB", "en · fr · de · es · pt", "IBM autoregressive and non-autoregressive speech models with strong punctuation"],
     ["Qwen3-ASR", "2", "2.0 – 4.1 GB", "30", "Alibaba Qwen LLM-decoder ASR with auto language detection; int4-only downloads"],
-    ["Audio8-ASR / ARK-ASR", "3", "0.67 – 4.4 GB", "7 · 19", "LLM-decoder ASR at three sizes — the 0.1B runs on any CPU (non-commercial licence); the Apache-2.0 ARK-ASR pair tops the accuracy table at 3B"],
+    ["Audio8-ASR / ARK-ASR", "4", "0.67 – 5.4 GB", "7 · 19 · 2", "LLM-decoder ASR at three sizes — the 0.1B runs on any CPU (non-commercial licence); the Apache-2.0 ARK-ASR pair tops the accuracy table at 3B; Audio8-ASR Infinite streams zh/en natively in constant memory"],
     ["SenseVoice", "1", "159 MB", "5 (zh/en/ja/ko/yue)", "Fast East-Asian multilingual in a tiny int8 graph"],
     ["Dolphin", "1", "104 MB", "15 Asian and Middle Eastern languages", "Compact multilingual CTC model for Eastern-language coverage"],
     ["GigaAM", "2", "~3.5 GB", "Russian", "Best-in-class Russian (CTC / RNNT)"],
     ["Kaldi / Vosk / Zipformer", "5", "93 – 478 MB", "English + Russian + Arabic", "Lightweight Vosk and Zipformer models for low-end hardware, incl. Quranic Arabic phonemes"],
     ["T-One", "1", "144 MB", "Russian", "Compact Russian streaming ASR"],
   ]}
-  caption="Sizes are representative downloads; smaller quantizations are usually available. The catalog totals 73 shipped entries plus user-dropped custom models."
+  caption="Sizes are representative downloads; smaller quantizations are usually available. The catalog totals 84 shipped entries plus user-dropped custom models."
 />
 
 ## A few standouts
@@ -66,8 +66,8 @@ is more accurate; higher **RTFx** (real-time factor) is faster.
   rows={[
     ["Whisper Tiny", "38M", "16.8", "1350", "99", "149 MB"],
     ["Whisper Large v3 Turbo", "796M", "7.0", "783", "99", "1.1 GB"],
-    ["Moonshine Base", "62M", "8.6", "2767", "EN", "711 MB"],
-    ["Parakeet TDT 0.6B v3", "627M", "5.7", "6098", "25", "2.5 GB"],
+    ["Moonshine v2 Medium", "266M", "6.7", "439", "EN", "358 MB int8"],
+    ["Parakeet Ultra 0.6B", "627M", "5.3", "6098", "25", "2.5 GB"],
     ["Canary 1B v2", "978M", "6.4", "1821", "25", "4.0 GB"],
     ["Cohere Transcribe", "2.0B", "5.2", "916", "14", "5.1 GB"],
     ["Qwen3-ASR 0.6B", "600M", "5.6", "439", "30", "2.0 GB"],
@@ -90,24 +90,24 @@ and **language**. Start from what matters most to you.
     language reach.
   </BentoCell>
   <BentoCell icon="speed" title="Lowest latency">
-    **Moonshine** (up to ~3700 RTFx) is built for real-time English on CPU. For accurate
+    **Moonshine v2** streams incrementally on CPU with constant per-chunk latency. For accurate
     English fast, **Parakeet** clears 5000 RTFx.
   </BentoCell>
   <BentoCell icon="cpu" title="Smallest footprint">
-    **Whisper Tiny** (149 MB), **SenseVoice Small** (159 MB), or **Moonshine Tiny** ship the
+    **Whisper Tiny** (149 MB), **SenseVoice Small** (159 MB), or **Moonshine v2 Tiny** ship the
     smallest defaults; q4 / int8 quantizations shrink them further.
   </BentoCell>
   <BentoCell icon="languages" title="Specific language">
     **Whisper** covers 99 languages; **Qwen3-ASR** 30; **Cohere** 14; **Canary /
-    Parakeet v3** 25 European languages; **GigaAM / Vosk / T-One** are Russian;
+    Parakeet Ultra** 25 European languages; **GigaAM / Vosk / T-One** are Russian;
     **Moonshine** has per-language fine-tunes.
   </BentoCell>
 </BentoGrid>
 
 <Callout type="info" title="Good default">
   If you're unsure, start with **Whisper Large v3 Turbo** (multilingual, WER 7.8, ~1.1 GB) or
-  **Parakeet TDT 0.6B v3** for fast, accurate English and European dictation. Small machines
-  can begin with **Whisper Tiny** or **Moonshine Base** and grow from there.
+  **Parakeet Ultra 0.6B** for fast, accurate English and European dictation. Small machines
+  can begin with **Whisper Tiny** or **Moonshine v2 Small** and grow from there.
 </Callout>
 
 <Callout type="warn" title="Real-time preview needs a small model">

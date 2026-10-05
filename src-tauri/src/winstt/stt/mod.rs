@@ -35,6 +35,8 @@ pub mod gigaam_v3_consts;
 pub mod mel;
 /// Moonshine ONNX engine (raw-audio encoder + 3-graph decoder KV-cache, SentencePiece tokenizer).
 pub mod moonshine;
+/// Moonshine v2 streaming engine (5-graph frontend/encoder/adapter/cross-KV/decoder, native stream).
+pub mod moonshine_streaming;
 /// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
 pub mod resolver;
 /// Startup reconciliation of the persisted STT selection against the weights actually on disk
@@ -152,6 +154,10 @@ impl EngineKind {
         match self {
             EngineKind::Moonshine => 14.0,
             EngineKind::Audio8Asr => 24.0,
+            // Native streaming with a constant-memory rolling cache: a file decodes as ONE stream
+            // (VAD segmentation would only throw away cross-sentence context). The cap merely
+            // bounds a single `transcribe` call's PCM copy.
+            EngineKind::Audio8Infinite => 3600.0,
             _ => 28.0,
         }
     }
@@ -363,6 +369,9 @@ pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
         // Own engine files not yet ported.
         EngineKind::WhisperOrt => Err(SttError::Unsupported("WhisperOrt engine not yet ported")),
         EngineKind::Moonshine => Ok(Box::new(moonshine::MoonshineEngine::load(&cfg)?)),
+        EngineKind::MoonshineStreaming => Ok(Box::new(
+            moonshine_streaming::MoonshineStreamingEngine::load(&cfg)?,
+        )),
         // All other families dispatch through `families::build_family_engine` (SenseVoice /
         // Dolphin / NeMo {Ctc,Rnnt,Tdt,Aed} / Kaldi / GigaAM / Cohere). Their numerics are
         // drafted but benchmark-gated — the LIVE path only enables a family after it's validated

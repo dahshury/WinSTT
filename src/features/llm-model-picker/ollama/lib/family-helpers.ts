@@ -12,6 +12,7 @@ import type { OllamaModel } from "@/shared/api/models";
 
 const FAMILY_REGEX = /^([a-zA-Z]+)/;
 const PRISM_BONSAI_PREFIX = "hf.co/prism-ml/bonsai";
+const SUPERWHISPER_S1_PREFIX = "hf.co/superwhisper/s1-mini-gguf";
 
 function containsFamilyToken(slug: string, token: string): boolean {
 	return slug.indexOf(token) >= 0;
@@ -30,6 +31,9 @@ export function getOllamaFamily(model: OllamaModel): string {
 	// catalogue group to Community as soon as its download completes.
 	if (model.name.trim().toLowerCase().startsWith(PRISM_BONSAI_PREFIX)) {
 		return "bonsai";
+	}
+	if (model.name.trim().toLowerCase().startsWith(SUPERWHISPER_S1_PREFIX)) {
+		return "s1-mini";
 	}
 	// Prefer the NAME prefix (the publisher family) over `details.family` (the
 	// model ARCHITECTURE) — they differ for re-published families: SmolLM is
@@ -77,6 +81,7 @@ const FAMILY_DISPLAY: Record<string, string> = {
 	nemotron: "Nemotron",
 	gpt: "GPT",
 	other: "Other",
+	"s1-mini": "S1-mini",
 };
 
 /**
@@ -92,6 +97,7 @@ interface OllamaPublisher {
 
 const FAMILY_PUBLISHER: Record<string, OllamaPublisher> = {
 	bonsai: { slug: "prismml", label: "PrismML" },
+	"s1-mini": { slug: "superwhisper", label: "Superwhisper" },
 	llama: { slug: "meta-llama", label: "Meta" },
 	codellama: { slug: "meta-llama", label: "Meta" },
 	tinyllama: { slug: "meta-llama", label: "Meta" },
@@ -139,6 +145,10 @@ interface PublisherRule {
 }
 
 const PUBLISHER_RULES: readonly PublisherRule[] = [
+	{
+		publisher: { slug: "superwhisper", label: "Superwhisper" },
+		tokens: ["s1-mini", "superwhisper"],
+	},
 	{
 		publisher: { slug: "prismml", label: "PrismML" },
 		tokens: ["bonsai", "prismml"],
@@ -519,6 +529,20 @@ export function formatOllamaDisplayNameParts(
 			variant: variantLabel || null,
 		};
 	}
+	if (normalized.startsWith(SUPERWHISPER_S1_PREFIX)) {
+		const colonIdx = trimmed.indexOf(":");
+		const variant = colonIdx >= 0 ? trimmed.slice(colonIdx + 1) : "";
+		const { quantization, variantParts } = parseVariantFacts(variant);
+		const variantLabel = variantParts.join(" ");
+		const main = "S1-mini";
+		return {
+			full: [main, variantLabel].filter(Boolean).join(" "),
+			main,
+			parameterSize: "0.6B",
+			quantization,
+			variant: variantLabel || null,
+		};
+	}
 	const colonIdx = trimmed.indexOf(":");
 	const base = colonIdx >= 0 ? trimmed.slice(0, colonIdx) : trimmed;
 	const variant = colonIdx >= 0 ? trimmed.slice(colonIdx + 1) : "";
@@ -566,7 +590,8 @@ export function resolveOllamaQuantization(model: OllamaModel): string | null {
 export function resolveOllamaParameterSize(model: OllamaModel): string | null {
 	const parsed = formatOllamaDisplayNameParts(model.name).parameterSize?.trim();
 	if (
-		model.name.trim().toLowerCase().startsWith(PRISM_BONSAI_PREFIX) &&
+		(model.name.trim().toLowerCase().startsWith(PRISM_BONSAI_PREFIX) ||
+			model.name.trim().toLowerCase().startsWith(SUPERWHISPER_S1_PREFIX)) &&
 		parsed
 	) {
 		return parsed.toUpperCase();

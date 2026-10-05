@@ -27,7 +27,7 @@
 // `EngineKind`, not this legacy field.
 //
 // This module is split into two siblings behind a stable re-export surface:
-//   * `data`   — the `ModelEntry` row shape + the verbatim 75-row `STT_CATALOG` const.
+//   * `data`   — the `ModelEntry` row shape + the verbatim 84-row `STT_CATALOG` const.
 //   * `policy` — `Family`/`Accelerator` + the deterministic precision/EP resolution policy.
 // Every previously public path (`crate::winstt::catalog::X`) is preserved via the globs below.
 
@@ -44,11 +44,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_75() {
+    fn catalog_total_count_is_84() {
         assert_eq!(
             STT_CATALOG.len(),
-            75,
-            "catalog.json ships exactly 75 STT models"
+            84,
+            "catalog.json ships exactly 84 STT models"
         );
     }
 
@@ -56,8 +56,8 @@ mod tests {
     fn per_family_counts_match_catalog_json() {
         let count = |f: Family| STT_CATALOG.iter().filter(|m| m.family == f).count();
         assert_eq!(count(Family::Whisper), 16, "whisper count");
-        assert_eq!(count(Family::Moonshine), 10, "moonshine count");
-        assert_eq!(count(Family::Nemo), 29, "nemo count");
+        assert_eq!(count(Family::Moonshine), 17, "moonshine count");
+        assert_eq!(count(Family::Nemo), 30, "nemo count");
         assert_eq!(count(Family::Kaldi), 5, "kaldi count");
         assert_eq!(count(Family::GigaAm), 2, "gigaam count");
         assert_eq!(count(Family::Cohere), 2, "cohere count");
@@ -67,14 +67,14 @@ mod tests {
         assert_eq!(count(Family::Dolphin), 1, "dolphin count");
         assert_eq!(count(Family::Qwen3), 2, "qwen3 count");
         assert_eq!(count(Family::VibeVoice), 1, "vibevoice count");
-        assert_eq!(count(Family::Audio8), 3, "audio8 count");
+        assert_eq!(count(Family::Audio8), 4, "audio8 count");
         assert_eq!(
             count(Family::Custom),
             0,
             "custom never appears in the shipped catalog"
         );
         // The family counts must sum to the catalog total.
-        let summed = 16 + 10 + 29 + 5 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 3;
+        let summed = 16 + 17 + 30 + 5 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 4;
         assert_eq!(summed, STT_CATALOG.len());
     }
 
@@ -162,6 +162,53 @@ mod tests {
                 find(old).unwrap().id,
                 "streaming-nemotron-3.5-multi-1120ms-int8"
             );
+        }
+    }
+
+    #[test]
+    fn retired_parakeet_v3_migrates_to_ultra() {
+        assert_eq!(
+            canonical_model_id("nemo-parakeet-tdt-0.6b-v3"),
+            "nemo-parakeet-tdt-0.6b-ultra"
+        );
+        // A persisted v3 selection resolves to the live Ultra row (and the v3 row is gone).
+        assert_eq!(
+            find("nemo-parakeet-tdt-0.6b-v3").unwrap().id,
+            "nemo-parakeet-tdt-0.6b-ultra"
+        );
+        assert!(
+            STT_CATALOG
+                .iter()
+                .all(|m| m.id != "nemo-parakeet-tdt-0.6b-v3")
+        );
+    }
+
+    #[test]
+    fn retired_moonshine_v1_ids_migrate_to_v2_streaming() {
+        for (old, new) in [
+            ("moonshine-tiny", "moonshine-streaming-tiny"),
+            ("moonshine-base", "moonshine-streaming-small"),
+            ("moonshine-tiny-ar", "moonshine-streaming-tiny-ar"),
+            ("moonshine-tiny-vi", "moonshine-streaming-tiny-vi"),
+            ("moonshine-tiny-zh", "moonshine-streaming-tiny-zh"),
+            ("moonshine-base-zh", "moonshine-streaming-tiny-zh"),
+            ("moonshine-tiny-ja", "moonshine-streaming-tiny-ja"),
+            ("moonshine-base-ja", "moonshine-streaming-small-ja"),
+        ] {
+            assert!(
+                !STT_CATALOG.iter().any(|m| m.id == old),
+                "{old} must not ship as a row"
+            );
+            assert_eq!(find(old).unwrap().id, new);
+        }
+        // v1 languages without a v2 checkpoint keep their own rows.
+        for kept in [
+            "moonshine-tiny-ko",
+            "moonshine-base-ko",
+            "moonshine-tiny-uk",
+            "moonshine-tiny-fr",
+        ] {
+            assert_eq!(find(kept).unwrap().id, kept);
         }
     }
 
@@ -297,7 +344,7 @@ mod tests {
 
     #[test]
     fn picker_filters_sub_fp16_only_on_cuda() {
-        let moon = find("moonshine-base").unwrap(); // ["","fp16","q4","bnb4","int8","uint8","q4f16"]
+        let moon = find("moonshine-base-ko").unwrap(); // ["","fp16","q4","bnb4","int8","uint8","q4f16"]
         // CUDA: only "" and fp16 survive (order preserved).
         assert_eq!(
             picker_quantizations_for(moon, Accelerator::Cuda),

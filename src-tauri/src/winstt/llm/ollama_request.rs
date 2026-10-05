@@ -56,6 +56,18 @@ const DEFAULT_OLLAMA_KEEP_ALIVE: &str = "5m";
 // 4B) is the smallest model verified to handle the FULL envelope, so 4B-class
 // models keep it; everything smaller goes lite.
 const LITE_MODEL_MAX_PARAMS_B: f64 = 4.0;
+const SUPERWHISPER_S1_PREFIX: &str = "hf.co/superwhisper/s1-mini-gguf";
+
+/// S1-mini is a purpose-built transcript normalizer with a closed prompt
+/// contract, not a general chat model. Direct Hugging Face GGUF pulls keep the
+/// repository path in the Ollama model id, so this prefix is stable across
+/// quantization tags.
+pub fn is_s1_mini_model(model: &str) -> bool {
+    model
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with(SUPERWHISPER_S1_PREFIX)
+}
 
 /// Param-size token inside a tag's variant part: `2b`, `0.8b`, `135m`, and
 /// Gemma MatFormer "effective" sizes (`e2b` → 2B). The token must sit between
@@ -70,6 +82,9 @@ static PARAM_FROM_VARIANT_RE: Lazy<Regex> =
 /// `None` when the name carries no param token (bare bases like `gemma4` or
 /// alias tags like `phi3:mini`) — such models are treated as full-tier.
 pub fn ollama_effective_params_billions(model: &str) -> Option<f64> {
+    if is_s1_mini_model(model) {
+        return Some(0.6);
+    }
     let variant = model.split_once(':').map(|(_, v)| v)?;
     let caps = PARAM_FROM_VARIANT_RE.captures(variant)?;
     let value: f64 = caps.get(1)?.as_str().parse().ok()?;
@@ -490,6 +505,36 @@ pub fn build_ollama_chat_body_with_keep_alive(
     })
 }
 
+const S1_MINI_SYSTEM_PROMPT: &str = "You are a text normalizer for speech-to-text transcripts. The input begins with a control line specifying the styling, structure, and context settings; clean the transcript to match those settings and output only the cleaned text.";
+
+/// Build the exact request shape S1-mini was trained on. It must not receive
+/// WinSTT's normal structured-output schema or generic cleanup instructions:
+/// the model emits plain text, requires this control line, and was trained with
+/// Qwen3 thinking disabled and greedy decoding.
+pub fn build_s1_mini_chat_body_with_keep_alive(
+    model: &str,
+    text: &str,
+    keep_alive: serde_json::Value,
+) -> serde_json::Value {
+    let user_prompt =
+        format!("[Styling: semi-formal] [Structure: prose] [Context: general]\n{text}");
+    serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": S1_MINI_SYSTEM_PROMPT },
+            { "role": "user", "content": user_prompt },
+        ],
+        "stream": true,
+        "think": false,
+        "keep_alive": keep_alive,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": OLLAMA_NUM_CTX,
+            "num_predict": std::cmp::max(text.len() * 2 + 32, 256),
+        }
+    })
+}
+
 /// One parsed NDJSON chunk from /api/chat. Mirrors ollamaChatStreamChunkSchema.
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct OllamaChatChunk {
@@ -815,6 +860,7 @@ mod tests {
         close("gemma4:12b-it-q4_K_M", 12.0);
         close("phi4-mini:3.8b", 3.8);
         close("lfm2.5:8b-a1b-q4_K_M", 8.0);
+        close("hf.co/superwhisper/s1-mini-GGUF:Q4_K_M", 0.6);
         // Quant markers must never parse as sizes.
         close("llama3.2:1b-instruct-q8_0", 1.0);
         // Bare bases / alias tags carry no size → unknown (full tier).
@@ -832,8 +878,9 @@ mod tests {
             "qwen3.5:2b",
             "gemma4:e2b",
             "gemma4:e2b-it-qat",
-            "granite4.1:3b",
+            "granite4.2:3b",
             "phi4-mini:3.8b",
+            "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
         ] {
             assert!(is_lite_ollama_model(lite), "{lite} should be lite");
         }
@@ -863,6 +910,27 @@ mod tests {
         let user = body["messages"][1]["content"].as_str().unwrap();
         assert!(user.contains("{\"text\": \"<transformed text>\"}"));
         assert!(!user.contains("history_tag"));
+    }
+
+    #[test]
+    fn s1_mini_chat_body_uses_its_trained_plain_text_contract() {
+        let model = "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M";
+        let body = build_s1_mini_chat_body_with_keep_alive(
+            model,
+            "so um send it friday no thursday",
+            serde_json::json!("15m"),
+        );
+        assert_eq!(body["model"], model);
+        assert_eq!(body["think"], false);
+        assert_eq!(body["options"]["temperature"], 0.0);
+        assert_eq!(body["options"]["num_ctx"], OLLAMA_NUM_CTX);
+        assert_eq!(body["keep_alive"], "15m");
+        assert!(body.get("format").is_none());
+        assert_eq!(body["messages"][0]["content"], S1_MINI_SYSTEM_PROMPT);
+        assert_eq!(
+            body["messages"][1]["content"],
+            "[Styling: semi-formal] [Structure: prose] [Context: general]\nso um send it friday no thursday"
+        );
     }
 
     #[test]

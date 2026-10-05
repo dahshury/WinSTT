@@ -10,7 +10,7 @@
 use std::time::Instant;
 
 use winstt_app_lib::audio_toolkit::read_wav_samples;
-use winstt_app_lib::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
+use winstt_app_lib::audio_toolkit::vad::{SILERO_VAD_RESOURCE, SileroVad, VAD_SPEECH_THRESHOLD};
 use winstt_app_lib::winstt::stt::{
     self, Accelerator, EngineConfig, EngineKind, Quantization, TranscribeOptions,
 };
@@ -87,12 +87,8 @@ fn main() {
 
     // --- the long-audio align path (same constants as WordAligner) ---
     const MAX_ALIGN_CHUNK_S: f32 = 28.0;
-    let vad_path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/resources/models/silero_vad_v4.onnx"
-    );
-    let mut vad =
-        SileroVad::new(std::path::Path::new(vad_path), VAD_SPEECH_THRESHOLD).expect("vad");
+    let vad_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(SILERO_VAD_RESOURCE);
+    let mut vad = SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD).expect("vad");
 
     let align_started = Instant::now();
     let timed = if audio.len() > (MAX_ALIGN_CHUNK_S * 16_000.0) as usize {

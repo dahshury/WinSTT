@@ -44,7 +44,14 @@ function Find-VcVars64 {
 function Import-VcVars {
     param([string] $VcVars)
 
-    cmd /d /s /c "`"$VcVars`" >nul && set" | ForEach-Object {
+    # vcvars shells out to vswhere.exe via PATH; put the VS Installer dir there so it resolves,
+    # and swallow vcvars' stderr — under $ErrorActionPreference = "Stop", Windows PowerShell
+    # turns any native stderr line (even a benign vswhere warning) into a terminating error.
+    $Installer = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer"
+    if ((Test-Path -LiteralPath $Installer) -and ($env:PATH -notlike "*$Installer*")) {
+        $env:PATH = "$Installer;$env:PATH"
+    }
+    cmd /d /s /c "`"$VcVars`" >nul 2>nul && set" | ForEach-Object {
         if ($_ -match "^([^=]+)=(.*)$") {
             Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2]
         }

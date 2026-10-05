@@ -428,7 +428,7 @@ mod tests {
         // must win even when a smaller cached model exists (this is what stops a recovery from
         // silently landing on, say, a Russian-only Vosk export).
         let pick = pick_cached_selection([
-            selection("moonshine-tiny", "int8", 10),
+            selection("moonshine-streaming-tiny", "int8", 10),
             selection("tiny", "", 500),
             selection("base", "", 20),
         ]);
@@ -462,12 +462,12 @@ mod tests {
     fn a_missing_selection_switches_to_an_installed_model() {
         assert_eq!(
             decide_recovery(
-                "nemo-parakeet-tdt-0.6b-v3",
+                "nemo-parakeet-tdt-0.6b-ultra",
                 SelectedState::Missing,
                 [selection("base", "int8", 40)],
             ),
             SttSelectionRecovery::Switched {
-                from: "nemo-parakeet-tdt-0.6b-v3".to_string(),
+                from: "nemo-parakeet-tdt-0.6b-ultra".to_string(),
                 to: selection("base", "int8", 40),
             }
         );
@@ -477,9 +477,9 @@ mod tests {
     fn nothing_installed_forces_setup_and_resets_to_the_default() {
         // The reported bug: settings carried over to a machine with an EMPTY model cache.
         assert_eq!(
-            decide_recovery("nemo-parakeet-tdt-0.6b-v3", SelectedState::Missing, []),
+            decide_recovery("nemo-parakeet-tdt-0.6b-ultra", SelectedState::Missing, []),
             SttSelectionRecovery::SetupRequired {
-                from: "nemo-parakeet-tdt-0.6b-v3".to_string(),
+                from: "nemo-parakeet-tdt-0.6b-ultra".to_string(),
                 reset_to_default: true,
             }
         );

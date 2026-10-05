@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "After the wake word fires, the recorder waits this long for you to start speaking. If you don't, the gate clears and you must say the wake word again. Prevents stray noise minutes later from triggering an accidental recording.",
     "speakerDiarization": "Speaker diarization",
     "speakerDiarizationCaption": "Color text per speaker in long-form recordings",
-    "speakerDiarizationTooltip": "When on, each finalised utterance is run through an on-device speaker model (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB downloaded on first use, no torch). Words are colored per speaker in the live overlay; speaker IDs stay stable across the whole session.",
+    "speakerDiarizationTooltip": "When on, each finalised utterance is run through an on-device speaker model (NVIDIA Nemotron-3-Diarization, ~104 MB downloaded on first use, no torch). Words are colored per speaker in the live overlay; speaker IDs stay stable across the whole session.",
     "loopbackDevice": "Loopback Device",
     "loopbackDeviceCaption": "WASAPI loopback device to capture",
     "loopbackDeviceTooltip": "Select the audio output device to capture. The app will transcribe all audio playing through this device.",

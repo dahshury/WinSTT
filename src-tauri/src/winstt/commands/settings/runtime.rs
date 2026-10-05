@@ -771,7 +771,7 @@ mod tests {
 
         // local → another local model is a swap, not a cloud switch.
         let mut local_swap = local.clone();
-        local_swap.model.model = "nemo-parakeet-tdt-0.6b-v3".into();
+        local_swap.model.model = "nemo-parakeet-tdt-0.6b-ultra".into();
         assert!(!stt_switched_to_cloud(&local, &local_swap));
 
         // Unchanged id, or already-cloud staying cloud, is not a fresh switch.

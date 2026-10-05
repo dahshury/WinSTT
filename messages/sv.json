@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Efter att vakorder aktiveras väntar inspelaren så här länge på att du ska börja tala. Om du inte gör det återställs porten och du måste säga vakorder igen. Förhindrar att slumpmässigt ljud minuter senare utlöser en oavsiktlig inspelning.",
     "speakerDiarization": "Talaridentifiering",
     "speakerDiarizationCaption": "Färgkoda text per talare i längre inspelningar",
-    "speakerDiarizationTooltip": "När aktiverat körs varje slutförd yttrande genom en lokal talarmodell (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB laddas ned vid första användning, ingen torch). Ord färgkodas per talare i live-överlagringen; talar-ID:n förblir stabila under hela sessionen.",
+    "speakerDiarizationTooltip": "När aktiverat körs varje slutförd yttrande genom en lokal talarmodell (NVIDIA Nemotron-3-Diarization, ~104 MB laddas ned vid första användning, ingen torch). Ord färgkodas per talare i live-överlagringen; talar-ID:n förblir stabila under hela sessionen.",
     "loopbackDevice": "Loopback-enhet",
     "loopbackDeviceCaption": "WASAPI loopback-enhet att fånga",
     "loopbackDeviceTooltip": "Välj den ljudutgångsenhet som ska fångas. Appen transkriberar allt ljud som spelas via den här enheten.",

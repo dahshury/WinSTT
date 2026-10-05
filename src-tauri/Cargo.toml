@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.9"
+version = "0.1.3-alpha.10"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
@@ -14,9 +14,7 @@ path = "src/main.rs"
 
 [workspace]
 members = ["context-sidecar"]
-# vendor/vad-rs is its own root (it declares an empty [workspace] so its default
-# features stay off) — exclude it here or cargo sees two roots in one tree.
-exclude = ["vendor/vad-rs", "vendor/cpal"]
+exclude = ["vendor/cpal"]
 default-members = ["."]
 resolver = "3"
 
@@ -114,9 +112,6 @@ tokio = "1.43.0"
 # (cloud LLM/STT/TTS abort). Already in the tree transitively; `rt` gates the
 # `sync::CancellationToken` we use. Dropping the raced future aborts the request.
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
-# Vendored (see vendor/vad-rs/Cargo.toml): upstream pins ort =rc.12 exactly, which
-# deadlocks the lockfile against our =rc.13; the vendor copy relaxes only that pin.
-vad-rs = { path = "vendor/vad-rs", default-features = false }
 enigo = "0.6.1"
 # Chime/recording-sound playback only (audio_feedback.rs). Default features pull the
 # FULL symphonia 0.5 decoder suite (flac/mp4+aac/vorbis) — a second copy next to our

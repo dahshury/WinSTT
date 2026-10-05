@@ -15,6 +15,12 @@ describe("ollamaThinkingMode", () => {
 		expect(ollamaThinkingMode("mystery-model:7b", undefined)).toBe("none");
 	});
 
+	test("forces S1-mini to non-thinking despite its inherited Qwen3 capability", () => {
+		expect(
+			ollamaThinkingMode("hf.co/superwhisper/s1-mini-GGUF:Q4_K_M", THINKING),
+		).toBe("none");
+	});
+
 	test("catalog knowledge wins even when live capabilities are unknown (un-pulled model)", () => {
 		// gpt-oss is recorded as `thinking: "levels"` in the catalog; the
 		// classifier must not depend on /api/show having run.
@@ -31,7 +37,7 @@ describe("ollamaThinkingMode", () => {
 	});
 
 	test("'toggle' for hybrid thinking models (levels are no-ops)", () => {
-		for (const m of ["gemma4:e4b", "qwen3.5:4b", "granite4.1:8b"]) {
+		for (const m of ["gemma4:e4b", "qwen3.5:4b", "granite4.2:8b"]) {
 			expect(ollamaThinkingMode(m, THINKING)).toBe("toggle");
 		}
 	});

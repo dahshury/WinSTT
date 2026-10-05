@@ -594,7 +594,8 @@ pub struct AudioSettings {
     /// Audio chunk size. STARTUP (CLI).
     #[serde(default = "AudioSettings::default_buffer_size")]
     pub buffer_size: i64,
-    /// Silero VAD sensitivity; trip threshold = `1 - value`. Range 0..1. HOT-SWAP.
+    /// Silero VAD sensitivity; trip threshold = `0.05 ^ (value / 0.7)` (see
+    /// `audio_toolkit::vad::live`). Range 0..1. HOT-SWAP.
     /// INVARIANT: Silero VAD must load CPU-only (CUDA deadlock).
     #[serde(default = "AudioSettings::default_silero_sensitivity")]
     pub silero_sensitivity: f64,
@@ -828,7 +829,7 @@ pub struct GeneralSettings {
     /// exactly like the UIA text. HOT-SWAP (read per-capture from settings).
     #[serde(default)]
     pub context_screen_ocr: bool,
-    /// Per-utterance speaker diarization (~32 MB models, first-run download).
+    /// Listen-mode speaker diarization (Nemotron-3-Diarization, ~104 MB first-run download).
     /// HOT-SWAP (runtime toggle via diarization-toggle method).
     #[serde(default)]
     pub speaker_diarization: bool,
@@ -1782,7 +1783,7 @@ impl Default for IntegrationsSettings {
 /// matching step to `apply_settings_migrations`; purely additive fields need no
 /// bump (serde defaults cover absence). Stores written before the field existed
 /// read as version 0.
-pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 /// The complete WinSTT settings tree, nested by the settings sections, ported
 /// 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON

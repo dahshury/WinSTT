@@ -40,11 +40,12 @@ use crate::winstt::settings_store::{read_settings, read_settings_raw};
 use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
 use crate::winstt::tts::local_engines::{
-    AUDIO8_VOICES, Audio8LocalEngine, CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES,
-    KittenLocalEngine, NEUTTS_VOICE_INFOS, NeuTtsLocalEngine, OMNIVOICE_VOICES,
-    ORPHEUS_VOICE_INFOS, OmniVoiceLocalEngine, OrpheusLocalEngine, PiperLocalEngine,
-    QWEN3TTS_CUSTOMVOICE_VOICES, QWEN3TTS_VOICES, Qwen3TtsLocalEngine, SPARK_VOICE_INFOS,
-    SUPERTONIC_VOICES, SparkLocalEngine, SupertonicLocalEngine, piper_voice_infos,
+    AUDIO8_01_VOICES, AUDIO8_VOICES, Audio8LocalEngine, Audio8Preview01LocalEngine,
+    CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES, KittenLocalEngine, NEUTTS_VOICE_INFOS,
+    NeuTtsLocalEngine, OMNIVOICE_VOICES, ORPHEUS_VOICE_INFOS, OmniVoiceLocalEngine,
+    OrpheusLocalEngine, PiperLocalEngine, QWEN3TTS_CUSTOMVOICE_VOICES, QWEN3TTS_VOICES,
+    Qwen3TtsLocalEngine, SPARK_VOICE_INFOS, SUPERTONIC_VOICES, SparkLocalEngine,
+    SupertonicLocalEngine, piper_voice_infos,
 };
 use crate::winstt::tts::phonemize::{
     ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, EspeakCliPhonemizer, Phonemizer,
@@ -678,6 +679,9 @@ impl TtsManager {
             // "default" sentinel or a reference-clip path; `tts.clone_ref_text` carries the
             // clip's transcript (the DualAR prompt needs it) and is already part of the
             // engine fingerprint, so editing the transcript rebuilds the engine.
+            Some(TtsEngineId::Audio8) if model_id == "audio8-tts-0.1b" => Arc::new(
+                Audio8Preview01LocalEngine::new(self.model_cache_dir(&model_id)),
+            ),
             Some(TtsEngineId::Audio8) => Arc::new(Audio8LocalEngine::new(
                 self.model_cache_dir(&model_id),
                 settings.tts.clone_ref_text.clone(),
@@ -930,6 +934,7 @@ impl TtsManager {
             // No preset bank — one sentinel entry; the real voice comes from a reference
             // clip, which the ZeroShotAudioText cloning facet surfaces in the dropdown.
             Some(TtsEngineId::OmniVoice) => OMNIVOICE_VOICES.to_vec(),
+            Some(TtsEngineId::Audio8) if model_id == "audio8-tts-0.1b" => AUDIO8_01_VOICES.to_vec(),
             Some(TtsEngineId::Audio8) => AUDIO8_VOICES.to_vec(),
             _ => KOKORO_VOICE_CATALOG.to_vec(),
         };

@@ -4,11 +4,12 @@ export const audioSettingsSchema = z.object({
 	inputDeviceIndex: z.number().int().nullable().default(null),
 	sampleRate: z.number().int().default(16_000),
 	bufferSize: z.number().int().default(512),
-	// Trip threshold = 1 - sileroSensitivity (see server SileroVad.detect).
-	// Default 0.7 → trip > 0.3, the tuned threshold. Silero confidence on
-	// far-mic speech routinely lives in 0.3–0.6. Per-device adaptive
-	// calibration (`sileroSensitivityByDeviceName` below) adjusts from
-	// this baseline.
+	// Trip threshold = 0.05 ^ (sileroSensitivity / 0.7) (backend
+	// `audio_toolkit/vad/live.rs`, tuned for Silero VAD v6). Default 0.7 →
+	// trip > 0.05, the tuned threshold: v6 confidence is bimodal and quiet
+	// far-mic word onsets live in 0.05–0.3 while noise/music stay < 0.02.
+	// Per-device adaptive calibration (`sileroSensitivityByDeviceName`
+	// below) adjusts from this baseline.
 	sileroSensitivity: z.number().min(0).max(1).default(0.7).catch(0.7),
 	sileroUseOnnx: z.boolean().default(false),
 	sileroDeactivityDetection: z.boolean().default(true),

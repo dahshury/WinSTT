@@ -46,36 +46,18 @@ Git hooks live in `.husky/` and shell out to npm scripts. Skip with
 - **`bun run precommit`** — lockfile, `lint`, `typecheck`, `check:cycles`.
 - **`bun run prepush`** — lockfile, `test`, `check:deadcode` (knip), `check:rust`.
 
-`check:cycles` runs `tools/check-cycles.mjs`, a zero-dependency circular-import
-detector over `src/`. **Do not swap it for `madge`**: madge parses TS via
-`detective-typescript` → `@typescript-eslint/typescript-estree`, which reads
-`ts.Extension.Cjs` at module-load time. That is `undefined` under this repo's
-TypeScript 7, so madge throws before parsing anything, with or without
-`--ts-config`. The local checker resolves `@/` aliases and barrel `index` files
-itself and counts type-only imports, because the cycle class this repo actually
-hits is a module importing its own slice barrel
-(`entities/x/lib/y.ts` → `@/entities/x` → back to `lib/y.ts`). Fix those by
-importing from the defining module, not the barrel.
+`check:cycles` runs `tools/check-cycles.mjs` (zero-dependency). **Do not swap it for `madge`** —
+madge throws under this repo's TypeScript 7. The usual cycle is a module importing its own slice
+barrel; fix it by importing from the defining module.
 
 ## IPC & events conventions
 
 - **All frontend → backend calls use generated bindings.** Import `{ commands }`
   from `@/bindings` (tauri-specta) and call `commands.theCommand(...)`.
-  The legacy string-channel funnel (`ipc-channels.ts` → `ipc-transport.ts`
-  `COMMAND_INVOKERS` → `native-bridge-adapter.ts` ROUTE) is **GONE** — all three
-  files were deleted in `720890c6`. Do not try to edit them, and do not
-  reintroduce the pattern: `src/shared/api/native-boundary.test.ts` scans every
-  non-test file under `src/` and fails on an `ipc-channels` import, a
-  `COMMAND_INVOKERS` symbol, or a `native-bridge-adapter` mention.
-  What survived the split: `src/shared/api/native-events.ts` holds renderer-facing
-  EVENT names only (command names live exclusively in the generated bindings),
-  `src/shared/api/native-boundary.ts` owns the Tauri listen/invoke boundary, and
-  `src/shared/api/ipc-client.ts` is now just a re-export barrel.
-  Note the test harness still models the old funnel (`test/mocks/legacy-ipc.ts`,
-  `test/mocks/ipc-client.ts`, `test/preload.ts` installing `window.nativeBridge`),
-  which is why `native-boundary.ts` keeps a few `window.nativeBridge` branches
-  marked "Unit-test compatibility only". Those are production-dead; retiring them
-  means converting the bun suite to `commands.*` assertions first.
+  The legacy string-channel funnel (`ipc-channels.ts`, `COMMAND_INVOKERS`,
+  `native-bridge-adapter.ts`) is gone; `src/shared/api/native-boundary.test.ts` fails if it comes
+  back. `native-events.ts` holds event names only; `native-boundary.ts` owns listen/invoke. Its
+  `window.nativeBridge` branches are test-only (the bun suite still models the old funnel).
 - **A new Rust command needs only 2 edits:** (a) the `#[tauri::command] #[specta::specta]`
   fn, and (b) its entry in `collect_commands![]` (`commands_registry.rs`). A
   completeness guard test enforces (b); regenerate `bindings.ts` via the
@@ -99,3 +81,12 @@ importing from the defining module, not the barrel.
   backend emitter, or a canonical backend event has no listener (the prefix-drift
   bug class); add an allowlist entry with a reason for a deliberately
   dead/internal edge.
+
+## Spending context
+
+- Read narrowly: search first, then read the lines you need. Do not dump whole large or
+  generated files or lockfiles.
+- Bound command output (`| tail -40`, counts, summaries); read the failure lines of a gate, not
+  the whole log.
+- Delegate to subagents only for large, independent work; never to verify or double-check your
+  own work. Run each gate once after a change; re-run only after changing something.

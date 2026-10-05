@@ -1581,69 +1581,72 @@
    }
   },
   {
-   "id": "moonshine-tiny",
-   "display_name": "Moonshine Tiny",
+   "id": "moonshine-streaming-tiny",
+   "display_name": "Moonshine v2 Tiny",
    "family": "moonshine",
    "languages": [
     "en"
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "moonshine-tiny",
-   "description": "Fastest English Moonshine; best for short commands and quick notes.",
-   "param_count": 27092835,
-   "wer": 11.39,
-   "rtfx": 3733,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-ONNX",
+   "description": "Moonshine v2 streaming English: text appears as you speak, tiny and very fast.",
+   "param_count": 44054721,
+   "wer": 12.01,
+   "rtfx": 2079,
    "available_quantizations": [
     "",
-    "fp16",
-    "q4",
-    "bnb4",
-    "int8",
-    "uint8",
-    "q4f16"
+    "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 186555396,
-    "fp16": 95544684,
-    "q4": 102595881,
-    "bnb4": 101041821,
-    "int8": 50370483,
-    "uint8": 50370561,
-    "q4f16": 59796393
+    "": 136882482,
+    "int8": 78087438
    }
   },
   {
-   "id": "moonshine-base",
-   "display_name": "Moonshine Base",
+   "id": "moonshine-streaming-small",
+   "display_name": "Moonshine v2 Small",
    "family": "moonshine",
    "languages": [
     "en"
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "moonshine-base",
-   "description": "Low-latency English Moonshine with better accuracy for everyday dictation.",
-   "param_count": 61514019,
-   "wer": 8.6,
-   "rtfx": 2767,
+   "onnx_model_name": "Masterx/moonshine-streaming-small-ONNX",
+   "description": "Moonshine v2 streaming English with a big accuracy step up at low latency.",
+   "param_count": 140135225,
+   "wer": 7.84,
+   "rtfx": 791,
    "available_quantizations": [
     "",
-    "fp16",
-    "q4",
-    "bnb4",
-    "int8",
-    "uint8",
-    "q4f16"
+    "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 405139055,
-    "fp16": 204936715,
-    "q4": 171542072,
-    "bnb4": 167216888,
-    "int8": 105371664,
-    "uint8": 105371781,
-    "q4f16": 105457908
+    "": 496614918,
+    "int8": 208624368
+   }
+  },
+  {
+   "id": "moonshine-streaming-medium",
+   "display_name": "Moonshine v2 Medium",
+   "family": "moonshine",
+   "languages": [
+    "en"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-medium-ONNX",
+   "description": "Most accurate Moonshine v2 streaming English; still light enough for CPU live captions.",
+   "param_count": 265898113,
+   "wer": 6.65,
+   "rtfx": 439,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 983469707,
+    "int8": 358251912
    }
   },
   {
@@ -1656,7 +1659,7 @@
    "supports_language_detection": false,
    "supports_realtime": true,
    "onnx_model_name": "moonshine-tiny-ko",
-   "description": "Tiny Korean Moonshine for quick on-device notes.",
+   "description": "Tiny Korean Moonshine for quick on-device notes. Moonshine Community License (non-commercial; free commercial use under US$1M revenue).",
    "param_count": 27092835,
    "wer": 15.0,
    "rtfx": 3733,
@@ -1680,135 +1683,118 @@
    }
   },
   {
-   "id": "moonshine-tiny-ar",
-   "display_name": "Moonshine Tiny (AR)",
+   "id": "moonshine-streaming-tiny-ar",
+   "display_name": "Moonshine v2 Tiny (AR)",
    "family": "moonshine",
    "languages": [
     "ar"
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "moonshine-tiny-ar",
-   "description": "Tiny Arabic Moonshine for quick lightweight dictation.",
-   "param_count": 27092835,
-   "wer": 15.0,
-   "rtfx": 3733,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-ar-ONNX",
+   "description": "Moonshine v2 streaming Arabic (tiny): live text as you speak, fully on-device.",
+   "param_count": 27015361,
+   "wer": 18.0,
+   "rtfx": 2641,
    "available_quantizations": [
     "",
-    "fp16",
-    "q4",
-    "bnb4",
-    "int8",
-    "uint8",
-    "q4f16"
+    "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 186618442,
-    "fp16": 95608818,
-    "q4": 102658927,
-    "bnb4": 101104867,
-    "int8": 50787805,
-    "uint8": 50787805,
-    "q4f16": 59860527
+    "": 109721693,
+    "int8": 50926649
    }
   },
   {
-   "id": "moonshine-tiny-vi",
-   "display_name": "Moonshine Tiny (VI)",
+   "id": "moonshine-streaming-tiny-vi",
+   "display_name": "Moonshine v2 Tiny (VI)",
    "family": "moonshine",
    "languages": [
     "vi"
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "moonshine-tiny-vi",
-   "description": "Tiny Vietnamese Moonshine for fast short-form speech.",
-   "param_count": 27092835,
-   "wer": 15.0,
-   "rtfx": 3733,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-vi-ONNX",
+   "description": "Moonshine v2 streaming Vietnamese (tiny): live text as you speak, fully on-device.",
+   "param_count": 27015361,
+   "wer": 13.06,
+   "rtfx": 2641,
    "available_quantizations": [
     "",
-    "fp16",
-    "q4",
-    "bnb4",
-    "int8",
-    "uint8",
-    "q4f16"
+    "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 262583214,
-    "fp16": 134264380,
-    "q4": 114923291,
-    "bnb4": 114923291,
-    "int8": 70227860,
-    "uint8": 70227934,
-    "q4f16": 71272603
+    "": 109416221,
+    "int8": 50621177
    }
   },
   {
-   "id": "moonshine-base-zh",
-   "display_name": "Moonshine Base (ZH)",
+   "id": "moonshine-streaming-tiny-zh",
+   "display_name": "Moonshine v2 Tiny (ZH)",
    "family": "moonshine",
    "languages": [
     "zh"
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "moonshine-base-zh",
-   "description": "Low-latency Mandarin Moonshine for responsive dictation.",
-   "param_count": 61514019,
-   "wer": 10.5,
-   "rtfx": 2767,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-zh-ONNX",
+   "description": "Moonshine v2 streaming Mandarin (tiny): live text as you speak, fully on-device.",
+   "param_count": 27015361,
+   "wer": 11.24,
+   "rtfx": 2641,
    "available_quantizations": [
     "",
-    "fp16",
-    "q4",
-    "bnb4",
-    "int8",
-    "uint8",
-    "q4f16"
+    "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 405216664,
-    "fp16": 205015454,
-    "q4": 171619681,
-    "bnb4": 167294497,
-    "int8": 106131563,
-    "uint8": 106131563,
-    "q4f16": 105536647
+    "": 109311585,
+    "int8": 50516541
    }
   },
   {
-   "id": "moonshine-base-ja",
-   "display_name": "Moonshine Base (JA)",
+   "id": "moonshine-streaming-tiny-ja",
+   "display_name": "Moonshine v2 Tiny (JA)",
    "family": "moonshine",
    "languages": [
     "ja"
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "moonshine-base-ja",
-   "description": "Low-latency Japanese Moonshine for everyday notes.",
-   "param_count": 61514019,
-   "wer": 10.5,
-   "rtfx": 2767,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-ja-ONNX",
+   "description": "Moonshine v2 streaming Japanese (tiny): live text as you speak, fully on-device.",
+   "param_count": 27015361,
+   "wer": 11.96,
+   "rtfx": 2641,
    "available_quantizations": [
     "",
-    "fp16",
-    "q4",
-    "bnb4",
-    "int8",
-    "uint8",
-    "q4f16"
+    "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 405216664,
-    "fp16": 205015454,
-    "q4": 171619681,
-    "bnb4": 167294497,
-    "int8": 106131563,
-    "uint8": 106131563,
-    "q4f16": 105536647
+    "": 109422678,
+    "int8": 50627634
+   }
+  },
+  {
+   "id": "moonshine-streaming-small-ja",
+   "display_name": "Moonshine v2 Small (JA)",
+   "family": "moonshine",
+   "languages": [
+    "ja"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-small-ja-ONNX",
+   "description": "Moonshine v2 streaming Japanese (small): live text as you speak, fully on-device.",
+   "param_count": 112872249,
+   "wer": 6.73,
+   "rtfx": 894,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 453426474,
+    "int8": 165435924
    }
   },
   {
@@ -1821,7 +1807,7 @@
    "supports_language_detection": false,
    "supports_realtime": true,
    "onnx_model_name": "moonshine-base-ko",
-   "description": "Low-latency Korean Moonshine with more headroom than Tiny.",
+   "description": "Low-latency Korean Moonshine with more headroom than Tiny. Moonshine Community License (non-commercial; free commercial use under US$1M revenue).",
    "param_count": 61514019,
    "wer": 10.5,
    "rtfx": 2767,
@@ -1854,7 +1840,7 @@
    "supports_language_detection": false,
    "supports_realtime": true,
    "onnx_model_name": "moonshine-tiny-uk",
-   "description": "Tiny Ukrainian Moonshine for fast short-form speech.",
+   "description": "Tiny Ukrainian Moonshine for fast short-form speech. Moonshine Community License (non-commercial; free commercial use under US$1M revenue).",
    "param_count": 27600000,
    "wer": 0.0,
    "rtfx": 3733,
@@ -1908,6 +1894,121 @@
     "int8": 50787894,
     "uint8": 50787894,
     "q4f16": 59860616
+   }
+  },
+  {
+   "id": "moonshine-streaming-tiny-es",
+   "display_name": "Moonshine v2 Tiny (ES)",
+   "family": "moonshine",
+   "languages": [
+    "es"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-es-ONNX",
+   "description": "Moonshine v2 streaming Spanish (tiny): live text as you speak, fully on-device.",
+   "param_count": 27015361,
+   "wer": 6.68,
+   "rtfx": 2641,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 109468407,
+    "int8": 50673363
+   }
+  },
+  {
+   "id": "moonshine-streaming-small-es",
+   "display_name": "Moonshine v2 Small (ES)",
+   "family": "moonshine",
+   "languages": [
+    "es"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-small-es-ONNX",
+   "description": "Moonshine v2 streaming Spanish (small): live text as you speak, fully on-device.",
+   "param_count": 112872249,
+   "wer": 4.8,
+   "rtfx": 894,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 453472203,
+    "int8": 165481653
+   }
+  },
+  {
+   "id": "moonshine-streaming-tiny-de",
+   "display_name": "Moonshine v2 Tiny (DE)",
+   "family": "moonshine",
+   "languages": [
+    "de"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-de-ONNX",
+   "description": "Moonshine v2 streaming German (tiny): live text as you speak, fully on-device.",
+   "param_count": 27015361,
+   "wer": 9.78,
+   "rtfx": 2641,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 109580378,
+    "int8": 50785334
+   }
+  },
+  {
+   "id": "moonshine-streaming-small-de",
+   "display_name": "Moonshine v2 Small (DE)",
+   "family": "moonshine",
+   "languages": [
+    "de"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-small-de-ONNX",
+   "description": "Moonshine v2 streaming German (small): live text as you speak, fully on-device.",
+   "param_count": 112872249,
+   "wer": 5.33,
+   "rtfx": 894,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 453584174,
+    "int8": 165593624
+   }
+  },
+  {
+   "id": "moonshine-streaming-tiny-tl",
+   "display_name": "Moonshine v2 Tiny (TL)",
+   "family": "moonshine",
+   "languages": [
+    "tl"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/moonshine-streaming-tiny-tl-ONNX",
+   "description": "Moonshine v2 streaming Tagalog (tiny): live text as you speak. Early checkpoint published while still training, so expect rougher accuracy.",
+   "param_count": 27015361,
+   "wer": 19.07,
+   "rtfx": 2641,
+   "available_quantizations": [
+    "",
+    "int8"
+   ],
+   "size_bytes_by_quantization": {
+    "": 109539877,
+    "int8": 50744833
    }
   },
   {
@@ -2279,6 +2380,30 @@
    }
   },
   {
+   "id": "audio8-asr-infinite",
+   "display_name": "Audio8-ASR Infinite",
+   "family": "audio8",
+   "languages": [
+    "zh",
+    "en"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/Audio8-ASR-Infinite-ONNX",
+   "description": "Audio8-ASR Infinite (Edge0): causal Voxtral-style audio tower + Qwen2.5-3B decoder (~4.1B), natively streaming Chinese/English with unbounded-length audio in constant memory (rolling KV caches) and a built-in end-of-turn signal. One token per 80 ms at 480 ms delay. Set the spoken language (no auto-detect). Heavy: CPU only, needs a fast multi-core machine; int8 is the more accurate tier. Apache-2.0.",
+   "param_count": 4086355776,
+   "wer": 0,
+   "rtfx": 0,
+   "available_quantizations": [
+    "int8",
+    "int4"
+   ],
+   "size_bytes_by_quantization": {
+    "int8": 5374259171,
+    "int4": 3272801706
+   }
+  },
+  {
    "id": "sense-voice-small",
    "display_name": "SenseVoice Small",
    "family": "sense_voice",
@@ -2352,8 +2477,8 @@
    }
   },
   {
-   "id": "nemo-parakeet-tdt-0.6b-v3",
-   "display_name": "NeMo Parakeet TDT 0.6B v3",
+   "id": "nemo-parakeet-tdt-0.6b-ultra",
+   "display_name": "NeMo Parakeet Ultra 0.6B",
    "family": "nemo",
    "languages": [
     "bg",
@@ -2384,10 +2509,10 @@
    ],
    "supports_language_detection": false,
    "supports_realtime": true,
-   "onnx_model_name": "nemo-parakeet-tdt-0.6b-v3",
-   "description": "Fast Parakeet for 25 European languages.",
+   "onnx_model_name": "Masterx/parakeet-tdt-0.6b-ultra-onnx",
+   "description": "Fast, accurate Parakeet for 25 European languages.",
    "param_count": 626983558,
-   "wer": 5.66,
+   "wer": 5.32,
    "rtfx": 6098,
    "available_quantizations": [
     "",
@@ -2395,9 +2520,54 @@
     "int8"
    ],
    "size_bytes_by_quantization": {
-    "": 2549851683,
-    "int8": 670386003,
-    "fp16": 1275609535
+    "": 2549711919,
+    "int8": 670385218,
+    "fp16": 1275514181
+   }
+  },
+  {
+   "id": "nemo-parakeet-tdt-0.6b-redux",
+   "display_name": "NeMo Parakeet Redux 0.6B",
+   "family": "nemo",
+   "languages": [
+    "bg",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "et",
+    "fi",
+    "fr",
+    "hr",
+    "hu",
+    "it",
+    "lt",
+    "lv",
+    "mt",
+    "nl",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sk",
+    "sl",
+    "sv",
+    "uk"
+   ],
+   "supports_language_detection": false,
+   "supports_realtime": true,
+   "onnx_model_name": "Masterx/parakeet-tdt-0.6b-redux-onnx",
+   "description": "Tiny ternary Parakeet for 25 European languages on CPU.",
+   "param_count": 626983558,
+   "wer": 6.05,
+   "rtfx": 0.0,
+   "available_quantizations": [
+    "int4"
+   ],
+   "size_bytes_by_quantization": {
+    "int4": 416394213
    }
   },
   {

@@ -82,6 +82,8 @@ pub enum AudioFeedbackError {
     #[error("failed to decode sound: {0}")]
     Decode(#[from] rodio::decoder::DecoderError),
 
+    // Only the Windows Communications-category renderer constructs this.
+    #[cfg_attr(not(windows), allow(dead_code))]
     #[error("failed to manage communications audio: {0}")]
     Communication(String),
 }

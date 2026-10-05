@@ -33,6 +33,21 @@ fn catalog_model_id(model_id: &str) -> Option<&'static str> {
     catalog::find(model_id).map(|entry| entry.id)
 }
 
+/// The Audio8 0.1B files WinSTT fetches, at their upstream paths (which double as the local
+/// layout — `audio8_01.rs` reads the repo exactly as `hf download --local-dir` leaves it).
+/// The byte total of this list is the catalog row's `size_bytes`; the two must move together.
+const AUDIO8_01_FILES: &[&str] = &[
+    "runtime_manifest.json",
+    "slow_ar_int8.onnx",
+    "slow_ar_int8.onnx.data",
+    "fast_ar_int8.onnx",
+    "fast_ar_int8.onnx.data",
+    "codec_decoder_fp16.onnx",
+    "codec_decoder_fp16.onnx.data",
+    "tokenizer/tokenizer.json",
+    "reference_codes.npy",
+];
+
 fn kokoro_voice_id(voice_id: &str) -> Option<&'static str> {
     voice_by_id(voice_id).map(|voice| voice.id)
 }
@@ -225,6 +240,11 @@ impl TtsDownloadManager {
         if matches!(entry.engine, TtsEngineId::OmniVoice) {
             return Self::omnivoice_manifest(dir);
         }
+        // Audio8 0.1B is one repo but a NON-FLAT layout (tokenizer/ subdir) plus two
+        // non-graph runtime files, so it emits fully-qualified pairs of its own.
+        if entry.id == "audio8-tts-0.1b" {
+            return Self::audio8_01_manifest(dir);
+        }
         // (hf_path, local_relative)
         let pairs: Vec<(String, String)> = match entry.engine {
             TtsEngineId::Kitten => {
@@ -338,20 +358,26 @@ impl TtsDownloadManager {
             .collect()
     }
 
-    /// Chatterbox manifest — the 4 graphs (each with its external-data sidecar) + tokenizer
-    /// + the per-export config JSONs, plus the shared `default_voice.wav`.
-    ///
-    /// Two things make this multi-repo / per-graph rather than one suffix + one repo:
-    ///   * every export picks its quant suffix PER GRAPH (nano MIXES q4 / fp16 / q4f16), so
-    ///     the filenames come from `catalog::chatterbox_graph_set` — the SAME function the
-    ///     engine loads through, so the fetched files and the opened sessions cannot drift;
-    ///   * only `onnx-community/chatterbox-multilingual-ONNX` publishes a default reference
-    ///     clip, so turbo/nano fetch `default_voice.wav` from there. Without it the
-    ///     "Default voice" entry (the non-cloning affordance) has nothing to condition on.
-    ///
-    /// The config JSONs are tiny (< 2 KB total) and document the export's `kv_cache_dtype`
-    /// / layer count, which is exactly what the engine introspects — worth keeping beside
-    /// the weights for diagnosis.
+    /// Audio8 0.1B: Audio8's own INT8 ONNX release. Fetches exactly the files its
+    /// `onnx_runtime_0_1b_int8` runtime needs for synthesis — the two AR graphs and the
+    /// codec decoder (each with its external-data sidecar), the runtime manifest, the
+    /// tokenizer, and the PACKAGED reference voice that makes the model usable without a
+    /// clip. `registration/codec_encoder_fp16.onnx` (+414 MB) is skipped: it only exists to
+    /// encode NEW reference clips, and this row does not expose cloning.
+    fn audio8_01_manifest(dir: &Path) -> Vec<(String, PathBuf)> {
+        const REPO: &str = "Audio8/audio8-TTS-0.1B-ONNX-INT8";
+        AUDIO8_01_FILES
+            .iter()
+            .map(|path| {
+                (
+                    format!("https://huggingface.co/{REPO}/resolve/main/{path}"),
+                    dir.join(path),
+                )
+            })
+            .collect()
+    }
+
+    /// Chatterbox manifest: model graphs and metadata plus the shared default voice.
     fn chatterbox_manifest(
         entry: &TtsModelEntry,
         quant: &str,
@@ -1005,6 +1031,17 @@ mod tests {
     /// One row per file, kept off rustfmt so the table reads as data.
     #[rustfmt::skip]
     const BLOB_BYTES: &[(&str, &str, u64)] = &[
+        // Audio8/audio8-TTS-0.1B-ONNX-INT8 (blobs API, 2026-08-30)
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "runtime_manifest.json", 1_424),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "slow_ar_int8.onnx", 4_820_700),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "slow_ar_int8.onnx.data", 133_471_232),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "fast_ar_int8.onnx", 511_306),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "fast_ar_int8.onnx.data", 36_718_592),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "codec_decoder_fp16.onnx", 594_319),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "codec_decoder_fp16.onnx.data", 260_741_440),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "tokenizer/tokenizer.json", 5_852_397),
+        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "reference_codes.npy", 8_928),
+
         // Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4
         ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "slow_ar_int4.onnx", 900_218),
         ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "slow_ar_int4.onnx.data", 290_267_090),

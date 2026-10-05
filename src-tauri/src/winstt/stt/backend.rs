@@ -1186,6 +1186,7 @@ pub(crate) fn engine_kind_for(
         kind,
         EngineKind::WhisperHf
             | EngineKind::Moonshine
+            | EngineKind::MoonshineStreaming
             | EngineKind::SenseVoiceCtc
             | EngineKind::NemoAed
             | EngineKind::NemoCtc
@@ -1198,6 +1199,7 @@ pub(crate) fn engine_kind_for(
             | EngineKind::VibeVoiceAsr
             | EngineKind::Audio8Asr
             | EngineKind::ArkAsr
+            | EngineKind::Audio8Infinite
             | EngineKind::KaldiTransducer
             | EngineKind::KaldiCtc
             | EngineKind::DolphinCtc
@@ -1274,7 +1276,7 @@ fn build_segmentation_vad(app: &AppHandle) -> Result<SileroVad> {
     let path = app
         .path()
         .resolve(
-            "resources/models/silero_vad_v4.onnx",
+            crate::audio_toolkit::vad::SILERO_VAD_RESOURCE,
             tauri::path::BaseDirectory::Resource,
         )
         .map_err(|e| anyhow::anyhow!("resolve VAD path: {e}"))?;

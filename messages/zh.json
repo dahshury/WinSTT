@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "唤醒词触发后，录音机会等待你开始说话这么长时间。如果不说，门会关闭，你必须再次说出唤醒词。防止几分钟后的随机噪声触发意外录音。",
     "speakerDiarization": "说话人区分",
     "speakerDiarizationCaption": "在长录音中按说话人为文本上色",
-    "speakerDiarizationTooltip": "启用后，每条完成的语句都会经过设备端说话人模型（pyannote-segmentation-3.0 + wespeaker-resnet34-LM，首次使用下载约 32 MB，无需 torch）。实时浮层中的文字按说话人着色；说话人 ID 在整个会话期间保持稳定。",
+    "speakerDiarizationTooltip": "启用后，每条完成的语句都会经过设备端说话人模型（NVIDIA Nemotron-3-Diarization，首次使用下载约 104 MB，无需 torch）。实时浮层中的文字按说话人着色；说话人 ID 在整个会话期间保持稳定。",
     "loopbackDevice": "回环设备",
     "loopbackDeviceCaption": "要捕获的 WASAPI 回环设备",
     "loopbackDeviceTooltip": "选择要捕获的音频输出设备。应用将转录通过该设备播放的所有音频。",

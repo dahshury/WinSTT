@@ -29,11 +29,11 @@ pub struct ModelEntry {
     pub supports_realtime: bool,
 }
 
-/// The full STT catalog: 75 shipped models. Verbatim from `catalog.json` (id / display_name /
+/// The full STT catalog: 84 shipped models. Verbatim from `catalog.json` (id / display_name /
 /// family / onnx_model_name / available_quantizations / param_count / supports_realtime).
 ///
-/// Counts (asserted in tests): whisper 16, moonshine 10, nemo 29, kaldi 5, gigaam 2,
-/// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2, vibevoice 1, audio8 3.
+/// Counts (asserted in tests): whisper 16, moonshine 17, nemo 30, kaldi 5, gigaam 2,
+/// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2, vibevoice 1, audio8 4.
 pub const STT_CATALOG: &[ModelEntry] = &[
     // ── Whisper family (15) ──────────────────────────────────────────────────────────────
     ModelEntry {
@@ -185,25 +185,41 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         param_count: 473_840_689,
         supports_realtime: true,
     },
-    // ── Moonshine family (10) ────────────────────────────────────────────────────────────
+    // ── Moonshine family (17) ────────────────────────────────────────────────────────────
+    // Moonshine v2 streaming ("Ergodic Streaming Encoder", sliding-window attention): Masterx
+    // five-graph ONNX re-exports of moonshine-ai/moonshine-streaming-* (frontend / encoder /
+    // adapter / cross_kv / decoder_kv), driven incrementally by `MoonshineStreamingEngine`.
+    // LICENSE: MIT (all v2 checkpoints, English and multilingual). They replace the v1
+    // tiny / base / ar / vi / zh / ja rows (old ids migrate via `canonical_model_id`).
     ModelEntry {
-        id: "moonshine-tiny",
-        display_name: "Moonshine Tiny",
+        id: "moonshine-streaming-tiny",
+        display_name: "Moonshine v2 Tiny",
         family: Family::Moonshine,
-        onnx_model_name: "moonshine-tiny",
-        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
-        param_count: 27_092_835,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 44_054_721,
         supports_realtime: true,
     },
     ModelEntry {
-        id: "moonshine-base",
-        display_name: "Moonshine Base",
+        id: "moonshine-streaming-small",
+        display_name: "Moonshine v2 Small",
         family: Family::Moonshine,
-        onnx_model_name: "moonshine-base",
-        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
-        param_count: 61_514_019,
+        onnx_model_name: "Masterx/moonshine-streaming-small-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 140_135_225,
         supports_realtime: true,
     },
+    ModelEntry {
+        id: "moonshine-streaming-medium",
+        display_name: "Moonshine v2 Medium",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-medium-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 265_898_113,
+        supports_realtime: true,
+    },
+    // Moonshine v1 (non-streaming) Korean: no v2 checkpoint. LICENSE: Moonshine Community
+    // License (non-commercial; free commercial use under US$1M annual revenue).
     ModelEntry {
         id: "moonshine-tiny-ko",
         display_name: "Moonshine Tiny (KO)",
@@ -214,41 +230,53 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         supports_realtime: true,
     },
     ModelEntry {
-        id: "moonshine-tiny-ar",
-        display_name: "Moonshine Tiny (AR)",
+        id: "moonshine-streaming-tiny-ar",
+        display_name: "Moonshine v2 Tiny (AR)",
         family: Family::Moonshine,
-        onnx_model_name: "moonshine-tiny-ar",
-        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
-        param_count: 27_092_835,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-ar-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
         supports_realtime: true,
     },
     ModelEntry {
-        id: "moonshine-tiny-vi",
-        display_name: "Moonshine Tiny (VI)",
+        id: "moonshine-streaming-tiny-vi",
+        display_name: "Moonshine v2 Tiny (VI)",
         family: Family::Moonshine,
-        onnx_model_name: "moonshine-tiny-vi",
-        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
-        param_count: 27_092_835,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-vi-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
         supports_realtime: true,
     },
     ModelEntry {
-        id: "moonshine-base-zh",
-        display_name: "Moonshine Base (ZH)",
+        id: "moonshine-streaming-tiny-zh",
+        display_name: "Moonshine v2 Tiny (ZH)",
         family: Family::Moonshine,
-        onnx_model_name: "moonshine-base-zh",
-        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
-        param_count: 61_514_019,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-zh-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
         supports_realtime: true,
     },
     ModelEntry {
-        id: "moonshine-base-ja",
-        display_name: "Moonshine Base (JA)",
+        id: "moonshine-streaming-tiny-ja",
+        display_name: "Moonshine v2 Tiny (JA)",
         family: Family::Moonshine,
-        onnx_model_name: "moonshine-base-ja",
-        available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
-        param_count: 61_514_019,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-ja-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
         supports_realtime: true,
     },
+    ModelEntry {
+        id: "moonshine-streaming-small-ja",
+        display_name: "Moonshine v2 Small (JA)",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-small-ja-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 112_872_249,
+        supports_realtime: true,
+    },
+    // Moonshine v1 Korean / Ukrainian / French: no v2 checkpoint. LICENSE: Korean and Ukrainian
+    // are under the Moonshine Community License (non-commercial; free commercial use under
+    // US$1M annual revenue); the French export is published as MIT.
     ModelEntry {
         id: "moonshine-base-ko",
         display_name: "Moonshine Base (KO)",
@@ -274,6 +302,52 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         onnx_model_name: "moonshine-tiny-fr",
         available_quantizations: &["", "fp16", "q4", "bnb4", "int8", "uint8", "q4f16"],
         param_count: 27_600_000,
+        supports_realtime: true,
+    },
+    // Moonshine v2 streaming, languages v1 never covered (MIT).
+    ModelEntry {
+        id: "moonshine-streaming-tiny-es",
+        display_name: "Moonshine v2 Tiny (ES)",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-es-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "moonshine-streaming-small-es",
+        display_name: "Moonshine v2 Small (ES)",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-small-es-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 112_872_249,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "moonshine-streaming-tiny-de",
+        display_name: "Moonshine v2 Tiny (DE)",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-de-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "moonshine-streaming-small-de",
+        display_name: "Moonshine v2 Small (DE)",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-small-de-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 112_872_249,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "moonshine-streaming-tiny-tl",
+        display_name: "Moonshine v2 Tiny (TL)",
+        family: Family::Moonshine,
+        onnx_model_name: "Masterx/moonshine-streaming-tiny-tl-ONNX",
+        available_quantizations: &["", "int8"],
+        param_count: 27_015_361,
         supports_realtime: true,
     },
     // ── Cohere family (2) ────────────────────────────────────────────────────────────────
@@ -421,6 +495,23 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         param_count: 4_063_494_332,
         supports_realtime: true,
     },
+    // Audio8-ASR-Infinite (Edge0) — NOT an `arkasr` sibling despite the maker family: a NATIVE
+    // STREAMING zh/en model (Voxtral-Realtime causal audio tower + Qwen2.5-3B decoder with delay
+    // modulation + semantic end-of-turn heads) on `EngineKind::Audio8Infinite`. Upstream ships
+    // safetensors only; this row points at OUR export (tools/onnx/audio8_infinite_export.py).
+    // Added ALONGSIDE the arkasr rows rather than superseding them: they cover 7 / 19 languages,
+    // this one zh + en. Apache-2.0. The repo also ships an fp16 tier (token-identical to torch),
+    // but it decodes at RTF ~20 on CPU and DML is pinned off for this engine, so it is not offered;
+    // int8 (MatMulNBits 8-bit) is the more accurate tier and measured no slower than int4.
+    ModelEntry {
+        id: "audio8-asr-infinite",
+        display_name: "Audio8-ASR Infinite",
+        family: Family::Audio8,
+        onnx_model_name: "Masterx/Audio8-ASR-Infinite-ONNX",
+        available_quantizations: &["int8", "int4"],
+        param_count: 4_086_355_776,
+        supports_realtime: true,
+    },
     // ── SenseVoice family (1) ────────────────────────────────────────────────────────────
     ModelEntry {
         id: "sense-voice-small",
@@ -438,7 +529,8 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         family: Family::Nemo,
         onnx_model_name: "nemo-parakeet-ctc-0.6b",
         // NO fp16: the v1-era export converts (CPU-correct) but produces garbage on the DML EP
-        // at fp16 (the lite-whisper disease); fp16-on-CPU is pointless. tdt-v3 carries fp16.
+        // at fp16 (the lite-whisper disease); fp16-on-CPU is pointless. The tdt (Ultra)
+        // export carries fp16.
         available_quantizations: &["", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,
@@ -449,19 +541,35 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         family: Family::Nemo,
         onnx_model_name: "nemo-parakeet-rnnt-0.6b",
         // NO fp16: the v1-era export converts (CPU-correct) but produces garbage on the DML EP
-        // at fp16 (the lite-whisper disease); fp16-on-CPU is pointless. tdt-v3 carries fp16.
+        // at fp16 (the lite-whisper disease); fp16-on-CPU is pointless. The tdt (Ultra)
+        // export carries fp16.
         available_quantizations: &["", "int8"],
         param_count: 600_000_000,
         supports_realtime: true,
     },
+    // Parakeet Ultra (moondream, CC-BY-4.0) REPLACED Parakeet TDT 0.6B v3 (2026-10): a post-trained
+    // v3 with the same architecture, tokenizer and 25 languages, better WER everywhere. The old id
+    // `nemo-parakeet-tdt-0.6b-v3` migrates here via `canonical_model_id`. Our export swaps the Ultra
+    // weights into the istupakov v3 graph (byte-identical IO + DirectML behaviour), so ONE repo
+    // carries all three tiers in the istupakov file layout — no QUANT_REPO_OVERRIDES entry.
     ModelEntry {
-        id: "nemo-parakeet-tdt-0.6b-v3",
-        display_name: "NeMo Parakeet TDT 0.6B v3",
+        id: "nemo-parakeet-tdt-0.6b-ultra",
+        display_name: "NeMo Parakeet Ultra 0.6B",
         family: Family::Nemo,
-        onnx_model_name: "nemo-parakeet-tdt-0.6b-v3",
-        // fp16 = Masterx/parakeet-tdt-0.6b-v3-fp16-onnx (QUANT_REPO_OVERRIDES). Measured
-        // 2026-07-11: 231 ms vs fp32 459 ms on DirectML (66 s clip), transcripts byte-identical.
+        onnx_model_name: "Masterx/parakeet-tdt-0.6b-ultra-onnx",
         available_quantizations: &["", "fp16", "int8"],
+        param_count: 626_983_558,
+        supports_realtime: true,
+    },
+    // Parakeet Redux (moondream, CC-BY-4.0): the 1.58-bit (ternary) Parakeet v3 — the lite/CPU
+    // row. The ternary encoder ships as 4-bit `MatMulNBits` blocks that reproduce -1/0/+1 exactly
+    // (hence the `int4` tier, the only one); same TDT graph contract as Ultra.
+    ModelEntry {
+        id: "nemo-parakeet-tdt-0.6b-redux",
+        display_name: "NeMo Parakeet Redux 0.6B",
+        family: Family::Nemo,
+        onnx_model_name: "Masterx/parakeet-tdt-0.6b-redux-onnx",
+        available_quantizations: &["int4"],
         param_count: 626_983_558,
         supports_realtime: true,
     },

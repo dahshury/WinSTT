@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use log::{LevelFilter, Metadata, Record};
-use winstt_app_lib::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
+use winstt_app_lib::audio_toolkit::vad::{SILERO_VAD_RESOURCE, SileroVad, VAD_SPEECH_THRESHOLD};
 use winstt_app_lib::winstt::stt::{
     Accelerator, EngineConfig, EngineKind, Quantization, ResolvedModel, SttError,
     TranscribeOptions, Transcriber, WhisperEngine,
@@ -270,6 +270,20 @@ fn resolved_from_snapshot_dir(
             )?;
             insert_existing(&mut files, "tokenizer", dir.join("tokenizer.json"))?;
         }
+        // Audio8-ASR-Infinite: point `STT_BENCH_SNAPSHOT_DIR` at a `Masterx/Audio8-ASR-Infinite-ONNX`
+        // folder (flat root, `_`-separated quant suffix, precision-independent host tables).
+        EngineKind::Audio8Infinite => {
+            let graph = |stem: &str| match effective_quant {
+                Quantization::Default => dir.join(format!("{stem}.onnx")),
+                quant => dir.join(format!("{stem}_{}.onnx", quant.suffix())),
+            };
+            insert_existing(&mut files, "encoder", graph("audio_encoder"))?;
+            insert_existing(&mut files, "decoder", graph("decoder"))?;
+            insert_existing(&mut files, "embed_tokens", dir.join("embed_tokens.bf16"))?;
+            insert_existing(&mut files, "ada_scale", dir.join("ada_scale.f32"))?;
+            insert_existing(&mut files, "runtime", dir.join("runtime.json"))?;
+            insert_existing(&mut files, "tokenizer", dir.join("tokenizer.json"))?;
+        }
         // Audio8-ASR: point `STT_BENCH_SNAPSHOT_DIR` at a `model_bundle/` directory (the upstream
         // layout, `_`-separated quant suffixes, host-side NumPy weights under `weights/`). Lets the
         // engine be exercised against a hand-downloaded bundle without going through the resolver.
@@ -398,6 +412,10 @@ fn run_catalog_mode(cat_id: &str) {
     // family AND fp16. Without it, fp16 whisper encoders fail to commit (graph-fusion error), so
     // catalog-mode fp16 A/B runs couldn't load at all.
     let whisper_fp16_workaround = family_slug == "whisper" && effective_quant == Quantization::Fp16;
+    // STT_BENCH_LANGUAGE=zh|en|...: forced language for language-prompted models (unset = auto).
+    let bench_language = std::env::var("STT_BENCH_LANGUAGE")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
     let cfg = EngineConfig {
         model_name: cat_id.to_string(),
         family: family_slug.to_string(),
@@ -405,7 +423,7 @@ fn run_catalog_mode(cat_id: &str) {
         resolved,
         providers: providers_from_env(),
         whisper_fp16_workaround,
-        language: None,
+        language: bench_language.clone(),
     };
     let build_started = Instant::now();
     let mut engine = match build_engine(cfg) {
@@ -449,10 +467,7 @@ fn run_catalog_mode(cat_id: &str) {
     }
     let profile_only = std::env::var("STT_BENCH_PROFILE_ONLY").is_ok();
     let mut segment_vad = if segment {
-        let vad_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("models")
-            .join("silero_vad_v4.onnx");
+        let vad_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(SILERO_VAD_RESOURCE);
         let started = Instant::now();
         match SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD) {
             Ok(vad) => {
@@ -475,7 +490,10 @@ fn run_catalog_mode(cat_id: &str) {
             n => format!("warm{n}"),
         };
         let t = Instant::now();
-        let opts = TranscribeOptions::default();
+        let opts = TranscribeOptions {
+            language: bench_language.clone(),
+            ..Default::default()
+        };
         eprintln!("pass_start : pass={pass} label={label}");
         let text = if segment {
             match segment_vad.as_mut() {

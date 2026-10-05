@@ -1,17 +1,27 @@
-// Speaker diarization runtime — Cascade (pyannote seg-3.0 + WeSpeaker) with the
-// WhoSpeaksLive clustering backend, ported from `examples/diarization-playground`.
+// Speaker diarization runtime — NVIDIA Nemotron-3-Diarization (streaming
+// Sortformer, up to 8 speakers, OpenMDW-1.1) on the `joosthel` ONNX export.
 //
 // `DiarizationManager` owns the whole lifecycle:
-//   * the runtime toggle (`request_diarization_toggle`): downloads the two ONNX
-//     models on first enable (~32 MB via the hf-hub cache), builds + warms the CPU
-//     sessions on a worker, and emits the `stt:diarization-toggle-*` lifecycle
-//     events the renderer's toggle store listens for (started → completed/failed;
-//     a failure reverts the optimistic settings toggle in the renderer).
+//   * the runtime toggle (`request_diarization_toggle`): downloads the int8 step
+//     graph on first enable (~104 MB via the hf-hub cache, pinned revision), builds
+//     + warms the CPU session on a worker, and emits the `stt:diarization-toggle-*`
+//     lifecycle events the renderer's toggle store listens for (started →
+//     completed/failed; a failure reverts the optimistic settings toggle in the
+//     renderer).
 //   * the feed path: Listen mode's loopback consumer pushes 16 kHz frames through
-//     a bounded channel to a dedicated worker thread that runs the cascade engine
-//     off the audio thread and publishes a merged speaker timeline snapshot.
+//     a bounded channel to a dedicated worker thread that runs the streaming engine
+//     off the audio thread and publishes the speaker timeline snapshot.
 //   * span queries: `dominant_speaker_for_span` labels each committed caption row
 //     with the majority speaker over its time span.
+//
+// Nemotron replaced the pyannote-seg-3.0 + WeSpeaker + online-clustering cascade:
+// one end-to-end model whose arrival-order speaker cache keeps identities stable
+// for the whole session (no clustering heuristics) and scores overlapped speech.
+// On 13 A/B clips (the 2-speaker playground pair + 11 MSDWild sessions, 2–10
+// speakers, five languages) the Listen profile cut pooled DER from 43.5 % to 18.2 %
+// (collar 0.25) and won 12 of 13; the one loss is a 10-speaker clip, above the
+// model's 8-speaker cap. It costs ~2× the cascade's RAM (~190 MB vs ~95 MB peak
+// working set) but ~30 % less CPU (RTF 0.20 vs 0.32 on two threads).
 //
 // Toggle idempotence mirrors the old server's `_diarization_toggle_target` guard
 // (memory: project_listen_mode_architecture): a repeat request for an in-flight
@@ -19,13 +29,11 @@
 // renderer's double-fire (on-connect push + settings change) would rebuild the
 // sessions twice and the spurious failure would bounce the optimistic toggle.
 
-mod cascade;
-mod fbank;
-mod memory;
+mod nemotron;
 
-// `CascadeDiarizer` is re-exported for the offline E2E harness
+// The engine is re-exported for the offline E2E harness
 // (src-tauri/examples/diarize_e2e.rs); in-app consumers go through the manager.
-pub use cascade::{CascadeDiarizer, SpeakerSegment};
+pub use nemotron::{MAX_SPEAKERS, NemotronDiarizer, SpeakerSegment, StreamingProfile};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,12 +44,26 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::winstt::sync_ext::MutexExt;
 
-/// HF sources for the two cascade models (the playground's
-/// `tools/download_models.py` primaries, both resolved through the hf-hub cache).
-pub const SEG_REPO: (&str, &str) = ("onnx-community", "pyannote-segmentation-3.0");
-pub const SEG_FILE: &str = "onnx/model.onnx";
-pub const EMB_REPO: (&str, &str) = ("csukuangfj", "speaker-embedding-models");
-pub const EMB_FILE: &str = "wespeaker_en_voxceleb_resnet34.onnx";
+/// HF source of the ONNX export (`joosthel/Nemotron-3-Diarization-ONNX`, OpenMDW-1.1),
+/// pinned to a commit so an upstream re-export can never swap the graph under us.
+pub const MODEL_REPO: (&str, &str) = ("joosthel", "Nemotron-3-Diarization-ONNX");
+pub const MODEL_REVISION: &str = "4a911fc3ca821b76a99fffd5ce5135bd1efca540";
+/// Per-channel dynamic-int8 step graph (104 MB; DER within 0.03 of fp32 on AMI-test).
+pub const MODEL_FILE: &str = "model.int8.onnx";
+/// Silence embedding + geometry constants (`np.savez`).
+pub const CONSTANTS_FILE: &str = "constants.npz";
+/// Repos the retired pyannote-seg-3.0 + WeSpeaker cascade downloaded. Nothing loads
+/// them any more; they stay listed so cleanup still clears caches left by older builds.
+pub const LEGACY_REPOS: [(&str, &str); 2] = [
+    ("onnx-community", "pyannote-segmentation-3.0"),
+    ("csukuangfj", "speaker-embedding-models"),
+];
+
+/// Listen-mode chunk geometry (see `StreamingProfile::LIVE`).
+const LIVE_PROFILE: StreamingProfile = StreamingProfile::LIVE;
+/// Intra-op threads for the step session: keeps RTF far below 1 without starving
+/// the STT engine that shares the CPU.
+const INTRA_THREADS: usize = 2;
 
 /// Bounded audio feed: 30 ms frames × 256 ≈ 7.7 s of backlog before frames drop.
 const FEED_CHANNEL_CAP: usize = 256;
@@ -69,7 +91,7 @@ pub struct DiarizationManager {
     active: AtomicBool,
     engine: Mutex<Option<EngineHandle>>,
     toggle: Mutex<ToggleState>,
-    /// Latest merged timeline snapshot published by the worker.
+    /// Latest timeline snapshot published by the worker.
     timeline: Arc<Mutex<Vec<SpeakerSegment>>>,
 }
 
@@ -89,7 +111,7 @@ impl DiarizationManager {
         self.active.load(Ordering::Acquire)
     }
 
-    /// Start a fresh diarization session (Listen start): clears clustering state,
+    /// Start a fresh diarization session (Listen start): clears the speaker cache,
     /// the session clock, and the published timeline.
     pub fn begin_session(&self) {
         self.timeline.lock_recover().clear();
@@ -125,7 +147,7 @@ impl DiarizationManager {
             return None;
         }
         let timeline = self.timeline.lock_recover();
-        cascade::dominant_speaker(&timeline, start, end)
+        nemotron::dominant_speaker(&timeline, start, end)
     }
 
     /// When `[start, end]` already contains two distinct labeled speakers (each
@@ -137,10 +159,10 @@ impl DiarizationManager {
             return None;
         }
         let timeline = self.timeline.lock_recover();
-        cascade::span_turn_boundary(&timeline, start, end, min_each_sec)
+        nemotron::span_turn_boundary(&timeline, start, end, min_each_sec)
     }
 
-    /// True while a listen session is running — the only time the cascade can
+    /// True while a listen session is running — the only time the diarizer can
     /// actually consume audio. Resolved lazily off managed state so the toggle
     /// surface stays decoupled from the loopback manager's construction order.
     fn listen_session_active(&self) -> bool {
@@ -153,11 +175,11 @@ impl DiarizationManager {
     /// emitting the `stt:diarization-toggle-*` lifecycle events. Idempotent for
     /// both committed and in-flight state.
     ///
-    /// The cascade models are a LISTEN-session runtime: enabling the toggle
+    /// The diarization model is a LISTEN-session runtime: enabling the toggle
     /// outside a running session only ARMS it (acknowledged immediately so the
     /// renderer's spinner resolves) — the engine builds when a listen session
     /// starts (`ensure_active_for_session`) and tears down when it ends, so the
-    /// models are never resident while the app sits in PTT/toggle/wakeword mode.
+    /// model is never resident while the app sits in PTT/toggle/wakeword mode.
     pub fn request_toggle(self: &Arc<Self>, enabled: bool) {
         if enabled && !self.is_active() && !self.listen_session_active() {
             emit_started(&self.app, enabled);
@@ -244,13 +266,19 @@ impl DiarizationManager {
         if self.is_active() {
             return Ok(());
         }
-        let (seg_path, emb_path) = download_models()?;
-        let mut engine = CascadeDiarizer::new(&seg_path, &emb_path)
-            .map_err(|e| format!("model_corrupt: {e}"))?;
+        let (model_path, constants_path) = download_models()?;
+        let mut engine = NemotronDiarizer::new(
+            &model_path,
+            &constants_path,
+            LIVE_PROFILE,
+            crate::winstt::stt::Accelerator::Cpu,
+            INTRA_THREADS,
+        )
+        .map_err(|e| format!("model_corrupt: {e}"))?;
         log::info!(
-            "[diarize] cascade ready (seg={}, emb={})",
-            seg_path.display(),
-            emb_path.display()
+            "[diarize] nemotron ready (model={}, input latency {:.2}s)",
+            model_path.display(),
+            LIVE_PROFILE.latency_sec()
         );
 
         let (tx, rx) = std::sync::mpsc::sync_channel::<FeedMsg>(FEED_CHANNEL_CAP);
@@ -288,24 +316,24 @@ impl Drop for DiarizationManager {
     }
 }
 
-/// The engine worker: drain the feed, process every ready window, publish the
-/// merged timeline. Runs off the audio thread; inference latency here only delays
-/// speaker labels, never audio capture or captions.
+/// The engine worker: drain the feed, run every ready chunk, publish the timeline.
+/// Runs off the audio thread; inference latency here only delays speaker labels,
+/// never audio capture or captions.
 fn engine_loop(
-    engine: &mut CascadeDiarizer,
+    engine: &mut NemotronDiarizer,
     rx: &Receiver<FeedMsg>,
     timeline: &Arc<Mutex<Vec<SpeakerSegment>>>,
 ) {
     while let Ok(first) = rx.recv() {
         let mut reset = false;
         let mut stop = false;
-        let mut ingest = |msg: FeedMsg, engine: &mut CascadeDiarizer| match msg {
+        let mut ingest = |msg: FeedMsg, engine: &mut NemotronDiarizer| match msg {
             FeedMsg::Audio(chunk, abs) => engine.accept_audio(&chunk, abs),
             FeedMsg::Reset => reset = true,
             FeedMsg::Stop => stop = true,
         };
         ingest(first, engine);
-        // Batch whatever else is queued so segmentation runs per-hop, not per-frame.
+        // Batch whatever else is queued so the encoder runs per chunk, not per frame.
         while let Ok(msg) = rx.try_recv() {
             ingest(msg, engine);
         }
@@ -317,44 +345,46 @@ fn engine_loop(
             timeline.lock_recover().clear();
             continue;
         }
-        match engine.process_ready_windows() {
+        match engine.process_ready_chunks() {
             Ok(0) => {}
             Ok(n) => {
                 *timeline.lock_recover() = engine.timeline_snapshot();
                 log::debug!(
-                    "[diarize] +{n} windows (total {}, speakers {})",
-                    engine.windows_processed(),
+                    "[diarize] +{n} chunks (total {}, speakers {})",
+                    engine.chunks_processed(),
                     engine.speaker_count()
                 );
             }
             Err(err) => {
                 // Fail-soft: diarization must never take down Listen mode. Log and
                 // keep consuming; the captions simply stay unlabeled.
-                log::error!("[diarize] window processing failed: {err}");
+                log::error!("[diarize] chunk processing failed: {err}");
             }
         }
     }
 }
 
-/// Resolve both model files through the hf-hub cache (network only on a miss).
-/// Returns `(segmentation_path, embedding_path)`.
+/// Resolve the step graph + constants through the hf-hub cache at the pinned
+/// revision (network only on a miss). Returns `(model_path, constants_path)`.
 fn download_models() -> Result<(PathBuf, PathBuf), String> {
     tauri::async_runtime::block_on(async {
         use hf_hub::HFClient;
         let client = HFClient::new().map_err(|e| format!("network: hf client init: {e}"))?;
-        let download = |owner: &str, name: &str, file: &'static str| {
-            let repo = client.model(owner.to_string(), name.to_string());
+        let repo = client.model(MODEL_REPO.0.to_string(), MODEL_REPO.1.to_string());
+        let download = |file: &'static str| {
+            let repo = &repo;
             async move {
                 repo.download_file()
                     .filename(file)
+                    .revision(MODEL_REVISION)
                     .send()
                     .await
                     .map_err(|e| format!("network: download {file}: {e}"))
             }
         };
-        let seg = download(SEG_REPO.0, SEG_REPO.1, SEG_FILE).await?;
-        let emb = download(EMB_REPO.0, EMB_REPO.1, EMB_FILE).await?;
-        Ok((seg, emb))
+        let constants = download(CONSTANTS_FILE).await?;
+        let model = download(MODEL_FILE).await?;
+        Ok((model, constants))
     })
 }
 

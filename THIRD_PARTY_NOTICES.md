@@ -84,7 +84,6 @@ crate's upstream repository, linked below.
 | rayon                                     | MIT OR Apache-2.0             | <https://github.com/rayon-rs/rayon>                                                                                        |
 | num_cpus                                  | MIT OR Apache-2.0             | <https://github.com/seanmonstar/num_cpus>                                                                                  |
 | sherpa-onnx                               | Apache-2.0                    | KWS wake word + speaker-embedding diarization (linked as a shared DLL on Windows). <https://github.com/k2-fsa/sherpa-onnx> |
-| vad-rs (vendored)                         | MIT                           | Silero VAD wrapper, rev `2a412ed` vendored at `src-tauri/vendor/vad-rs` (ort pin relaxed). <https://github.com/cjpais/vad-rs> |
 | ferrous-opencc                            | Apache-2.0                    | Chinese text conversion for TTS. <https://github.com/apoint123/ferrous-opencc>                                             |
 | libloading                                | ISC                           | `dlopen` of the espeak-ng shared lib. <https://github.com/nagisa/rust_libloading>                                          |
 | enigo                                     | MIT                           | Synthetic keyboard input for paste. <https://github.com/enigo-rs/enigo>                                                    |
@@ -212,7 +211,8 @@ demand rather than shipping them in the installer.
 
 ### Silero VAD model (bundled)
 
-- `src-tauri/resources/models/silero_vad_v4.onnx` is bundled in the installer.
+- `src-tauri/resources/models/silero_vad_v6.onnx` is bundled in the installer
+  (Silero VAD v6.2, the upstream `silero_vad_16k_op15.onnx` export).
   Silero VAD — MIT, (c) Silero Team.
   <https://github.com/snakers4/silero-vad>
 
@@ -272,8 +272,17 @@ Qwen3-ASR, VibeVoice, Audio8).
 
 ### Moonshine (family: Moonshine)
 
-- Useful Sensors Moonshine ONNX variants (10 entries). — MIT.
-  <https://github.com/usefulsensors/moonshine>
+- Moonshine v2 streaming (`moonshine-streaming-*`, 13 entries: English
+  tiny/small/medium plus ar, vi, zh, ja, es, de, tl fine-tunes). Weights
+  (c) Moonshine AI (Useful Sensors) — MIT. ONNX re-exports hosted as
+  `Masterx/moonshine-streaming-*-ONNX`.
+  <https://huggingface.co/moonshine-ai>
+- Moonshine v1 language fine-tunes kept where v2 has no checkpoint (4
+  entries, ONNX exports by `onnx-community`): `moonshine-tiny-ko`,
+  `moonshine-base-ko`, `moonshine-tiny-uk` — **Moonshine Community License**
+  (non-commercial; free commercial use for organisations under US$1M annual
+  revenue); `moonshine-tiny-fr` — MIT.
+  <https://github.com/moonshine-ai/moonshine>
 
 ### Sber/Salute GigaAM (family: GigaAM)
 
@@ -326,6 +335,13 @@ Qwen3-ASR, VibeVoice, Audio8).
   upstream weights in converted form. — Apache-2.0, inherited from
   <https://huggingface.co/Audio8/ARK-ASR-3B> (redistribution and modification
   permitted; NOTICE attribution retained in the export's README).
+- `audio8-asr-infinite` — Edge0 Audio8-ASR-Infinite (Voxtral-Realtime causal
+  audio tower + Qwen2.5-3B decoder, native streaming zh/en with semantic
+  end-of-turn heads). Upstream ships safetensors only; the catalog points at our
+  own ONNX export, <https://huggingface.co/Masterx/Audio8-ASR-Infinite-ONNX>,
+  which redistributes the upstream weights in converted form. — Apache-2.0,
+  inherited from <https://huggingface.co/Edge0/Audio8-ASR-Infinite>
+  (attribution and licence retained in the export's README / LICENSE).
 
 ---
 
@@ -363,22 +379,40 @@ TTS models are downloaded on demand from Hugging Face. The catalogue is in
   `neuphonic/neucodec-onnx-decoder-int8` (the neural vocoder NeuTTS-2E decodes
   through). (c) Neuphonic Limited — Apache-2.0, no revenue threshold.
   <https://huggingface.co/neuphonic/neucodec>
+- **Audio8 TTS Preview 0.1B** — `Audio8/audio8-TTS-0.1B-ONNX-INT8`, Audio8's
+  own INT8 ONNX release of `Audio8/Audio8-TTS-Preview-0.1b` (per-token slow/fast
+  autoregressive graphs, fp16 codec decoder, and a packaged reference voice).
+  (c) Audio8 — **Apache-2.0**, no revenue threshold. The download includes the
+  repository's `runtime_manifest.json` and `reference_codes.npy`; the bundled
+  reference voice is Audio8's and is covered by the same license.
+  <https://huggingface.co/Audio8/audio8-TTS-0.1B-ONNX-INT8> —
+  <https://github.com/Audio8-AI/Audio8_TTS>
 
 The Piper recipe is derived from `OHF-Voice/piper1-gpl` (GPL-3.0); WinSTT's
 Piper inference is a clean-room ONNX runner and does not link GPL Piper code.
 
 ---
 
-## Speaker diarization models
+## Speaker diarization model
 
-Downloaded only if the user enables Speaker Diarization. They are gated on
-Hugging Face — the user must accept upstream model terms before download.
+Downloaded (from Hugging Face, at a pinned revision) only if the user enables
+Speaker Diarization; not bundled with WinSTT.
 
-- `pyannote/segmentation-3.0` — MIT, (c) CNRS / pyannote.
-  <https://huggingface.co/pyannote/segmentation-3.0>
-- WeSpeaker `voxceleb-resnet34-LM` speaker-embedding extractor (run via
-  sherpa-onnx) — Apache-2.0, (c) the WeSpeaker authors.
-  <https://github.com/wenet-e2e/wespeaker>
+- `nvidia/Nemotron-3-Diarization` (revision `f667ed73aee57d40cc39428eb768b4fd87a0a29e`)
+  — OpenMDW License Agreement, version 1.1 (OpenMDW-1.1), NVIDIA Corporation.
+  Commercial use permitted; redistributing any portion of the model materials
+  requires retaining a copy of the agreement and its notices of origin.
+  <https://huggingface.co/nvidia/Nemotron-3-Diarization> ·
+  <https://openmdw.ai/license/1-1/>
+- ONNX conversion used at runtime: `joosthel/Nemotron-3-Diarization-ONNX`
+  (`model.int8.onnx`, `constants.npz`; revision
+  `4a911fc3ca821b76a99fffd5ce5135bd1efca540`) — OpenMDW-1.1, (c) 2026 Joost
+  Helfers; an independent conversion, not produced or endorsed by NVIDIA.
+  <https://huggingface.co/joosthel/Nemotron-3-Diarization-ONNX>
+- WinSTT's streaming loop and speaker-cache logic (`src-tauri/src/winstt/diarize/`)
+  are a Rust port of Hugging Face transformers'
+  `models/nemotron3_diarization` (Apache-2.0, (c) The HuggingFace Inc. team),
+  cross-checked against the conversion's numpy reference (`diarize.py`, OpenMDW-1.1).
 
 ---
 
@@ -408,8 +442,9 @@ Hugging Face — the user must accept upstream model terms before download.
 
 ## Voice-activity detection
 
-- Silero VAD — MIT, (c) Silero Team. Bundled as `silero_vad_v4.onnx`; driven by
-  the `vad-rs` crate (MIT). <https://github.com/snakers4/silero-vad>
+- Silero VAD v6.2 — MIT, (c) Silero Team. Bundled as `silero_vad_v6.onnx`; driven
+  directly on ONNX Runtime (`ort`) by `src-tauri/src/audio_toolkit/vad/silero.rs`.
+  <https://github.com/snakers4/silero-vad>
 
 ---
 

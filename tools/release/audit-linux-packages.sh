@@ -91,7 +91,7 @@ audit_tree() {
   assert_named_file "$root" marimba_start.wav "$label startup sound"
   assert_named_file "$root" recording.png "$label recording image"
   assert_named_file "$root" tray_idle.png "$label tray image"
-  assert_named_file "$root" silero_vad_v4.onnx "$label VAD runtime model"
+  assert_named_file "$root" silero_vad_v6.onnx "$label VAD runtime model"
   assert_named_file "$root" gigaam_vocab.txt "$label GigaAM vocabulary"
 
   local sidecar

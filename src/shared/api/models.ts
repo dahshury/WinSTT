@@ -131,6 +131,17 @@ export interface RecommendedOllamaModel {
 	/** Approximate on-disk size of the default quantization, in bytes. */
 	sizeBytes: number;
 	description: string;
+	/**
+	 * Optional normalized card metrics. Ollama does not publish a common
+	 * benchmark for its library, so this is present only when a curated row has
+	 * an explicit, attributable upstream profile.
+	 */
+	performance?: {
+		accuracyScore: number;
+		speedScore: number;
+		/** Model whose published results back the two inherited scores. */
+		sourceModel: string;
+	};
 	/** Free-form tags, e.g. `fast`, `tiny`, `instruct`. */
 	tags?: string[];
 	/**

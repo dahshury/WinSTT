@@ -538,7 +538,7 @@ impl Transcriber for MoonshineEngine {
 /// Moonshine's SentencePiece byte-fallback tokenizer, parsed straight from `tokenizer.json`
 /// (no `tokenizers`/`sentencepiece` dependency — we only need id → text). Port of
 /// `moonshine.py::_load_tokenizer` + `_decode_text`.
-struct MoonshineTokenizer {
+pub(crate) struct MoonshineTokenizer {
     id_to_token: HashMap<i64, String>,
     special_token_ids: std::collections::HashSet<i64>,
     bos_id: i64,
@@ -546,7 +546,10 @@ struct MoonshineTokenizer {
 }
 
 impl MoonshineTokenizer {
-    fn load(tokenizer_path: &Path, tokenizer_config_path: Option<&Path>) -> SttResult<Self> {
+    pub(crate) fn load(
+        tokenizer_path: &Path,
+        tokenizer_config_path: Option<&Path>,
+    ) -> SttResult<Self> {
         let raw = std::fs::read_to_string(tokenizer_path)
             .map_err(|e| SttError::Tokenizer(format!("read {}: {e}", tokenizer_path.display())))?;
         let tok: serde_json::Value = serde_json::from_str(&raw)
@@ -655,7 +658,7 @@ impl MoonshineTokenizer {
     ///   2. byte-fallback: pieces `<0xNN>` buffer a raw byte, decoded as UTF-8 when the run breaks;
     ///   3. ▁ (U+2581) → ASCII space;
     ///   4. strip the single SentencePiece-prepended leading space.
-    fn decode_text(&self, ids: &[i64]) -> String {
+    pub(crate) fn decode_text(&self, ids: &[i64]) -> String {
         let mut byte_buf: Vec<u8> = Vec::new();
         let mut out = String::new();
 

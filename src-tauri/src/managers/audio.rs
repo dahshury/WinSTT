@@ -795,7 +795,7 @@ impl AudioRecordingManager {
                 .app_handle
                 .path()
                 .resolve(
-                    "resources/models/silero_vad_v4.onnx",
+                    crate::audio_toolkit::vad::SILERO_VAD_RESOURCE,
                     tauri::path::BaseDirectory::Resource,
                 )
                 .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;

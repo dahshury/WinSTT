@@ -149,6 +149,23 @@ pub fn canonical_model_id(id: &str) -> &str {
         // graph layout, better training data). Migrate any persisted old-id selection so a user who
         // had the previous model keeps a working choice instead of falling back to `tiny`.
         "granite-speech-4.1-2b" => "granite-speech-4.1-2b-plus",
+        // Parakeet TDT 0.6B v3 was REPLACED by Parakeet Ultra (moondream's post-trained v3: same
+        // architecture/tokenizer/languages, better WER on every benchmark). A persisted v3 selection
+        // lands on Ultra (`settings_store` also rewrites the stored id on boot).
+        "nemo-parakeet-tdt-0.6b-v3" => "nemo-parakeet-tdt-0.6b-ultra",
+        // Moonshine v1 (non-streaming encoder/decoder) was REPLACED by Moonshine v2 streaming
+        // wherever v2 covers the language: English tiny → tiny, base (61 M) → small (123 M, the
+        // nearest size), and the language fine-tunes to the v2 checkpoint of that language
+        // (base-ja → small-ja; zh has only a tiny v2 checkpoint). Korean / Ukrainian / French keep
+        // their v1 rows (no v2 checkpoint). The tiny-zh / tiny-ja ids were aliases that never
+        // shipped as rows, but map them too.
+        "moonshine-tiny" => "moonshine-streaming-tiny",
+        "moonshine-base" => "moonshine-streaming-small",
+        "moonshine-tiny-ar" => "moonshine-streaming-tiny-ar",
+        "moonshine-tiny-vi" => "moonshine-streaming-tiny-vi",
+        "moonshine-tiny-zh" | "moonshine-base-zh" => "moonshine-streaming-tiny-zh",
+        "moonshine-tiny-ja" => "moonshine-streaming-tiny-ja",
+        "moonshine-base-ja" => "moonshine-streaming-small-ja",
         _ => id,
     }
 }
@@ -188,6 +205,8 @@ const LANGUAGE_DISPLAY_QUALIFIERS: &[&str] = &[
     "uk",
     "vietnamese",
     "vi",
+    "tagalog",
+    "tl",
     "multilingual",
 ];
 

@@ -2,22 +2,32 @@ import {
 	BinaryCodeIcon,
 	Brain01Icon,
 	CodeIcon,
+	DashboardSpeed02Icon,
 	HardDriveDownloadIcon,
 	Image01Icon,
 	Layers01Icon,
 	Mic01Icon,
 	NeuralNetworkIcon,
+	Target02Icon,
 	Wrench01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
+import {
+	findRecommendedModel,
+	ollamaThinkingMode,
+} from "@/entities/llm-catalog";
 import type { OllamaModel } from "@/shared/api/models";
 import type {
 	ModelSpec,
 	ModelSpecFact,
 	ModelSpecFeature,
+	ModelSpecStat,
 } from "@/shared/ui/model-spec-card";
 import { getProviderIconWithFallback } from "@/shared/ui/model-picker/lib/provider-icons";
-import { formatContextTokens } from "@/shared/ui/model-picker/lib/model-spec-format";
+import {
+	formatContextTokens,
+	specStat,
+} from "@/shared/ui/model-picker/lib/model-spec-format";
 import {
 	formatOllamaDisplayName,
 	formatOllamaSize,
@@ -27,7 +37,6 @@ import {
 	resolveOllamaQuantization,
 } from "./family-helpers";
 import {
-	normalizedCapabilitySet,
 	supportsOllamaToolCalling,
 	visibleCapabilities,
 } from "./ollama-description-helpers";
@@ -56,7 +65,7 @@ function buildOllamaFeatures(model: OllamaModel): ModelSpecFeature[] {
 			description: "Supports function / tool calling.",
 		});
 	}
-	if (normalizedCapabilitySet(capabilities).has("thinking")) {
+	if (ollamaThinkingMode(model.name, capabilities) !== "none") {
 		features.push({
 			key: "reasoning",
 			icon: Brain01Icon,
@@ -81,8 +90,9 @@ function buildOllamaFeatures(model: OllamaModel): ModelSpecFeature[] {
 }
 
 /**
- * Build the hover-card spec for an installed Ollama model. Local models carry no
- * benchmark source, so there are no perf bars; `description` is optional (the
+ * Build the hover-card spec for an installed Ollama model. Most local models
+ * carry no benchmark source and therefore have no perf bars. Curated rows may
+ * opt into an attributable upstream profile; `description` is optional (the
  * live `/api/tags` payload has none — the caller passes one when it has the
  * catalog description).
  */
@@ -92,6 +102,7 @@ export function buildOllamaSpec(
 ): ModelSpec {
 	const family = getOllamaFamily(model);
 	const publisher = getOllamaPublisher(family);
+	const performance = findRecommendedModel(model.name)?.performance;
 
 	const facts: ModelSpecFact[] = [];
 	const parameterSize = resolveOllamaParameterSize(model);
@@ -130,6 +141,28 @@ export function buildOllamaSpec(
 		});
 	}
 
+	const stats: ModelSpecStat[] = [];
+	if (performance) {
+		const accuracy = specStat(
+			"accuracy",
+			"Accuracy",
+			performance.accuracyScore,
+			Target02Icon,
+		);
+		const speed = specStat(
+			"speed",
+			"Speed",
+			performance.speedScore,
+			DashboardSpeed02Icon,
+		);
+		if (accuracy) {
+			stats.push(accuracy);
+		}
+		if (speed) {
+			stats.push(speed);
+		}
+	}
+
 	return {
 		name: formatOllamaDisplayName(model.name),
 		makerLabel: publisher.label,
@@ -137,5 +170,9 @@ export function buildOllamaSpec(
 		description: description || undefined,
 		features: buildOllamaFeatures(model),
 		facts,
+		stats: stats.length > 0 ? stats : undefined,
+		sourceLabel: performance
+			? `Performance inherited from ${performance.sourceModel}`
+			: undefined,
 	};
 }

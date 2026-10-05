@@ -204,9 +204,9 @@ describe("variantDisplayName", () => {
 		expect(variantDisplayName(named("NeMo Parakeet CTC 0.6B", "nemo"))).toBe(
 			"Parakeet CTC",
 		);
-		// Token mid-name leaves no double space behind.
-		expect(variantDisplayName(named("NeMo Parakeet TDT 0.6B v3", "nemo"))).toBe(
-			"Parakeet TDT v3",
+		// Token mid-name (Canary above) leaves no double space; a trailing one leaves no tail.
+		expect(variantDisplayName(named("NeMo Parakeet Ultra 0.6B", "nemo"))).toBe(
+			"Parakeet Ultra",
 		);
 	});
 
@@ -513,13 +513,13 @@ describe("bundleVariants", () => {
 		const bundles = bundleVariants([
 			model("nemo-parakeet-ctc-0.6b", "nemo", "600M"),
 			model("nemo-parakeet-rnnt-0.6b", "nemo", "600M"),
-			model("nemo-parakeet-tdt-0.6b-v3", "nemo", "600M"),
+			model("nemo-parakeet-tdt-0.6b-ultra", "nemo", "600M"),
 		]);
 		expect(bundles).toHaveLength(3);
 		expect(bundles.map((b) => b.baseId).sort()).toEqual([
 			"nemo-parakeet-ctc-0.6b",
 			"nemo-parakeet-rnnt-0.6b",
-			"nemo-parakeet-tdt-0.6b-v3",
+			"nemo-parakeet-tdt-0.6b-ultra",
 		]);
 	});
 
@@ -542,6 +542,31 @@ describe("bundleVariants", () => {
 		expect(bundles[1]?.variants.map((m) => m.id)).toEqual([
 			"moonshine-base",
 			"moonshine-base-zh",
+		]);
+	});
+
+	test("Moonshine v2 streaming sizes bundle their language tunes; v1 leftovers stay apart", () => {
+		const bundles = bundleVariants([
+			model("moonshine-streaming-tiny", "moonshine", "44M"),
+			model("moonshine-streaming-tiny-ja", "moonshine", "27M"),
+			model("moonshine-streaming-small", "moonshine", "140M"),
+			model("moonshine-streaming-small-ja", "moonshine", "123M"),
+			model("moonshine-streaming-medium", "moonshine", "266M"),
+			model("moonshine-tiny-ko", "moonshine", "27M"),
+		]);
+		expect(bundles.map((b) => b.baseId)).toEqual([
+			"moonshine-streaming-tiny",
+			"moonshine-streaming-small",
+			"moonshine-streaming-medium",
+			"moonshine-tiny",
+		]);
+		expect(bundles[0]?.variants.map((m) => m.id)).toEqual([
+			"moonshine-streaming-tiny",
+			"moonshine-streaming-tiny-ja",
+		]);
+		expect(bundles[1]?.variants.map((m) => m.id)).toEqual([
+			"moonshine-streaming-small",
+			"moonshine-streaming-small-ja",
 		]);
 	});
 

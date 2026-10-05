@@ -124,7 +124,7 @@ describe("buildMakerGroups", () => {
 	it("groups distinct makers separately, sorted by label", () => {
 		const groups = buildMakerGroups({
 			installed: [installed("qwen3.5:4b"), installed("llama3.2:3b")],
-			recommended: [recommended("granite4.1:3b", "granite")],
+			recommended: [recommended("granite4.2:3b", "granite")],
 			library: [],
 		});
 		// Sorted by maker LABEL: Alibaba (qwen), IBM (ibm-granite), Meta (meta-llama).

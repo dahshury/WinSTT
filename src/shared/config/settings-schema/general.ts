@@ -243,7 +243,8 @@ export const generalSettingsSchema = z.object({
 	// Speaker diarization — per-utterance, with session-wide identity tracking.
 	// Toggle-mode only in the UI (long-form dictation is where multi-speaker
 	// conversations actually happen); the server still runs the same pipeline
-	// regardless of recording mode. First-run downloads ~32 MB of ONNX models.
+	// regardless of recording mode. First-run downloads the ~104 MB Nemotron-3-
+	// Diarization ONNX model (up to 8 speakers).
 	// Tier-2 OCR fallback for context awareness. When on AND context capture
 	// found no usable text (canvas apps, remote desktops, games -- surfaces the
 	// accessibility tree returns nothing for), the pinned window is screenshotted

@@ -31,6 +31,7 @@
 // and the pure-logic tests stay here.
 
 mod aed;
+mod audio8_infinite;
 mod ctc;
 pub(crate) mod frontend;
 mod native_streaming;
@@ -83,6 +84,9 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
         EngineKind::VibeVoiceAsr => Box::new(aed::VibeVoiceEngine::load(&cfg)?),
         EngineKind::Audio8Asr => Box::new(aed::Audio8AsrEngine::load(&cfg)?),
         EngineKind::ArkAsr => Box::new(aed::ArkAsrEngine::load(&cfg)?),
+        EngineKind::Audio8Infinite if audio8_infinite::Audio8InfiniteEngine::supports(&cfg) => {
+            Box::new(audio8_infinite::Audio8InfiniteEngine::load(&cfg)?)
+        }
         EngineKind::NemoAed => Box::new(aed::CanaryEngine::load(&cfg)?),
         EngineKind::ToneCtc => Box::new(aed::ToneEngine::load(&cfg)?),
         EngineKind::NemoCtcStreaming
@@ -114,12 +118,16 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
         EngineKind::NemoCtcStreaming
         | EngineKind::NemoRnntStreaming
         | EngineKind::KaldiTransducerStreaming
-        | EngineKind::KaldiCtc => {
+        | EngineKind::KaldiCtc
+        | EngineKind::Audio8Infinite => {
             return Err(SttError::Resolve(
                 "resolved streaming model is missing the expected native ORT graph files".into(),
             ));
         }
-        EngineKind::WhisperHf | EngineKind::WhisperOrt | EngineKind::Moonshine => {
+        EngineKind::WhisperHf
+        | EngineKind::WhisperOrt
+        | EngineKind::Moonshine
+        | EngineKind::MoonshineStreaming => {
             return Err(SttError::Unsupported(
                 "build_family_engine: Whisper/Moonshine handled by their own engine files",
             ));

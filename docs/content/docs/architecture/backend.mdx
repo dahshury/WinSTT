@@ -74,7 +74,7 @@ managers.
     ["LlmManager", "Ollama / OpenRouter post-processing + custom transforms"],
     ["CloudSttManager", "ElevenLabs / OpenRouter cloud STT round-trips"],
     ["TtsManager", "Kokoro (local) + ElevenLabs (cloud) synthesis"],
-    ["WakeWordManager / DiarizationManager", "sherpa-onnx KWS + speaker embedding"],
+    ["WakeWordManager / DiarizationManager", "wake-word KWS + Nemotron-3 streaming speaker diarization"],
     ["LoopbackManager", "WASAPI system-audio capture (listen mode)"],
     ["RealtimeManager", "daemon that decodes a growing window for the live preview"],
     ["FileTranscribeManager", "batch file-transcribe queue"],
@@ -164,8 +164,8 @@ providers bundled for that target and keep CPU as the fallback:
 ## Audio, VAD & Realtime
 
 `AudioRecordingManager` builds an `AudioRecorder` (cpal) with a `rubato` resampler to 16 kHz
-mono and a `SileroVad` wrapped in a `SmoothedVad` (onset pre-roll + hangover) for clean
-speech-edge detection. Every 16 kHz frame is also tapped for the audio-level visualizer and
+mono and a `SileroVad` (Silero VAD v6, run directly on `ort`) wrapped in a `SmoothedVad`
+(onset pre-roll + hangover) for clean speech-edge detection. Every 16 kHz frame is also tapped for the audio-level visualizer and
 the always-on wake-word detector.
 
 The **`RealtimeManager`** is a single daemon that powers the live preview: it `try_lock`s the
@@ -209,8 +209,7 @@ exploratory benchmark engines, not shipped.)
     ["ort 2.0 (rc)", "ONNX Runtime — CPU fallback plus platform/build-specific EPs"],
     ["hf-hub", "HuggingFace model resolver + download"],
     ["cpal / rubato / rustfft", "audio capture / resampling / spectrum"],
-    ["vad-rs (Silero)", "voice-activity detection"],
-    ["sherpa-onnx", "wake-word KWS + diarization embedder"],
+    ["sherpa-onnx", "wake-word KWS"],
     ["tokenizers, ndarray, half", "tokenization + tensor math"],
     ["windows / wasapi", "WASAPI loopback, audio ducking (COM)"],
     ["ollama-rs, keyring, enigo", "local LLM, encrypted secrets, paste injection"],

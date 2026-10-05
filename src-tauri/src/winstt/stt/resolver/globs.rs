@@ -14,7 +14,7 @@ use once_cell::sync::Lazy;
 // ---------------------------------------------------------------------------
 
 /// onnx-asr's `model_repos` alias table (resolver.py:19-70), ported verbatim. A bare alias
-/// (`nemo-parakeet-tdt-0.6b-v3`) maps to a slashed HF repo id; a model that already contains `/`
+/// (`nemo-parakeet-ctc-0.6b`) maps to a slashed HF repo id; a model that already contains `/`
 /// is used verbatim. The VAD / speaker-embedding aliases are included for completeness (the
 /// diarization + VAD slices resolve through the same table).
 pub const MODEL_REPOS: &[(&str, &str)] = &[
@@ -37,22 +37,10 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
         "nemo-parakeet-rnnt-0.6b",
         "istupakov/parakeet-rnnt-0.6b-onnx",
     ),
-    (
-        "nemo-parakeet-tdt-0.6b-v3",
-        "istupakov/parakeet-tdt-0.6b-v3-onnx",
-    ),
     // DirectML-safe re-export (encoder via dynamo=False); see the nemo-canary-1b-v2 catalog entry.
     ("nemo-canary-1b-v2", "Masterx/canary-1b-v2-onnx"),
     ("whisper-base", "istupakov/whisper-base-onnx"),
-    ("moonshine-tiny", "onnx-community/moonshine-tiny-ONNX"),
-    ("moonshine-base", "onnx-community/moonshine-base-ONNX"),
-    ("moonshine-tiny-zh", "onnx-community/moonshine-tiny-zh-ONNX"),
-    ("moonshine-tiny-ja", "onnx-community/moonshine-tiny-ja-ONNX"),
     ("moonshine-tiny-ko", "onnx-community/moonshine-tiny-ko-ONNX"),
-    ("moonshine-tiny-ar", "onnx-community/moonshine-tiny-ar-ONNX"),
-    ("moonshine-tiny-vi", "onnx-community/moonshine-tiny-vi-ONNX"),
-    ("moonshine-base-zh", "onnx-community/moonshine-base-zh-ONNX"),
-    ("moonshine-base-ja", "onnx-community/moonshine-base-ja-ONNX"),
     ("moonshine-base-ko", "onnx-community/moonshine-base-ko-ONNX"),
     ("moonshine-tiny-uk", "onnx-community/moonshine-tiny-uk-ONNX"),
     ("moonshine-tiny-fr", "onnx-community/moonshine-tiny-fr-ONNX"),
@@ -136,18 +124,6 @@ const QUANT_REPO_OVERRIDES: &[(&str, Quantization, &str)] = &[
         "onnx-community/cohere-transcribe-03-2026-ONNX",
         Quantization::Int8,
         "Masterx/cohere-transcribe-03-2026-ONNX",
-    ),
-    // Parakeet TDT v3 fp16 tier (2026-07-11): istupakov ships only fp32+int8; the fp16
-    // conversion (ORT transformers float16, keep_io_types, parity-verified — measured 2× faster
-    // on DirectML with byte-identical transcripts) lives in a Masterx repo carrying the FULL
-    // fp16 file set incl. vocab/config. Catalog id == onnx_model_name alias, so ONE entry
-    // covers both lookup paths. The v1-era parakeet-ctc/-rnnt exports were converted and are
-    // CPU-correct but produce GARBAGE on the DML EP at fp16 (the lite-whisper disease; the v3
-    // export idiom is unaffected) — no fp16 tier for those two.
-    (
-        "nemo-parakeet-tdt-0.6b-v3",
-        Quantization::Fp16,
-        "Masterx/parakeet-tdt-0.6b-v3-fp16-onnx",
     ),
     // Streaming parakeet-unified fp16 tiers (2026-07-12): the sherpa maintainer publishes fp32
     // and int8 as SEPARATE repos with no fp16; these Masterx repos carry the fp16 conversion of
@@ -320,6 +296,19 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("tokenizer", "tokenizer.json".into()),
             g("tokenizer_config", "tokenizer_config.json".into()),
         ],
+        // Masterx/moonshine-streaming-*-ONNX (flat root). The frontend is one fp32 graph shared by
+        // every tier (it is ~3% of the model and its state carry must stay exact); the four
+        // transformer graphs carry the quant suffix.
+        EngineKind::MoonshineStreaming => vec![
+            g("frontend", "frontend.onnx".into()),
+            g("encoder", format!("encoder{s}.onnx")),
+            g("adapter", format!("adapter{s}.onnx")),
+            g("cross_kv", format!("cross_kv{s}.onnx")),
+            g("decoder_kv", format!("decoder_kv{s}.onnx")),
+            g("streaming_config", "streaming_config.json".into()),
+            g("tokenizer", "tokenizer.json".into()),
+            g("tokenizer_config", "tokenizer_config.json".into()),
+        ],
         EngineKind::CohereAsr => vec![
             g("encoder", format!("**/encoder_model{s}.onnx")),
             g("decoder", format!("**/decoder_model_merged{s}.onnx")),
@@ -448,6 +437,20 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
                 g("tokenizer_config", "tokenizer_config.json".into()),
             ]
         }
+        EngineKind::Audio8Infinite => vec![
+            // Masterx/Audio8-ASR-Infinite-ONNX ships flat at the repo root with the `_` quant
+            // separator (`decoder_int4.onnx`); each graph's weights sit in a `<stem>.onnx.data`
+            // sidecar the automatic sweep resolves. The host tables are precision-independent:
+            // the raw bf16 token-embedding table, the per-layer delay-modulation scales, and the
+            // streaming geometry/clock/special ids the engine is driven by.
+            g("encoder", format!("audio_encoder{s}.onnx")),
+            g("decoder", format!("decoder{s}.onnx")),
+            g("embed_tokens", "embed_tokens.bf16".into()),
+            g("ada_scale", "ada_scale.f32".into()),
+            g("runtime", "runtime.json".into()),
+            g("tokenizer", "tokenizer.json".into()),
+            g("tokenizer_config", "tokenizer_config.json".into()),
+        ],
         EngineKind::VibeVoiceAsr => vec![
             // Masterx/vibevoice-asr-bitnet-onnx ships at the repo ROOT with the qwen3 layout
             // (`.` quant separator, shared decoder external-data blob, suffix-less fp16 embed
@@ -470,8 +473,10 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
         ],
         EngineKind::NemoRnnt | EngineKind::NemoTdt => vec![
             // TDT's fp16 tier is uniform — it runs all-DML at float precisions (measured
-            // 2026-07-11: fp16 all-DML 231 ms vs fp32 459 ms, transcripts byte-identical).
-            // No fp16 tier exists for the v1 rnnt export (fp16 garbage on the DML EP).
+            // 2026-07-11 on the v3 graph Parakeet Ultra reuses: fp16 all-DML 231 ms vs fp32
+            // 459 ms, transcripts byte-identical). No fp16 tier exists for the v1 rnnt export
+            // (fp16 garbage on the DML EP). Parakeet Redux's only tier is `int4` (ternary
+            // encoder as 4-bit MatMulNBits) under the same file names.
             g("encoder", format!("encoder-model{s}.onnx")),
             g("decoder_joint", format!("decoder_joint-model{s}.onnx")),
             g("vocab", "vocab.txt".into()),

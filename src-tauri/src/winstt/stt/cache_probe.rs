@@ -82,6 +82,8 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
 
     match family {
         "whisper" => EngineKind::WhisperHf,
+        // Moonshine v2 (`moonshine-streaming-*`) is a different 5-graph export of the same family.
+        "moonshine" if has("streaming") => EngineKind::MoonshineStreaming,
         "moonshine" => EngineKind::Moonshine,
         "cohere" => EngineKind::CohereAsr,
         "granite" => {
@@ -97,6 +99,8 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
         "vibevoice" => EngineKind::VibeVoiceAsr,
         // Both `arkasr` models ship under the same maker family; the id picks the engine (their
         // ONNX packagings share nothing — see EngineKind::ArkAsr).
+        // Audio8-ASR-Infinite is a separate streaming architecture (own export, own engine).
+        "audio8" if has("infinite") => EngineKind::Audio8Infinite,
         "audio8" if has("ark") => EngineKind::ArkAsr,
         "audio8" => EngineKind::Audio8Asr,
         "t-one" => EngineKind::ToneCtc,
@@ -419,8 +423,16 @@ mod tests {
             EngineKind::WhisperHf
         );
         assert_eq!(
-            engine_kind_for("moonshine-base", "moonshine", "moonshine-base"),
+            engine_kind_for("moonshine-base-ko", "moonshine", "moonshine-base-ko"),
             EngineKind::Moonshine
+        );
+        assert_eq!(
+            engine_kind_for(
+                "moonshine-streaming-small",
+                "moonshine",
+                "Masterx/moonshine-streaming-small-ONNX"
+            ),
+            EngineKind::MoonshineStreaming
         );
         assert_eq!(
             engine_kind_for("cohere-transcribe", "cohere", "cohere-transcribe"),
@@ -486,6 +498,14 @@ mod tests {
             ),
             EngineKind::Audio8Asr
         );
+        assert_eq!(
+            engine_kind_for(
+                "audio8-asr-infinite",
+                "audio8",
+                "Masterx/Audio8-ASR-Infinite-ONNX"
+            ),
+            EngineKind::Audio8Infinite
+        );
     }
 
     #[test]
@@ -500,9 +520,17 @@ mod tests {
         );
         assert_eq!(
             engine_kind_for(
-                "nemo-parakeet-tdt-0.6b-v3",
+                "nemo-parakeet-tdt-0.6b-ultra",
                 "nemo",
-                "nemo-parakeet-tdt-0.6b-v3"
+                "Masterx/parakeet-tdt-0.6b-ultra-onnx"
+            ),
+            EngineKind::NemoTdt
+        );
+        assert_eq!(
+            engine_kind_for(
+                "nemo-parakeet-tdt-0.6b-redux",
+                "nemo",
+                "Masterx/parakeet-tdt-0.6b-redux-onnx"
             ),
             EngineKind::NemoTdt
         );

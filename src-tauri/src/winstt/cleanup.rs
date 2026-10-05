@@ -517,29 +517,38 @@ fn win_stt_hf_repo_ids() -> BTreeSet<String> {
         insert_resolved_repo_id(&mut out, entry.id);
         insert_resolved_repo_id(&mut out, entry.onnx_model_name);
     }
-    // Helper model repos used by VAD / diarization code paths. The diarization
-    // cascade downloads its two models straight from these HF repos (see
-    // winstt::diarize::{SEG_REPO, EMB_REPO}); they don't route through the STT
-    // resolver alias table, so insert the concrete repo ids directly.
+    // Helper model repos used by VAD / diarization code paths. The diarizer
+    // downloads straight from its HF repo (winstt::diarize::MODEL_REPO), plus the
+    // retired cascade's repos (LEGACY_REPOS) older builds left behind; none route
+    // through the STT resolver alias table, so insert the concrete repo ids directly.
     insert_resolved_repo_id(&mut out, "silero");
-    out.insert(
-        format!(
-            "{}/{}",
-            crate::winstt::diarize::SEG_REPO.0,
-            crate::winstt::diarize::SEG_REPO.1
-        )
-        .to_ascii_lowercase(),
-    );
-    out.insert(
-        format!(
-            "{}/{}",
-            crate::winstt::diarize::EMB_REPO.0,
-            crate::winstt::diarize::EMB_REPO.1
-        )
-        .to_ascii_lowercase(),
-    );
+    use crate::winstt::diarize::{LEGACY_REPOS, MODEL_REPO};
+    for (owner, name) in std::iter::once(&MODEL_REPO).chain(LEGACY_REPOS.iter()) {
+        out.insert(format!("{owner}/{name}").to_ascii_lowercase());
+    }
+    for repo in RETIRED_STT_REPOS {
+        out.insert(repo.to_ascii_lowercase());
+    }
     out
 }
+
+/// HF repos of STT catalog rows that were REPLACED by a successor (see
+/// `catalog::canonical_model_id`). No current row resolves to them, but older builds
+/// downloaded them, so "delete STT models" must still find and remove them.
+const RETIRED_STT_REPOS: &[&str] = &[
+    // Parakeet TDT 0.6B v3 → Parakeet Ultra.
+    "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    "Masterx/parakeet-tdt-0.6b-v3-fp16-onnx",
+    // Moonshine v1 → Moonshine v2 streaming (ko/uk/fr v1 rows still ship).
+    "onnx-community/moonshine-tiny-ONNX",
+    "onnx-community/moonshine-base-ONNX",
+    "onnx-community/moonshine-tiny-ar-ONNX",
+    "onnx-community/moonshine-tiny-vi-ONNX",
+    "onnx-community/moonshine-tiny-zh-ONNX",
+    "onnx-community/moonshine-base-zh-ONNX",
+    "onnx-community/moonshine-tiny-ja-ONNX",
+    "onnx-community/moonshine-base-ja-ONNX",
+];
 
 fn insert_resolved_repo_id(out: &mut BTreeSet<String>, model_id: &str) {
     if let Some((owner, name)) = crate::winstt::stt::resolver::resolve_repo(model_id) {
@@ -869,9 +878,14 @@ mod tests {
         let ids = win_stt_hf_repo_ids();
         assert!(ids.contains("onnx-community/whisper-tiny"));
         assert!(ids.contains("istupakov/silero-vad-onnx"));
-        // Diarization cascade repos (winstt::diarize::{SEG_REPO, EMB_REPO}).
+        // Diarization repo (winstt::diarize::MODEL_REPO) + the retired cascade's
+        // repos older builds downloaded (winstt::diarize::LEGACY_REPOS).
+        assert!(ids.contains("joosthel/nemotron-3-diarization-onnx"));
         assert!(ids.contains("onnx-community/pyannote-segmentation-3.0"));
         assert!(ids.contains("csukuangfj/speaker-embedding-models"));
+        // Repos of retired STT rows older builds downloaded (RETIRED_STT_REPOS).
+        assert!(ids.contains("istupakov/parakeet-tdt-0.6b-v3-onnx"));
+        assert!(ids.contains("onnx-community/moonshine-base-onnx"));
     }
 
     #[test]

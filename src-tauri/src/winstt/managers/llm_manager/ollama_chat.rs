@@ -130,17 +130,27 @@ impl LlmManager {
             self.clear_cancel(request_id);
             return Err(ollama_cancelled_error());
         }
-        let enable_dictionary_suggestions = dictionary_auto_add_enabled;
-        let mut body = build_ollama_chat_body_with_keep_alive(
-            model,
-            system_prompt,
-            user_prompt,
-            text.len(),
-            caps.supports_thinking,
-            effort,
-            self.ollama_keep_alive(),
-        );
-        llm::add_ollama_side_effect_schema_instruction(&mut body, enable_dictionary_suggestions);
+        let s1_mini = llm::is_s1_mini_model(model);
+        let enable_dictionary_suggestions = dictionary_auto_add_enabled && !s1_mini;
+        let mut body = if s1_mini {
+            llm::build_s1_mini_chat_body_with_keep_alive(model, text, self.ollama_keep_alive())
+        } else {
+            build_ollama_chat_body_with_keep_alive(
+                model,
+                system_prompt,
+                user_prompt,
+                text.len(),
+                caps.supports_thinking,
+                effort,
+                self.ollama_keep_alive(),
+            )
+        };
+        if !s1_mini {
+            llm::add_ollama_side_effect_schema_instruction(
+                &mut body,
+                enable_dictionary_suggestions,
+            );
+        }
         if self.is_cancelled(request_id) {
             self.clear_cancel(request_id);
             return Err(ollama_cancelled_error());

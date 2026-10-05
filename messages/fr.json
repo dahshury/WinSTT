@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Après déclenchement du mot de réveil, l'enregistreur attend ce délai que vous parliez. Sinon, la porte se ferme et vous devez répéter le mot de réveil. Empêche qu'un bruit aléatoire ne déclenche un enregistrement accidentel des minutes plus tard.",
     "speakerDiarization": "Diarisation des locuteurs",
     "speakerDiarizationCaption": "Colorer le texte par locuteur dans les enregistrements longs",
-    "speakerDiarizationTooltip": "Lorsque activé, chaque énoncé finalisé passe dans un modèle de locuteurs sur l'appareil (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 Mo téléchargés à la première utilisation, sans torch). Les mots sont colorés par locuteur dans la superposition en direct ; les ID de locuteurs restent stables pendant toute la session.",
+    "speakerDiarizationTooltip": "Lorsque activé, chaque énoncé finalisé passe dans un modèle de locuteurs sur l'appareil (NVIDIA Nemotron-3-Diarization, ~104 Mo téléchargés à la première utilisation, sans torch). Les mots sont colorés par locuteur dans la superposition en direct ; les ID de locuteurs restent stables pendant toute la session.",
     "loopbackDevice": "Périphérique de bouclage",
     "loopbackDeviceCaption": "Périphérique de bouclage WASAPI à capturer",
     "loopbackDeviceTooltip": "Sélectionnez le périphérique de sortie audio à capturer. L'application transcrira tout l'audio diffusé par ce périphérique.",

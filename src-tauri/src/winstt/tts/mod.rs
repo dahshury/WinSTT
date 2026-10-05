@@ -16,6 +16,7 @@
 // where format == "f32le" (raw mono f32, local Kokoro) | "mp3" (cloud, renderer decodeAudioData's).
 
 pub mod audio8;
+pub mod audio8_01;
 pub mod catalog;
 pub mod chatterbox;
 pub mod kitten;

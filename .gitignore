@@ -57,7 +57,6 @@ result
 # Custom cargo target dirs (benchmark / moon / verify builds). `/target/` is already
 # ignored above; these are alternate build outputs that must never be committed.
 src-tauri/target*/
-src-tauri/vendor/vad-rs/target/
 src-tauri/ctl.exe
 src-tauri/ctl.pdb
 target-moon/

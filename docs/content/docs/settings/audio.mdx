@@ -70,8 +70,10 @@ Voice activity detection (VAD) is how WinSTT tells speech apart from silence and
 
 <SettingRow label="Silero Sensitivity" settingKey="audio.sileroSensitivity" default="0.7">
   Confidence threshold for the neural detector, 0–1 in steps of 0.05. Higher is **more**
-  sensitive. Internally the trip point is `1 − sensitivity`, so the default 0.7 trips whenever
-  Silero's confidence exceeds 0.3. Raise it if quiet or distant speech is being missed; lower
+  sensitive. Internally the trip point is `0.05 ^ (sensitivity / 0.7)`, so the default 0.7 trips
+  whenever Silero's confidence exceeds 0.05 (1.0 → ~0.014, 0.5 → ~0.12, 0 → only certain speech);
+  Silero VAD v6 scores speech near 1 and noise near 0, so the useful range sits close to zero.
+  Raise it if quiet or distant speech is being missed; lower
   it if background voices keep waking the recorder. The default is calibrated for quiet and
   distant speech.
 </SettingRow>

@@ -197,8 +197,15 @@ function canAutoDetectWithoutCandidateConstraints(model: ModelInfo): boolean {
 	);
 }
 
+/**
+ * Models that take a declared source language and cannot auto-detect. Audio8-ASR
+ * Infinite is prompted with a zh/en language token; the wrong one makes it
+ * translate (or, at int8, loop), so it needs the explicit picker too.
+ */
 function canUseSingleSourceLanguage(model: ModelInfo): boolean {
-	return model.id.startsWith("nemo-canary-");
+	return (
+		model.id.startsWith("nemo-canary-") || model.id === "audio8-asr-infinite"
+	);
 }
 
 export function resolveLanguageControlMode(

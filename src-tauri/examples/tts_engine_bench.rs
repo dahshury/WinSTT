@@ -14,6 +14,7 @@
 //   cargo run --release --example tts_engine_bench -- neutts neutts-2e fp32 sophie-sad "text"
 //   cargo run --release --example tts_engine_bench -- orpheus orpheus-3b q4 tara "text"
 //   cargo run --release --example tts_engine_bench -- audio8 audio8-tts-0.6b <ref.wav> "ref transcript" "text"
+//   cargo run --release --example tts_engine_bench -- audio8 audio8-tts-0.1b default "" "text"
 //
 // Model files live under  <repo>/.tts-cache/<catalog-id>/  (override WINSTT_TTS_CACHE),
 // laid out exactly like the TtsDownloadManager manifest so this exercises the real load
@@ -26,8 +27,8 @@ use std::time::Instant;
 
 use winstt_app_lib::winstt::tts::kitten::{KITTEN_SAMPLE_RATE, KittenConfig, KittenEngine};
 use winstt_app_lib::winstt::tts::local_engines::{
-    Audio8LocalEngine, ChatterboxLocalEngine, NeuTtsLocalEngine, OmniVoiceLocalEngine,
-    OrpheusLocalEngine, Qwen3TtsLocalEngine,
+    Audio8LocalEngine, Audio8Preview01LocalEngine, ChatterboxLocalEngine, NeuTtsLocalEngine,
+    OmniVoiceLocalEngine, OrpheusLocalEngine, Qwen3TtsLocalEngine,
 };
 use winstt_app_lib::winstt::tts::piper::{PiperConfig, PiperEngine};
 use winstt_app_lib::winstt::tts::qwen3_tts::Qwen3TtsVoiceMode;
@@ -314,11 +315,18 @@ fn run_omnivoice(model_id: &str, voice: &str, lang: &str, ref_text: &str, text: 
     run_adapter(&engine, "omnivoice", voice, lang, text);
 }
 
-/// Audio8 through the shipping adapter. `voice` MUST be a path to a reference clip
-/// (the DualAR prompt requires reference codes — there is no unconditioned path);
-/// `ref_text` is that clip's exact transcript (the ZeroShotAudioText contract).
+/// Audio8 through the shipping adapter. The DualAR prompt always needs reference codes —
+/// there is no unconditioned path in either checkpoint — but the two rows get them
+/// differently: 0.6B clones from a clip, so `voice` MUST be a path to one and `ref_text` its
+/// exact transcript (the ZeroShotAudioText contract); 0.1B ships its reference inside the
+/// model repo, so both arguments are ignored.
 fn run_audio8(model_id: &str, voice: &str, ref_text: &str, text: &str) {
     eprintln!("\n=== AUDIO8 {model_id} voice={voice} ===");
+    if model_id == "audio8-tts-0.1b" {
+        let engine = Audio8Preview01LocalEngine::new(cache_root().join(model_id));
+        run_adapter(&engine, "audio8-01", "default", "en", text);
+        return;
+    }
     let engine = Audio8LocalEngine::new(cache_root().join(model_id), ref_text.to_string());
     run_adapter(&engine, "audio8", voice, "en", text);
 }

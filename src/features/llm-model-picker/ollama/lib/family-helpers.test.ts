@@ -55,6 +55,16 @@ describe("formatOllamaDisplayName", () => {
 		});
 	});
 
+	it("formats the namespaced S1-mini GGUF reference", () => {
+		const reference = "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M";
+		expect(formatOllamaDisplayName(reference)).toBe("S1-mini");
+		expect(formatOllamaDisplayNameParts(reference)).toMatchObject({
+			main: "S1-mini",
+			parameterSize: "0.6B",
+			quantization: "Q4_K_M",
+		});
+	});
+
 	it("returns an empty string for empty input", () => {
 		expect(formatOllamaDisplayName("")).toBe("");
 	});
@@ -111,6 +121,16 @@ describe("getOllamaPublisher", () => {
 			slug: "prismml",
 			label: "PrismML",
 		});
+	});
+
+	it("keeps an installed S1-mini pull under Superwhisper", () => {
+		const s1Mini = model("hf.co/superwhisper/s1-mini-GGUF:Q4_K_M", "qwen3");
+		expect(getOllamaFamily(s1Mini)).toBe("s1-mini");
+		expect(getOllamaPublisher(getOllamaFamily(s1Mini))).toEqual({
+			slug: "superwhisper",
+			label: "Superwhisper",
+		});
+		expect(resolveOllamaParameterSize(s1Mini)).toBe("0.6B");
 	});
 
 	it("falls back to Community for unknown families", () => {

@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "לאחר שמילת ההשכמה מופעלת, המקליט ממתין זמן זה לתחילת הדיבור. אם לא מדברים, השער מתנקה ויש לומר שוב את מילת ההשכמה. מונע מרעש מקרי דקות לאחר מכן מהפעלת הקלטה שגויה.",
     "speakerDiarization": "זיהוי דוברים",
     "speakerDiarizationCaption": "צבע טקסט לפי דובר בהקלטות ארוכות",
-    "speakerDiarizationTooltip": "כשמופעל, כל ביטוי שהסתיים עובר דרך מודל דובר על-המכשיר (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, כ-32 MB מורד בשימוש ראשון, ללא torch). מילים מצבועות לפי דובר ב-overlay החי; מזהי דוברים נשארים יציבים לאורך כל הסשן.",
+    "speakerDiarizationTooltip": "כשמופעל, כל ביטוי שהסתיים עובר דרך מודל דובר על-המכשיר (NVIDIA Nemotron-3-Diarization, כ-104 MB מורד בשימוש ראשון, ללא torch). מילים מצבועות לפי דובר ב-overlay החי; מזהי דוברים נשארים יציבים לאורך כל הסשן.",
     "loopbackDevice": "מכשיר לולאה",
     "loopbackDeviceCaption": "מכשיר WASAPI לולאה ללכידה",
     "loopbackDeviceTooltip": "בחר את מכשיר פלט השמע ללכידה. האפליקציה תתמלל את כל השמע המושמע דרך מכשיר זה.",

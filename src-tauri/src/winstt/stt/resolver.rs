@@ -89,9 +89,21 @@ mod tests {
     #[test]
     fn alias_resolves_to_owner_name() {
         assert_eq!(
-            resolve_repo("nemo-parakeet-tdt-0.6b-v3"),
-            Some(("istupakov".into(), "parakeet-tdt-0.6b-v3-onnx".into()))
+            resolve_repo("nemo-parakeet-ctc-0.6b"),
+            Some(("istupakov".into(), "parakeet-ctc-0.6b-onnx".into()))
         );
+        // The retired Parakeet v3 id resolves through `canonical_model_id` to the Ultra repo, at
+        // every precision (one repo carries fp32/fp16/int8 — no per-quant override).
+        for quant in [
+            Quantization::Default,
+            Quantization::Fp16,
+            Quantization::Int8,
+        ] {
+            assert_eq!(
+                resolve_repo_for_quant("nemo-parakeet-tdt-0.6b-v3", quant),
+                Some(("Masterx".into(), "parakeet-tdt-0.6b-ultra-onnx".into()))
+            );
+        }
         // slashed id used verbatim.
         assert_eq!(
             resolve_repo("onnx-community/whisper-tiny"),
@@ -160,8 +172,13 @@ mod tests {
         // A catalog id whose onnx_model_name is itself a MODEL_REPOS alias (Moonshine) still
         // resolves through the alias recursion.
         assert_eq!(
+            resolve_repo("moonshine-base-ko"),
+            Some(("onnx-community".into(), "moonshine-base-ko-ONNX".into()))
+        );
+        // A retired Moonshine v1 id follows its catalog migration to the v2 streaming repo.
+        assert_eq!(
             resolve_repo("moonshine-base"),
-            Some(("onnx-community".into(), "moonshine-base-ONNX".into()))
+            Some(("Masterx".into(), "moonshine-streaming-small-ONNX".into()))
         );
         assert_eq!(
             resolve_repo("granite-speech-4.1-2b-plus"),
@@ -356,6 +373,36 @@ mod tests {
             "lm_cache_prefill_int4",
             "lm_cache_prefill_int4.onnx.data"
         ));
+    }
+
+    #[test]
+    fn audio8_infinite_globs_follow_the_quant_and_keep_host_tables() {
+        for (q, sfx) in [
+            (Quantization::Int4, "_int4"),
+            (Quantization::Int8, "_int8"),
+            (Quantization::Fp16, "_fp16"),
+        ] {
+            let g = file_globs("audio8-asr-infinite", EngineKind::Audio8Infinite, q);
+            let glob = |key: &str| {
+                g.iter()
+                    .find(|f| f.key == key)
+                    .map_or_else(|| panic!("{key} glob missing"), |f| f.glob.clone())
+            };
+            assert!(glob_match(
+                &glob("encoder"),
+                &format!("audio_encoder{sfx}.onnx")
+            ));
+            assert!(glob_match(&glob("decoder"), &format!("decoder{sfx}.onnx")));
+            // Host tables are precision-independent and NOT `.onnx.data` sidecars → explicit keys.
+            assert_eq!(glob("embed_tokens"), "embed_tokens.bf16");
+            assert_eq!(glob("ada_scale"), "ada_scale.f32");
+            assert_eq!(glob("runtime"), "runtime.json");
+            assert!(g.iter().all(|f| !f.optional));
+            assert!(is_sidecar_for(
+                &format!("decoder{sfx}"),
+                &format!("decoder{sfx}.onnx.data")
+            ));
+        }
     }
 
     #[test]

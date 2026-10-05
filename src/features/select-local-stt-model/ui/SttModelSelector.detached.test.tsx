@@ -138,7 +138,7 @@ describe("SttModelSelector detached-open mode", () => {
 	test("renders selected quantization and footprint in the closed trigger", () => {
 		const selected = {
 			...model(),
-			displayName: "NeMo Parakeet TDT 0.6B v3",
+			displayName: "NeMo Parakeet Ultra 0.6B",
 			family: "nemo",
 			sizeLabel: "0.6B",
 			sizeBytesByQuantization: { int8: 123_000_000 },
@@ -159,8 +159,7 @@ describe("SttModelSelector detached-open mode", () => {
 		const trigger = document.querySelector(
 			'[data-slot="stt-model-selector-trigger"]',
 		);
-		expect(trigger?.textContent).toContain("Parakeet TDT");
-		expect(trigger?.textContent).toContain("v3");
+		expect(trigger?.textContent).toContain("Parakeet Ultra");
 		expect(trigger?.textContent).toContain("0.6B");
 		expect(trigger?.textContent).toContain("INT8");
 		expect(trigger?.textContent).toContain("117 MB");

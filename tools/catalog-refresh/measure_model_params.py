@@ -31,7 +31,8 @@ RESOLVER_REPOS: dict[str, str] = {
     "nemo-fastconformer-ru-rnnt": "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx",
     "nemo-parakeet-ctc-0.6b": "istupakov/parakeet-ctc-0.6b-onnx",
     "nemo-parakeet-rnnt-0.6b": "istupakov/parakeet-rnnt-0.6b-onnx",
-    "nemo-parakeet-tdt-0.6b-v3": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    "nemo-parakeet-tdt-0.6b-ultra": "Masterx/parakeet-tdt-0.6b-ultra-onnx",
+    "nemo-parakeet-tdt-0.6b-redux": "Masterx/parakeet-tdt-0.6b-redux-onnx",
     "nemo-canary-1b-v2": "istupakov/canary-1b-v2-onnx",
     "nemo-canary-180m-flash": "istupakov/canary-180m-flash-onnx",
     "breeze-asr-25": "xeonchen/Breeze-ASR-25-ONNX",
@@ -157,6 +158,9 @@ PUBLISHED: dict[str, tuple[int, str]] = {
     "nemo-parakeet-ctc-0.6b": (600_000_000, "NVIDIA NeMo parakeet_ctc_0.6b card"),
     "nemo-parakeet-rnnt-0.6b": (600_000_000, "NVIDIA NeMo parakeet_rnnt_0.6b card"),
     "nemo-canary-1b-v2": (978_000_000, "NVIDIA NeMo canary-1b-v2 card (978M)"),
+    # Redux ships only a packed-ternary (MatMulNBits) encoder, which would under-count; it is the
+    # Ultra/v3 architecture, so reuse the measured fp32 Ultra count.
+    "nemo-parakeet-tdt-0.6b-redux": (626_983_558, "same graph as Parakeet Ultra fp32 (measured)"),
     # GigaAM v3 family — Sber Salute model cards.
     "gigaam-v3-e2e-ctc": (243_000_000, "Sber GigaAM-v3 E2E model card"),
     "gigaam-v3-e2e-rnnt": (243_000_000, "Sber GigaAM-v3 E2E model card"),
@@ -187,7 +191,7 @@ def _files_for(model_id: str) -> list[str] | None:
         return NEMO_CONFORMER_CTC_FILES
     if model_id == "nemo-parakeet-rnnt-0.6b":
         return NEMO_CONFORMER_RNNT_FILES
-    if model_id == "nemo-parakeet-tdt-0.6b-v3":
+    if model_id == "nemo-parakeet-tdt-0.6b-ultra":
         return NEMO_CONFORMER_TDT_FILES
     if model_id in ("nemo-canary-1b-v2", "nemo-canary-180m-flash"):
         return NEMO_CONFORMER_AED_FILES

@@ -799,19 +799,26 @@ impl LlmManager {
             .await
             .unwrap_or_default();
         let inputs = crate::winstt::commands::llm::dictation_prompt_prime_inputs(&settings);
-        let mut body = crate::winstt::llm::build_ollama_chat_body_with_keep_alive(
-            model,
-            &inputs.system_prompt,
-            &inputs.user_prompt,
-            0,
-            caps.supports_thinking,
-            inputs.effort,
-            keep_alive,
-        );
-        crate::winstt::llm::add_ollama_side_effect_schema_instruction(
-            &mut body,
-            inputs.dictionary_auto_add_enabled,
-        );
+        let s1_mini = crate::winstt::llm::is_s1_mini_model(model);
+        let mut body = if s1_mini {
+            crate::winstt::llm::build_s1_mini_chat_body_with_keep_alive(model, "", keep_alive)
+        } else {
+            crate::winstt::llm::build_ollama_chat_body_with_keep_alive(
+                model,
+                &inputs.system_prompt,
+                &inputs.user_prompt,
+                0,
+                caps.supports_thinking,
+                inputs.effort,
+                keep_alive,
+            )
+        };
+        if !s1_mini {
+            crate::winstt::llm::add_ollama_side_effect_schema_instruction(
+                &mut body,
+                inputs.dictionary_auto_add_enabled,
+            );
+        }
         // One-token, non-streaming: the point is the PREFILL, not the answer.
         body["stream"] = serde_json::Value::Bool(false);
         if let Some(options) = body

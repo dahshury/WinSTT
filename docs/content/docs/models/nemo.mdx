@@ -3,12 +3,12 @@ title: NVIDIA NeMo
 description: NVIDIA's Parakeet and Canary models — Conformer-based recognizers that run at 1800–6100× real-time on the same ONNX engine as everything else.
 ---
 
-NVIDIA's NeMo family pairs FastConformer encoders with three different decoders (CTC, RNN-T, TDT) to hit some of the highest accuracy-per-millisecond numbers in the catalog — Parakeet TDT lands at **5.7 WER** while decoding at **~6100× real-time**. WinSTT runs every NeMo model on the same `onnx-asr` ONNX Runtime engine as Whisper and the rest; there is no separate backend to flip.
+NVIDIA's NeMo family pairs FastConformer encoders with three different decoders (CTC, RNN-T, TDT) to hit some of the highest accuracy-per-millisecond numbers in the catalog — Parakeet Ultra lands at **5.3 WER** while decoding at **~6100× real-time**. WinSTT runs every NeMo model on the same `onnx-asr` ONNX Runtime engine as Whisper and the rest; there is no separate backend to flip.
 
 <StatGrid>
-  <Stat value="8" label="Models in the family" />
-  <Stat value="5.7" label="Lowest WER (Parakeet TDT 0.6B v3)" />
-  <Stat value="6100" label="Top RTFx (Parakeet TDT 0.6B v3)" />
+  <Stat value="9" label="Models in the family" />
+  <Stat value="5.3" label="Lowest WER (Parakeet Ultra 0.6B)" />
+  <Stat value="6100" label="Top RTFx (Parakeet Ultra 0.6B)" />
   <Stat value="25" label="Languages, with auto-detect" />
 </StatGrid>
 
@@ -34,7 +34,8 @@ A pair of **FastConformer RU** models round out Russian coverage.
   rows={[
     ["Parakeet CTC 0.6B", "600M", "6.7", "5884", "English", "—, int8"],
     ["Parakeet RNNT 0.6B", "600M", "6.7", "5407", "English", "—, int8"],
-    ["Parakeet TDT 0.6B v3", "627M", "5.7", "6098", "25 (multilingual)", "—, int8"],
+    ["Parakeet Ultra 0.6B", "627M", "5.3", "6098", "25 (multilingual)", "—, fp16, int8"],
+    ["Parakeet Redux 0.6B", "627M", "6.1", "—", "25 (multilingual)", "int4 (CPU)"],
     ["Canary 180M Flash", "194M", "6.3", "2484", "en · de · es · fr", "—, int8"],
     ["Canary 1B Flash", "883M", "5.8", "2126", "en · de · es · fr", "—, int8"],
     ["Canary 1B v2", "978M", "6.4", "1821", "25 (multilingual)", "—, int8"],
@@ -55,9 +56,9 @@ All three decoders sit on top of the same FastConformer encoder. They differ onl
   rows={[
     ["CTC", "Each audio frame is classified independently in a single pass, then collapsed.", "Fastest, lightest. Slightly higher WER because it can't condition on what it just emitted."],
     ["RNN-T", "Autoregressive — each token is predicted from the audio and the tokens emitted so far.", "More accurate than CTC; the token-by-token loop is heavier, so RTFx is lower."],
-    ["TDT", "An RNN-T variant that predicts a token and its duration together, so it can skip ahead instead of stepping one frame at a time.", "RNN-T accuracy at close-to-CTC speed — NVIDIA's newest decoder, and why TDT v3 beats both 0.6B Parakeets."],
+    ["TDT", "An RNN-T variant that predicts a token and its duration together, so it can skip ahead instead of stepping one frame at a time.", "RNN-T accuracy at close-to-CTC speed — NVIDIA's newest decoder, and why the TDT Parakeets beat the CTC and RNN-T ones."],
   ]}
-  caption="Within the 0.6B Parakeets: CTC 6.7 WER @ 5884 RTFx, RNN-T 6.7 @ 5407, TDT 5.7 @ 6098 — the TDT decoder wins on both axes, which is why it's NVIDIA's newest."
+  caption="Within the 0.6B Parakeets: CTC 6.7 WER @ 5884 RTFx, RNN-T 6.7 @ 5407, TDT (Ultra) 5.3 @ 6098 — the TDT decoder wins on both axes, which is why it's NVIDIA's newest."
 />
 
 The Russian pair publishes the same 5.3 WER for both decoders; the CTC graph (5700 RTFx) decodes a touch faster than the RNN-T one (5400 RTFx).
@@ -68,11 +69,11 @@ Language scope is fixed per model — it is not a setting you can widen.
 
 - **English-only:** `Parakeet CTC 0.6B` and `Parakeet RNNT 0.6B`. The fastest path to high-accuracy English dictation; no language-detection step to pay for.
 - **Four-language (en / de / es / fr):** both **Canary Flash** models. `180M Flash` is the smallest model in the family (2484 RTFx); `1B Flash` keeps Flash-class speed (2126 RTFx) at noticeably lower WER (5.8).
-- **25-language:** `Parakeet TDT 0.6B v3` and `Canary 1B v2` both cover the same 25 European languages (Bulgarian, Czech, Danish, German, Greek, English, Spanish, Estonian, Finnish, French, Croatian, Hungarian, Italian, Lithuanian, Latvian, Maltese, Dutch, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Swedish, Ukrainian). Both auto-detect the spoken language.
+- **25-language:** `Parakeet Ultra 0.6B`, `Parakeet Redux 0.6B` and `Canary 1B v2` all cover the same 25 European languages (Bulgarian, Czech, Danish, German, Greek, English, Spanish, Estonian, Finnish, French, Croatian, Hungarian, Italian, Lithuanian, Latvian, Maltese, Dutch, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Swedish, Ukrainian). All auto-detect the spoken language.
 - **Russian-only:** the two `FastConformer RU` models.
 
-<Callout type="info" title="TDT v3 or Canary 1B v2 for multilingual?">
-  They cover the same 25 languages. **TDT v3** is the right default — 5.7 WER at 6098 RTFx in 2.5 GB, more accurate *and* ~3× faster on the leaderboard average. Pick **Canary 1B v2** (6.4 WER, 1821 RTFx, 4 GB) when you need its real `translate` task.
+<Callout type="info" title="Parakeet Ultra or Canary 1B v2 for multilingual?">
+  They cover the same 25 languages. **Parakeet Ultra** is the right default — 5.3 WER at 6098 RTFx in 2.5 GB, more accurate *and* ~3× faster on the leaderboard average. Pick **Canary 1B v2** (6.4 WER, 1821 RTFx, 4 GB) when you need its real `translate` task.
 </Callout>
 
 ## Precision
@@ -88,7 +89,7 @@ Every NeMo model ships two quantizations, selected by the **Quantization** contr
   caption="No fp16/q4 variants are published for NeMo. int8 is the recommended choice on CPU."
 />
 
-For example, `Parakeet TDT 0.6B v3` is **2.5 GB** at default precision and **670 MB** as int8; `Canary 1B v2` drops from **4.0 GB** to **1.0 GB**. See [Compute Types](/docs/models/compute-types) for what the quantization labels mean.
+For example, `Parakeet Ultra 0.6B` is **2.5 GB** at default precision and **670 MB** as int8 (`Parakeet Redux 0.6B`, a ternary-weight build of the same model, is a single **416 MB** CPU-only int4 tier); `Canary 1B v2` drops from **4.0 GB** to **1.0 GB**. See [Compute Types](/docs/models/compute-types) for what the quantization labels mean.
 
 <Callout type="info" title="No backend to set">
   Every model — NeMo included — runs on the single ONNX engine. There's no "NeMo backend" toggle; just pick a NeMo model in [Model](/docs/settings/model) and it hot-swaps in. Switching to or from a different model **family** briefly reconnects the engine.
@@ -101,7 +102,7 @@ For example, `Parakeet TDT 0.6B v3` is **2.5 GB** at default precision and **670
     <strong>Parakeet CTC 0.6B</strong> — 6.7 WER at 5884 RTFx, single-pass, English-only. No language-detection step to pay for.
   </BentoCell>
   <BentoCell icon="quality" title="Best all-round main model">
-    <strong>Parakeet TDT 0.6B v3</strong> — 5.7 WER at 6098 RTFx in 2.5 GB, covering 25 languages. The family's accuracy ceiling and its throughput champion at once — the default multilingual pick.
+    <strong>Parakeet Ultra 0.6B</strong> — 5.3 WER at 6098 RTFx in 2.5 GB, covering 25 languages. The family's accuracy ceiling and its throughput champion at once — the default multilingual pick.
   </BentoCell>
   <BentoCell icon="brain" title="Built-in translation">
     <strong>Canary 1B v2</strong> — the only NeMo model with a real <code>translate</code> task. 6.4 WER, 4 GB, 1821 RTFx.

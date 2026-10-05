@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Uyandırma kelimesi tetiklendikten sonra kayıt cihazı konuşmaya başlamanızı bu kadar süre bekler. Başlamazsanız kapı kapanır ve uyandırma kelimesini tekrar söylemeniz gerekir. Dakikalar sonra rastlantısal bir gürültünün yanlışlıkla kaydı tetiklemesini önler.",
     "speakerDiarization": "Konuşmacı diarizasyonu",
     "speakerDiarizationCaption": "Uzun kayıtlarda metni konuşmacıya göre renklendir",
-    "speakerDiarizationTooltip": "Açıkken, her sonlandırılan konuşma cihaz üzerindeki bir konuşmacı modelinden geçirilir (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ilk kullanımda ~32 MB indirir, torch gerektirmez). Kelimeler canlı overlay'de konuşmacıya göre renklendirilir; konuşmacı kimlikleri tüm oturum boyunca sabit kalır.",
+    "speakerDiarizationTooltip": "Açıkken, her sonlandırılan konuşma cihaz üzerindeki bir konuşmacı modelinden geçirilir (NVIDIA Nemotron-3-Diarization, ilk kullanımda ~104 MB indirir, torch gerektirmez). Kelimeler canlı overlay'de konuşmacıya göre renklendirilir; konuşmacı kimlikleri tüm oturum boyunca sabit kalır.",
     "loopbackDevice": "Geri Döngü Cihazı",
     "loopbackDeviceCaption": "Yakalanacak WASAPI geri döngü cihazı",
     "loopbackDeviceTooltip": "Yakalanacak ses çıkış cihazını seçin. Uygulama bu cihazdan çalan tüm sesi transkribe edecek.",

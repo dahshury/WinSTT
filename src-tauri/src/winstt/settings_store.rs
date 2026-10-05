@@ -166,7 +166,9 @@ pub fn init_settings_store(app: &AppHandle) {
 /// v1 `""`→`"auto"` step would keep flipping a deliberately-picked fp32).
 ///
 /// Additive schema growth needs NO migration (every field is `#[serde(default)]`);
-/// steps here are only for fields whose MEANING changed between versions.
+/// steps here are only for fields whose MEANING changed between versions. The one
+/// version-independent pass rewrites RETIRED STT catalog ids to their replacement
+/// (see `canonicalize_retired_stt_model_ids`).
 fn migrate_store_on_boot(store: &Store<tauri::Wry>) {
     let Some(value) = store.get(WINSTT_SETTINGS_KEY) else {
         return; // fresh install: seed_defaults writes a current-version tree
@@ -181,8 +183,9 @@ fn migrate_store_on_boot(store: &Store<tauri::Wry>) {
 }
 
 /// Pure core of [`migrate_store_on_boot`]: `Some(migrated tree)` when the
-/// recorded version is behind CURRENT, `None` when the tree is already current
-/// (or not an object — the repair path's job).
+/// recorded version is behind CURRENT or a retired STT catalog id was rewritten,
+/// `None` when the tree is already current (or not an object — the repair
+/// path's job).
 fn migrated_settings_value(mut value: serde_json::Value) -> Option<serde_json::Value> {
     if !value.is_object() {
         return None;
@@ -191,16 +194,46 @@ fn migrated_settings_value(mut value: serde_json::Value) -> Option<serde_json::V
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0) as u32;
-    if from >= crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION {
-        return None;
+    let mut changed = false;
+    if from < crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION {
+        apply_settings_migrations(&mut value, from);
+        value["schemaVersion"] =
+            crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION.into();
+        log::info!(
+            "[settings] migrated persisted settings schema v{from} → v{}",
+            crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+        changed = true;
     }
-    apply_settings_migrations(&mut value, from);
-    value["schemaVersion"] = crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION.into();
-    log::info!(
-        "[settings] migrated persisted settings schema v{from} → v{}",
-        crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION
-    );
-    Some(value)
+    changed |= canonicalize_retired_stt_model_ids(&mut value);
+    changed.then_some(value)
+}
+
+/// Rewrite persisted STT selections that name a RETIRED catalog id to the row
+/// that replaced it (`catalog::canonical_model_id` — e.g. Parakeet TDT v3 →
+/// Parakeet Ultra). Version-INDEPENDENT on purpose: a catalog replacement is not
+/// a schema change, the step is idempotent (a canonical id maps to itself), and
+/// every future alias added to `canonical_model_id` is picked up with no new
+/// schema step. Without it the backend still LOADS the replacement (every load
+/// path canonicalizes), but the picker would show a selection that no longer
+/// exists in the catalog. Returns whether anything changed.
+fn canonicalize_retired_stt_model_ids(value: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    for pointer in ["/model/model", "/model/realtimeModel"] {
+        let Some(slot) = value.pointer_mut(pointer) else {
+            continue;
+        };
+        let Some(id) = slot.as_str() else {
+            continue;
+        };
+        let canonical = crate::winstt::catalog::canonical_model_id(id);
+        if canonical != id {
+            log::info!("[settings] {pointer}: retired STT model id \"{id}\" → \"{canonical}\"");
+            *slot = serde_json::Value::String(canonical.to_string());
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// The migration steps, applied in order from the store's recorded version.
@@ -220,6 +253,56 @@ fn apply_settings_migrations(value: &mut serde_json::Value, from: u32) {
             );
             *quant = serde_json::json!("auto");
         }
+    }
+    if from < 2 {
+        // v1 → v2: STT catalog ids retired by a successor (Moonshine v1 → Moonshine v2
+        // streaming, plus the older Nemotron/Granite aliases) are rewritten to the id
+        // `catalog::canonical_model_id` already resolves them to, so the persisted pick names a
+        // shipped row. A pinned precision the successor does not publish (v1 Moonshine shipped
+        // q4/bnb4/uint8/q4f16; v2 ships fp32 + int8) reverts to "auto" instead of failing
+        // `validate_quantization` and wedging every later save of the model section.
+        migrate_retired_stt_ids(value);
+    }
+}
+
+/// The v1 → v2 step of [`apply_settings_migrations`].
+fn migrate_retired_stt_ids(value: &mut serde_json::Value) {
+    let mut main_changed = false;
+    for (pointer, is_main) in [("/model/model", true), ("/model/realtimeModel", false)] {
+        let Some(slot) = value.pointer_mut(pointer) else {
+            continue;
+        };
+        let Some(id) = slot.as_str() else {
+            continue;
+        };
+        let canonical = crate::winstt::catalog::canonical_model_id(id);
+        if canonical != id {
+            log::info!("[settings] v1→v2: {pointer} \"{id}\" (retired) → \"{canonical}\"");
+            *slot = serde_json::json!(canonical);
+            main_changed |= is_main;
+        }
+    }
+    if !main_changed {
+        return;
+    }
+    let Some(model_id) = value
+        .pointer("/model/model")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if let Some(quant) = value.pointer_mut("/model/onnxQuantization")
+        && let Some(q) = quant.as_str()
+        && q != "auto"
+        && crate::winstt::catalog::find(&model_id)
+            .is_some_and(|entry| !entry.available_quantizations.contains(&q))
+    {
+        log::info!(
+            "[settings] v1→v2: model.onnxQuantization \"{q}\" is not published for \
+             \"{model_id}\" → \"auto\""
+        );
+        *quant = serde_json::json!("auto");
     }
 }
 
@@ -957,6 +1040,48 @@ mod tests {
     }
 
     #[test]
+    fn v1_store_moves_retired_moonshine_ids_to_their_v2_successors() {
+        let migrated = migrated_settings_value(serde_json::json!({
+            "schemaVersion": 1,
+            "model": {
+                "model": "moonshine-base",
+                "realtimeModel": "moonshine-tiny",
+                "onnxQuantization": "q4"
+            }
+        }))
+        .expect("v1 stores must migrate");
+
+        assert_eq!(migrated["model"]["model"], "moonshine-streaming-small");
+        assert_eq!(
+            migrated["model"]["realtimeModel"],
+            "moonshine-streaming-tiny"
+        );
+        // q4 is not published for the v2 export → back to auto.
+        assert_eq!(migrated["model"]["onnxQuantization"], "auto");
+    }
+
+    #[test]
+    fn v1_store_keeps_a_published_quant_and_untouched_ids() {
+        let migrated = migrated_settings_value(serde_json::json!({
+            "schemaVersion": 1,
+            "model": { "model": "moonshine-tiny-ar", "onnxQuantization": "int8" }
+        }))
+        .unwrap();
+        assert_eq!(migrated["model"]["model"], "moonshine-streaming-tiny-ar");
+        assert_eq!(migrated["model"]["onnxQuantization"], "int8");
+
+        // A surviving v1 row (no v2 Korean model) and a non-Moonshine model are left alone,
+        // including a quant pin that only that row publishes.
+        let migrated = migrated_settings_value(serde_json::json!({
+            "schemaVersion": 1,
+            "model": { "model": "moonshine-base-ko", "onnxQuantization": "q4" }
+        }))
+        .unwrap();
+        assert_eq!(migrated["model"]["model"], "moonshine-base-ko");
+        assert_eq!(migrated["model"]["onnxQuantization"], "q4");
+    }
+
+    #[test]
     fn current_version_store_is_not_remigrated() {
         // An explicit fp32 pick (`""`) on a stamped store must NEVER be flipped
         // back to "auto" by a re-run of the v0 step.
@@ -965,6 +1090,39 @@ mod tests {
             "model": { "model": "tiny", "onnxQuantization": "" }
         });
         assert!(migrated_settings_value(value).is_none());
+    }
+
+    #[test]
+    fn retired_stt_model_ids_are_rewritten_on_a_current_store() {
+        // A user who had Parakeet TDT v3 selected (main AND live preview) lands on its
+        // replacement, Parakeet Ultra — without a schema bump and leaving the quant alone.
+        let migrated = migrated_settings_value(serde_json::json!({
+            "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+            "model": {
+                "model": "nemo-parakeet-tdt-0.6b-v3",
+                "realtimeModel": "nemo-parakeet-tdt-0.6b-v3",
+                "onnxQuantization": "int8"
+            }
+        }))
+        .expect("a retired id must be rewritten");
+        assert_eq!(migrated["model"]["model"], "nemo-parakeet-tdt-0.6b-ultra");
+        assert_eq!(
+            migrated["model"]["realtimeModel"],
+            "nemo-parakeet-tdt-0.6b-ultra"
+        );
+        assert_eq!(migrated["model"]["onnxQuantization"], "int8");
+        // Idempotent: the rewritten tree needs nothing further.
+        assert!(migrated_settings_value(migrated).is_none());
+    }
+
+    #[test]
+    fn v0_store_with_a_retired_id_gets_both_migrations() {
+        let migrated = migrated_settings_value(serde_json::json!({
+            "model": { "model": "nemo-parakeet-tdt-0.6b-v3", "onnxQuantization": "" }
+        }))
+        .expect("v0 stores must migrate");
+        assert_eq!(migrated["model"]["model"], "nemo-parakeet-tdt-0.6b-ultra");
+        assert_eq!(migrated["model"]["onnxQuantization"], "auto");
     }
 
     #[test]

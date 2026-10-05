@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Sau khi từ đánh thức kích hoạt, máy ghi âm chờ trong thời gian này để bạn bắt đầu nói. Nếu không, cổng đóng lại và bạn phải nói lại từ đánh thức. Ngăn tiếng ồn ngẫu nhiên vài phút sau kích hoạt bản ghi ngẫu nhiên.",
     "speakerDiarization": "Phân biệt người nói",
     "speakerDiarizationCaption": "Tô màu văn bản theo từng người nói trong bản ghi dài",
-    "speakerDiarizationTooltip": "Khi bật, mỗi câu nói hoàn chỉnh được chạy qua mô hình người nói trên thiết bị (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, tải xuống ~32 MB khi dùng lần đầu, không cần torch). Từ được tô màu theo người nói trong lớp phủ trực tiếp; ID người nói ổn định trong suốt phiên.",
+    "speakerDiarizationTooltip": "Khi bật, mỗi câu nói hoàn chỉnh được chạy qua mô hình người nói trên thiết bị (NVIDIA Nemotron-3-Diarization, tải xuống ~104 MB khi dùng lần đầu, không cần torch). Từ được tô màu theo người nói trong lớp phủ trực tiếp; ID người nói ổn định trong suốt phiên.",
     "loopbackDevice": "Thiết bị loopback",
     "loopbackDeviceCaption": "Thiết bị loopback WASAPI để ghi",
     "loopbackDeviceTooltip": "Chọn thiết bị đầu ra âm thanh để ghi. Ứng dụng sẽ chuyển đổi tất cả âm thanh phát qua thiết bị này.",

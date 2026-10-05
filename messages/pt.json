@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Após a palavra de ativação ser detetada, o gravador aguarda este tempo para que comece a falar. Se não falar, o registo é limpo e tem de repetir a palavra de ativação. Previne que ruídos aleatórios minutos depois desencadeiem uma gravação acidental.",
     "speakerDiarization": "Diarização de locutores",
     "speakerDiarizationCaption": "Colorir o texto por locutor em gravações longas",
-    "speakerDiarizationTooltip": "Quando ativo, cada enunciado finalizado é processado por um modelo de locutor no dispositivo (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB transferidos no primeiro uso, sem torch). As palavras são coloridas por locutor na sobreposição em tempo real; os IDs dos locutores mantêm-se estáveis ao longo de toda a sessão.",
+    "speakerDiarizationTooltip": "Quando ativo, cada enunciado finalizado é processado por um modelo de locutor no dispositivo (NVIDIA Nemotron-3-Diarization, ~104 MB transferidos no primeiro uso, sem torch). As palavras são coloridas por locutor na sobreposição em tempo real; os IDs dos locutores mantêm-se estáveis ao longo de toda a sessão.",
     "loopbackDevice": "Dispositivo de loopback",
     "loopbackDeviceCaption": "Dispositivo de loopback WASAPI a capturar",
     "loopbackDeviceTooltip": "Selecione o dispositivo de saída de áudio a capturar. A aplicação transcreverá todo o áudio reproduzido através deste dispositivo.",

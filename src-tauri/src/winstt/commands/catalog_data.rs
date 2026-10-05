@@ -414,6 +414,8 @@ const LANGUAGE_DISPLAY_QUALIFIERS: &[&str] = &[
     "uk",
     "vietnamese",
     "vi",
+    "tagalog",
+    "tl",
     "multilingual",
 ];
 
@@ -714,11 +716,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_75_rows() {
+    fn catalog_parses_84_rows() {
         assert_eq!(
             raw_catalog().len(),
-            75,
-            "embedded catalog must carry all 75 shipped models"
+            84,
+            "embedded catalog must carry all 84 shipped models"
         );
     }
 
@@ -838,7 +840,11 @@ mod tests {
     #[test]
     fn runtime_language_ignored_rows_do_not_advertise_auto_detection() {
         let rows = catalog_rows(Accelerator::Cpu);
-        for id in ["nemo-parakeet-tdt-0.6b-v3", "dolphin-base-ctc"] {
+        for id in [
+            "nemo-parakeet-tdt-0.6b-ultra",
+            "nemo-parakeet-tdt-0.6b-redux",
+            "dolphin-base-ctc",
+        ] {
             let row = rows
                 .iter()
                 .find(|r| r.id == id)
@@ -1106,6 +1112,30 @@ mod tests {
             st.device_by_quantization.get("int8"),
             Some(&"cpu".to_string())
         );
+
+        // Parakeet Redux (TDT `int4`, MatMulNBits) faults on DML → CPU, while Parakeet Ultra
+        // (same engine kind, float/int8 tiers) keeps the GPU EP.
+        let redux = raw_catalog()
+            .iter()
+            .find(|e| e.id == "nemo-parakeet-tdt-0.6b-redux")
+            .expect("parakeet redux present");
+        let st = state(redux, Accelerator::DirectMl);
+        assert_eq!(
+            st.device_by_quantization.get("int4"),
+            Some(&"cpu".to_string())
+        );
+        let ultra = raw_catalog()
+            .iter()
+            .find(|e| e.id == "nemo-parakeet-tdt-0.6b-ultra")
+            .expect("parakeet ultra present");
+        let st = state(ultra, Accelerator::DirectMl);
+        for q in ["", "fp16", "int8"] {
+            assert_eq!(
+                st.device_by_quantization.get(q),
+                Some(&"gpu".to_string()),
+                "ultra {q:?} keeps DML"
+            );
+        }
 
         // DML-safe engine keeps the GPU EP on a GPU primary…
         let gigaam = raw_catalog()

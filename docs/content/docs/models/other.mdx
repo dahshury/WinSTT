@@ -10,38 +10,39 @@ Every model on this page runs through the single `onnx-asr` ONNX engine, support
 <StatGrid>
   <Stat value="10" label="model families on this page" />
   <Stat value="4.9" label="lowest WER (Granite Speech 4.1 2B Plus)" />
-  <Stat value="3733" label="fastest RTFx (Moonshine Tiny)" />
+  <Stat value="3733" label="fastest RTFx (Moonshine Tiny KO/UK/FR)" />
   <Stat value="30" label="Qwen3-ASR languages" />
 </StatGrid>
 
 ## Moonshine
 
-Useful Sensors Moonshine is a raw-audio encoder built for **latency**, not raw accuracy. The tiny model is ~2.8× faster than Whisper tiny on the leaderboard benchmark, which makes it a strong realtime-preview and live-dictation pick. The base English models and the language fine-tunes round out the family — each fine-tune is single-language only, with no auto-detect.
+Moonshine is a raw-audio encoder built for **latency**. The catalog ships **Moonshine v2** ("Ergodic Streaming Encoder"): its sliding-window encoder runs **incrementally** — each 40 ms hop of audio is encoded once as it arrives, so live text appears while you speak and the final transcript is ready almost as soon as you stop. Tiny, Small and Medium cover English; the language tunes are single-language only, with no auto-detect. Three first-generation (v1) tunes stay for languages v2 does not cover yet (Korean, Ukrainian, French).
 
 <ModelTable
   head={["Model", "Params", "WER", "RTFx", "Language"]}
   numeric={[1, 2, 3]}
   rows={[
-    ["Moonshine Tiny", "27M", "11.4", "3733", "English"],
-    ["Moonshine Base", "62M", "8.6", "2767", "English"],
+    ["Moonshine v2 Tiny", "44M", "12.0", "2079", "English"],
+    ["Moonshine v2 Small", "140M", "7.8", "791", "English"],
+    ["Moonshine v2 Medium", "266M", "6.7", "439", "English"],
+    ["Moonshine v2 Tiny (JA / ZH / AR / VI / ES / DE / TL)", "27M", "6.7 – 19.1", "2641", "One language each"],
+    ["Moonshine v2 Small (JA / ES / DE)", "113M", "4.8 – 6.7", "894", "One language each"],
     ["Moonshine Tiny (KO)", "27M", "15.0", "3733", "Korean"],
-    ["Moonshine Tiny (AR)", "27M", "15.0", "3733", "Arabic"],
-    ["Moonshine Tiny (VI)", "27M", "15.0", "3733", "Vietnamese"],
+    ["Moonshine Base (KO)", "62M", "10.5", "2767", "Korean"],
     ["Moonshine Tiny (UK)", "28M", "—", "3733", "Ukrainian"],
     ["Moonshine Tiny (FR)", "28M", "—", "3733", "French"],
-    ["Moonshine Base (ZH)", "62M", "10.5", "2767", "Chinese"],
-    ["Moonshine Base (JA)", "62M", "10.5", "2767", "Japanese"],
-    ["Moonshine Base (KO)", "62M", "10.5", "2767", "Korean"],
   ]}
-  caption="RTFx = real-time factor (higher is faster); the fine-tunes share their base model's architecture and speed. WER is whichever benchmark the upstream repo reports — read it within a family, not across."
+  caption="English WER is the Open ASR leaderboard average from the model card; language-tune WER/CER is a 20-utterance FLEURS check. v2 RTFx is scaled from measured CPU speed against v1 Tiny, so it is lower than the leaderboard GPU figure of the v1 rows. Read WER within a family, not across."
 />
 
-Moonshine exposes the widest quantization range of any family: `""` (default), `fp16`, `q4`, `bnb4`, `int8`, `uint8`, and `q4f16`. The `int8` / `uint8` graphs are the smallest downloads (the English tiny model drops from 327 MB to 67 MB) and are the best fit for CPU-only machines.
+v2 models ship fp32 (`""`, default) and `int8` graphs; `int8` is 20–30% faster on CPU at near-identical accuracy. The v1 tunes keep their wider quantization range (`fp16`, `q4`, `bnb4`, `int8`, `uint8`, `q4f16`). Moonshine runs on the CPU.
 
-<Callout type="info" title="The fastest realtime model">
-  At 27M parameters and RTFx ~3700, Moonshine Tiny is the lightest model in the catalog
-  and an ideal **realtime preview** model. Pair it with a larger main model when you want
-  the live preview to feel instant without taxing the GPU.
+The v1 English, Arabic, Vietnamese, Chinese and Japanese models were replaced; a saved selection moves to its v2 counterpart automatically (Base → v2 Small, Base JA → v2 Small JA, Base ZH → v2 Tiny ZH). Korean and Ukrainian v1 tunes are under the Moonshine Community License (non-commercial; free commercial use under US$1M annual revenue); everything else is MIT.
+
+<Callout type="info" title="A natural realtime model">
+  Moonshine v2 Tiny streams natively at a fraction of real time on a CPU, so it makes an
+  ideal **realtime preview** model. Pair it with a larger main model when you want the live
+  preview to feel instant without taxing the GPU.
 </Callout>
 
 ## Cohere
@@ -111,7 +112,7 @@ int4 exports because the full precision graphs are too large for normal desktop 
 
 ## Audio8-ASR and ARK-ASR
 
-Audio8 ships two `arkasr` models. **Audio8-ASR 0.1B** is the smallest LLM-decoder model in the
+Audio8 ships two `arkasr` models (plus Edge0's streaming Infinite model, below). **Audio8-ASR 0.1B** is the smallest LLM-decoder model in the
 catalog: the same Qwen3-ASR audio tower, but feeding an 8-layer Qwen-style decoder of only 0.1B
 parameters (0.32B end-to-end). That makes it the one LLM-decoder option that fits comfortably on a
 CPU-only machine — the int4 download is under 700 MB, where Qwen3-ASR starts at 2.0 GB.
@@ -127,6 +128,7 @@ catalog — at the cost of a 4.4 GB download and noticeably slower CPU decoding.
     ["Audio8-ASR 0.1B", "0.32B", "7 + auto-detect", "fp32 · int8 · int4", "0.67 – 2.0 GB"],
     ["ARK-ASR 0.6B", "1.3B", "19 + auto-detect", "int8 only", "1.8 GB"],
     ["ARK-ASR 3B", "4.06B", "19 + auto-detect", "int8 · int4", "2.9 – 4.4 GB"],
+    ["Audio8-ASR Infinite", "4.09B", "zh · en", "int8 · int4", "3.3 – 5.4 GB"],
   ]}
   caption="Audio8-ASR covers English, Chinese, Cantonese, French, Japanese, German, and Korean; its int4 tier pairs the int8 audio tower with the int4 decoder (the bundle ships no int4 tower). ARK-ASR 0.6B is the larger sibling — a Whisper-large encoder over a 0.6B decoder, 19 languages, WER 5.53 — and is Apache-2.0, so the non-commercial note below applies to the 0.1B only."
 />
@@ -151,6 +153,16 @@ catalog — at the cost of a 4.4 GB download and noticeably slower CPU decoding.
   recordings transcribe in full — but it means Audio8 re-encodes per chunk rather than holding a
   whole take in one pass.
 </Callout>
+
+**Audio8-ASR Infinite** (Edge0, Apache-2.0) is a different architecture under the Audio8 name: a
+causal, Voxtral-style audio tower feeding a Qwen2.5-3B decoder that emits one token every 80 ms
+at a fixed 480 ms delay. It is a **native streaming** model — live dictation sees text grow word by
+word instead of re-decoding a window — and both attention caches roll, so memory stays constant
+however long the recording runs (the 24-second chunking above does not apply). The decoder also
+predicts **end of turn**, which WinSTT uses to finalize a segment. It covers Chinese and English
+only and cannot auto-detect, so set the spoken language explicitly — speech in the other language
+gets translated rather than transcribed. At ~4.1B parameters it runs on the CPU and needs a fast
+multi-core machine to keep up in real time.
 
 ## SenseVoice
 

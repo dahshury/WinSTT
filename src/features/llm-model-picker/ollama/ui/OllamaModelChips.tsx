@@ -13,7 +13,7 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import { isLiteOllamaModel } from "@/entities/llm-catalog";
+import { isLiteOllamaModel, ollamaThinkingMode } from "@/entities/llm-catalog";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
@@ -35,7 +35,6 @@ import {
 	formatOllamaSize,
 } from "../lib/family-helpers";
 import {
-	normalizedCapabilitySet,
 	supportsOllamaToolCalling,
 	visibleCapabilities,
 } from "../lib/ollama-description-helpers";
@@ -117,12 +116,14 @@ function CompactCapabilityChip({
 function ThinkingChip({
 	capabilities,
 	compact = false,
+	model,
 }: {
 	capabilities: readonly string[] | undefined;
 	compact?: boolean;
+	model?: string | undefined;
 }) {
 	const t = useTranslations("modelPicker");
-	if (!normalizedCapabilitySet(capabilities).has("thinking")) {
+	if (ollamaThinkingMode(model ?? "", capabilities) === "none") {
 		return null;
 	}
 	if (compact) {
@@ -257,11 +258,13 @@ function CapabilityChip({
 export function InstalledCapabilityBadges({
 	capabilities,
 	compact = false,
+	model,
 }: {
 	capabilities: readonly string[] | undefined;
 	compact?: boolean;
+	model?: string | undefined;
 }): ReactNode {
-	const hasThinking = normalizedCapabilitySet(capabilities).has("thinking");
+	const hasThinking = ollamaThinkingMode(model ?? "", capabilities) !== "none";
 	const hasTools = supportsOllamaToolCalling(capabilities);
 	const labels = visibleCapabilities(capabilities, { excludeTools: true });
 	if (!(hasThinking || hasTools) && labels.length === 0) {
@@ -273,7 +276,11 @@ export function InstalledCapabilityBadges({
 				capabilities={capabilities}
 				compact={compact}
 			/>
-			<ThinkingChip capabilities={capabilities} compact={compact} />
+			<ThinkingChip
+				capabilities={capabilities}
+				compact={compact}
+				model={model}
+			/>
 			<CapabilityChips capabilities={capabilities} compact={compact} />
 		</>
 	);

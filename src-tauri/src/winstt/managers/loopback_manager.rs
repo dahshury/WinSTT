@@ -64,10 +64,12 @@ const LOOPBACK_IDLE_GRACE: Duration = Duration::from_millis(200);
 /// exact remaining VAD-frame duration in one deadline.
 const VAD_FRAME_DURATION: Duration = Duration::from_millis(30);
 
-/// Loopback needs much more permissive VAD than close-talk mic dictation: system audio is often
-/// normalized, compressed, mixed with music/effects, or quieter than microphone speech. This
-/// mirrors the RealtimeSTT stereo-mix example's `silero_sensitivity=0.05`.
-const LOOPBACK_VAD_SPEECH_THRESHOLD: f32 = 0.05;
+/// Loopback needs a more permissive VAD than close-talk mic dictation: system audio is often
+/// normalized, compressed, mixed with music/effects, or quieter than microphone speech.
+/// Tuned for Silero v6.2 (see `VAD_SPEECH_THRESHOLD`): on AVA-Speech movie audio 0.02 keeps
+/// ~96% of labelled speech while music / noise / notification sounds trigger ~2 onsets/min
+/// (the v4 model at its old 0.05 kept everything — 94% of non-speech — and fired ~13/min).
+const LOOPBACK_VAD_SPEECH_THRESHOLD: f32 = 0.02;
 
 // The 30 ms frame size (`VAD_FRAME_SAMPLES`) stays shared with the mic path from
 // `audio_toolkit::vad` so the two pipelines keep the same timing unit.
@@ -466,7 +468,7 @@ impl LoopbackManager {
         self.app
             .path()
             .resolve(
-                "resources/models/silero_vad_v4.onnx",
+                crate::audio_toolkit::vad::SILERO_VAD_RESOURCE,
                 tauri::path::BaseDirectory::Resource,
             )
             .map_err(|e| format!("failed to resolve VAD path: {e}"))?
@@ -1554,8 +1556,11 @@ mod tests {
     }
 
     #[test]
-    fn loopback_vad_uses_stereo_mix_sensitivity() {
-        assert_eq!(LOOPBACK_VAD_SPEECH_THRESHOLD, 0.05);
+    fn loopback_vad_is_more_permissive_than_mic() {
+        assert_eq!(LOOPBACK_VAD_SPEECH_THRESHOLD, 0.02);
+        const {
+            assert!(LOOPBACK_VAD_SPEECH_THRESHOLD < crate::audio_toolkit::vad::VAD_SPEECH_THRESHOLD)
+        };
     }
 
     #[test]

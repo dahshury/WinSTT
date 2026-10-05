@@ -78,8 +78,8 @@ allow = []
 deny = []
 
 # ---------------------------------------------------------------------------
-# Sources — crates.io plus the two intentional git pins (tauri-nspanel branch
-# v2.1, cjpais/vad-rs). Keep unknown-git on allow so a legitimate new git pin
+# Sources — crates.io plus the intentional git pin (tauri-nspanel branch
+# v2.1). Keep unknown-git on allow so a legitimate new git pin
 # doesn't break CI; tighten to a per-org allowlist if the set stabilizes.
 # ---------------------------------------------------------------------------
 [sources]

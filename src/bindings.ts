@@ -319,6 +319,11 @@ async winsttPatchSettings(request: RevisionedSettingsPatch) : Promise<Result<Set
  * Reset every renderer-owned settings section through the trusted replacement
  * path. The command broadcasts the canonical snapshot exactly like a normal
  * save, but cannot be mistaken for an unhydrated renderer dumping defaults.
+ *
+ * `(async)` keeps it off the main thread: resetting can change the microphone release
+ * policy or input device, which restarts the capture stream — seconds of blocking device
+ * work that must not run on the UI thread. The normal settings-patch command is already
+ * async for the same reason.
  */
 async settingsResetDefaults() : Promise<Result<SettingsSnapshot, string>> {
     try {
@@ -663,7 +668,8 @@ async ttsPrepareReferenceClip(path: string) : Promise<Result<ReferenceClipInfo, 
  * combined clip that goes in `settings.tts.voice`. The model's cap applies to the
  * CONCATENATION and trims rather than rejects, exactly as the single-clip path
  * does; a one-path call is equivalent to `tts_prepare_reference_clip`, down to
- * returning that same stored file.
+ * returning that same stored file and to writing NOTHING when the floor rejects
+ * the build.
  *
  * Sources arrive from the renderer, so each is checked against the caller's
  * asset-protocol scope — or, for a part this command itself stored, against the
@@ -1121,6 +1127,10 @@ async sttSwitchModel(request: SttSwitchModelRequest) : Promise<SttSwitchModelRes
  * `set_microphone(true)` server-side; here `set_microphone(true)` starts the
  * dictation recording through the coordinator (which runs the TranscribeAction
  * = model preload + overlay + paste pipeline) and `set_microphone(false)` stops it.
+ *
+ * `(async)` keeps it off the main thread: `abort`/`stop`/`shutdown`/`clear_audio_queue`
+ * route into the same recorder teardown as `cancel_current_operation`, which blocks for
+ * seconds on a Bluetooth device and would otherwise freeze the window.
  */
 async winsttCallMethod(method: string, args: JsonValue[] | null) : Promise<void> {
     await TAURI_INVOKE("winstt_call_method", { method, args });
@@ -1170,6 +1180,11 @@ async winsttSetParameter(parameter: string, value: JsonValue) : Promise<void> {
  * `stt_recording_snapshot` — read-only reconciliation surface for the current
  * dictation. Events remain the low-latency path; this snapshot recovers any
  * start/VAD edge emitted before a newly-created overlay registered listeners.
+ *
+ * `(async)` keeps it off the main thread. The overlay invokes this the moment a recording
+ * produces its terminal event, which is exactly when the idle-close worker is tearing the
+ * microphone down; as a synchronous command it parked the UI thread on the recording-state
+ * lock for the length of a Bluetooth teardown.
  */
 async sttRecordingSnapshot() : Promise<SttRecordingSnapshot> {
     return await TAURI_INVOKE("stt_recording_snapshot");
@@ -2443,8 +2458,8 @@ frameworkVersion: string;
 webview2Version: string; copyright: string }
 /**
  * One row of the "remove application data" disk-usage preview: a category key
- * (`stt` / `tts` / `dictionary` / `wakeword` / `history` / `logs` / `other`) and
- * its on-disk size in bytes.
+ * (`stt` / `tts` / `voices` / `dictionary` / `wakeword` / `history` / `logs` /
+ * `other`) and its on-disk size in bytes.
  */
 export type AppDataUsageEntry = { key: string; bytes: number }
 /**
@@ -2523,7 +2538,8 @@ sampleRate?: number;
  */
 bufferSize?: number;
 /**
- * Silero VAD sensitivity; trip threshold = `1 - value`. Range 0..1. HOT-SWAP.
+ * Silero VAD sensitivity; trip threshold = `0.05 ^ (value / 0.7)` (see
+ * `audio_toolkit::vad::live`). Range 0..1. HOT-SWAP.
  * INVARIANT: Silero VAD must load CPU-only (CUDA deadlock).
  */
 sileroSensitivity?: number;
@@ -2897,7 +2913,7 @@ contextDenyList?: string[];
  */
 contextScreenOcr?: boolean;
 /**
- * Per-utterance speaker diarization (~32 MB models, first-run download).
+ * Listen-mode speaker diarization (Nemotron-3-Diarization, ~104 MB first-run download).
  * HOT-SWAP (runtime toggle via diarization-toggle method).
  */
 speakerDiarization?: boolean;

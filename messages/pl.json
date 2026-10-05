@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Po wykryciu słowa wyzwalającego rejestrator czeka tyle sekund na rozpoczęcie mówienia. Jeśli nie zaczniesz, brama zostaje zwolniona i musisz powiedzieć słowo wyzwalające ponownie. Zapobiega uruchomieniu przypadkowego nagrania przez przypadkowy dźwięk kilka minut później.",
     "speakerDiarization": "Diaryzacja mówców",
     "speakerDiarizationCaption": "Koloruj tekst według mówcy w długich nagraniach",
-    "speakerDiarizationTooltip": "Gdy włączone, każda zakończona wypowiedź jest przetwarzana przez lokalny model mówcy (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB pobierane przy pierwszym użyciu, bez torch). Słowa są kolorowane według mówcy w nakładce na żywo; identyfikatory mówców pozostają stabilne przez całą sesję.",
+    "speakerDiarizationTooltip": "Gdy włączone, każda zakończona wypowiedź jest przetwarzana przez lokalny model mówcy (NVIDIA Nemotron-3-Diarization, ~104 MB pobierane przy pierwszym użyciu, bez torch). Słowa są kolorowane według mówcy w nakładce na żywo; identyfikatory mówców pozostają stabilne przez całą sesję.",
     "loopbackDevice": "Urządzenie loopback",
     "loopbackDeviceCaption": "Urządzenie loopback WASAPI do przechwytywania",
     "loopbackDeviceTooltip": "Wybierz urządzenie wyjścia audio do przechwytywania. Aplikacja będzie transkrybować wszystkie dźwięki odtwarzane przez to urządzenie.",

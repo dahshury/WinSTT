@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Nach dem Auslösen des Weckworts wartet der Recorder so lange darauf, dass Sie zu sprechen beginnen. Wenn nicht, wird die Sperre aufgehoben und das Weckwort muss erneut gesagt werden. Verhindert, dass zufällige Geräusche Minuten später eine versehentliche Aufnahme auslösen.",
     "speakerDiarization": "Sprechererkennung",
     "speakerDiarizationCaption": "Text bei langen Aufnahmen farblich pro Sprecher kennzeichnen",
-    "speakerDiarizationTooltip": "Wenn aktiviert, wird jede finalisierte Äußerung durch ein geräteseitiges Sprechermodell verarbeitet (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB werden beim ersten Einsatz heruntergeladen, kein torch). Wörter werden im Live-Overlay farblich nach Sprecher gekennzeichnet; Sprecher-IDs bleiben während der gesamten Sitzung stabil.",
+    "speakerDiarizationTooltip": "Wenn aktiviert, wird jede finalisierte Äußerung durch ein geräteseitiges Sprechermodell verarbeitet (NVIDIA Nemotron-3-Diarization, ~104 MB werden beim ersten Einsatz heruntergeladen, kein torch). Wörter werden im Live-Overlay farblich nach Sprecher gekennzeichnet; Sprecher-IDs bleiben während der gesamten Sitzung stabil.",
     "loopbackDevice": "Loopback-Gerät",
     "loopbackDeviceCaption": "WASAPI-Loopback-Gerät zur Aufnahme",
     "loopbackDeviceTooltip": "Wählen Sie das Audioausgabegerät für die Aufnahme aus. Die App transkribiert das gesamte Audio, das durch dieses Gerät abgespielt wird.",

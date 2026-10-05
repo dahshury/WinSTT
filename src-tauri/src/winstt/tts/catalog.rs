@@ -923,6 +923,56 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         speed_score: 0.08,
         description: "Clone a voice from a short clip in 600+ languages. Slow.",
     },
+    // Audio8 TTS Preview 0.1B — a compact Falcon-H1 (attention + Mamba) slow AR feeding
+    // the same 4-layer fast AR and 44.1 kHz codec family as 0.6B, from Audio8's OFFICIAL
+    // INT8 ONNX release. Unlike the 0.6B row this repo SHIPS its reference voice
+    // (reference_codes.npy + the manifest transcript), so the DualAR prompt is conditioned
+    // out of the box and Read Aloud works the moment the download lands.
+    TtsModelEntry {
+        id: "audio8-tts-0.1b",
+        engine: TtsEngineId::Audio8,
+        display_name: "Audio8 TTS 0.1B",
+        maker: "Audio8",
+        hf_repo: "Audio8/audio8-TTS-0.1B-ONNX-INT8",
+        // The same 11 languages the 0.6B Preview card recommends.
+        languages: &[
+            "en", "cmn", "yue", "nl", "fr", "de", "it", "ja", "ko", "pl", "es",
+        ],
+        // The single packaged reference voice. Must equal AUDIO8_01_VOICES.len().
+        num_voices: 1,
+        // The checkpoint IS a zero-shot cloner, but registering a new voice needs the
+        // +414 MB codec ENCODER this row does not download — so no cloning is offered and
+        // the bundled voice is always present.
+        cloning: CloningKind::None,
+        requires_reference_clip: false,
+        voice_design: false,
+        voice_design_max_chars: 0,
+        voice_instruct: false,
+        max_ref_clip_secs: 0,
+        tag_syntax: TagSyntax::None,
+        tags: &[],
+        sample_rate: 44_100,
+        // ~100M in the AR stack per the model card, plus the shared 44.1 kHz codec.
+        param_count_m: 100,
+        // Exact HF blob bytes (repo tree API, 2026-08-30) of AUDIO8_01_FILES:
+        // runtime_manifest.json 1,424 + slow_ar_int8.onnx 4,820,700 + .data 133,471,232 +
+        // fast_ar_int8.onnx 511,306 + .data 36,718,592 + codec_decoder_fp16.onnx 594,319 +
+        // .data 260,741,440 + tokenizer/tokenizer.json 5,852,397 + reference_codes.npy
+        // 8,928. "int8" is the only precision upstream publishes.
+        quants: &[TtsQuant {
+            id: "int8",
+            size_bytes: 442_720_338,
+        }],
+        quality_score: 0.80,
+        // speed MEASURED with examples/tts_engine_bench (i9-12900KF, warm, 8 intra-op
+        // threads): RTF 7.6 (cold 9.3) rendering 3.20 s of audio in 24.4 s. That lands
+        // between qwen3-tts-0.6b (6.3x -> 0.10) and omnivoice (~8x -> 0.08) on the shared
+        // log-RTF scale. The cost is structural: upstream's hybrid export is a one-token
+        // graph INCLUDING prefill, so every sentence pays one Run per prompt token — and
+        // the packaged reference alone is 110 of them — before the first frame appears.
+        speed_score: 0.09,
+        description: "Tiny multilingual 44.1 kHz speech model; works immediately with its built-in voice.",
+    },
     // Audio8 TTS Preview 0.6B — DualAR (Fish-Audio-S2-style) zero-shot cloner: 24-layer
     // slow AR (one semantic token per frame) + 4-layer fast AR (10 codec codebooks) +
     // 44.1 kHz neural codec, ported from the official CPU-oriented ONNX runtime
@@ -1401,6 +1451,23 @@ mod tests {
         assert_eq!(omni.cloning, audio8.cloning);
         assert!(!omni.requires_reference_clip);
         assert!(audio8.requires_reference_clip);
+    }
+
+    #[test]
+    fn audio8_preview_01_ships_its_voice_and_points_at_the_official_repo() {
+        let entry = find("audio8-tts-0.1b").expect("Audio8 0.1B catalog row");
+        assert_eq!(entry.engine, TtsEngineId::Audio8);
+        assert_eq!(
+            entry.num_voices as usize,
+            crate::winstt::tts::local_engines::AUDIO8_01_VOICES.len()
+        );
+        // The packaged reference voice is what makes this row usable with no clip; the
+        // 0.6B row next to it is the one that needs one.
+        assert_eq!(entry.cloning, CloningKind::None);
+        assert!(!entry.requires_reference_clip);
+        assert_eq!(entry.default_quant(), "int8");
+        // Audio8's OFFICIAL INT8 export, which superseded WinSTT's community conversion.
+        assert_eq!(entry.hf_repo, "Audio8/audio8-TTS-0.1B-ONNX-INT8");
     }
 
     #[test]

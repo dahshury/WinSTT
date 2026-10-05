@@ -70,7 +70,8 @@ These three controls appear only when the mode is **Wakeword**.
 
 <SettingRow label="Speaker Diarization" settingKey="general.speakerDiarization" default="false">
   Shown only in **Listen** mode. Colors each speaker in the transcript and tracks identities
-  across the session. First use downloads ~32 MB of ONNX models. Toggles live — no restart.
+  across the session (up to 8 speakers, via NVIDIA's on-device Nemotron-3-Diarization model).
+  First use downloads ~104 MB. Toggles live — no restart.
 </SettingRow>
 
 ### Audio feedback

@@ -705,7 +705,7 @@ describe("supportsTranslateToEnglish", () => {
 		expect(
 			supportsTranslateToEnglish(
 				withModel({
-					id: "nemo-parakeet-tdt-0.6b-v3",
+					id: "nemo-parakeet-tdt-0.6b-ultra",
 					family: "nemo",
 					supportsLanguageDetection: false,
 				}),

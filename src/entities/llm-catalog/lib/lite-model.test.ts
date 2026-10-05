@@ -12,6 +12,9 @@ describe("ollamaEffectiveParamsBillions", () => {
 		expect(ollamaEffectiveParamsBillions("phi4-mini:3.8b")).toBeCloseTo(3.8);
 		expect(ollamaEffectiveParamsBillions("gemma4:12b-it-q4_K_M")).toBe(12);
 		expect(ollamaEffectiveParamsBillions("lfm2.5:8b-a1b-q4_K_M")).toBe(8);
+		expect(
+			ollamaEffectiveParamsBillions("hf.co/superwhisper/s1-mini-GGUF:Q4_K_M"),
+		).toBe(0.6);
 	});
 
 	it("never parses quant markers as sizes", () => {
@@ -34,8 +37,9 @@ describe("isLiteOllamaModel", () => {
 			"qwen3.5:2b",
 			"gemma4:e2b",
 			"gemma4:e2b-it-qat",
-			"granite4.1:3b",
+			"granite4.2:3b",
 			"phi4-mini:3.8b",
+			"hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
 		]) {
 			expect(isLiteOllamaModel(name)).toBe(true);
 		}

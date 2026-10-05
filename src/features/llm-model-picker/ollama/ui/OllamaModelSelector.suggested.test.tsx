@@ -77,6 +77,32 @@ beforeEach(() => {
 });
 
 describe("OllamaModelSelector suggested filter", () => {
+	test("renders inherited accuracy and speed bars for a curated model", () => {
+		render(
+			<OllamaModelSelector
+				inline
+				models={[]}
+				onChange={mock(() => undefined)}
+				recommendedModels={[
+					recommended({
+						name: "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
+						displayName: "S1-mini",
+						family: "s1-mini",
+						performance: {
+							accuracyScore: 0.446,
+							speedScore: 0.979,
+							sourceModel: "Qwen/Qwen3-0.6B",
+						},
+					}),
+				]}
+				value=""
+			/>,
+		);
+
+		expect(screen.getByLabelText("Accuracy 45%")).toBeDefined();
+		expect(screen.getByLabelText("Speed 98%")).toBeDefined();
+	});
+
 	test("hides recommended models with no fitting quant (default ON) and shows the chip", () => {
 		renderSelector({ suggestions: makeSuggestions() });
 		expect(screen.getByText("Small Llama")).toBeDefined();

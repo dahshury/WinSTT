@@ -91,7 +91,7 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 	test("the 'tiny' tag tracks parameter count, NOT disk size", () => {
 		// NOTE: "tiny" is NOT a disk-size promise. llama3.2:1b is tagged "tiny"
 		// (1.2B params) yet weighs 1.3 GB on disk — more than several non-tiny
-		// entries (e.g. granite4.1:3b at 2.1 GB IS larger but is the bigger model).
+		// entries (e.g. granite4.2:3b at 2.2 GB IS larger but is the bigger model).
 		// So the only invariant we can assert is that every "tiny" model is
 		// small by parameter label. Anyone reading the tag as "small download"
 		// would be misled — flagged as a UX wart, not asserted as a size bound.
@@ -124,6 +124,24 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 		const smol17b = findRecommendedModel("smollm2:1.7b");
 		expect(smol17b?.displayName).toBe("SmolLM 2 1.7B");
 		expect(smol17b?.sizeBytes).toBe(Math.round(1.8 * 1_000_000_000));
+	});
+
+	test("offers S1-mini by Superwhisper through its Ollama-compatible GGUF", () => {
+		const s1Mini = findRecommendedModel(
+			"hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
+		);
+		expect(s1Mini).toMatchObject({
+			displayName: "S1-mini",
+			family: "s1-mini",
+			paramSize: "0.6B",
+			performance: {
+				accuracyScore: 0.446,
+				sourceModel: "Qwen/Qwen3-0.6B",
+				speedScore: 0.979,
+			},
+			sizeBytes: 484_219_808,
+		});
+		expect(s1Mini?.description).toContain("S1-mini by Superwhisper");
 	});
 
 	test("carries no SmolLM v1 (smollm) entries — only smollm2", () => {

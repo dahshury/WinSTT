@@ -11,9 +11,10 @@ const GB = 1_000_000_000;
  * "won't fit" chip warns per-device). Ordered smallest → largest.
  *
  * EVERY entry is the LATEST generation of its family available on
- * `ollama.com/library`, verified live (2026-06). Superseded versions were removed
- * outright: gemma3 → **gemma4**, qwen3/qwen2.5 → **qwen3.5** (qwen3.6 is large-only,
- * no small sizes), granite3.x → **granite4.1**, tinyllama dropped. Notes:
+ * `ollama.com/library`, verified live (2026-06; granite re-verified 2026-10). Superseded
+ * versions were removed outright: gemma3 → **gemma4**, qwen3/qwen2.5 → **qwen3.5**
+ * (qwen3.6 is large-only, no small sizes), granite3.x/4.1 → **granite4.2**, tinyllama
+ * dropped. Notes:
  *   - Llama 4 is MoE-only (Scout 67 GB+), so **llama3.2** remains the latest SMALL
  *     Llama — kept, not outdated.
  *   - SmolLM3 has no official library entry (404), so **smollm2** is the latest
@@ -59,6 +60,27 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		description:
 			"Hugging Face SmolLM 2 360M. Tiny footprint with passable instruction following.",
 		tags: ["fast", "tiny"],
+	},
+	{
+		name: "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
+		displayName: "S1-mini",
+		family: "s1-mini",
+		paramSize: "0.6B",
+		sizeBytes: 484_219_808,
+		description:
+			"S1-mini by Superwhisper, fine-tuned from Qwen3-0.6B. A purpose-built, English-only speech-to-text normalizer for filler removal, self-corrections, punctuation, capitalization, and spoken-number formatting.",
+		performance: {
+			// Inherit the upstream Qwen3-0.6B non-thinking profile as requested;
+			// these are deliberately not presented as S1-mini-specific benchmarks.
+			// Accuracy: Qwen's published BF16 MMLU-Redux non-thinking result (44.6).
+			// Speed: Qwen's short-input BF16 Transformers throughput (58.57 tok/s),
+			// normalized against the fastest dense Qwen3 result in the same table
+			// (Qwen3-1.7B at 59.83 tok/s): 58.57 / 59.83 = 0.979.
+			accuracyScore: 0.446,
+			speedScore: 0.979,
+			sourceModel: "Qwen/Qwen3-0.6B",
+		},
+		tags: ["fast", "tiny", "recommended"],
 	},
 	{
 		name: "qwen3.5:0.8b",
@@ -114,13 +136,13 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		tags: ["fast", "instruct"],
 	},
 	{
-		name: "granite4.1:3b",
-		displayName: "Granite 4.1 3B",
+		name: "granite4.2:3b",
+		displayName: "Granite 4.2 3B",
 		family: "granite",
 		paramSize: "3B",
-		sizeBytes: Math.round(2.1 * GB),
+		sizeBytes: Math.round(2.2 * GB),
 		description:
-			"IBM Granite 4.1 3B, tuned for instruction-following and summarization — ideal for clean rewrites at low VRAM.",
+			"IBM Granite 4.2 3B (Aug 2026), tuned for instruction-following and summarization with toggleable reasoning — leave Thinking off for clean rewrites at low VRAM.",
 		tags: ["fast", "instruct", "recommended"],
 	},
 	{
@@ -194,13 +216,13 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		tags: ["instruct"],
 	},
 	{
-		name: "granite4.1:8b",
-		displayName: "Granite 4.1 8B",
+		name: "granite4.2:8b",
+		displayName: "Granite 4.2 8B",
 		family: "granite",
 		paramSize: "8B",
 		sizeBytes: Math.round(5.3 * GB),
 		description:
-			"IBM Granite 4.1 8B. Enterprise-grade instruction-following and summarization; best on a GPU or 16 GB RAM.",
+			"IBM Granite 4.2 8B (Aug 2026). Enterprise-grade instruction-following and summarization with toggleable reasoning and a 128K context window; best on a GPU or 16 GB RAM.",
 		tags: ["instruct"],
 	},
 	{

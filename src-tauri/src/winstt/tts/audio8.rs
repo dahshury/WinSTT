@@ -272,7 +272,7 @@ const INTRA_OP_THREADS: usize = 8;
 /// `tts_engine_bench` can sweep the count without a rebuild — the same knob
 /// NeuTTS exposes. Clamped to the machine's parallelism so a 2-core box does not
 /// over-subscribe.
-fn intra_op_threads() -> usize {
+pub(super) fn intra_op_threads() -> usize {
     let cores = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
     std::env::var("WINSTT_TTS_INTRA_THREADS")
         .ok()
@@ -516,7 +516,7 @@ fn build_prompt(
 /// ordering (top-1 always kept), THEN temperature-scale the surviving logits, softmax,
 /// and draw. Note the order differs from the Qwen3 sampler in `sampling.rs` (which
 /// scales before masking), so this is its own faithful port.
-fn sample_audio8(
+pub(super) fn sample_audio8(
     logits: &[f64],
     temperature: f64,
     top_p: f64,
@@ -1162,7 +1162,7 @@ impl Audio8Engine {
 
 /// Extract a named float output as f32, accepting fp16 graphs (the int4 export emits
 /// fp16 activations). Same contract as Chatterbox's `extract_f32`.
-fn extract_f32(
+pub(super) fn extract_f32(
     outputs: &ort::session::SessionOutputs<'_>,
     name: &str,
 ) -> Audio8Result<ArrayD<f32>> {
@@ -1185,7 +1185,7 @@ fn extract_f32(
 /// which the sampler wants the final 4097. The old path converted and `to_vec()`d the
 /// whole thing first. Reads the graph's own dtype (fp16 for this export) and converts
 /// only the tail.
-fn extract_last_row_f64(
+pub(super) fn extract_last_row_f64(
     outputs: &ort::session::SessionOutputs<'_>,
     name: &str,
 ) -> Audio8Result<Vec<f64>> {

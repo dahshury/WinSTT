@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "깨우기 단어가 감지된 후 말하기 시작할 때까지 이 시간만큼 대기합니다. 시간 내에 말을 시작하지 않으면 게이트가 해제되어 깨우기 단어를 다시 말해야 합니다. 나중에 발생하는 잡음으로 인한 우발적 녹음을 방지합니다.",
     "speakerDiarization": "화자 분리",
     "speakerDiarizationCaption": "장문 녹음에서 화자별로 텍스트에 색상 표시",
-    "speakerDiarizationTooltip": "활성화하면 최종 발화마다 온디바이스 화자 모델(pyannote-segmentation-3.0 + wespeaker-resnet34-LM, 첫 사용 시 약 32MB 다운로드, torch 불필요)을 통해 처리됩니다. 실시간 오버레이에서 화자별로 단어가 색상으로 표시되며, 화자 ID는 전체 세션에서 일관되게 유지됩니다.",
+    "speakerDiarizationTooltip": "활성화하면 최종 발화마다 온디바이스 화자 모델(NVIDIA Nemotron-3-Diarization, 첫 사용 시 약 104MB 다운로드, torch 불필요)을 통해 처리됩니다. 실시간 오버레이에서 화자별로 단어가 색상으로 표시되며, 화자 ID는 전체 세션에서 일관되게 유지됩니다.",
     "loopbackDevice": "루프백 장치",
     "loopbackDeviceCaption": "캡처할 WASAPI 루프백 장치",
     "loopbackDeviceTooltip": "캡처할 오디오 출력 장치를 선택합니다. 해당 장치를 통해 재생되는 모든 오디오가 전사됩니다.",

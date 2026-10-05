@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "ウェイクワードが検出された後、録音器はこの時間だけ発話を待ちます。発話がない場合はゲートがリセットされ、再度ウェイクワードを発声する必要があります。後の偶発的なノイズによる誤録音を防ぎます。",
     "speakerDiarization": "話者分離",
     "speakerDiarizationCaption": "長時間録音で話者ごとにテキストを色分け",
-    "speakerDiarizationTooltip": "オンにすると、確定した各発話がオンデバイスの話者モデル（pyannote-segmentation-3.0 + wespeaker-resnet34-LM、初回使用時に約32 MB ダウンロード、torch不要）で処理されます。ライブオーバーレイに話者ごとの色付きテキストが表示され、話者 ID はセッション全体で一定に保たれます。",
+    "speakerDiarizationTooltip": "オンにすると、確定した各発話がオンデバイスの話者モデル（NVIDIA Nemotron-3-Diarization、初回使用時に約104 MB ダウンロード、torch不要）で処理されます。ライブオーバーレイに話者ごとの色付きテキストが表示され、話者 ID はセッション全体で一定に保たれます。",
     "loopbackDevice": "ループバックデバイス",
     "loopbackDeviceCaption": "キャプチャする WASAPI ループバックデバイス",
     "loopbackDeviceTooltip": "キャプチャするオーディオ出力デバイスを選択します。このデバイスで再生されるすべての音声がアプリにより文字起こしされます。",

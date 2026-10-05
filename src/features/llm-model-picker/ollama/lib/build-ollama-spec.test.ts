@@ -53,6 +53,33 @@ describe("buildOllamaSpec", () => {
 		expect(spec.facts.find((fact) => fact.key === "quant")?.value).toBe("Q1_0");
 	});
 
+	test("shows S1-mini under Superwhisper with its bundled logo", () => {
+		const spec = buildOllamaSpec(
+			makeModel({
+				name: "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
+				details: {
+					family: "qwen3",
+					parameterSize: "751.6M",
+					quantizationLevel: "Q4_K_M",
+				},
+			}),
+		);
+		expect(spec.name).toBe("S1-mini");
+		expect(spec.makerLabel).toBe("Superwhisper");
+		expect(spec.makerLogoSrc).toContain("/provider-icons/superwhisper.png");
+		expect(spec.facts.find((fact) => fact.key === "params")?.value).toBe(
+			"0.6B",
+		);
+		expect(spec.features.map((feature) => feature.key)).not.toContain(
+			"reasoning",
+		);
+		expect(spec.stats).toMatchObject([
+			{ key: "accuracy", label: "Accuracy", score: 0.446 },
+			{ key: "speed", label: "Speed", score: 0.979 },
+		]);
+		expect(spec.sourceLabel).toBe("Performance inherited from Qwen/Qwen3-0.6B");
+	});
+
 	test("context is compacted", () => {
 		expect(
 			buildOllamaSpec(makeModel()).facts.find((f) => f.key === "context")
@@ -67,7 +94,7 @@ describe("buildOllamaSpec", () => {
 		expect(keys.some((k) => k.startsWith("cap-"))).toBe(true);
 	});
 
-	test("no perf bars for local models", () => {
+	test("keeps perf bars absent for local models without an attributable profile", () => {
 		expect(buildOllamaSpec(makeModel()).stats).toBeUndefined();
 	});
 });

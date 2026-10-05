@@ -52,6 +52,7 @@ const PROVIDER_ICONS: Record<string, string> = {
 	sao10k: "/provider-icons/sao10k.png",
 	sesame: "/provider-icons/sesame.svg",
 	"stepfun-ai": "/provider-icons/stepfun-ai.svg",
+	superwhisper: "/provider-icons/superwhisper.png",
 	switchpoint: "/provider-icons/switchpoint.png",
 	tencent: "/provider-icons/tencent.svg",
 	thedrummer: "/provider-icons/thedrummer.png",

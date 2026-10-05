@@ -127,6 +127,30 @@ describe("OllamaModelSelector detached-open mode", () => {
 		expect(trigger?.textContent).toContain("4B");
 	});
 
+	test("keeps S1-mini's inherited performance bars after installation", () => {
+		const s1Mini = "hf.co/superwhisper/s1-mini-GGUF:Q4_K_M";
+		render(
+			<OllamaModelSelector
+				inline
+				models={[
+					model({
+						name: s1Mini,
+						details: {
+							family: "qwen3",
+							parameterSize: "751.6M",
+							quantizationLevel: "Q4_K_M",
+						},
+					}),
+				]}
+				onChange={() => undefined}
+				value={s1Mini}
+			/>,
+		);
+
+		expect(screen.getByLabelText("Accuracy 45%")).toBeDefined();
+		expect(screen.getByLabelText("Speed 98%")).toBeDefined();
+	});
+
 	test("a typed off-catalog tag renders a full card from the on-demand homepage hit", () => {
 		const uiStorageKey = "winstt:test:ollama-typed-card";
 		window.localStorage.setItem(

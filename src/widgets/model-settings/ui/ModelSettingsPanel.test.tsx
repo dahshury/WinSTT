@@ -434,7 +434,7 @@ describe("ModelSettingsPanel", () => {
 
 	test("hides language controls for multilingual models that cannot use a runtime language option", () => {
 		useCatalogStore.getState().setModels([
-			rawModel("nemo-parakeet-tdt-0.6b-v3", true, {
+			rawModel("nemo-parakeet-tdt-0.6b-ultra", true, {
 				family: "nemo",
 				languages: ["de", "en", "es", "fr"],
 				supports_language_detection: false,
@@ -445,7 +445,7 @@ describe("ModelSettingsPanel", () => {
 				...DEFAULT_SETTINGS,
 				model: {
 					...DEFAULT_SETTINGS.model,
-					model: "nemo-parakeet-tdt-0.6b-v3",
+					model: "nemo-parakeet-tdt-0.6b-ultra",
 				},
 			} as typeof DEFAULT_SETTINGS,
 		});

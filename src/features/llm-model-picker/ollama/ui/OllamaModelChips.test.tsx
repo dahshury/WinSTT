@@ -6,12 +6,14 @@ import { InstalledCapabilityBadges } from "./OllamaModelChips";
 function renderCapabilityBadges(
 	capabilities: readonly string[],
 	compact = false,
+	model?: string,
 ) {
 	return render(
 		<TooltipProvider.Provider>
 			<InstalledCapabilityBadges
 				capabilities={capabilities}
 				compact={compact}
+				model={model}
 			/>
 		</TooltipProvider.Provider>,
 	);
@@ -53,6 +55,16 @@ describe("installedCapabilityBadges", () => {
 		expect(renderCapabilityBadges([]).container.firstChild).toBeNull();
 		expect(
 			renderCapabilityBadges(["completion"]).container.firstChild,
+		).toBeNull();
+	});
+
+	test("hides S1-mini's inherited Qwen3 thinking capability", () => {
+		expect(
+			renderCapabilityBadges(
+				["completion", "thinking"],
+				false,
+				"hf.co/superwhisper/s1-mini-GGUF:Q4_K_M",
+			).container.firstChild,
 		).toBeNull();
 	});
 });

@@ -76,7 +76,7 @@ function Assert-PackageTree([string] $Root, [string] $Label) {
         "resources\marimba_start.wav",
         "resources\recording.png",
         "resources\tray_idle.png",
-        "resources\models\silero_vad_v4.onnx",
+        "resources\models\silero_vad_v6.onnx",
         "resources\models\gigaam_vocab.txt",
         "DirectML.dll",
         "msvcp140.dll",

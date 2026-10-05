@@ -21,7 +21,10 @@ import type {
 	OllamaPullProgress,
 	RecommendedOllamaModel,
 } from "@/shared/api/models";
-import { isLiteOllamaModel } from "@/entities/llm-catalog";
+import {
+	findRecommendedModel,
+	isLiteOllamaModel,
+} from "@/entities/llm-catalog";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
@@ -203,6 +206,7 @@ function OllamaModelRow({
 }) {
 	const displayName = formatOllamaDisplayName(model.name);
 	const publisher = getOllamaPublisher(getOllamaFamily(model));
+	const performance = findRecommendedModel(model.name)?.performance;
 	const activePullName = shelfDeps
 		? activePullNameForRow(
 				shelfDeps.pulls,
@@ -217,7 +221,10 @@ function OllamaModelRow({
 				model.capabilities?.length || isLiteOllamaModel(model.name) ? (
 					<>
 						{model.capabilities?.length ? (
-							<InstalledCapabilityBadges capabilities={model.capabilities} />
+							<InstalledCapabilityBadges
+								capabilities={model.capabilities}
+								model={model.name}
+							/>
 						) : null}
 						<LiteTierChip model={model.name} />
 					</>
@@ -234,6 +241,7 @@ function OllamaModelRow({
 			makerIcon={<OllamaMakerIcon slug={publisher.slug} />}
 			meta={buildInstalledMetaEntries(model)}
 			name={displayName}
+			perf={performance}
 			selected={isSelected}
 			shelf={
 				shelfDeps ? (
@@ -469,7 +477,9 @@ function LibraryRowHeader({
 	// subordinate `badges` wrap-row (mirrors RecommendedRow), so the name owns
 	// the top line.
 	const capabilityBadges =
-		caps.length > 0 ? <InstalledCapabilityBadges capabilities={caps} /> : null;
+		caps.length > 0 ? (
+			<InstalledCapabilityBadges capabilities={caps} model={hit.name} />
+		) : null;
 	const hasBadges =
 		status.installedCount > 0 ||
 		Boolean(status.activePull) ||
@@ -789,6 +799,7 @@ function RecommendedRow({
 			makerIcon={<OllamaMakerIcon slug={recPublisher.slug} />}
 			meta={buildRecommendedMetaEntries(model, downloadSizeBytes)}
 			name={model.displayName}
+			perf={model.performance}
 			// Card-body click = use the recommended (default) tag: `model.name` is the
 			// bare recommended pull tag (e.g. `gemma3:4b`). Select it if installed,
 			// else pull it. The per-quant badges keep their own explicit clicks.
@@ -966,7 +977,11 @@ function TypedModelRow({
 			as="div"
 			badges={
 				<>
-					<InstalledCapabilityBadges capabilities={capabilities} compact />
+					<InstalledCapabilityBadges
+						capabilities={capabilities}
+						compact
+						model={info.modelName}
+					/>
 					<WontFitChip fit={fit} />
 				</>
 			}

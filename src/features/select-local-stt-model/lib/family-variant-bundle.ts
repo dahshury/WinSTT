@@ -40,15 +40,22 @@ const TURBO_SUFFIX_RE = /-turbo$/;
  * Examples:
  *   - ``nemo-canary-1b-v2`` + ``nemo-canary-180m-flash`` → ``nemo-canary``
  *     (both are TDT-based Canary; differ only in size).
- *   - ``moonshine-tiny`` + ``moonshine-tiny-zh`` / ``-ja`` / ``-ko`` / etc.
- *       → ``moonshine-tiny`` (the same encoder-only model, language-tuned).
- *   - ``moonshine-base`` likewise.
+ *   - ``moonshine-streaming-tiny`` + ``moonshine-streaming-tiny-ja`` / ``-zh`` /
+ *     ``-ar`` / etc. → ``moonshine-streaming-tiny`` (Moonshine v2, the same
+ *     streaming architecture, language-tuned); ``-small`` likewise.
+ *   - The surviving Moonshine v1 language rows (``moonshine-tiny-ko`` /
+ *     ``-uk`` / ``-fr``, ``moonshine-base-ko``) keep their v1 tiny / base
+ *     bundles. ``moonshine-tiny`` can never swallow a v2 id: those start with
+ *     ``moonshine-streaming-``.
  *   - ``cohere-transcribe`` + ``cohere-transcribe-arabic`` → ``cohere-transcribe``
  *     (same CohereAsr architecture; the Arabic build is a language fine-tune, so
  *     it rides under the multilingual base as a variant, not its own card).
  */
 const ARCH_BUNDLE_PREFIXES: readonly string[] = [
 	"nemo-canary",
+	"moonshine-streaming-tiny",
+	"moonshine-streaming-small",
+	"moonshine-streaming-medium",
 	"moonshine-tiny",
 	"moonshine-base",
 	"cohere-transcribe",

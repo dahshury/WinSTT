@@ -399,7 +399,7 @@ describe("audioSettingsSchema defaults (lock-down)", () => {
 		expect(audioSettingsSchema.parse({}).bufferSize).toBe(512);
 	});
 
-	test("sileroSensitivity defaults to 0.7 (trip threshold 0.3)", () => {
+	test("sileroSensitivity defaults to 0.7 (trip threshold 0.05)", () => {
 		expect(audioSettingsSchema.parse({}).sileroSensitivity).toBe(0.7);
 	});
 

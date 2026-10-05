@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Dopo che la parola chiave viene attivata, il registratore attende questo periodo prima che tu inizi a parlare. Se non parli, il sistema si reimposta e devi pronunciare di nuovo la parola chiave. Evita che un rumore casuale minuti dopo attivi una registrazione accidentale.",
     "speakerDiarization": "Diarizzazione speaker",
     "speakerDiarizationCaption": "Colora il testo per speaker nelle registrazioni lunghe",
-    "speakerDiarizationTooltip": "Quando attivo, ogni enunciato finalizzato viene elaborato da un modello speaker locale (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB scaricati al primo utilizzo, senza torch). Le parole sono colorate per speaker nell'overlay in tempo reale; gli ID speaker rimangono stabili per tutta la sessione.",
+    "speakerDiarizationTooltip": "Quando attivo, ogni enunciato finalizzato viene elaborato da un modello speaker locale (NVIDIA Nemotron-3-Diarization, ~104 MB scaricati al primo utilizzo, senza torch). Le parole sono colorate per speaker nell'overlay in tempo reale; gli ID speaker rimangono stabili per tutta la sessione.",
     "loopbackDevice": "Dispositivo loopback",
     "loopbackDeviceCaption": "Dispositivo loopback WASAPI da acquisire",
     "loopbackDeviceTooltip": "Seleziona il dispositivo di uscita audio da acquisire. L'app trascriverà tutto l'audio riprodotto attraverso questo dispositivo.",

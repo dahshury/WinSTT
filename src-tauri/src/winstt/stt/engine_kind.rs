@@ -25,6 +25,10 @@ pub enum EngineKind {
     /// 3-graph raw-audio encoder/decoder (`decoder_model.onnx` +
     /// `decoder_with_past_model.onnx`, no merged graph, no `use_cache_branch`).
     Moonshine,
+    /// Moonshine v2 streaming (`moonshine-streaming-*`): five graphs — a stateful causal
+    /// `frontend`, a sliding-window `encoder` re-run over a bounded window, a positional `adapter`,
+    /// `cross_kv`, and a KV-cached `decoder_kv` — driven incrementally (`moonshine_streaming.rs`).
+    MoonshineStreaming,
     /// Conformer encoder + merged Transformer decoder; SentencePiece byte-fallback
     /// tokenizer; KV-cache branch implicit in past-tensor shapes (no flag input);
     /// fp16 KV-cache dtype must match the decoder's declared `past_key_values` type.
@@ -59,6 +63,14 @@ pub enum EngineKind {
     /// faster on a 3 s clip and ~8% slower on a 30 s one — a growing cache concatenates O(past)
     /// per step, so it wins only while the sequence is short relative to the static ceiling.
     ArkAsr,
+    /// Audio8-ASR-Infinite (Edge0): a NATIVE STREAMING zh/en recognizer — Voxtral-Realtime causal
+    /// audio tower (sliding window 750) → frame-grouping projector → Qwen2.5-3B decoder with
+    /// per-layer delay modulation (AdaRMSNorm) + semantic end-of-turn heads. One text token per
+    /// 80 ms of audio; constant memory via a 749-slot encoder ring and the 375-token rolling
+    /// decoder cache (38-token trims after a 16-token stable prefix). Our own export
+    /// (`Masterx/Audio8-ASR-Infinite-ONNX`, `families/audio8_infinite.rs`) — unrelated to the
+    /// `arkasr` packagings above despite the name.
+    Audio8Infinite,
     /// VibeVoice-ASR (BitNet): dual ConvNeXt audio tokenizer over RAW 24 kHz waveform (no mel) →
     /// audio embeds; qwen3-style `decoder_init` (embeds ids internally, splices audio at
     /// `audio_offset`) + `decoder_step` (host-looked-up `input_embeds`, stacked KV
@@ -258,6 +270,26 @@ impl EngineKind {
         if matches!(self, EngineKind::Audio8Asr | EngineKind::ArkAsr) {
             return true;
         }
+        // NeMo TDT `int4` = Parakeet Redux, the ternary (1.58-bit) Parakeet whose encoder ships as
+        // 4-bit `MatMulNBits` blocks from a torch-dynamo export. It is a CPU model by design, and
+        // DirectML cannot run it at all: ORT-DML 1.24 faults on the first encoder pass
+        // (`Reshape` node, MLOperatorAuthorImpl 8007023E) — so this is a hard CPU route, not a
+        // perf preference. It lives here because this is the only per-QUANT routing hook; the
+        // float/int8 TDT tiers (Parakeet Ultra) keep the GPU EP.
+        if self == EngineKind::NemoTdt && quant == Quantization::Int4 {
+            return true;
+        }
+        // Audio8-ASR-Infinite: CPU at every precision. The streaming contract keeps both caches
+        // HOST-resident and re-feeds them every call — the encoder's 32-layer sliding-window ring
+        // is ~392 MB (f32) per window and the decoder's rolling cache ~27 MB per 80 ms token —
+        // which is free (zero-copy views) on the CPU EP but a full upload per call on DirectML,
+        // the exact per-token-launch + transfer pattern measured above to lose ~3x for the
+        // `arkasr` decoders. Measured at landing (int4, 11 s JFK, same machine load): DirectML
+        // RTF 10.8 vs CPU 2.1 — identical transcript, ~5x slower. Unpinning needs IoBinding-
+        // resident caches plus a measured win.
+        if self == EngineKind::Audio8Infinite {
+            return true;
+        }
         matches!(self, EngineKind::GigaamRnnt | EngineKind::NemoRnntStreaming)
             && matches!(
                 quant,
@@ -280,10 +312,12 @@ impl EngineKind {
         matches!(
             self,
             EngineKind::ToneCtc
+                | EngineKind::MoonshineStreaming
                 | EngineKind::NemoCtcStreaming
                 | EngineKind::NemoRnntStreaming
                 | EngineKind::KaldiTransducerStreaming
                 | EngineKind::KaldiCtc
+                | EngineKind::Audio8Infinite
         )
     }
 

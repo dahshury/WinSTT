@@ -421,7 +421,7 @@
     "wakeWordTimeoutTooltip": "Po zaznění probuzovacího slova nahrávač čeká tuto dobu, než začnete mluvit. Pokud nezačnete, brána se vyčistí a musíte probuzovací slovo říci znovu. Zabraňuje náhodným nahrávkám způsobeným pozdějším šumem.",
     "speakerDiarization": "Rozlišení mluvčích",
     "speakerDiarizationCaption": "Barevné odlišení textu dle mluvčích v delších nahrávkách",
-    "speakerDiarizationTooltip": "Pokud je zapnuto, každá finalizovaná promluva je zpracována lokálním modelem mluvčích (pyannote-segmentation-3.0 + wespeaker-resnet34-LM, ~32 MB staženo při prvním použití, bez torch). Slova jsou barevně odlišena dle mluvčího v živém přehledu; ID mluvčích zůstávají stabilní po celou relaci.",
+    "speakerDiarizationTooltip": "Pokud je zapnuto, každá finalizovaná promluva je zpracována lokálním modelem mluvčích (NVIDIA Nemotron-3-Diarization, ~104 MB staženo při prvním použití, bez torch). Slova jsou barevně odlišena dle mluvčího v živém přehledu; ID mluvčích zůstávají stabilní po celou relaci.",
     "loopbackDevice": "Zpětnovazební zařízení",
     "loopbackDeviceCaption": "Zařízení pro WASAPI zpětnovazební zachytávání",
     "loopbackDeviceTooltip": "Vyberte výstupní zvukové zařízení k zachytávání. Aplikace bude přepisovat veškerý zvuk přehrávaný přes toto zařízení.",

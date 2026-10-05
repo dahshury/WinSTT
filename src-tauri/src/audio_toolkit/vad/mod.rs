@@ -2,14 +2,27 @@ use anyhow::Result;
 
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
 
-/// Silero VAD speech threshold shared by every VAD-gated pipeline (the mic recorder
-/// in `managers/audio.rs` and the listen-mode loopback consumer in
-/// `winstt/managers/loopback_manager.rs`) so both gate on the SAME sensitivity. A
-/// single owner avoids the two paths silently drifting apart.
-pub const VAD_SPEECH_THRESHOLD: f32 = 0.3;
+/// Bundled Silero VAD model (v6.2), relative to the Tauri resource dir. Every consumer
+/// (mic recorder, loopback listen mode, long-form segmentation, CLI, examples) resolves
+/// this ONE path so a model swap is a single edit plus the resource file.
+pub const SILERO_VAD_RESOURCE: &str = "resources/models/silero_vad_v6.onnx";
 
-/// Silero analysis frame size at 16 kHz (30 ms). The Silero VAD operates on 30 ms
-/// frames; capture sides emit 30 ms chunks and consumers re-frame defensively.
+/// Silero VAD speech threshold shared by every VAD-gated pipeline (the mic recorder
+/// in `managers/audio.rs` at the default sensitivity — see `live.rs` — and the long-form
+/// segmentation sweep in `winstt/stt/vad_segment.rs`) so both gate on the SAME
+/// sensitivity. A single owner avoids the paths silently drifting apart.
+///
+/// Tuned for Silero v6.2 (benchmark 2026-10, AVA-Speech / TEN testset / synthetic
+/// multilingual dictation in clean, far-field, noise and music conditions): v6 probabilities
+/// are sharply bimodal, so quiet/far-field word onsets sit at 0.05–0.3 while noise, music
+/// and system sounds stay below ~0.02. 0.05 keeps more speech than v4 did at 0.3 (far-field
+/// coverage 0.79 → 0.99 with the input AGC in `silero.rs`, fewer clipped onsets) with ~4x fewer
+/// false onsets on speech-free audio (mic path 6.4 → 1.4/min, segmentation 17 → 4/min).
+pub const VAD_SPEECH_THRESHOLD: f32 = 0.05;
+
+/// Analysis frame size at 16 kHz (30 ms) — the unit every capture pipeline, speech mask
+/// and smoother counts in. Silero v6 itself runs on fixed 512-sample windows; `SileroVad`
+/// accumulates these frames internally (see `silero.rs`).
 pub const VAD_FRAME_SAMPLES: usize = (WHISPER_SAMPLE_RATE as usize) * 30 / 1000;
 
 pub enum VadFrame<'a> {

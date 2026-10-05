@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::audio8::{AUDIO8_SAMPLE_RATE, Audio8Engine};
+use super::audio8_01::Audio8Preview01Engine;
 use super::catalog;
 use super::chatterbox::{
     CHATTERBOX_SAMPLE_RATE, ChatterboxConfig, ChatterboxEngine, ChatterboxGraphs,
@@ -1567,6 +1568,99 @@ pub const AUDIO8_VOICES: &[VoiceInfo] = &[VoiceInfo {
     language: "en",
     gender: Gender::Female,
 }];
+
+/// A REAL built-in voice, not the reference-clip sentinel above: Audio8's 0.1B ONNX repo
+/// ships the encoded reference (`reference_codes.npy`) its own runtime registers as
+/// `default`, so this row is never inert. The clip is Mandarin, but the voice carries
+/// across all eleven languages the checkpoint supports.
+pub const AUDIO8_01_VOICES: &[VoiceInfo] = &[VoiceInfo {
+    id: "default",
+    label: "Default voice",
+    language: "en",
+    gender: Gender::Female,
+}];
+
+pub struct Audio8Preview01LocalEngine {
+    cache_dir: PathBuf,
+    engine: Mutex<Option<Audio8Preview01Engine>>,
+}
+
+impl Audio8Preview01LocalEngine {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir,
+            engine: Mutex::new(None),
+        }
+    }
+
+    fn ensure_loaded(&self) -> TtsResult<()> {
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("audio8 0.1B lock poisoned".into()))?;
+        if guard.is_none() {
+            // Named up front so a half-finished download reports the missing FILE rather
+            // than surfacing as an opaque ORT "load model" failure several layers down.
+            for relative in Audio8Preview01Engine::required_files() {
+                let path = self.cache_dir.join(&relative);
+                if !path.is_file() {
+                    return Err(TtsError::Engine(format!(
+                        "Audio8 0.1B is missing {} — re-download the model",
+                        relative.display()
+                    )));
+                }
+            }
+            *guard = Some(
+                Audio8Preview01Engine::load(&self.cache_dir)
+                    .map_err(|err| TtsError::Engine(err.to_string()))?,
+            );
+        }
+        Ok(())
+    }
+}
+
+impl TtsEngine for Audio8Preview01LocalEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        _voice: &str,
+        _lang: &str,
+        _speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        self.ensure_loaded()?;
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("audio8 0.1B lock poisoned".into()))?;
+        let samples = guard
+            .as_mut()
+            .ok_or_else(|| TtsError::Engine("audio8 0.1B not loaded".into()))?
+            .synthesize(text)
+            .map_err(|err| TtsError::Engine(err.to_string()))?;
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: AUDIO8_SAMPLE_RATE,
+        })
+    }
+
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        AUDIO8_01_VOICES.to_vec()
+    }
+
+    fn is_ready(&self) -> bool {
+        self.engine.lock().is_ok_and(|guard| guard.is_some())
+    }
+
+    fn warm_up(&self) -> TtsResult<()> {
+        self.ensure_loaded()
+    }
+
+    fn shutdown(&self) {
+        if let Ok(mut guard) = self.engine.lock() {
+            *guard = None;
+        }
+    }
+}
 
 /// This engine's catalog row id — the reference trim asks the catalog for THIS row's
 /// cap so a future per-row tightening (like OmniVoice's) takes effect here for free.

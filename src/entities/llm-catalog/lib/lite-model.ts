@@ -17,6 +17,7 @@
  */
 
 const LITE_MODEL_MAX_PARAMS_B = 4;
+const SUPERWHISPER_S1_PREFIX = "hf.co/superwhisper/s1-mini-gguf";
 
 // Param-size token inside a tag's variant part: `2b`, `0.8b`, `135m`, and
 // Gemma MatFormer "effective" sizes (`e2b` → 2B). The token must sit between
@@ -32,6 +33,9 @@ const PARAM_FROM_VARIANT_RE = /(?:^|[-_])e?(\d+(?:\.\d+)?)([bmk])(?=$|[-_])/i;
  * alias tags like `phi3:mini`) — such models are treated as full-tier.
  */
 export function ollamaEffectiveParamsBillions(model: string): number | null {
+	if (model.trim().toLowerCase().startsWith(SUPERWHISPER_S1_PREFIX)) {
+		return 0.6;
+	}
 	const colonIdx = model.indexOf(":");
 	if (colonIdx < 0) {
 		return null;

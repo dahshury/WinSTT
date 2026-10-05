@@ -538,7 +538,10 @@ fn decode_audio(
     }
 
     let vad_path = segmentation_vad_path().ok_or_else(|| {
-        CliError("long-form transcription requires resources/models/silero_vad_v4.onnx".into())
+        CliError(format!(
+            "long-form transcription requires {}",
+            crate::audio_toolkit::vad::SILERO_VAD_RESOURCE
+        ))
     })?;
     let mut vad = crate::audio_toolkit::vad::SileroVad::new(
         &vad_path,
@@ -558,7 +561,7 @@ fn decode_audio(
 }
 
 fn segmentation_vad_path() -> Option<PathBuf> {
-    let relative = Path::new("resources/models/silero_vad_v4.onnx");
+    let relative = Path::new(crate::audio_toolkit::vad::SILERO_VAD_RESOURCE);
     let packaged = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|parent| parent.join(relative)));

@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.1.3-alpha.10] - 2026-10-06
+
+Changes since `v0.1.3-alpha.9`.
+
+### Added
+
+- Added NeMo Parakeet Ultra 0.6B (fp32 / fp16 / int8), which replaces Parakeet TDT 0.6B v3 with lower multilingual WER (FLEURS int8 6.45% vs 8.32%) and without v3's long-form language drift, plus the compact CPU-only Parakeet Redux 0.6B (ternary int4).
+- Added Moonshine v2 streaming recognition (tiny / small / medium and Arabic, German, Spanish, Japanese, Tagalog, Vietnamese, and Chinese variants) with a sliding-window streaming encoder, published as `Masterx/moonshine-streaming-*-ONNX`.
+- Added Audio8-ASR-Infinite, a self-exported long-form ONNX port (int4 / int8, CPU) with a Chinese/English language picker, and the export, graph, and parity tooling under `tools/onnx/`.
+- Added the Audio8 TTS 0.1B voice (official INT8 ONNX runtime with its bundled reference voice) and Superwhisper S1-mini to the curated Ollama models.
+
+### Changed
+
+- Replaced the pyannote segmentation + WeSpeaker embedding diarization cascade with Nemotron 3 streaming diarization (speaker cache + FIFO), cutting pooled DER from 43.5% to 18.2%.
+- Upgraded voice activity detection from Silero v4 to Silero v6.2 with input AGC (mean AUC 0.911 → 0.964, far fewer false triggers), retuned the mic and loopback thresholds, and dropped the vendored `vad-rs` crate in favor of a direct ONNX Runtime session.
+- Replaced Granite 4.1 with Granite 4.2 (3B / 8B, toggleable reasoning) in the recommended Ollama models.
+- Migrated saved settings automatically: retired Parakeet v3 and Moonshine v1 model ids map to their successors on startup (settings schema v2), and superseded model caches are removed by cleanup.
+
+### Fixed
+
+- Stopped Bluetooth LE Audio devices from hanging the app and swallowing speech.
+- Made the Windows build and pre-push Rust gate find Visual Studio Build Tools, tolerate benign `vswhere` stderr, and fall back to the MSVC linker when LLVM is absent.
+- Fixed the macOS/Linux build, where the Windows-only Communications audio error variant failed the dead-code lint.
+
+### Security
+
+- Updated `h2` to `0.4.19` (RUSTSEC-2026-0258), `rustls` to `0.23.45` (RUSTSEC-2026-0285), and replaced the yanked `chacha20 0.10.0` so the cargo-deny audit passes.
+
+### Maintenance
+
+- Bumped the application and context-sidecar versions from `0.1.3-alpha.9` to `0.1.3-alpha.10` while retaining the alpha release policy.
+
 ## [0.1.3-alpha.9] - 2026-08-16
 
 Changes since `v0.1.3-alpha.8`.
