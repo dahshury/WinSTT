@@ -152,7 +152,11 @@ describe("SettingsPage", () => {
 
 		renderSettingsPage();
 
-		expect(await screen.findByText("Recording Mode")).toBeDefined();
+		// Same lazy-panel budget as `waitForOpen`: the default 1s is exceeded
+		// under the full views suite on a loaded machine.
+		expect(
+			await screen.findByText("Recording Mode", undefined, { timeout: 5000 }),
+		).toBeDefined();
 	});
 
 	test("renders settings transfer controls in the About tab", async () => {
