@@ -100,7 +100,7 @@ serde_json = "1"
 semver = "1"
 cpal = "0.17.1"
 anyhow = "1.0.95"
-rubato = "4.0.0"
+rubato = "5.0.1"
 # Real RAM detection for the model-download fitness heuristics (the "RAM: unknown"
 # fix). Already in the dep graph transitively; pinned to the same version.
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
@@ -147,12 +147,12 @@ thiserror = "2"
 hf-hub = "1.0.0-rc.1"            # HF snapshot resolver for STT model files (resolver/download)
 globset = "0.4.18"               # STT resolver POSIX glob matching (`**`, `*`, `?`) without custom recursion
 prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
-tokenizers = { version = "0.22.1", default-features = false, features = ["onig"] }  # DistilBERT + custom models
+tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }  # DistilBERT + custom models
 sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for KWS keyword tokenization
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
-base64 = "0.22"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
+base64 = "0.23"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
 half = "2"                       # f16 tensor element type (matches ort's half)
 # sherpa-onnx DROPPED (2026-07): its shared c-api DLL carried a SECOND onnxruntime.dll
 # into every install just for wake-word KWS. The keyword spotter is now a native port
@@ -183,7 +183,7 @@ tauri-plugin-updater = "2.10.0"
 
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.13", features = ["directml"] }
-wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
+wasapi = "0.25.0"  # WASAPI loopback capture for listen mode
 windows-core = "0.62.2"
 windows = { version = "0.62.2", features = [
   "Win32_Media_Audio_Endpoints",

@@ -1089,7 +1089,9 @@ fn build_qwen2_tokenizer(dir: &Path) -> Qwen3TtsResult<Tokenizer> {
     let mut tokenizer = Tokenizer::new(bpe);
 
     // Normalizer: NFC (golden `normalizer.type == "NFC"`).
-    tokenizer.with_normalizer(Some(NormalizerWrapper::from(NFC)));
+    tokenizer
+        .with_normalizer(Some(NormalizerWrapper::from(NFC)))
+        .map_err(|e| Qwen3TtsError::Tokenizer(format!("set normalizer: {e}")))?;
 
     // Pre-tokenizer: Sequence[ Split(Qwen2 GPT2-style regex, Isolated), ByteLevel(no
     // prefix, use_regex=false) ] — exactly the golden pre_tokenizer.
@@ -1128,14 +1130,18 @@ fn build_qwen2_tokenizer(dir: &Path) -> Qwen3TtsResult<Tokenizer> {
                     .rstrip(opts.rstrip)
             })
             .collect();
-        tokenizer.add_special_tokens(&added);
+        tokenizer
+            .add_special_tokens(added)
+            .map_err(|e| Qwen3TtsError::Tokenizer(format!("add special tokens: {e}")))?;
     } else {
         // Minimal fallback: the three ids the chat template relies on.
-        tokenizer.add_special_tokens(&[
-            AddedToken::from("<|endoftext|>", true),
-            AddedToken::from("<|im_start|>", true),
-            AddedToken::from("<|im_end|>", true),
-        ]);
+        tokenizer
+            .add_special_tokens([
+                AddedToken::from("<|endoftext|>", true),
+                AddedToken::from("<|im_start|>", true),
+                AddedToken::from("<|im_end|>", true),
+            ])
+            .map_err(|e| Qwen3TtsError::Tokenizer(format!("add special tokens: {e}")))?;
     }
 
     Ok(tokenizer)
