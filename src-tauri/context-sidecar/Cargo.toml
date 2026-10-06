@@ -22,7 +22,7 @@ ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 # Keep this feature set aligned with the app manifest. Because both manifests use
 # the same target directory and profile, Cargo can reuse the already-built Windows
 # projection instead of compiling a second feature variant for this small helper.
-windows = { version = "0.61.3", features = [
+windows = { version = "0.62.2", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_Media_Audio",
   "Win32_System_Com_StructuredStorage",
