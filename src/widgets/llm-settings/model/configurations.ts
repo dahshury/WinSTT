@@ -19,7 +19,7 @@ import {
 	readPersistedSelectorState,
 	writePersistedSelectorState,
 } from "@/shared/lib/persisted-selector-state";
-import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
+import type { PresetCarrier } from "../lib/llm-settings-panel-helpers";
 import { syncRuleSnapshots } from "./app-profile-rules";
 import type {
 	LlmConfiguration,

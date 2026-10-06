@@ -2,7 +2,7 @@ import { useTranslations } from "use-intl";
 import type { LlmWarmupStatus } from "@/shared/api/ipc-client";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { Button } from "@/shared/ui/button";
-import { findModelStatus } from "../lib/warmup-banner-test-helpers";
+import { findModelStatus } from "../lib/warmup-banner-helpers";
 import type { AssignableFeature } from "../model/configuration-assignment";
 
 /**

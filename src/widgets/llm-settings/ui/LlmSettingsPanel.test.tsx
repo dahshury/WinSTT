@@ -14,8 +14,8 @@ import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
-import * as helpers from "../lib/llm-settings-panel-test-helpers";
-import type { FeatureToggleDeps } from "../lib/llm-settings-panel-test-helpers";
+import * as helpers from "../lib/llm-settings-panel-helpers";
+import type { FeatureToggleDeps } from "../lib/llm-settings-panel-helpers";
 import {
 	DEFAULT_CONFIGURATION_ID,
 	type LlmConfiguration,

@@ -13,7 +13,7 @@ import { filterInstalledModels, filterRecommendedModels } from "../lib/filter";
 import {
 	buildTabOptions,
 	createHandlePull,
-} from "../lib/ollama-model-manager-test-helpers";
+} from "../lib/ollama-model-manager-helpers";
 import {
 	DialogFooter,
 	DialogHeader,

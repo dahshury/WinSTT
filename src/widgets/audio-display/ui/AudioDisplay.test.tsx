@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 //  enqueueDroppedFiles describe blocks.)
 import { render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import * as helpers from "../lib/audio-display-test-helpers";
+import * as helpers from "../lib/audio-display-helpers";
 import { AudioDisplay } from "./AudioDisplay";
 
 const originalApi = window.nativeBridge;

@@ -30,7 +30,7 @@ import {
 	readLlmSnapshot,
 	resolveOllamaModelReconcilePatch,
 	shouldScanOpenRouter,
-} from "../lib/llm-settings-panel-test-helpers";
+} from "../lib/llm-settings-panel-helpers";
 import { useWarmupStatusStore } from "./warmup-status-store";
 import type {
 	OllamaCatalogState,

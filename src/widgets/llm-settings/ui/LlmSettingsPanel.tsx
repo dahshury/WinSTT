@@ -8,7 +8,7 @@ import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
 import { FormControl } from "@/shared/ui/form-control";
 import { Toggle } from "@/shared/ui/toggle";
-import { ownsWarmupBanner } from "../lib/warmup-banner-test-helpers";
+import { ownsWarmupBanner } from "../lib/warmup-banner-helpers";
 import type { AssignableFeature } from "../model/configuration-assignment";
 import { useConfigurationWorkbench } from "../model/use-configuration-workbench";
 import { useFeatureToggles } from "../model/use-feature-toggles";
