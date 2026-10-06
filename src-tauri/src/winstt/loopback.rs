@@ -982,7 +982,7 @@ mod windows_impl {
                 if wait_result == WAIT_FAILED {
                     return Err(anyhow::anyhow!(
                         "WaitForMultipleObjects(buffer-ready, stop) failed: {}",
-                        windows::core::Error::from_win32()
+                        windows::core::Error::from_thread()
                     ));
                 }
                 anyhow::bail!("unexpected WASAPI wait result: {}", wait_result.0);

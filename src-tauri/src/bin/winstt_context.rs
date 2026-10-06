@@ -1774,12 +1774,12 @@ mod windows_impl {
         /// The engine is created from the user's profile languages (fallback:
         /// English); a machine with no OCR language pack installed returns `None`
         /// and the caller simply omits `ocrText`. Blocks on the async recognize
-        /// (`.get()` pumps the STA), which is fine on the per-request sidecar thread
+        /// (`.join()` pumps the STA), which is fine on the per-request sidecar thread
         /// under its own watchdog. The result is empty-line-stripped and 8k-capped.
         pub fn recognize(bitmap: &WindowBitmap) -> Option<String> {
             let engine = create_engine()?;
             let software_bitmap = to_software_bitmap(bitmap)?;
-            let result = engine.RecognizeAsync(&software_bitmap).ok()?.get().ok()?;
+            let result = engine.RecognizeAsync(&software_bitmap).ok()?.join().ok()?;
             let text: HSTRING = result.Text().ok()?;
             let tidied = tidy_ocr_text(&text.to_string_lossy());
             if tidied.is_empty() {
