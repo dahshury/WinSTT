@@ -3,9 +3,9 @@
 # changes get reviewed on their own.
 version: 2
 updates:
-  # Renderer (root package.json + bun.lock). Bun lockfiles are read by
-  # Dependabot via the npm ecosystem.
-  - package-ecosystem: "npm"
+  # Renderer (root package.json + bun.lock). The npm ecosystem refuses to
+  # touch bun.lock ("Bun is misconfigured"), so use Dependabot's bun ecosystem.
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
