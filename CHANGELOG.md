@@ -22,7 +22,7 @@ Changes since `v0.1.3-alpha.9`.
 
 - Stopped Bluetooth LE Audio devices from hanging the app and swallowing speech.
 - Made the Windows build and pre-push Rust gate find Visual Studio Build Tools, tolerate benign `vswhere` stderr, and fall back to the MSVC linker when LLVM is absent.
-- Fixed the macOS/Linux build, where the Windows-only Communications audio error variant failed the dead-code lint.
+- Fixed the macOS/Linux build, where the Windows-only Communications audio error variant failed the dead-code lint, and moved fixed-width byte decoding to `as_chunks` so the build passes Rust 1.99 Clippy on every platform.
 
 ### Security
 

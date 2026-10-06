@@ -280,11 +280,11 @@ tempfile = "3"
 # style preferences into hard errors across this Tauri command surface.
 [lints.rust]
 warnings = "deny"
-future-incompatible = "deny"
-nonstandard-style = "deny"
-rust-2018-idioms = "deny"
+future_incompatible = "deny"
+nonstandard_style = "deny"
+rust_2018_idioms = "deny"
 unused = "deny"
-unsafe-op-in-unsafe-fn = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

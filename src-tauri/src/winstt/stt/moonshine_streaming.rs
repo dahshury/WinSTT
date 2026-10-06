@@ -759,7 +759,7 @@ impl MoonshineStreamingEngine {
                     self.commit_segment(speech)?;
                     start = i;
                     let rest = &seg_pcm[cut_samples..];
-                    for frame in rest.chunks_exact(HOP) {
+                    for frame in rest.as_chunks::<HOP>().0 {
                         self.stream.seg.pcm.extend_from_slice(frame);
                         // Replayed frames only rebuild endpointer state. A pause inside the replay
                         // is not acted on here; if the silence continues, the next live frame
@@ -946,7 +946,9 @@ mod tests {
 
     fn first_cut(ep: &mut Endpointer, audio: &[f32]) -> Option<(usize, Cut)> {
         audio
-            .chunks_exact(HOP)
+            .as_chunks::<HOP>()
+            .0
+            .iter()
             .enumerate()
             .find_map(|(i, f)| ep.push(f).map(|c| (i, c)))
     }

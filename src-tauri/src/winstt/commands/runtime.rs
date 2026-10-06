@@ -227,6 +227,8 @@ pub fn runtime_info_snapshot(
 /// `generate_handler!` — no `lib.rs` change is needed.
 #[tauri::command]
 #[specta::specta]
+// The async command shape requires a `Result`; `()` keeps the generated binding unchanged (see below).
+#[allow(clippy::result_unit_err)]
 pub async fn stt_list_models_with_state(
     app: AppHandle,
     downloads: State<'_, Arc<DownloadManager>>,

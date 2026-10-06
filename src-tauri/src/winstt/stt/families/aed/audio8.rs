@@ -131,7 +131,9 @@ fn npy_f32(bytes: &[u8], what: &str) -> SttResult<(Vec<usize>, Vec<f32>)> {
         )));
     }
     let values = body[..count * 4]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     Ok((header.shape, values))
@@ -175,7 +177,9 @@ fn read_embedding_table(path: &Path) -> SttResult<(usize, usize, Vec<F16>)> {
             .map_err(|e| SttError::Resolve(format!("audio8 token_embedding body: {e}")))?;
         table.extend(
             chunk[..want]
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|c| F16::from_f32(f32::from_le_bytes([c[0], c[1], c[2], c[3]]))),
         );
         remaining -= want;

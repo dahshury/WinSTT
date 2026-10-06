@@ -750,7 +750,9 @@ impl Audio8InfiniteEngine {
             .ok_or_else(|| err(format!("token id {id} outside the embedding table")))?;
         let row = &self.embed[id * self.rt.hidden * 2..(id + 1) * self.rt.hidden * 2];
         x.extend(
-            row.chunks_exact(2)
+            row.as_chunks::<2>()
+                .0
+                .iter()
                 .zip(audio)
                 .map(|(b, &a)| bf16_to_f32(u16::from_le_bytes([b[0], b[1]])) + a),
         );
@@ -1044,7 +1046,9 @@ fn read_ada(path: &Path, rt: &Runtime) -> SttResult<Vec<f32>> {
         )));
     }
     Ok(bytes[rt.ada_index * per * 4..(rt.ada_index + 1) * per * 4]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
 }

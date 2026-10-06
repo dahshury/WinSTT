@@ -26,7 +26,9 @@ fn load(path: &Path) -> Vec<f32> {
     if path.extension().is_some_and(|e| e == "f32") {
         let bytes = std::fs::read(path).expect("read f32");
         return bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
     }
@@ -55,7 +57,7 @@ fn mask_string(mask: &[bool]) -> String {
 
 fn labeled(vad: &mut dyn VoiceActivityDetector, audio: &[f32]) -> Vec<bool> {
     let mut mask = Vec::new();
-    for frame in audio.chunks_exact(VAD_FRAME_SAMPLES) {
+    for frame in audio.as_chunks::<VAD_FRAME_SAMPLES>().0 {
         let label = vad.push_frame_labeled(frame).expect("vad");
         let n = mask.len();
         for m in &mut mask[n.saturating_sub(label.retro_frames)..] {
@@ -83,7 +85,9 @@ fn main() {
         let mut raw_vad = SileroVad::new(&model, VAD_SPEECH_THRESHOLD).expect("vad");
         let t = Instant::now();
         let raw: Vec<bool> = audio
-            .chunks_exact(VAD_FRAME_SAMPLES)
+            .as_chunks::<VAD_FRAME_SAMPLES>()
+            .0
+            .iter()
             .map(|f| raw_vad.is_voice(f).expect("vad"))
             .collect();
         let us_per_frame = t.elapsed().as_secs_f64() * 1e6 / frames.max(1) as f64;

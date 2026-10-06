@@ -895,13 +895,17 @@ fn read_embedding_blob(
             // Already f16 on disk — reinterpret, no conversion.
             table.extend(
                 chunk[..want]
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| F16::from_le_bytes([c[0], c[1]])),
             );
         } else {
             table.extend(
                 chunk[..want]
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|c| F16::from_f32(f32::from_le_bytes([c[0], c[1], c[2], c[3]]))),
             );
         }

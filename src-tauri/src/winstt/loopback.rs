@@ -1010,7 +1010,7 @@ mod windows_impl {
             SampleType::Float => {
                 // 32-bit float interleaved.
                 let mut interleaved = Vec::with_capacity(bytes.len() / 4);
-                for chunk in bytes.chunks_exact(4) {
+                for chunk in bytes.as_chunks::<4>().0 {
                     interleaved.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
                 }
                 interleaved_f32_to_mono_i16(&interleaved, channels)
@@ -1018,14 +1018,14 @@ mod windows_impl {
             SampleType::Int => {
                 if bytes_per_sample == 2 {
                     let mut interleaved = Vec::with_capacity(bytes.len() / 2);
-                    for chunk in bytes.chunks_exact(2) {
+                    for chunk in bytes.as_chunks::<2>().0 {
                         interleaved.push(i16::from_le_bytes([chunk[0], chunk[1]]));
                     }
                     interleaved_to_mono_i16(&interleaved, channels)
                 } else if bytes_per_sample == 4 {
                     // 32-bit int → top 16 bits.
                     let mut interleaved = Vec::with_capacity(bytes.len() / 4);
-                    for chunk in bytes.chunks_exact(4) {
+                    for chunk in bytes.as_chunks::<4>().0 {
                         let v = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                         interleaved.push((v >> 16) as i16);
                     }

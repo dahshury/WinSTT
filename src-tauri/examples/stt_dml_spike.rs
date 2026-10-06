@@ -57,7 +57,9 @@ fn audio_path() -> PathBuf {
 fn load_audio_file(p: &std::path::Path) -> Vec<f32> {
     let bytes = std::fs::read(p).unwrap_or_else(|e| panic!("read audio {}: {e}", p.display()));
     let mut audio: Vec<f32> = bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
     let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));

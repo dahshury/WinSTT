@@ -152,7 +152,7 @@ impl Qwen3AsrEngine {
             let raw = std::fs::read(path)
                 .map_err(|e| SttError::Resolve(format!("qwen3 embed_tokens read: {e}")))?;
             let mut v = Vec::with_capacity(raw.len() / 2);
-            for c in raw.chunks_exact(2) {
+            for c in raw.as_chunks::<2>().0 {
                 v.push(F16::from_le_bytes([c[0], c[1]]));
             }
             v

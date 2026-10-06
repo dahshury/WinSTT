@@ -347,7 +347,12 @@ impl SpeakerCache {
         // Speaker probabilities at the encoder frame rate (avg-pool 8 of the sigmoids).
         let pooled_frames = logits.len() / (SUBSAMPLING * MAX_SPEAKERS);
         let mut probs = vec![0f32; pooled_frames * MAX_SPEAKERS];
-        for (f, row) in probs.chunks_exact_mut(MAX_SPEAKERS).enumerate() {
+        for (f, row) in probs
+            .as_chunks_mut::<MAX_SPEAKERS>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             for (s, slot) in row.iter_mut().enumerate() {
                 let mut acc = 0f32;
                 for k in 0..SUBSAMPLING {
@@ -658,7 +663,9 @@ fn load_constants(npz: &Path) -> Result<Vec<f32>, String> {
         ));
     }
     Ok(data
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect())
 }

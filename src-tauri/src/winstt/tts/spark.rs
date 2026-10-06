@@ -531,7 +531,9 @@ mod smoke {
         .expect("load_cloning");
         let bytes = std::fs::read(base.join("ref_en.f32")).expect("ref f32");
         let ref16k: Vec<f32> = bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
         let ref_text = std::fs::read_to_string(base.join("ref_text.txt")).expect("ref text");

@@ -142,7 +142,11 @@ pub(super) fn chunk_payload(
     let pcm_b64 = match chunk.format {
         Format::F32le => {
             let mut bytes = vec![0u8; chunk.audio.len() * 4];
-            for (sample, slot) in chunk.audio.iter().zip(bytes.chunks_exact_mut(4)) {
+            for (sample, slot) in chunk
+                .audio
+                .iter()
+                .zip(bytes.as_chunks_mut::<4>().0.iter_mut())
+            {
                 slot.copy_from_slice(&sample.to_le_bytes());
             }
             encode_base64(&bytes)

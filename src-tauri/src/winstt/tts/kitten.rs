@@ -222,7 +222,7 @@ fn parse_npy_f32_rows(bytes: &[u8], dim: usize) -> KittenResult<(Vec<f32>, usize
         )));
     }
     let mut data = Vec::with_capacity(count);
-    for chunk in payload.chunks_exact(4) {
+    for chunk in payload.as_chunks::<4>().0 {
         data.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
     Ok((data, count / dim))
