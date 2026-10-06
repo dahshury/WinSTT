@@ -515,10 +515,9 @@ describe("hijri", () => {
 
 		test("the 12 month-start dates are strictly increasing in time", () => {
 			const months = hijri.monthsOfYear(ref);
-			for (let i = 1; i < months.length; i++) {
-				expect((months[i]?.date as Date).getTime()).toBeGreaterThan(
-					(months[i - 1]?.date as Date).getTime(),
-				);
+			const times = months.map((m) => m.date.getTime());
+			for (let i = 1; i < times.length; i++) {
+				expect(times[i]).toBeGreaterThan(times[i - 1] as number);
 			}
 		});
 

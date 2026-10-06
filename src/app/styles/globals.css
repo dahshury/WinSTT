@@ -967,7 +967,8 @@
 
 	/* The first row's group label loses the tall top inset — the header above
 	   already provides the breathing room. */
-	.settings-sidebar-list > [data-settings-search-result]:first-child
+	.settings-sidebar-list
+		> [data-settings-search-result]:first-child
 		.settings-sidebar-group-label {
 		padding-top: 0.2rem;
 	}

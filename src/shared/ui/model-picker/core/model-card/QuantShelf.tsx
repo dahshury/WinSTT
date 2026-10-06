@@ -23,14 +23,12 @@ import {
 import type { QuantShelfEntry, QuantShelfProps } from "./quant-shelf-types";
 
 export type {
-	QuantCacheSnapshot,
 	QuantCacheState,
 	QuantDownloadAction,
 	QuantDownloadCallbacks,
 	QuantDownloadSnapshot,
 	QuantShelfEntry,
 	QuantShelfProps,
-	ResolvedQuantDownloadState,
 } from "./quant-shelf-types";
 
 /**

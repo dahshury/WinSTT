@@ -1073,11 +1073,14 @@ describe("LlmSettingsPanel helpers — shouldScanOpenRouter", () => {
 		["openrouter", "key", true, false],
 		["ollama", "key", false, false],
 	];
-	test.each(
-		cases,
-	)("provider=%s key=%s loaded=%s -> %s", (provider, key, loaded, expected) => {
-		expect(helpers.shouldScanOpenRouter(provider, key, loaded)).toBe(expected);
-	});
+	test.each(cases)(
+		"provider=%s key=%s loaded=%s -> %s",
+		(provider, key, loaded, expected) => {
+			expect(helpers.shouldScanOpenRouter(provider, key, loaded)).toBe(
+				expected,
+			);
+		},
+	);
 });
 
 // Tests assert on the `mock(...)`-returned spies; the helper signature accepts

@@ -2,7 +2,6 @@ import type {
 	AudioDevicePayload,
 	GpuInfoEntry,
 	LlmWarmupModelStatus,
-	LlmWarmupOutcome,
 	LlmWarmupStatus,
 	OllamaModelPayload,
 	OllamaScanResultPayload,
@@ -392,4 +391,4 @@ export type AllowedMethod =
 export type AppSettingsSaveInput = Record<string, unknown>;
 
 // LLM warmup status is emitted by Rust commands and generated in bindings.ts.
-export type { LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus };
+export type { LlmWarmupModelStatus, LlmWarmupStatus };

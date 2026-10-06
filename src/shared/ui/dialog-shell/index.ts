@@ -1,1 +1,1 @@
-export { DialogShell, type DialogShellProps } from "./DialogShell";
+export { DialogShell } from "./DialogShell";

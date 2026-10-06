@@ -22,7 +22,6 @@ export {
 export {
 	lookupModelsDev,
 	type ModelsDevEntry,
-	type ModelsDevIndex,
 } from "./lib/models-dev";
 export {
 	findRecommendedModel,

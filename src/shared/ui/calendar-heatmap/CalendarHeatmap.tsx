@@ -29,11 +29,9 @@ import type {
 
 export type {
 	CalendarHeatmapProps,
-	CalendarMode,
 	CalendarPreset,
 	CalendarPresetGroup,
 	DateRange,
-	WeightedDateEntry,
 } from "./types";
 
 const YEAR_SPAN = 12;

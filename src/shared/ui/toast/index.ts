@@ -1,2 +1,2 @@
-export { ToastDismissButton, ToastShell, type ToastTone } from "./ToastShell";
+export { ToastDismissButton, ToastShell } from "./ToastShell";
 export { useAutoDismiss } from "./use-auto-dismiss";

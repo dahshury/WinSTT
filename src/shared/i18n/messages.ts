@@ -1,4 +1,3 @@
-import type { Locale } from "./config";
 import { DEFAULT_LOCALE } from "./config";
 
 // Per-locale lazy loading.
@@ -64,5 +63,3 @@ export async function loadMessages(
 	const mod = await loader();
 	return mod.default;
 }
-
-export type { Locale };

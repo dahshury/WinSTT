@@ -1,22 +1,13 @@
 export {
 	Dialog,
 	DialogActionButton,
-	type DialogActionButtonProps,
 	DialogBody,
-	type DialogBodyProps,
 	DialogClose,
-	type DialogCloseProps,
 	DialogContent,
-	type DialogContentProps,
 	DialogDescription,
-	type DialogDescriptionProps,
 	DialogFooter,
-	type DialogFooterProps,
-	type DialogProps,
 	DialogSection,
-	type DialogSectionProps,
 	DIALOG_SURFACE_LEVEL,
 	DialogTitle,
-	type DialogTitleProps,
 } from "./Dialog";
-export { DialogHeader, type DialogHeaderProps } from "./DialogHeader";
+export { DialogHeader } from "./DialogHeader";

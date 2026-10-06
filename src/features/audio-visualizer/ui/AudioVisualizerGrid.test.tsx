@@ -13,17 +13,16 @@ describe("AudioVisualizerGrid", () => {
 		expect(container.firstElementChild?.className).toContain("grid");
 	});
 
-	test.each([
-		"icon",
-		"sm",
-		"md",
-		"lg",
-		"xl",
-	] as const)("renders without throwing at size=%s", (size) => {
-		const { container, unmount } = render(<AudioVisualizerGrid size={size} />);
-		expect(container.firstElementChild).not.toBeNull();
-		unmount();
-	});
+	test.each(["icon", "sm", "md", "lg", "xl"] as const)(
+		"renders without throwing at size=%s",
+		(size) => {
+			const { container, unmount } = render(
+				<AudioVisualizerGrid size={size} />,
+			);
+			expect(container.firstElementChild).not.toBeNull();
+			unmount();
+		},
+	);
 
 	test("forwards color via inline style", () => {
 		const { container } = render(<AudioVisualizerGrid color="#00ff00" />);

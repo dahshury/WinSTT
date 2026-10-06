@@ -116,20 +116,21 @@ describe("recording-mode-color brand sync", () => {
 		}
 	});
 
-	test.each([
-		...MODES,
-	])("%s bridge hex equals the sRGB of its brand token", (mode: RecordingMode) => {
-		const literal = resolveToOklch(tokens, `--color-recording-mode-${mode}`);
-		const [L, C, H] = parseOklch(literal);
-		const expected = oklchToRgb(L, C, H);
-		const actual = hexToBytes(RECORDING_MODE_COLOR_HEX[mode]);
-		// Allow ±1/channel for rounding between toolchains.
-		for (let i = 0; i < 3; i += 1) {
-			expect(
-				Math.abs((actual[i] ?? 0) - (expected[i] ?? 0)),
-			).toBeLessThanOrEqual(1);
-		}
-	});
+	test.each([...MODES])(
+		"%s bridge hex equals the sRGB of its brand token",
+		(mode: RecordingMode) => {
+			const literal = resolveToOklch(tokens, `--color-recording-mode-${mode}`);
+			const [L, C, H] = parseOklch(literal);
+			const expected = oklchToRgb(L, C, H);
+			const actual = hexToBytes(RECORDING_MODE_COLOR_HEX[mode]);
+			// Allow ±1/channel for rounding between toolchains.
+			for (let i = 0; i < 3; i += 1) {
+				expect(
+					Math.abs((actual[i] ?? 0) - (expected[i] ?? 0)),
+				).toBeLessThanOrEqual(1);
+			}
+		},
+	);
 
 	test("RGB triples stay in lockstep with the HEX map", () => {
 		for (const mode of MODES) {

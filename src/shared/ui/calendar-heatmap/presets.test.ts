@@ -220,9 +220,8 @@ describe("buildDefaultCalendarPresets — defaults & purity", () => {
 		expect(a).not.toBe(b);
 		expect(a[0]).not.toBe(b[0]);
 		// But the computed values are deterministic for the same anchor.
-		expect((a[0]?.range.from as Date).getTime()).toBe(
-			(b[0]?.range.from as Date).getTime(),
-		);
+		expect(a[0]?.range.from?.getTime()).toBeTypeOf("number");
+		expect(a[0]?.range.from?.getTime()).toBe(b[0]?.range.from?.getTime());
 	});
 });
 

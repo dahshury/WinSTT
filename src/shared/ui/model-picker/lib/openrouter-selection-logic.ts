@@ -10,7 +10,6 @@ import {
 
 export {
 	applyCloseWith,
-	type FilterMenuPopupSlot,
 	isInsideMenuPopup,
 	nodeMatchesPopupSelector,
 	nodeRoleIsPopup,
