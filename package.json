@@ -89,7 +89,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "double-metaphone": "^2.0.1",
-    "motion": "^12.40.0",
+    "motion": "^14.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tailwind-merge": "^3.6.0",
