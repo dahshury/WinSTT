@@ -1,5 +1,5 @@
 ; Custom NSIS template for WinSTT with portable mode support.
-; Based on tauri-apps/tauri@tauri-v2.9.1 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
+; Based on tauri-apps/tauri@tauri-cli-v2.12.1 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
 ; Portable changes are marked with "; --- PORTABLE MODE ---" comments.
 ;
 ; When upgrading Tauri, diff this file against the new upstream template and
@@ -26,6 +26,12 @@ ManifestDPIAwareness PerMonitorV2
   !endif
 !endif
 
+; Keep above !include to stay ahead of any plugin command
+; see https://github.com/tauri-apps/tauri/pull/15422#discussion_r3289239624
+{{#if signed_plugins_path}}
+!addplugindir "{{signed_plugins_path}}"
+{{/if}}
+
 !include MUI2.nsh
 !include FileFunc.nsh
 !include x64.nsh
@@ -34,6 +40,7 @@ ManifestDPIAwareness PerMonitorV2
 !include "FileAssociation.nsh"
 !include "Win\COM.nsh"
 !include "Win\Propkey.nsh"
+!include "Win\RestartManager.nsh"
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
@@ -54,6 +61,8 @@ ${StrLoc}
 !define INSTALLERICON "{{installer_icon}}"
 !define SIDEBARIMAGE "{{sidebar_image}}"
 !define HEADERIMAGE "{{header_image}}"
+!define UNINSTALLERICON "{{uninstaller_icon}}"
+!define UNINSTALLERHEADERIMAGE "{{uninstaller_header_image}}"
 !define MAINBINARYNAME "{{main_binary_name}}"
 !define MAINBINARYSRCPATH "{{main_binary_path}}"
 !define BUNDLEID "{{bundle_id}}"
@@ -148,10 +157,26 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MUI_WELCOMEFINISHPAGE_BITMAP "${SIDEBARIMAGE}"
 !endif
 
-; Installer header image
+; Enable header images for installer and uninstaller pages when either image is configured.
 !if "${HEADERIMAGE}" != ""
   !define MUI_HEADERIMAGE
-  !define MUI_HEADERIMAGE_BITMAP  "${HEADERIMAGE}"
+!else if "${UNINSTALLERHEADERIMAGE}" != ""
+  !define MUI_HEADERIMAGE
+!endif
+
+; Installer header image
+!if "${HEADERIMAGE}" != ""
+  !define MUI_HEADERIMAGE_BITMAP "${HEADERIMAGE}"
+!endif
+
+; Uninstaller header image
+!if "${UNINSTALLERHEADERIMAGE}" != ""
+  !define MUI_HEADERIMAGE_UNBITMAP "${UNINSTALLERHEADERIMAGE}"
+!endif
+
+; Uninstaller icon
+!if "${UNINSTALLERICON}" != ""
+  !define MUI_UNICON "${UNINSTALLERICON}"
 !endif
 
 ; Define registry key to store installer language
@@ -325,7 +350,7 @@ Function PageReinstall
 
   ; Skip showing the page if passive
   ;
-  ; Note that we don't call this earlier at the begining
+  ; Note that we don't call this earlier at the beginning
   ; of this function because we need to populate some variables
   ; related to current installed version if detected and whether
   ; we are downgrading or not.
@@ -442,7 +467,7 @@ Function PageLeaveReinstall
         Abort
       ${EndIf}
 
-      ; Other erros? show generic error message and return to select un/reinstall page
+      ; Other errors? show generic error message and return to select un/reinstall page
       MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
       Abort
     ${EndIf}
@@ -752,7 +777,7 @@ Section Install
     !insertmacro NSIS_HOOK_PREINSTALL
   !endif
 
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
@@ -904,7 +929,7 @@ Section Uninstall
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
 
-  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
   ; Delete the app directory and its content from disk
   ; Copy main executable
