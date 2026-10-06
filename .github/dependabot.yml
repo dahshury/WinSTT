@@ -10,6 +10,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # TanStack Table v9 is a ground-up API redesign (feature registration,
+      # new ColumnMeta generics) that breaks the whole shared data-grid; v8 is
+      # maintained and sufficient. Migrate deliberately, not via Dependabot.
+      - dependency-name: "@tanstack/react-table"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         update-types:
