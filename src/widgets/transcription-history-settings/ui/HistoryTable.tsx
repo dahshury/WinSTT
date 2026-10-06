@@ -34,10 +34,7 @@ import {
 import { buildHistoryRowMeta, type MetaLabels } from "./HistoryRowMeta";
 import { RowTranscript } from "./RowTranscript";
 
-export type {
-	HistoryTableEntryKind,
-	HistoryTableItem,
-} from "../model/history-table-types";
+export type { HistoryTableItem } from "../model/history-table-types";
 
 interface HistoryTableProps {
 	emptyLabel?: string;

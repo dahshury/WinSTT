@@ -42,7 +42,6 @@ import type {
 export type {
 	ReactShaderToyProps,
 	Uniforms,
-	UniformsProp,
 } from "../lib/shader-toy-types";
 
 const EMPTY_CONTEXT_ATTRIBUTES: Record<string, unknown> = {};

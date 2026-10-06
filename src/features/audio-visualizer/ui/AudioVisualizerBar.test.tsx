@@ -13,17 +13,14 @@ describe("AudioVisualizerBar", () => {
 		expect(root.querySelectorAll("[data-lk-index]")).toHaveLength(9);
 	});
 
-	test.each([
-		"icon",
-		"sm",
-		"md",
-		"lg",
-		"xl",
-	] as const)("renders the appropriate height container at size=%s", (size) => {
-		const { container } = render(<AudioVisualizerBar size={size} />);
-		const root = container.firstElementChild as HTMLElement;
-		expect(root.className).toContain("relative");
-	});
+	test.each(["icon", "sm", "md", "lg", "xl"] as const)(
+		"renders the appropriate height container at size=%s",
+		(size) => {
+			const { container } = render(<AudioVisualizerBar size={size} />);
+			const root = container.firstElementChild as HTMLElement;
+			expect(root.className).toContain("relative");
+		},
+	);
 
 	test("renders 5 bars at size=icon", () => {
 		const { container } = render(<AudioVisualizerBar size="icon" />);

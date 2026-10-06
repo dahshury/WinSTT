@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmWarmupStatus } from "@/shared/api/ipc-client";
-import { findModelStatus } from "../lib/warmup-banner-test-helpers";
+import { findModelStatus } from "../lib/warmup-banner-helpers";
 
 const SAMPLE: LlmWarmupStatus = {
 	endpoint: "http://localhost:11434",

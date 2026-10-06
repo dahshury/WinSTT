@@ -17,7 +17,7 @@
     "type": true
   },
   "ignoreIssues": {
-    "src/widgets/ollama-model-manager/lib/ollama-model-manager-test-helpers.ts": [
+    "src/widgets/ollama-model-manager/lib/ollama-model-manager-helpers.ts": [
       "exports"
     ],
     "src/bindings.ts": ["exports", "types"],

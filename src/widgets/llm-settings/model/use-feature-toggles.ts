@@ -1,6 +1,6 @@
 import { useSettingsStore } from "@/entities/setting";
 import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
-import { performFeatureToggle } from "../lib/llm-settings-panel-test-helpers";
+import { performFeatureToggle } from "../lib/llm-settings-panel-helpers";
 import {
 	useOllamaUnloadTracker,
 	useOllamaWarmTracker,

@@ -14,8 +14,8 @@ import { useLlmCatalogStore } from "@/entities/llm-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import type { TranslateFn } from "@/shared/i18n/translation-types";
-import * as helpers from "../lib/llm-settings-panel-test-helpers";
-import type { FeatureToggleDeps } from "../lib/llm-settings-panel-test-helpers";
+import * as helpers from "../lib/llm-settings-panel-helpers";
+import type { FeatureToggleDeps } from "../lib/llm-settings-panel-helpers";
 import {
 	DEFAULT_CONFIGURATION_ID,
 	type LlmConfiguration,
@@ -1073,11 +1073,14 @@ describe("LlmSettingsPanel helpers — shouldScanOpenRouter", () => {
 		["openrouter", "key", true, false],
 		["ollama", "key", false, false],
 	];
-	test.each(
-		cases,
-	)("provider=%s key=%s loaded=%s -> %s", (provider, key, loaded, expected) => {
-		expect(helpers.shouldScanOpenRouter(provider, key, loaded)).toBe(expected);
-	});
+	test.each(cases)(
+		"provider=%s key=%s loaded=%s -> %s",
+		(provider, key, loaded, expected) => {
+			expect(helpers.shouldScanOpenRouter(provider, key, loaded)).toBe(
+				expected,
+			);
+		},
+	);
 });
 
 // Tests assert on the `mock(...)`-returned spies; the helper signature accepts

@@ -1,1 +1,1 @@
-export { AutoTextarea, type AutoTextareaProps } from "./AutoTextarea";
+export { AutoTextarea } from "./AutoTextarea";

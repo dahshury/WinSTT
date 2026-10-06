@@ -26,7 +26,7 @@ import { Modal } from "@/shared/ui/modal";
 import { Switcher } from "@/shared/ui/switcher";
 import { TextField } from "@/shared/ui/text-field";
 import { resolvePlaygroundLocalModel } from "../lib/llm-settings-helpers";
-import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
+import type { LlmFeatureDraft } from "../lib/llm-settings-panel-helpers";
 import {
 	cloneLlmConfiguration,
 	type LlmConfiguration,

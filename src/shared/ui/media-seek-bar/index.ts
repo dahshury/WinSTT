@@ -1,1 +1,1 @@
-export { MediaSeekBar, type MediaSeekTone } from "./MediaSeekBar";
+export { MediaSeekBar } from "./MediaSeekBar";

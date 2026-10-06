@@ -55,6 +55,16 @@ for (const proto of [
 	}
 }
 
+// happy-dom >= 20.11 implements `Element.animate`, which flips motion onto
+// native Animations: exits now wait out their real duration on happy-dom timers
+// (pushing busy suites past the 5s test timeout), and a cancelled animation
+// rejects `finished` without marking it handled (the spec says it must), so each
+// interrupted motion surfaced as an unhandled AbortError in whatever test was
+// running. Hide `animate` so motion keeps its JS-driven fallback, as before.
+if (typeof Element !== "undefined" && "animate" in Element.prototype) {
+	Reflect.deleteProperty(Element.prototype, "animate");
+}
+
 // React commits deletion effects asynchronously. When a suite mounts a tree and
 // the file ends (or the global afterEach brute-clears <body>) before React flushes
 // those effects, the deferred `removeChild` runs during a LATER test against a node

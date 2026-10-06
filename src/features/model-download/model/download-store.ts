@@ -17,7 +17,6 @@ import {
 } from "@/shared/lib/download-progress-core";
 
 export {
-	type QuantCacheSeedSource,
 	type QuantDownloadSeed,
 	quantDownloadSeedFromCache,
 } from "@/shared/lib/download-progress-core";

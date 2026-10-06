@@ -61,7 +61,7 @@ import {
 	setIndependentTargetLang,
 	setTone,
 	toggleIndependent,
-} from "../lib/llm-settings-panel-test-helpers";
+} from "../lib/llm-settings-panel-helpers";
 import type { LlmSettingsPanelModel } from "../model/use-llm-settings-panel";
 import type { TranslateFn } from "./types";
 

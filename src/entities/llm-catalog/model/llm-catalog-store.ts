@@ -19,8 +19,6 @@ import { OllamaPullProgressStatusSchema } from "@/shared/api/schema.zod";
 import { isSameOllamaTag } from "@/shared/lib/ollama-tag";
 import { hasTauriRuntime } from "@/shared/lib/tauri-runtime";
 
-export type { OllamaModel };
-
 interface PullState {
 	progress: OllamaPullProgress;
 	startedAt: number;

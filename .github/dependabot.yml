@@ -28,6 +28,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # windows-core must match the `windows` crate's version (its COM traits
+      # are what `#[implement]` and the generated interfaces bind to). It
+      # publishes ahead of `windows`, so a lone bump breaks every COM impl —
+      # move it by hand together with `windows`.
+      - dependency-name: "windows-core"
     groups:
       cargo-minor-patch:
         update-types:

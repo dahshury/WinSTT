@@ -120,10 +120,10 @@ describe("OnboardingWizard", () => {
 		expect(openIndex).toBeGreaterThan(finishIndex);
 		expect(
 			(
-				invocations[finishIndex]?.args as {
-					args?: { completed?: boolean; track?: string };
-				}
-			).args,
+				invocations[finishIndex]?.args as
+					| { args?: { completed?: boolean; track?: string } }
+					| undefined
+			)?.args,
 		).toEqual({ completed: true, track: "local" });
 		expect(
 			window.localStorage

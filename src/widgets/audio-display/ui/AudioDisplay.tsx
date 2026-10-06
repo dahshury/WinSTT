@@ -13,7 +13,7 @@ import {
 	enqueueDroppedFilePaths,
 	enqueueDroppedFiles,
 	getContainerClassName,
-} from "../lib/audio-display-test-helpers";
+} from "../lib/audio-display-helpers";
 import { FileOverlay } from "./FileOverlay";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { TranscriptionThinking } from "./TranscriptionThinking";

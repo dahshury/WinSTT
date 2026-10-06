@@ -3,7 +3,6 @@ export { DEFAULT_SETTINGS } from "./model/setting";
 export {
 	type SettingsHydrationStatus,
 	type SettingsWarning,
-	type SettingsWarningKind,
 	useSettingsHydrationStore,
 } from "./model/settings-hydration-store";
 export type {
@@ -22,7 +21,6 @@ export {
 	subscribePendingSettingsSection,
 	takePendingSettingsSection,
 } from "./model/settings-deep-link";
-export type { ModelPatch } from "./model/settings-store";
 export {
 	getSettingsStoreState,
 	useSettingsStore,

@@ -19,7 +19,7 @@ import {
 	RECOMMENDED_OLLAMA_MODELS,
 } from "@/entities/llm-catalog";
 import { useOllamaSuggestions } from "@/features/suggested-models";
-import type { LlmFeatureDraft } from "../lib/llm-settings-panel-test-helpers";
+import type { LlmFeatureDraft } from "../lib/llm-settings-panel-helpers";
 import { OllamaThinkingControl } from "./OllamaThinkingControl";
 import type {
 	OllamaCatalogState,
