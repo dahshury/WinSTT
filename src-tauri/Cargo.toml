@@ -152,7 +152,7 @@ sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for 
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
-base64 = "0.22"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
+base64 = "0.23"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
 half = "2"                       # f16 tensor element type (matches ort's half)
 # sherpa-onnx DROPPED (2026-07): its shared c-api DLL carried a SECOND onnxruntime.dll
 # into every install just for wake-word KWS. The keyword spotter is now a native port
