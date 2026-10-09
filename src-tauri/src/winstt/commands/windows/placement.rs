@@ -325,6 +325,14 @@ fn model_picker_layout(
     Some((work, panel))
 }
 
+fn model_picker_mode_payload(state: &PickerState) -> serde_json::Value {
+    serde_json::json!({
+        "kind": state.mode.kind,
+        "feature": state.mode.feature,
+        "target": state.mode.target,
+    })
+}
+
 fn model_picker_anchor_payload(
     state: &PickerState,
     work: (f64, f64, f64, f64),
@@ -337,12 +345,21 @@ fn model_picker_anchor_payload(
         "width": panel.width,
         "height": panel.height,
         "origin": panel.origin,
-        "mode": {
-            "kind": state.mode.kind,
-            "feature": state.mode.feature,
-            "target": state.mode.target,
-        },
+        "mode": model_picker_mode_payload(state),
     })
+}
+
+/// Tell the (normally hidden, warm) picker renderer which kind is about to
+/// open, ahead of the Win32 placement/show work. Switching kinds remounts the
+/// picker body; starting that now overlaps it with placement instead of
+/// running it after the anchor lands. The renderer ignores it while a panel is
+/// up.
+pub(super) fn emit_model_picker_prepare(window: &tauri::WebviewWindow) {
+    let state = with_picker_state("model-picker", |state| state.clone());
+    let _ = window.emit(
+        crate::winstt::commands::events::names::MODEL_PICKER_PREPARE,
+        model_picker_mode_payload(&state),
+    );
 }
 
 fn emit_model_picker_anchor(

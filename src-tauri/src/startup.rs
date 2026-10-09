@@ -71,8 +71,82 @@ pub(crate) fn startup_profile_enabled() -> bool {
 /// only per-thread relative deltas.
 static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
+/// How long the OS process had existed when `run()` began (exe + DLL load,
+/// static init, CLI parsing). Captured with the anchor, logged once later.
+static PROCESS_AGE_AT_RUN_MS: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+
 pub(crate) fn mark_process_start() {
     let _ = PROCESS_START.set(Instant::now());
+    let _ = PROCESS_AGE_AT_RUN_MS.set(process_age_ms());
+}
+
+/// Milliseconds since the OS created this process.
+#[cfg(windows)]
+fn process_age_ms() -> Option<u64> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    let mut created = FILETIME::default();
+    let (mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    // SAFETY: the pseudo-handle from GetCurrentProcess is always valid, and every
+    // out-pointer references a live local.
+    unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    }
+    .ok()?;
+    let created_100ns =
+        (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    // FILETIME counts 100 ns ticks since 1601-01-01; shift the Unix-epoch clock onto it.
+    const UNIX_EPOCH_AS_FILETIME_SECS: u64 = 11_644_473_600;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    let now_100ns = (now.as_secs() + UNIX_EPOCH_AS_FILETIME_SECS) * 10_000_000
+        + u64::from(now.subsec_nanos()) / 100;
+    Some(now_100ns.saturating_sub(created_100ns) / 10_000)
+}
+
+#[cfg(not(windows))]
+fn process_age_ms() -> Option<u64> {
+    None
+}
+
+/// Log the pre-`run()` process cost (see [`PROCESS_AGE_AT_RUN_MS`]); "ms since
+/// launch" timestamps start at `run()`, so add this to get time since the OS
+/// created the process.
+pub(crate) fn log_process_age_at_run() {
+    if !startup_profile_enabled() {
+        return;
+    }
+    if let Some(Some(age)) = PROCESS_AGE_AT_RUN_MS.get() {
+        log::info!("[startup] process created {age} ms before run()");
+    }
+}
+
+/// Set by the first graceful-exit request so shutdown phases share one timeline.
+static QUIT_REQUESTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// Log `label` with elapsed-since-quit-request when startup profiling is enabled.
+pub(crate) fn log_since_quit(label: &str) {
+    if !startup_profile_enabled() {
+        return;
+    }
+    if let Some(requested) = QUIT_REQUESTED.get() {
+        log::info!(
+            "[shutdown] {label}: {} ms since quit requested",
+            requested.elapsed().as_millis()
+        );
+    }
 }
 
 /// Log `label` with elapsed-since-`run()` when startup profiling is enabled.
@@ -259,7 +333,64 @@ fn spawn_exit_watchdog() {
     });
 }
 
+/// Keep the exit teardown at full CPU speed once no window is visible. Windows
+/// 11 power-throttles (EcoQoS) a process with no visible windows, and under
+/// load that stretched the ~200 ms model unload to 1.5-5 s (twice into the
+/// 8 s watchdog) after [`hide_app_surfaces_for_exit`] hid the pill.
+#[cfg(windows)]
+fn opt_out_of_power_throttling() {
+    use windows::Win32::System::Threading::{
+        GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
+        ProcessPowerThrottling, SetProcessInformation,
+    };
+
+    // Control the execution-speed policy with its state bit clear = never throttle.
+    let state = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        StateMask: 0,
+    };
+    // SAFETY: the pseudo-handle from GetCurrentProcess is always valid, and the
+    // pointer/size describe the live local above.
+    let result = unsafe {
+        SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            std::ptr::from_ref(&state).cast(),
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+    };
+    if let Err(err) = result {
+        log::debug!("[shutdown] power-throttling opt-out failed: {err}");
+    }
+}
+
+#[cfg(not(windows))]
+fn opt_out_of_power_throttling() {}
+
+/// Make a quit look instant: the graceful exit below unloads the model runtimes
+/// on the event loop (~200-300 ms) before Tauri destroys any window, so the pill
+/// and tray icon would otherwise linger on screen for that long. Only visible
+/// windows are touched — hiding an already-hidden WebView2 window still costs a
+/// cross-process round trip, and ~10 warm hidden windows made that ~50 ms.
+fn hide_app_surfaces_for_exit(app: &AppHandle) {
+    use tauri::Manager;
+    opt_out_of_power_throttling();
+    for window in app.webview_windows().values() {
+        if window.is_visible().unwrap_or(true) {
+            let _ = window.hide();
+        }
+    }
+    if let Some(tray) = app.try_state::<tauri::tray::TrayIcon>() {
+        let _ = tray.set_visible(false);
+    }
+    log_since_quit("windows hidden");
+}
+
 pub(crate) fn request_app_exit(app: &AppHandle, reason: &str) {
+    let _ = QUIT_REQUESTED.get_or_init(Instant::now);
+    hide_app_surfaces_for_exit(app);
     log::info!("{reason} - exiting.");
     spawn_exit_watchdog();
     app.exit(0);

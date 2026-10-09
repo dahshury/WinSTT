@@ -90,6 +90,10 @@ pub mod names {
     pub const MODEL_FOOTPRINT_RESOURCES: &str = "model-footprint:resources";
     /// Latest window-local panel rectangle for the detached model picker.
     pub const MODEL_PICKER_ANCHOR: &str = "model-picker:anchor";
+    /// Picker kind of an incoming open, sent to the hidden model picker before
+    /// placement so it can remount its body for that kind while the window is
+    /// still being positioned and shown.
+    pub const MODEL_PICKER_PREPARE: &str = "model-picker:prepare";
     /// Model-picker close generation whose renderer animation must complete.
     pub const MODEL_PICKER_CLOSING: &str = "model-picker:closing";
     /// One existing, privacy-gated app log record for Settings > About.

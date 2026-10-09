@@ -110,6 +110,7 @@ export function ModelPickerPanelBody({
 										effectiveSearch.trim() === "" &&
 										"pe-6",
 								)}
+								data-slot="model-picker-search"
 								dir="ltr"
 								placeholder={searchPlaceholder}
 								ref={searchInputRef}

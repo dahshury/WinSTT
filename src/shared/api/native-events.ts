@@ -37,6 +37,7 @@ export const NATIVE_EVENTS = {
 	LISTEN_SESSION_CHANGED: "listen:session-changed",
 	MODEL_PICKER_ANCHOR: "model-picker:anchor",
 	MODEL_PICKER_CLOSING: "model-picker:closing",
+	MODEL_PICKER_PREPARE: "model-picker:prepare",
 	MODEL_FOOTPRINT_RESOURCES: "model-footprint:resources",
 	OVERLAY_HIDE: "overlay:hide",
 	PTT_MODIFIER_ONLY_UNSUPPORTED: "ptt:modifier-only-unsupported",

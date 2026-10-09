@@ -39,13 +39,14 @@ afterEach(() => {
 });
 
 describe("usePanelRect readiness handshake", () => {
-	test("requests the anchor immediately after both native listeners install", async () => {
+	test("requests the anchor immediately after every native listener installs", async () => {
 		renderHook(() => usePanelRect(false));
 
 		await waitFor(() => {
 			expect(lifecycle).toEqual([
 				`listen:${NATIVE_EVENTS.MODEL_PICKER_ANCHOR}`,
 				`listen:${NATIVE_EVENTS.MODEL_PICKER_CLOSING}`,
+				`listen:${NATIVE_EVENTS.MODEL_PICKER_PREPARE}`,
 				"ready",
 			]);
 		});

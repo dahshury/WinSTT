@@ -367,11 +367,13 @@ fn initialize_model_runtime(
     // This is a non-requesting preflight: OS prompts remain owned by the focused
     // onboarding/recovery UI.
     let permission_status = winstt::commands::permission::initialize_startup_gate(app_handle);
+    startup.mark("permission gate established");
     if permission_status.ready {
         winstt::audio_device_watcher::install_audio_device_watcher(app_handle);
     } else {
         log::info!("[permissions] audio device watcher deferred until access is restored");
     }
+    startup.mark("audio device watcher installed");
 
     // Settings travel between machines (portable installs, exported settings, a reinstall on a
     // fresh OS); the model cache does not. Reconcile the persisted STT selection against the
@@ -624,9 +626,9 @@ fn initialize_desktop_integration(
 }
 
 /// Settings-store seeding, the cheap headless singletons, then the model
-/// runtime. Runs on the deferred startup thread only after the splash has
-/// painted at 0%; expensive STT warmup follows the selected eager/renderer-ready
-/// policy.
+/// runtime. Runs first on the deferred startup thread, while the main thread is
+/// still creating the splash window; expensive STT warmup follows the selected
+/// eager/renderer-ready policy.
 fn run_headless_boot(
     app_handle: &AppHandle,
     cli_args: &CliArgs,
@@ -857,6 +859,7 @@ pub fn run(cli_args: CliArgs) {
 
     let app = match builder
         .setup(move |app| {
+            startup::log_since_launch("setup entered");
             let app_handle = app.handle().clone();
             specta_builder.mount_events(app);
 
@@ -915,40 +918,42 @@ pub fn run(cli_args: CliArgs) {
             // precondition violation. Caching the handle here keeps every later read on
             // the clone-free path. (Must precede the first `read_settings_raw` below.)
             winstt::commands::settings::init_settings_store(&app_handle);
+            startup::log_since_launch("settings store initialized");
 
             let startup_winstt_settings =
                 winstt::commands::settings::read_settings_raw(&app_handle);
             let should_show_splash =
                 !cli_args.start_hidden && !startup_winstt_settings.general.start_minimized;
-            if should_show_splash {
-                splash::create_splash_window(&app_handle);
-            }
-
-            let app_handle_for_startup = app_handle;
+            let app_handle_for_startup = app_handle.clone();
             let cli_args_for_startup = cli_args;
+            // The deferred startup thread starts BEFORE the splash is built:
+            // `create_splash_window` blocks this (main) thread for ~0.5 s while
+            // WebView2 starts its browser process, and the headless boot (settings,
+            // managers, the eager STT load/warm spawn) needs none of it. Overlapping
+            // the two starts the STT load ~0.6 s sooner, and STT warmup is what
+            // gates the visible handoff. Measured on a packaged build: pill visible
+            // ~3.1 s -> ~2.5 s after launch; the splash paints ~50 ms later.
             std::thread::spawn(move || {
                 let mut startup = StartupProfiler::new();
                 startup::log_since_launch("deferred startup thread running");
-                // Do not begin any progress-producing or model-runtime work until
-                // the local splash page has loaded and WebView2 has had time to
-                // present its initial 0% frame. Starting headless boot first could
-                // starve the splash compositor, making its first visible frame land
-                // at 50-70% on cold launches.
-                if should_show_splash && splash::wait_until_painted() {
-                    advance_startup_phase(&mut startup, &app_handle_for_startup, "splash painted");
-                }
+                startup::log_process_age_at_run();
                 // Wire the ducking crash journal and restore any session
                 // volumes a previous run left ducked (crash / kill while
                 // dictating). Must precede the first dictation.
                 winstt::ducking::init(&app_handle_for_startup);
-                // With the splash already visible, begin headless manager setup
-                // and the selected STT load/warm policy before creating the main
-                // renderer webview.
                 let headless_boot = run_headless_boot(
                     &app_handle_for_startup,
                     &cli_args_for_startup,
                     &mut startup,
                 );
+                // Create the main renderer only once the splash has painted, so
+                // the two WebView2 instances do not compete for the browser
+                // process start-up. The splash replays 0% on its first paint (see
+                // `replay_startup_progress`); this phase then moves it to the
+                // headless boot's real progress through the bar's transition.
+                if should_show_splash && splash::wait_until_painted() {
+                    advance_startup_phase(&mut startup, &app_handle_for_startup, "splash painted");
+                }
                 continue_startup_after_splash_paint(
                     app_handle_for_startup,
                     cli_args_for_startup,
@@ -956,6 +961,10 @@ pub fn run(cli_args: CliArgs) {
                     headless_boot,
                 );
             });
+            if should_show_splash {
+                splash::create_splash_window(&app_handle);
+                startup::log_since_launch("splash window created");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1072,6 +1081,9 @@ pub fn run(cli_args: CliArgs) {
                     save_main_window_position(window.app_handle(), position.x, position.y);
                 }
             }
+            tauri::WindowEvent::Destroyed if window.label() == "main" => {
+                startup::log_since_quit("main window destroyed");
+            }
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::debug!("Theme changed to: {:?}", theme);
                 utils::change_tray_icon(window.app_handle(), utils::TrayIconState::Idle);
@@ -1104,7 +1116,11 @@ pub fn run(cli_args: CliArgs) {
 
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { .. } = &event {
+            startup::log_since_quit("exit requested event");
             cleanup_runtime_models_on_exit(app);
+        }
+        if let tauri::RunEvent::Exit = &event {
+            startup::log_since_quit("event loop exited");
         }
         if let tauri::RunEvent::Resumed = &event {
             winstt::commands::permission::schedule_recurring_preflight(app);
@@ -1186,6 +1202,7 @@ fn cleanup_runtime_models_on_exit(app: &AppHandle) {
         "[shutdown] model runtime cleanup finished in {}ms",
         started.elapsed().as_millis()
     );
+    startup::log_since_quit("model runtime cleanup finished");
 }
 
 /// On graceful exit, unload the Ollama model(s) WinSTT loaded into VRAM, then stop

@@ -85,6 +85,8 @@ interface PickerBodyProps {
 	onDownloadAction: QuantActions["handleDownloadAction"];
 	onDownloadSnapshot: QuantActions["handleDownloadSnapshot"];
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	/** True while the panel is anchored on screen (false while warm + hidden). */
+	panelOpen: boolean;
 	realtime: RealtimePickerBundle;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
@@ -397,7 +399,7 @@ function realtimeModelPrefilter(
  *  `settings.tts` (applying Supertonic defaults via the shared helper) and closes
  *  the window; per-quant download/delete reuse the same TTS download wiring. The
  *  TTS catalog + state stores self-hydrate on import (see `tts-catalog-store`). */
-function DetachedTtsPicker() {
+function DetachedTtsPicker({ panelOpen }: { panelOpen: boolean }) {
 	const models = useTtsCatalogStore((s) => s.models);
 	const isLoaded = useTtsCatalogStore((s) => s.isLoaded);
 	const statesById = useTtsModelStateStore((s) => s.statesById);
@@ -416,11 +418,15 @@ function DetachedTtsPicker() {
 
 	// `refresh()` fetches BOTH the catalog model list and the per-model cache
 	// state in one round-trip. The detached window doesn't bootstrap the TTS
-	// catalog at startup (unlike STT), so populate it when this picker mounts —
-	// mirrors `TtsModelPickerHost`'s on-open refresh.
+	// catalog at startup (unlike STT), so populate it on every open — mirrors
+	// `TtsModelPickerHost`'s on-open refresh. The body stays mounted (hidden)
+	// between opens of this picker, so also hydrate a never-loaded catalog at
+	// mount: the first open then shows a populated list instead of filling in.
 	useEffect(() => {
-		refresh();
-	}, [refresh]);
+		if (panelOpen || !useTtsCatalogStore.getState().isLoaded) {
+			refresh();
+		}
+	}, [panelOpen, refresh]);
 
 	const handleChange = (nextModel: string): void => {
 		updateTts(resolveTtsModelSelectionPatch(nextModel, models, currentSpeed));
@@ -473,6 +479,7 @@ export function PickerBody({
 	onDownloadSnapshot,
 	onSelect,
 	realtime,
+	panelOpen,
 	statesById,
 	systemInfo,
 }: PickerBodyProps) {
@@ -510,7 +517,7 @@ export function PickerBody({
 		);
 	}
 	if (mode.kind === "tts") {
-		return <DetachedTtsPicker />;
+		return <DetachedTtsPicker panelOpen={panelOpen} />;
 	}
 	if (mode.kind === "output-device") {
 		return (

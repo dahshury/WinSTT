@@ -4,8 +4,6 @@ import { NATIVE_EVENTS as IPC } from "@/shared/api/native-events";
 import { ipcOnReady } from "@/shared/api/ipc-client";
 import {
 	DEFAULT_MODEL_PICKER_MODE,
-	DESIRED_HEIGHT,
-	DESIRED_WIDTH,
 	desiredSizeForMode,
 	type DetachedModelPickerMode,
 	normalizeDetachedModelPickerMode,
@@ -32,8 +30,9 @@ interface PanelRectState {
 
 /**
  * Owns the detached-window panel positioning state machine: panel/panelPhase
- * state + refs, the MODEL_PICKER_ANCHOR / MODEL_PICKER_CLOSING IPC effects, the
- * renderer-ready anchor handshake, close-animation acknowledgement, the one-shot
+ * state + refs, the MODEL_PICKER_ANCHOR / MODEL_PICKER_CLOSING /
+ * MODEL_PICKER_PREPARE IPC effects, the renderer-ready anchor handshake,
+ * close-animation acknowledgement, the one-shot
  * MODEL_PICKER_RESIZE send, and the derived panel values the host renders.
  */
 export function usePanelRect(catalogLoaded: boolean): PanelRectState {
@@ -42,6 +41,13 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 	// current chip position / clamped height).
 	const [panel, setPanelState] = useState<PanelRect | null>(null);
 	const [panelPhase, setPanelPhaseState] = useState<PanelPhase>("hidden");
+	// The mode of the most recent open. Kept after close so the hidden,
+	// remounted body stays warm for that picker kind: reopening the same
+	// selector (LLM, TTS, realtime, …) then just repositions a mounted tree
+	// instead of mounting the whole body during the open animation.
+	const [lastMode, setLastMode] = useState<DetachedModelPickerMode>(
+		DEFAULT_MODEL_PICKER_MODE,
+	);
 	// Bumped on every full close so the host can remount the warm picker body
 	// (while hidden) and reset its transient search query.
 	const [bodyGeneration, setBodyGenerationState] = useState(0);
@@ -109,16 +115,16 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		let disposed = false;
 		let unsubscribeAnchor: () => void = () => undefined;
 		let unsubscribeClosing: () => void = () => undefined;
+		let unsubscribePrepare: () => void = () => undefined;
 
 		const installLifecycleSubscriptions = async () => {
 			const anchorSubscription = ipcOnReady(IPC.MODEL_PICKER_ANCHOR, (rect) => {
 				if (rect) {
 					const payload = rect as PanelRect & { mode?: unknown };
 					closeSequenceRef.current = null;
-					setPanel({
-						...payload,
-						mode: normalizeDetachedModelPickerMode(payload.mode),
-					});
+					const nextMode = normalizeDetachedModelPickerMode(payload.mode);
+					setLastMode(nextMode);
+					setPanel({ ...payload, mode: nextMode });
 					// Already revealed (repair/re-anchor): just track the latest rect.
 					if (
 						panelPhaseRef.current === "open" ||
@@ -165,28 +171,47 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 					setPanelPhase("closing");
 				},
 			);
-			let cleanups: [() => void, () => void];
+			// Sent at the start of an open, before Rust positions/shows the window:
+			// switch the hidden body to the incoming kind now so its remount
+			// overlaps the native placement instead of following the anchor. Only
+			// while nothing is on screen — a visible panel re-modes via the anchor.
+			const prepareSubscription = ipcOnReady(
+				IPC.MODEL_PICKER_PREPARE,
+				(rawMode) => {
+					if (panelPhaseRef.current === "hidden") {
+						setLastMode(normalizeDetachedModelPickerMode(rawMode));
+					}
+				},
+			);
+			let cleanups: [() => void, () => void, () => void];
 			try {
-				cleanups = await Promise.all([anchorSubscription, closingSubscription]);
+				cleanups = await Promise.all([
+					anchorSubscription,
+					closingSubscription,
+					prepareSubscription,
+				]);
 			} catch (error) {
-				// If only one native registration failed, tear down the other one
-				// when it resolves rather than leaking a half-installed lifecycle.
-				void anchorSubscription
-					.then((cleanup) => cleanup())
-					.catch(() => undefined);
-				void closingSubscription
-					.then((cleanup) => cleanup())
-					.catch(() => undefined);
+				// If only some native registrations failed, tear down the others
+				// when they resolve rather than leaking a half-installed lifecycle.
+				for (const subscription of [
+					anchorSubscription,
+					closingSubscription,
+					prepareSubscription,
+				]) {
+					void subscription.then((cleanup) => cleanup()).catch(() => undefined);
+				}
 				throw error;
 			}
-			const [anchorCleanup, closingCleanup] = cleanups;
+			const [anchorCleanup, closingCleanup, prepareCleanup] = cleanups;
 			if (disposed) {
 				anchorCleanup();
 				closingCleanup();
+				prepareCleanup();
 				return;
 			}
 			unsubscribeAnchor = anchorCleanup;
 			unsubscribeClosing = closingCleanup;
+			unsubscribePrepare = prepareCleanup;
 			// Listener installation is the only prerequisite for the snapshot.
 			// Do not gate this acknowledgement on requestAnimationFrame: a freshly
 			// created or native-hidden WebView can throttle rAF, which would make the
@@ -206,6 +231,7 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 			disposed = true;
 			unsubscribeAnchor();
 			unsubscribeClosing();
+			unsubscribePrepare();
 		};
 	}, [
 		bumpBodyGeneration,
@@ -216,48 +242,52 @@ export function usePanelRect(catalogLoaded: boolean): PanelRectState {
 		setPanelPhase,
 	]);
 
-	const mode = panel?.mode ?? DEFAULT_MODEL_PICKER_MODE;
+	const mode = panel?.mode ?? lastMode;
 	const { height: desiredHeight, width: desiredWidth } =
 		desiredSizeForMode(mode);
 
 	// Report the desired footprint for the active picker body. Main clamps it to
 	// the room around the chip and sends back the final panel rect via
-	// MODEL_PICKER_ANCHOR. Only sent while a panel is actually up: `open_window`
-	// seeds the per-kind size itself, and the close-reset reverts `mode` to the
-	// default — firing this from the hidden/closing states made Rust re-place
-	// (and re-SHOW) the still-visible window during the close grace, so every
-	// close of a non-default-size picker (LLM) immediately reopened it.
+	// MODEL_PICKER_ANCHOR. Sent on every open (not only on a mode change): the
+	// warm body usually already has the incoming mode — it is kept after close
+	// and switched early by MODEL_PICKER_PREPARE — so a mode-keyed report alone
+	// would never correct Rust's per-kind seed size. Rust ignores a same-size
+	// report. Only sent while a panel is actually up: firing this from the
+	// hidden/closing states made Rust re-place (and re-SHOW) the still-visible
+	// window during the close grace, so a closed picker immediately reopened.
+	const panelRevealed = panel !== null;
 	useEffect(() => {
 		if (
-			panelPhaseRef.current !== "open" &&
-			panelPhaseRef.current !== "pre-open"
+			!panelRevealed ||
+			(panelPhaseRef.current !== "open" && panelPhaseRef.current !== "pre-open")
 		) {
 			return;
 		}
 		void commands.resizeWindow("model-picker", desiredWidth, desiredHeight);
-	}, [desiredHeight, desiredWidth]);
+	}, [desiredHeight, desiredWidth, panelRevealed]);
 
 	// Pre-warm the (heavy) picker body during the window's idle pre-create
-	// rather than on first open. The detached picker window is created hidden +
-	// parked off-screen at app startup, but `PickerBody` — a force-open inline
-	// combobox that mounts EVERY model card — used to be gated entirely behind
-	// `panel`, which the main process only sends on the first open. So the
+	// rather than on first open. The detached picker window is pre-created hidden
+	// shortly after app startup (Rust `DEFERRED_WINDOW_WARMUP_LABELS`), but
+	// `PickerBody` — a force-open inline combobox that mounts EVERY model card —
+	// used to be gated entirely behind `panel`, which the main process only sends
+	// on the first open. So the
 	// expensive first mount (Base UI's collection build + the full grouped-list
 	// layout) landed during the 150ms open fade and the user saw it lag.
 	//
 	// Mount it as soon as the catalog has hydrated (which happens in the
-	// background a beat after launch), laid out at the default footprint and held
-	// invisible (`opacity: 0`, `pointer-events: none`) until the real anchor
+	// background a beat after launch), laid out at the footprint of the
+	// last-opened picker kind (`lastMode`; the STT picker before any open) and
+	// held invisible (`opacity: 0`, `pointer-events: none`) until the real anchor
 	// lands. The window stays parked off-screen the whole time, so this warm
 	// render is never visible; the first real open then just repositions an
 	// already-warm tree (a cheap re-render) instead of mounting the whole picker.
-	const panelRevealed = panel !== null;
 	const panelInteractive = panelRevealed && panelPhase === "open";
 	const warmPanel = panel ?? {
 		x: 0,
 		y: 0,
-		width: DESIRED_WIDTH,
-		height: DESIRED_HEIGHT,
+		width: desiredWidth,
+		height: desiredHeight,
 		origin: "bottom-right",
 		mode,
 	};

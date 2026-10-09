@@ -46,9 +46,9 @@ const READY_TIMEOUT_MS: u64 = 15_000;
 /// `animationend`. Normal closes complete through the renderer acknowledgement.
 const SPLASH_CLOSE_FAILSAFE_MS: u64 = 1_500;
 const SPLASH_PAINT_WAIT_TIMEOUT_MS: u64 = 5_000;
-/// Keep startup work off the CPU briefly after WebView2 reports the local page
-/// loaded. This gives the compositor several frames to present the icon at 0%
-/// before the first progress tick or model-runtime work begins.
+/// Hold briefly after WebView2 reports the local page loaded. This gives the
+/// compositor several frames to present the icon at 0% before the first
+/// progress tick and the main renderer's WebView2 creation begin.
 const SPLASH_INITIAL_ZERO_HOLD_MS: u64 = 75;
 const STARTUP_PROGRESS_TOTAL_PHASES: usize = 32;
 
@@ -164,12 +164,12 @@ fn apply_startup_progress_to_splash(app: &AppHandle, payload: &serde_json::Value
 fn replay_startup_progress(app: &AppHandle) {
     crate::startup::log_since_launch("splash page painted");
     SPLASH_PAGE_READY.store(true, Ordering::SeqCst);
-    // Startup is gated on this page load, so the normal first render is 0%.
-    // Replaying the current value remains defensive for a paint-timeout fallback
-    // or a page reload: progress must never move backwards.
-    let phase = STARTUP_PROGRESS_PHASE.load(Ordering::SeqCst);
-    let payload =
-        startup_progress_payload("Starting WinSTT", phase, startup_percent_for_phase(phase));
+    // The headless boot runs while the splash comes up, so several phases have
+    // usually completed by now. Present 0% on the first paint anyway: the
+    // startup thread's next phase (it waits for this paint, then holds
+    // `SPLASH_INITIAL_ZERO_HOLD_MS`) moves the bar to the real value through
+    // its width transition instead of the first frame landing mid-way.
+    let payload = startup_progress_payload("Starting WinSTT", 0, 0);
     apply_startup_progress_to_splash(app, &payload, false);
     pulse_ready_signal();
 }

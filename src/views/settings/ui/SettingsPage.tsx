@@ -629,14 +629,15 @@ function useSettingsWindowMotion(
 
 	useEffect(() => {
 		// Reveal on mount ONLY if the OS window is already on screen. That is the
-		// normal COLD-OPEN case for this lazily-created window: Rust builds the
-		// webview inside open_window and show()+emit(SETTINGS_WINDOW_SHOWN) fire
-		// before this renderer has mounted and subscribed, so the event is always
-		// missed on the first open and the mount-time reveal is what plays it.
+		// COLD-OPEN case (the user opened Settings before the startup warmup
+		// pre-created it): Rust builds the webview inside open_window and
+		// show()+emit(SETTINGS_WINDOW_SHOWN) fire before this renderer has mounted
+		// and subscribed, so the event is missed and the mount-time reveal plays it.
 		//
-		// The window can still be HIDDEN at mount — e.g. the open was dismissed
-		// again before the page finished loading (the keep-alive close hides the
-		// native window while the renderer is still booting). A webview hidden
+		// Normally the window is HIDDEN at mount — the startup warmup pre-creates
+		// it off-screen, or the open was dismissed again before the page finished
+		// loading (the keep-alive close hides the native window while the renderer
+		// is still booting). A webview hidden
 		// that way still reports document.visibilityState="visible" and its rAFs
 		// are NOT frozen — so an unconditional reveal here would play the ENTIRE
 		// enter animation into the void: the shell finishes at opacity 1 while

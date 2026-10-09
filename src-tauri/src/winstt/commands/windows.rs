@@ -7,8 +7,9 @@
 // Creation policy (matches the reference's keep-alive semantics):
 //   - `main` is created eagerly in lib.rs setup (NOT here).
 //   - settings/history/onboarding/pickers/overlay/tray-menu are created LAZILY on
-//     first `open_window` and HIDDEN (not destroyed) on `close_window`, so re-open
-//     preserves renderer state.
+//     first `open_window` (or pre-created hidden by the startup warmup — see
+//     `schedule_secondary_window_warmup`) and HIDDEN (not destroyed) on
+//     `close_window`, so re-open preserves renderer state.
 //   - optional context-playground is created lazily but DESTROYED on close,
 //     resetting its live-capture renderer state.
 //
@@ -57,7 +58,8 @@ mod settings_modal;
 
 use placement::{
     anchor_from_rect, center_window, close_model_picker_with_animation,
-    complete_model_picker_close, emit_model_picker_anchor_snapshot, place_picker, resolve_opener,
+    complete_model_picker_close, emit_model_picker_anchor_snapshot, emit_model_picker_prepare,
+    place_picker, resolve_opener,
 };
 use settings_modal::close_main_modal_window;
 
@@ -496,10 +498,13 @@ fn picker_default_size(label: &str) -> (f64, f64) {
     }
 }
 
+/// Per-kind seed footprint for an open. Keep in sync with `desiredSizeForMode`
+/// in the renderer's `picker-helpers.ts`: the renderer re-reports its desired
+/// size on every open, and a mismatch costs a second placement pass.
 fn model_picker_size_for_kind(kind: &str) -> (f64, f64) {
     match kind {
-        "llm-ollama" => (620.0, 620.0),
-        "llm-openrouter" => (580.0, 620.0),
+        "llm-ollama" => (620.0, 580.0),
+        "llm-openrouter" => (580.0, 580.0),
         // Compact device list (keep in sync with `OUTPUT_DEVICE_PICKER_*` in the
         // renderer's `picker-helpers.ts`); Rust widens it to the trigger width.
         "output-device" => (320.0, 320.0),
@@ -657,10 +662,19 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         });
     }
 
-    let window = builder.build().map_err(|e| {
-        log::error!("ensure_window: failed to build '{label}': {e}");
-        e.to_string()
-    })?;
+    let window = match builder.build() {
+        Ok(window) => window,
+        // A concurrent caller (the deferred warmup on the main thread vs. an
+        // `open_window` on a worker) built the same label between our existence
+        // check and this build — use the window that won.
+        Err(e) => {
+            if let Some(existing) = app.get_webview_window(label) {
+                return Ok(existing);
+            }
+            log::error!("ensure_window: failed to build '{label}': {e}");
+            return Err(e.to_string());
+        }
+    };
 
     log::debug!(
         "[webview-built:{label}] url={}",
@@ -752,15 +766,40 @@ const SECONDARY_WINDOW_WARMUP_DELAY_MS: u64 = 250;
 ///     WebView2 creation stays off the recording pipeline (which would
 ///     otherwise block on main-thread window construction mid-recording).
 ///
-/// `settings` and `model-picker` stay lazy on purpose: their open paths are
-/// load-aware (the settings renderer replays its reveal from a mount-time
-/// visibility check; the picker has the `window_model_picker_ready` handshake),
-/// and both are shown full-size on open, so a cold create costs latency only.
+/// `settings` and `model-picker` are warmed separately, later — see
+/// `DEFERRED_WINDOW_WARMUP_LABELS`.
 const SECONDARY_WINDOW_WARMUP_LABELS: &[&str] = &["overlay", "model-footprint", "tray-indicator"];
 
+/// Extra delay (after the first warmup batch) before creating the heavier
+/// latency-only surfaces. Keeps their renderer boot + backend hydration off the
+/// startup / first-model-load path.
+const DEFERRED_WINDOW_WARMUP_DELAY_MS: u64 = 1_500;
+
+/// Gap between consecutive deferred creations, so each WebView2 build is its
+/// own main-thread task and the event loop pumps in between.
+const DEFERRED_WINDOW_WARMUP_STAGGER_MS: u64 = 300;
+
+/// Hidden windows warmed purely to cut first-open latency. A cold open pays
+/// WebView2 creation (0.5–5s measured on a release build) plus the renderer
+/// boot + store hydration (~0.9s) before anything can appear; pre-created
+/// hidden, the first open is the same warm show as any reopen (~60–140ms).
+///
+///   - `model-picker` — every model selector (local/cloud STT, realtime, TTS,
+///     Ollama, OpenRouter, output device) shares this window. Its renderer
+///     warm-mounts the picker body while hidden (`usePanelRect`) and installs
+///     the anchor listener, then acks via `window_model_picker_ready`; the
+///     first open just delivers the anchor.
+///   - `settings` — the renderer mounts with the window off-screen and does
+///     nothing (its mount-time reveal requires a visible window); the first
+///     open is the same `SETTINGS_WINDOW_SHOWN` replay as any later reopen.
+///
+/// If the user opens either before this fires, the cold path still works.
+const DEFERRED_WINDOW_WARMUP_LABELS: &[&str] = &["model-picker", "settings"];
+
 /// Pre-create the hidden secondary webviews in `SECONDARY_WINDOW_WARMUP_LABELS`
-/// shortly after startup. Idempotent: one-shot guard here, and `ensure_window`
-/// early-returns for any window that already exists.
+/// shortly after startup, then `DEFERRED_WINDOW_WARMUP_LABELS` a bit later.
+/// Idempotent: one-shot guard here, and `ensure_window` early-returns for any
+/// window that already exists.
 pub(crate) fn schedule_secondary_window_warmup(app: &AppHandle) {
     if SECONDARY_WINDOW_WARMUP_SCHEDULED.swap(true, Ordering::SeqCst) {
         return;
@@ -770,20 +809,31 @@ pub(crate) fn schedule_secondary_window_warmup(app: &AppHandle) {
         std::thread::sleep(std::time::Duration::from_millis(
             SECONDARY_WINDOW_WARMUP_DELAY_MS,
         ));
-        let app_for_main = app.clone();
-        // WebView2 creation must happen on the main thread; the event loop is
-        // pumping by now, so this runs right after the current tick.
-        if let Err(e) = app.run_on_main_thread(move || {
-            for &label in SECONDARY_WINDOW_WARMUP_LABELS {
-                match ensure_window(&app_for_main, label) {
-                    Ok(_) => log::debug!("[warmup] '{label}' pre-created (hidden, deferred)"),
-                    Err(e) => log::warn!("[warmup] '{label}' failed: {e}"),
-                }
-            }
-        }) {
-            log::warn!("secondary window warmup scheduling failed: {e}");
+        for &label in SECONDARY_WINDOW_WARMUP_LABELS {
+            warm_window_on_main_thread(&app, label);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(
+            DEFERRED_WINDOW_WARMUP_DELAY_MS,
+        ));
+        for &label in DEFERRED_WINDOW_WARMUP_LABELS {
+            warm_window_on_main_thread(&app, label);
+            std::thread::sleep(std::time::Duration::from_millis(
+                DEFERRED_WINDOW_WARMUP_STAGGER_MS,
+            ));
         }
     });
+}
+
+fn warm_window_on_main_thread(app: &AppHandle, label: &'static str) {
+    let app_for_main = app.clone();
+    // WebView2 creation must happen on the main thread; the event loop is
+    // pumping by now, so this runs right after the current tick.
+    if let Err(e) = app.run_on_main_thread(move || match ensure_window(&app_for_main, label) {
+        Ok(_) => log::debug!("[warmup] '{label}' pre-created (hidden, deferred)"),
+        Err(e) => log::warn!("[warmup] '{label}' failed: {e}"),
+    }) {
+        log::warn!("secondary window warmup scheduling failed: {e}");
+    }
 }
 
 // ── Settings modal (pill input gate) ────────────────────────────────────────
@@ -931,6 +981,7 @@ pub async fn open_window(
                 s.width = default_width;
                 s.height = default_height;
             });
+            emit_model_picker_prepare(&window);
         }
 
         // Stash the trigger anchor (converted to screen space via the opener =
