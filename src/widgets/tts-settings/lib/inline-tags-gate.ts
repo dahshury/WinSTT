@@ -21,7 +21,7 @@ export interface InlineTagsGate {
 	supported: boolean;
 	/**
 	 * The model's whole vocabulary in ITS OWN delimiters (`"<laugh> <sigh>"` for
-	 * Orpheus, `"[laugh] [cough]"` for Chatterbox Turbo), for the row's tooltip.
+	 * Maya1, `"[laugh] [cough]"` for Chatterbox Turbo), for the row's tooltip.
 	 * `""` when unsupported. NEVER assemble this from a literal bracket — the two
 	 * shipped syntaxes are not interchangeable and the wrong one is spoken aloud.
 	 */

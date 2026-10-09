@@ -79,7 +79,7 @@ tools/bench/wakeword-results/
 kokoro_tts_bench_*.wav
 tts_engine_bench_*.wav
 # Ad-hoc engine probe/verification renders written to the crate root by the
-# examples under src-tauri/examples (qwen3_tts_check, cbx_probe_*, orpheus_probe_*, …).
+# examples under src-tauri/examples (qwen3_tts_check, cbx_probe_*, maya1_probe_*, …).
 *_check.wav
 *_probe_*.wav
 

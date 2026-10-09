@@ -1,6 +1,6 @@
 // ARK-ASR engine (`arkasr`: Whisper-large audio encoder + MLP adapter → Qwen-style causal LM).
 //
-// Source: Audio8/ark-asr-0.6b-int8-onnx — `infer_ark_audio_onnx.py::ArkAsrOnnxRuntime`,
+// Source: Edge0/ark-asr-0.6b-int8-onnx — `infer_ark_audio_onnx.py::ArkAsrOnnxRuntime`,
 // `runtime_manifest.json`, and `processing_arkasr.py` (the prompt builder).
 //
 // SIBLING, NOT A COPY, of `audio8.rs`. Both models are the same upstream `arkasr` architecture and

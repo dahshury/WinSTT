@@ -52,11 +52,10 @@ pub(crate) const TTS_VOICE_ALLOWED_WINDOWS: &[&str] = &["settings", "model-picke
 
 // ── reference-clip preparation ───────────────────────────────────────────────
 
-/// Reference clips are normalized to 24 kHz mono, the highest rate any cloning
-/// engine here asks for (Chatterbox 24 kHz, Spark 16 kHz). Chatterbox then reads
-/// the stored file back with no resampling at all, and Spark downsamples through
-/// the shared rubato path — storing at 16 kHz instead would upsample into
-/// Chatterbox and throw away the top octave.
+/// Reference clips are normalized to 24 kHz mono, the native rate of most cloning
+/// engines here (Chatterbox, OmniVoice, Qwen3-TTS Base), which read the stored file
+/// back with no resampling at all. Audio8 (44.1 kHz) resamples through the shared
+/// rubato path; storing below 24 kHz would throw away the top octave everywhere.
 const REFERENCE_CLIP_SAMPLE_RATE: u32 = 24_000;
 
 /// Containers the shared symphonia decoder is built with (see `Cargo.toml`'s
@@ -294,7 +293,7 @@ pub(crate) fn reference_clip_budget(settings: &WinsttSettings) -> u32 {
 // A voice is N takes welded into ONE clip. The seam is deliberately narrow:
 // everything multi-clip happens here, and what leaves is a single path in the
 // same shape `tts_prepare_reference_clip` has always produced, so the engines
-// (audio8 `ensure_reference`, spark, omnivoice, chatterbox) cannot tell the
+// (audio8 `ensure_reference`, qwen3-tts base, omnivoice, chatterbox) cannot tell the
 // difference and need no change.
 
 /// The managed folder every stored reference clip lives in, created on demand.
@@ -1361,7 +1360,7 @@ async fn tag_text(
 }
 
 /// The selected model's tag vocabulary, normalized, paired with its syntax.
-/// `None` when the row has no vocabulary (every engine but Orpheus and
+/// `None` when the row has no vocabulary (every engine but Maya1 and
 /// Chatterbox Turbo) or the id is not a catalog row at all — settings are
 /// user-editable JSON, so an unknown id is a normal input here.
 fn selected_tag_vocabulary(settings: &WinsttSettings) -> Option<(TagSyntax, Vec<String>)> {
@@ -1585,7 +1584,7 @@ pub(crate) async fn prepare_read_aloud_text(
 /// `allowed_tags` are BARE names (`laugh`, `sigh`) and `syntax` selects the
 /// engine's delimiters — both come from the model's catalog row
 /// (`tags` / `tagSyntax`), never from a hardcoded list, because the two shipped
-/// syntaxes are incompatible: Orpheus reads `<laugh>`, Chatterbox Turbo reads
+/// syntaxes are incompatible: Maya1 reads `<laugh>`, Chatterbox Turbo reads
 /// `[laugh]`, and the wrong one is spoken aloud rather than rejected.
 ///
 /// The answer is filtered against `allowed_tags` and checked to confirm the
@@ -2027,11 +2026,11 @@ mod tests {
     #[test]
     fn the_read_aloud_vocabulary_comes_from_the_selected_models_own_row() {
         let mut settings = WinsttSettings::default();
-        // Orpheus and Chatterbox Turbo are the only two shipped rows with a
+        // Maya1 and Chatterbox Turbo are the only two shipped rows with a
         // vocabulary, and they do NOT share a syntax — this is exactly the pair a
         // hardcoded delimiter would break.
-        settings.tts.model = "orpheus-3b".to_string();
-        let (syntax, tags) = selected_tag_vocabulary(&settings).expect("orpheus has tags");
+        settings.tts.model = "maya1-3b".to_string();
+        let (syntax, tags) = selected_tag_vocabulary(&settings).expect("maya1 has tags");
         assert_eq!(syntax, TagSyntax::Angle);
         assert!(tags.contains(&"laugh".to_string()), "{tags:?}");
 
@@ -2103,7 +2102,7 @@ mod tests {
     #[test]
     fn the_clip_cap_follows_the_selected_model_and_never_reads_as_uncapped() {
         let mut settings = WinsttSettings::default();
-        settings.tts.model = "spark-tts-0.5b".to_string();
+        settings.tts.model = "qwen3-tts-0.6b-base".to_string();
         assert_eq!(reference_clip_budget(&settings), MAX_CLONE_REF_SECS);
         // A non-cloning selection must not resolve to the row's `0` (= no cap).
         settings.tts.model = "kokoro-82m".to_string();

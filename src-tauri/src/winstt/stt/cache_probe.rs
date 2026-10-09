@@ -494,7 +494,7 @@ mod tests {
             engine_kind_for(
                 "audio8-asr-0.1b",
                 "audio8",
-                "Audio8/Audio8-ASR-0.1B-onnx-runtime"
+                "Edge0/Audio8-ASR-0.1B-onnx-runtime"
             ),
             EngineKind::Audio8Asr
         );

@@ -75,7 +75,7 @@ describe("buildScriptTokens", () => {
 	});
 
 	test("flags inline paralinguistic tags in BOTH shipped syntaxes", () => {
-		// Orpheus reads `<laugh>`, Chatterbox Turbo reads `[laugh]` — the two
+		// Maya1 reads `<laugh>`, Chatterbox Turbo reads `[laugh]` — the two
 		// vocabularies are not interchangeable, so both must be recognized.
 		const tokens = buildScriptTokens(["ha <laugh> ho [sigh] hm"], []);
 		expect(tokens.filter((t) => t.tag).map((t) => t.text)).toEqual([

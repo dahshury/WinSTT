@@ -19,16 +19,18 @@ pub mod audio8;
 pub mod audio8_01;
 pub mod catalog;
 pub mod chatterbox;
+pub mod cosyvoice3;
 pub mod kitten;
 pub mod kokoro;
 pub mod local_engines;
+pub mod magpie;
+pub mod maya1;
 pub mod neutts;
 pub mod omnivoice;
-pub mod orpheus;
+pub mod paradee;
 pub mod phonemize;
 pub mod piper;
 pub mod qwen3_tts;
-pub mod spark;
 pub mod supertonic;
 
 mod cloud;
@@ -76,4 +78,23 @@ pub fn cache_dir(app: &tauri::AppHandle, model_id: &str) -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
         .join("tts")
         .join(model_id)
+}
+
+/// Write mono f32 PCM as a 16-bit WAV — for the `#[ignore]`d real-weights probes that hand their
+/// audio to an external ASR/WER pass.
+#[cfg(test)]
+pub(crate) fn write_probe_wav(path: &std::path::Path, pcm: &[f32], sample_rate: u32) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).expect("create wav");
+    for &s in pcm {
+        writer
+            .write_sample((s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16)
+            .expect("write sample");
+    }
+    writer.finalize().expect("finalize wav");
 }

@@ -483,7 +483,7 @@ pub async fn tts_preview_openrouter(
 // Multi-provider TTS catalog (the model-aware picker). Mirrors the STT
 // stt_list_models / stt_list_models_with_state + per-quant download lifecycle, but for
 // every TTS_CATALOG row (Kokoro / Kitten / Piper / Supertonic / Chatterbox /
-// Qwen3-TTS / Orpheus / Spark), downloaded on demand from HF.
+// Qwen3-TTS / Maya1), downloaded on demand from HF.
 // ===========================================================================
 
 use std::collections::HashMap;

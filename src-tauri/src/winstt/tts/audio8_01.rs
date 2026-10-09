@@ -1,6 +1,6 @@
 // Audio8 TTS Preview 0.1B — WinSTT port of Audio8's OFFICIAL INT8 ONNX runtime.
 //
-// Model repo:   https://huggingface.co/Audio8/audio8-TTS-0.1B-ONNX-INT8 (Apache-2.0)
+// Model repo:   https://huggingface.co/Edge0/audio8-TTS-0.1B-ONNX-INT8 (Apache-2.0)
 // Reference:    Audio8_TTS/onnx_runtime_0_1b_int8/arktts_runtime/{runtime,prompt,voices}.py
 //
 // Everything below is a faithful port of that runtime, so the graph contract lives here
@@ -758,7 +758,7 @@ pub struct Audio8Preview01Engine {
 
 impl Audio8Preview01Engine {
     /// Load from the model cache directory, laid out exactly as
-    /// `hf download Audio8/audio8-TTS-0.1B-ONNX-INT8 --local-dir model` leaves it.
+    /// `hf download Edge0/audio8-TTS-0.1B-ONNX-INT8 --local-dir model` leaves it.
     pub fn load(dir: &Path) -> Result<Self> {
         let manifest = RuntimeManifest::load(&dir.join(MANIFEST_FILE))?;
         let threads = intra_op_threads();
@@ -1342,7 +1342,9 @@ mod tests {
 
     #[test]
     fn manifest_verification_pins_the_published_export() {
-        // Audio8's shipped runtime_manifest.json, verbatim.
+        // Audio8's shipped runtime_manifest.json, verbatim. Its self-declared `model_id`
+        // names a pre-move repo id that no longer resolves (401); the file is still what
+        // `Edge0/audio8-TTS-0.1B-ONNX-INT8` serves, and `model_id` is not verified.
         let official = r#"{
           "model_id": "Audio8/Audio8-TTS-Preview-0.1B-ONNX-INT8",
           "model_fingerprint": "audio8-tts-preview-0.1b-int8-v1",

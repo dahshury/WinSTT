@@ -912,7 +912,7 @@ mod tests {
         assert!(tts_warm_inputs_changed(&prev, &next));
 
         let mut model_swap = next.clone();
-        model_swap.tts.model = "kitten-nano-0.2".into();
+        model_swap.tts.model = "kitten-nano-0.8".into();
         assert!(tts_warm_inputs_changed(&next, &model_swap));
 
         let mut device_swap = model_swap.clone();

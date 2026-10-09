@@ -249,3 +249,44 @@ describe("VoiceDesignField — AI generation", () => {
 		expect(onGeneratePrompt).not.toHaveBeenCalled();
 	});
 });
+
+describe("VoiceDesignField — ready-made presets", () => {
+	const PRESETS = [
+		{ id: "Warm female narrator, american accent.", label: "Warm narrator" },
+		{ id: "Deep male villain, british accent.", label: "Dark villain" },
+	];
+
+	test("no presets → no chip row", () => {
+		renderField();
+		openDialog();
+		expect(screen.queryByText("Ready-made voices")).toBeNull();
+	});
+
+	test("a chip fills the draft without saving, and Save stores the description", () => {
+		const { onPromptChange } = renderField({ presets: PRESETS });
+		openDialog();
+
+		const chip = screen.getByText("Dark villain");
+		expect(chip.getAttribute("aria-pressed")).toBe("false");
+		fireEvent.click(chip);
+		expect(textarea().value).toBe("Deep male villain, british accent.");
+		expect(screen.getByText("Dark villain").getAttribute("aria-pressed")).toBe(
+			"true",
+		);
+		expect(onPromptChange).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByText("Save"));
+		expect(onPromptChange.mock.calls[0]?.[0]).toBe(
+			"Deep male villain, british accent.",
+		);
+	});
+
+	test("a stored preset labels the trigger by name, not by its text", () => {
+		renderField({
+			presets: PRESETS,
+			prompt: "Warm female narrator, american accent.",
+		});
+		expect(screen.getByText("Warm narrator")).toBeTruthy();
+		expect(screen.queryByText(/^Warm female narrator/)).toBeNull();
+	});
+});

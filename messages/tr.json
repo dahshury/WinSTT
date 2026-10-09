@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Ses açıklaması",
     "voiceDesignPromptPlaceholder": "örn. hafif İngiliz aksanlı, sıcak ve kalın tonlu bir anlatıcı",
     "voiceDesignPromptEmptyHint": "Modelin yerleşik sesine geri dönmek için boş bırakın.",
+    "voiceDesignPresetsLabel": "Hazır sesler",
     "voiceDesignCharCounterLabel": "Açıklama uzunluğu",
     "voiceDesignCharsRemaining": "{count} kaldı",
     "voiceDesignGenerateLabel": "Karakter açıklaması",

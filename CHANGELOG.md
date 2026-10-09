@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.3-alpha.11] - 2026-10-09
+
+Changes since `v0.1.3-alpha.10`.
+
+### Added
+
+- Added Paradee 8M, a 9 MB English voice (WER 0.8%), with a Rust port of misaki's eSpeak-to-misaki phoneme conversion. Kokoro stays on eSpeak phonemes, where the conversion did not improve WER.
+- Added Qwen3-TTS 0.6B and 1.7B Base, which clone a voice from a short reference clip with an optional transcript (WER 2.5–3.4%).
+- Added NVIDIA Magpie TTS Multilingual 357M (10 languages, 5 voices), published as `Masterx/magpie-tts-multilingual-357m-ONNX`.
+- Added Fun-CosyVoice3 0.5B (multilingual zero-shot cloning and instruct, int8 / q4 / fp32), published as `Masterx/Fun-CosyVoice3-0.5B-2512-ONNX`.
+- Added Kitten TTS 0.8 micro (40M) and mini (80M).
+
+### Changed
+
+- Replaced Orpheus 3B with Maya1 3B (voice design from a written description, 17 inline emotion tags, q8 / q4 CPU), published as `Masterx/maya1-ONNX`.
+- Replaced Chatterbox Multilingual V2 with V3 (mean WER 2.0% vs 7.3% on the same sentences) and the third-party Chatterbox nano build with our own export, published as `Masterx/chatterbox-multilingual-v3-ONNX` and `Masterx/chatterbox-nano-ONNX`. Hebrew is no longer offered because V3 garbles it.
+- Replaced Kitten nano 0.2 with Kitten nano 0.8, defaulting to fp32, which is 2.5–4.5× faster on CPU than the int8 build at the same WER (int8 remains as the smaller download).
+- Removed Spark-TTS 0.5B in favor of Qwen3-TTS 0.6B Base.
+- Pointed the Audio8 STT and TTS models at their new `Edge0/*` Hugging Face repos and renamed existing STT caches so they stay detected.
+- Migrated saved TTS selections automatically: retired Kitten, Spark, Orpheus, and Chatterbox ids map to their successors on startup (cloned-voice clips are kept), and their downloaded files are removed.
+- Updated Tauri to 2.12 and the `windows` crate to 0.62, along with the pending Rust crate updates.
+- Updated the renderer dependencies, including motion 14 and rollup-plugin-visualizer 7, plus the npm minor and patch updates.
+
+### Maintenance
+
+- Bumped the GitHub Actions dependencies (`actions/checkout`, `Swatinem/rust-cache`, `actions/deploy-pages`), moved Dependabot's renderer updates to the bun ecosystem, and stopped it from proposing `windows-core` and TanStack Table major updates.
+- Bumped the application and context-sidecar versions from `0.1.3-alpha.10` to `0.1.3-alpha.11` while retaining the alpha release policy.
+
 ## [0.1.3-alpha.10] - 2026-10-06
 
 Changes since `v0.1.3-alpha.9`.

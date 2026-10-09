@@ -391,11 +391,11 @@ fn run_embed(
 /// different file set than the app would.
 fn graphs_for(model_id: &str, quant: &str) -> [String; 4] {
     match model_id {
-        "chatterbox-nano" => [
-            "speech_encoder_q4f16.onnx".into(),
-            "embed_tokens_fp16.onnx".into(),
+        "chatterbox-nano-v1" => [
+            "speech_encoder_q4.onnx".into(),
+            "embed_tokens_q4.onnx".into(),
             "language_model_q4f16.onnx".into(),
-            "conditional_decoder_q4.onnx".into(),
+            "conditional_decoder_q4f16.onnx".into(),
         ],
         "chatterbox-turbo" => {
             let s = if quant == "q4" { "q4" } else { "q4f16" };
@@ -501,7 +501,7 @@ fn run_gen(model_id: &str, quant: &str, out_dir: &Path, reps: usize) {
         tokenizer.get_vocab_size(true),
     );
 
-    let is_multi = model_id == "chatterbox-multilingual";
+    let is_multi = model_id == "chatterbox-multilingual-v3";
     let language_tag: Option<&str> = if is_multi {
         Some(
             std::env::var("CBX_LANG")
@@ -787,7 +787,7 @@ fn main() {
     let model_id = args
         .get(2)
         .cloned()
-        .unwrap_or_else(|| "chatterbox-multilingual".into());
+        .unwrap_or_else(|| "chatterbox-multilingual-v3".into());
     let quant = args.get(3).cloned().unwrap_or_else(|| "q4".into());
     match mode {
         "gen" => {

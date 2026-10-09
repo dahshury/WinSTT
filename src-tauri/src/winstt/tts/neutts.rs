@@ -1,6 +1,6 @@
 // NeuTTS-2e (neuphonic/neutts-2e) — Qwen3 backbone → NeuCodec tokens → 24 kHz audio.
 //
-// Same shape as `orpheus.rs` (autoregressive KV-cache decode + a separate vocoder session),
+// Same shape as `maya1.rs` (autoregressive KV-cache decode + a separate vocoder session),
 // but the conditioning is different in one load-bearing way: NeuTTS-2e is NOT a text-only
 // model and NOT a cloning model. Every generation is prefixed with a FIXED, pre-encoded
 // speaker reference — the reference clip's NeuCodec codes plus its transcript — and the
@@ -543,7 +543,7 @@ fn normalize_text(text: &str) -> String {
         .collect()
 }
 
-// ── ORT helpers (mirror orpheus / qwen3_tts idioms) ────────────────────────────────
+// ── ORT helpers (mirror maya1 / qwen3_tts idioms) ────────────────────────────────
 
 fn cpu_session(path: &Path, engine: &str) -> NeuTtsResult<Session> {
     super::provider::cpu_session_with_intra_threads(

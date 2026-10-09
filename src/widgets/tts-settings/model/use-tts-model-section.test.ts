@@ -32,7 +32,7 @@ interface TauriWindow extends Window {
 	};
 }
 
-const CLONE_MODEL = "spark-tts-0.5b";
+const CLONE_MODEL = "audio8-tts-0.6b";
 const COMBINED_A = "C:/appdata/tts/reference-voices/voice-a1b2.wav";
 const COMBINED_B = "C:/appdata/tts/reference-voices/voice-c3d4.wav";
 const SOURCE_1 = "C:/appdata/tts/reference-voices/part-1-11aa.wav";
@@ -83,7 +83,7 @@ function build(overrides: Partial<ReferenceBuild> = {}): ReferenceBuild {
 	};
 }
 
-/** Catalog row for a clip+transcript cloner (Spark) that cannot speak without a
+/** Catalog row for a clip+transcript cloner (Audio8 0.6B) that cannot speak without a
  *  reference — the shape that exercises every branch under test. */
 function seedCatalog(): void {
 	useTtsCatalogStore.getState().setModels([
@@ -92,8 +92,8 @@ function seedCatalog(): void {
 			available_quantizations: ["fp32"],
 			cloning: "zero_shot_audio_transcript",
 			description: "",
-			display_name: "Spark",
-			engine: "spark",
+			display_name: "Audio8 0.6B",
+			engine: "audio8",
 			id: CLONE_MODEL,
 			languages: ["en"],
 			max_ref_clip_secs: CATALOG_MAX_SECS,

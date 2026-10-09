@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "音声の説明",
     "voiceDesignPromptPlaceholder": "例: わずかに英国訛りのある、温かく低音のナレーター",
     "voiceDesignPromptEmptyHint": "空欄のままにするとモデルの内蔵音声にフォールバックします。",
+    "voiceDesignPresetsLabel": "プリセット音声",
     "voiceDesignCharCounterLabel": "説明の長さ",
     "voiceDesignCharsRemaining": "残り {count}",
     "voiceDesignGenerateLabel": "キャラクターの説明",

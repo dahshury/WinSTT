@@ -1643,9 +1643,9 @@ pub struct TtsSettings {
     #[serde(default = "TtsSettings::default_voice")]
     pub voice: String,
     /// Reference-clip transcript for cloning models that need it (`cloning ==
-    /// zero_shot_audio_transcript`, e.g. Spark). Auto-filled by transcribing the uploaded
-    /// reference clip with the selected STT model, then user-editable. Empty otherwise.
-    /// HOT-SWAP (the Spark engine is rebuilt when this changes).
+    /// zero_shot_audio_transcript`, e.g. Qwen3-TTS Base). Auto-filled by transcribing the
+    /// uploaded reference clip with the selected STT model, then user-editable. Empty
+    /// otherwise. HOT-SWAP (the cloning engine is rebuilt when this changes).
     #[serde(default)]
     pub clone_ref_text: String,
     /// Natural-language style instruction for models whose prompt carries a dedicated
@@ -1664,7 +1664,7 @@ pub struct TtsSettings {
     ///
     /// This flag only says "annotate"; the vocabulary AND the delimiters come
     /// from the model's catalog row (`tags` / `tag_syntax`), because the two
-    /// shipped syntaxes are incompatible — Orpheus reads `<laugh>`, Chatterbox
+    /// shipped syntaxes are incompatible — Maya1 reads `<laugh>`, Chatterbox
     /// Turbo reads `[laugh]`, and the wrong one is SPOKEN rather than rejected.
     /// Off by default: it costs one LLM round-trip before the first word.
     #[serde(default)]

@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Popis hlasu",
     "voiceDesignPromptPlaceholder": "např. vřelý vypravěč s hlubokým hlasem a mírným britským přízvukem",
     "voiceDesignPromptEmptyHint": "Ponecháte-li prázdné, použije se vestavěný hlas modelu.",
+    "voiceDesignPresetsLabel": "Připravené hlasy",
     "voiceDesignCharCounterLabel": "Délka popisu",
     "voiceDesignCharsRemaining": "Zbývá {count}",
     "voiceDesignGenerateLabel": "Popis postavy",

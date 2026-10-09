@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Описание на гласа",
     "voiceDesignPromptPlaceholder": "напр. топъл разказвач с нисък тон и лек британски акцент",
     "voiceDesignPromptEmptyHint": "Оставете празно, за да се използва вграденият глас на модела.",
+    "voiceDesignPresetsLabel": "Готови гласове",
     "voiceDesignCharCounterLabel": "Дължина на описанието",
     "voiceDesignCharsRemaining": "Остават {count}",
     "voiceDesignGenerateLabel": "Описание на героя",

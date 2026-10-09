@@ -380,6 +380,9 @@ fn initialize_model_runtime(
     // "nothing installed at all" re-arms the first-run wizard (both consumed below and by
     // `should_show_onboarding`). Skipped when the wizard already owns this launch — there is no
     // prior configuration to recover.
+    // First adopt hf-hub caches downloaded under a repo id that has since MOVED (Audio8 → Edge0),
+    // so the reconcile below — and every later probe/load — finds them under the current id.
+    winstt::stt::resolver::adopt_moved_repo_caches();
     if !winstt::commands::onboarding::is_onboarding_active() {
         winstt::stt::startup_recovery::recover_stt_selection_at_startup(app_handle);
     }

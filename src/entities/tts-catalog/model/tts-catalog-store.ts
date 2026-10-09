@@ -23,10 +23,10 @@ export type TtsCloning =
  * Delimiter style for a model's inline paralinguistic tags, mirroring the
  * server's ``tag_syntax`` discriminant:
  *   - ``none``    the model has no tag vocabulary
- *   - ``angle``   `<laugh>` (Orpheus)
+ *   - ``angle``   `<laugh>` (Maya1)
  *   - ``square``  `[laugh]` (Chatterbox Turbo)
  *
- * The two styles are NOT interchangeable — a `[laugh]` fed to Orpheus is spoken
+ * The two styles are NOT interchangeable — a `[laugh]` fed to Maya1 is spoken
  * out loud. Always render a tag through `formatInlineTag(syntax, tag)` rather
  * than typing a delimiter into a component.
  */
@@ -108,7 +108,7 @@ export interface TtsModelInfo {
 	 * `cloning === "zero_shot_audio_transcript"`, its transcript) is supplied —
 	 * its sentinel voice is an error, not a bundled fallback. Distinct from
 	 * `cloning !== "none"`, which only says the model CAN clone: Chatterbox,
-	 * Spark and OmniVoice all clone AND ship something usable out of the box.
+	 * OmniVoice and Qwen3-TTS Base all clone AND ship something usable out of the box.
 	 */
 	requiresReferenceClip: boolean;
 	sampleRate: number;

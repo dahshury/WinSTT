@@ -6,6 +6,7 @@ import type { TranslateFn } from "@/shared/i18n/translation-types";
 import { cn } from "@/shared/lib/cn";
 import { useSurface } from "@/shared/lib/surface";
 import { AutoTextarea } from "@/shared/ui/auto-textarea";
+import { Button } from "@/shared/ui/button";
 import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import {
@@ -39,6 +40,8 @@ function truncatePrompt(prompt: string, max = 48): string {
 	const oneLine = prompt.replace(/\s+/g, " ").trim();
 	return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }
+
+const NO_PRESETS: readonly VoiceDesignPreset[] = [];
 
 /** `0` means "the server told us nothing" (an old build, or a row that isn't a
  *  voice-design model at all) — treat it as "no cap" instead of a zero-length
@@ -214,6 +217,62 @@ function PromptGenerator({
 	);
 }
 
+/** A ready-made design prompt the backend ships for the row (Maya1's voice
+ *  descriptions). `id` IS the prompt that gets stored; `label` names it. */
+export interface VoiceDesignPreset {
+	id: string;
+	label: string;
+}
+
+interface PresetChipsProps {
+	/** The draft being edited — the chip whose prompt it equals reads as pressed. */
+	draft: string;
+	onPick: (prompt: string) => void;
+	presets: readonly VoiceDesignPreset[];
+	t: TranslateFn;
+}
+
+/** One-click starting points: a chip per preset FILLS the draft (still editable,
+ *  nothing is saved until Save), so a preset is a template, not a separate mode. */
+function PresetChips({ draft, onPick, presets, t }: PresetChipsProps) {
+	const labelId = useId();
+	return (
+		<div className="flex flex-col gap-1">
+			<p
+				className="px-0.5 text-2xs text-foreground-muted leading-relaxed"
+				id={labelId}
+			>
+				{t("voiceDesignPresetsLabel")}
+			</p>
+			<div
+				aria-labelledby={labelId}
+				className="flex flex-wrap gap-1"
+				role="group"
+			>
+				{presets.map((preset) => {
+					const active = draft.trim() === preset.id;
+					return (
+						<Button
+							aria-pressed={active}
+							className={cn(
+								"h-6 rounded-full border px-2.5 text-2xs transition-colors",
+								active
+									? "border-border-accent bg-accent/15 text-foreground"
+									: "border-border bg-surface-3 text-foreground-muted hover:border-border-accent hover:text-foreground",
+							)}
+							key={preset.id}
+							onClick={() => onPick(preset.id)}
+							title={preset.id}
+						>
+							{preset.label}
+						</Button>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 interface VoiceDesignDialogProps {
 	initialPrompt: string;
 	/** Character budget from the model's catalog row; `<= 0` = no cap known. */
@@ -224,6 +283,7 @@ interface VoiceDesignDialogProps {
 	onSave: (prompt: string) => void;
 	open: boolean;
 	keyPrefix: KeyPrefix;
+	presets: readonly VoiceDesignPreset[];
 	t: TranslateFn;
 }
 
@@ -239,6 +299,7 @@ function VoiceDesignDialog({
 	onSave,
 	open,
 	keyPrefix,
+	presets,
 	t,
 }: VoiceDesignDialogProps) {
 	const cap = resolveCap(maxChars);
@@ -255,6 +316,14 @@ function VoiceDesignDialog({
 		<DialogShell
 			body={
 				<div className="flex flex-col gap-1.5">
+					{presets.length > 0 ? (
+						<PresetChips
+							draft={draft}
+							onPick={(next) => setDraft(clampToCap(next, cap))}
+							presets={presets}
+							t={t}
+						/>
+					) : null}
 					{onGenerate ? (
 						<PromptGenerator
 							keyPrefix={keyPrefix}
@@ -328,6 +397,9 @@ export interface VoiceDesignFieldProps {
 	/** Current design prompt — the overloaded `settings.tts.voice`. Empty = the
 	 *  model's default built-in voice. */
 	prompt: string;
+	/** Ready-made prompts the row ships (Maya1's voice descriptions), offered as
+	 *  chips in the editor. Empty/omitted = no chip row. */
+	presets?: readonly VoiceDesignPreset[] | undefined;
 	/** i18n key prefix for the concept-specific strings. `"voiceDesign"` (default)
 	 *  is the prompt-IS-the-voice reading; `"voiceInstruct"` is the style
 	 *  instruction that rides ALONGSIDE a cloned voice (OmniVoice). The editor,
@@ -339,24 +411,30 @@ export interface VoiceDesignFieldProps {
 
 /**
  * The voice-design affordance shown in place of the voice dropdown when the
- * selected TTS model is a voice-design model (Qwen3-TTS-VoiceDesign): a "Design
- * voice" button that opens a textarea dialog. The button surfaces the current
- * prompt (truncated) or a placeholder when none is set. Empty prompt is the
- * default and is fully allowed.
+ * selected TTS model is a voice-design model (Qwen3-TTS-VoiceDesign, Maya1): a
+ * "Design voice" button that opens a textarea dialog, with the row's ready-made
+ * prompts as chips when it ships any. The button surfaces the current prompt
+ * (its preset name, else truncated) or a placeholder when none is set. Empty
+ * prompt is the default and is fully allowed.
  */
 export function VoiceDesignField({
 	maxChars,
 	onGeneratePrompt,
 	onPromptChange,
 	prompt,
+	presets = NO_PRESETS,
 	keyPrefix = "voiceDesign",
 	t,
 }: VoiceDesignFieldProps) {
 	const [open, setOpen] = useState(false);
 	const hasPrompt = prompt.trim().length > 0;
-	const buttonLabel = hasPrompt
-		? truncatePrompt(prompt)
-		: t(`${keyPrefix}ButtonPlaceholder`);
+	// A stored preset reads as its NAME, not as the first 48 chars of a description.
+	const preset = presets.find((p) => p.id === prompt.trim());
+	const buttonLabel = preset
+		? preset.label
+		: hasPrompt
+			? truncatePrompt(prompt)
+			: t(`${keyPrefix}ButtonPlaceholder`);
 	return (
 		<SettingField
 			// The prompt IS the voice here; the default is empty (built-in voice), so
@@ -396,6 +474,7 @@ export function VoiceDesignField({
 					setOpen(false);
 				}}
 				open={open}
+				presets={presets}
 				t={t}
 			/>
 		</SettingField>

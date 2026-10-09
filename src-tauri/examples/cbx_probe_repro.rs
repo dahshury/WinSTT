@@ -349,11 +349,11 @@ fn run_embed(
 fn graphs_for(model_id: &str, quant: &str) -> [String; 4] {
     // [speech_encoder, embed_tokens, language_model, conditional_decoder]
     match model_id {
-        "chatterbox-nano" => [
-            "speech_encoder_q4f16.onnx".into(),
-            "embed_tokens_fp16.onnx".into(),
+        "chatterbox-nano-v1" => [
+            "speech_encoder_q4.onnx".into(),
+            "embed_tokens_q4.onnx".into(),
             "language_model_q4f16.onnx".into(),
-            "conditional_decoder_q4.onnx".into(),
+            "conditional_decoder_q4f16.onnx".into(),
         ],
         "chatterbox-turbo" => {
             let s = if quant == "q4f16" { "q4f16" } else { "q4" };
@@ -402,7 +402,7 @@ fn run_probe(model_id: &str, quant: &str, out_dir: &Path, reps: usize) {
         tokenizer.get_vocab_size(true),
     );
 
-    let is_multi = model_id == "chatterbox-multilingual";
+    let is_multi = model_id == "chatterbox-multilingual-v3";
     let language_tag = if is_multi { Some("en") } else { None };
     let trailing_silence = usize::from(!is_multi) * 3;
 
@@ -838,7 +838,7 @@ fn main() {
             let model_id = args
                 .get(2)
                 .cloned()
-                .unwrap_or_else(|| "chatterbox-multilingual".into());
+                .unwrap_or_else(|| "chatterbox-multilingual-v3".into());
             let quant = args.get(3).cloned().unwrap_or_else(|| "q4".into());
             let out_dir = PathBuf::from(args.get(4).cloned().unwrap_or_else(|| "cbx_out".into()));
             let reps: usize = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(1);

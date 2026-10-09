@@ -41,10 +41,12 @@
 
 mod fetch;
 mod globs;
+mod moved_repos;
 mod sidecars;
 
 pub use fetch::*;
 pub use globs::*;
+pub use moved_repos::adopt_moved_repo_caches;
 pub use sidecars::*;
 
 // ---------------------------------------------------------------------------
@@ -504,7 +506,7 @@ mod tests {
     fn audio8_alias_resolves_to_the_upstream_bundle() {
         assert_eq!(
             resolve_repo("audio8-asr-0.1b"),
-            Some(("Audio8".into(), "Audio8-ASR-0.1B-onnx-runtime".into()))
+            Some(("Edge0".into(), "Audio8-ASR-0.1B-onnx-runtime".into()))
         );
     }
 

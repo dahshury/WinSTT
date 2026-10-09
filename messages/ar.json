@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "وصف الصوت",
     "voiceDesignPromptPlaceholder": "مثال: راوٍ دافئ بنبرة منخفضة ولهجة بريطانية خفيفة",
     "voiceDesignPromptEmptyHint": "اتركه فارغًا للرجوع إلى الصوت المدمج في النموذج.",
+    "voiceDesignPresetsLabel": "أصوات جاهزة",
     "voiceDesignCharCounterLabel": "طول الوصف",
     "voiceDesignCharsRemaining": "متبقٍّ {count}",
     "voiceDesignGenerateLabel": "وصف الشخصية",

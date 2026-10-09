@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Opis głosu",
     "voiceDesignPromptPlaceholder": "np. ciepły, niski narrator z lekkim brytyjskim akcentem",
     "voiceDesignPromptEmptyHint": "Pozostaw puste, aby użyć wbudowanego głosu modelu.",
+    "voiceDesignPresetsLabel": "Gotowe głosy",
     "voiceDesignCharCounterLabel": "Długość opisu",
     "voiceDesignCharsRemaining": "Pozostało {count}",
     "voiceDesignGenerateLabel": "Opis postaci",

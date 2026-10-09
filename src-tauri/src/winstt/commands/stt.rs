@@ -106,7 +106,7 @@ fn canonical_path_inside_dir(path: &Path, root: &Path) -> Option<PathBuf> {
 
 /// `tts_transcribe_reference` — transcribe a cloning reference clip with the currently-loaded STT
 /// model, to auto-fill the reference transcript (editable afterwards) for cloning models that need
-/// it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+/// it (e.g. Qwen3-TTS Base). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
 ///
 /// It does NOT re-validate the clip's length. The only path it accepts is the managed
 /// `tts/reference-voices` folder, which nothing but `tts_prepare_reference_clip` writes into, and
@@ -115,7 +115,7 @@ fn canonical_path_inside_dir(path: &Path, root: &Path) -> Option<PathBuf> {
 /// audio: a trimmed clip is stored at exactly `cap` seconds @ 24 kHz, and re-decoding it to 16 kHz
 /// appends up to one frame of resampler zero-pad, so every trimmed clip measured ~`cap + 0.06 s`
 /// and was refused with the self-contradictory "Reference clip is 30s — please use one under 30s.",
-/// leaving Spark to clone with an empty transcript. The decode is bounded by TRUNCATING at the cap
+/// leaving the engine to clone with an empty transcript. The decode is bounded by TRUNCATING at the cap
 /// instead, which can never refuse a clip the preparer just accepted.
 #[tauri::command]
 #[specta::specta]

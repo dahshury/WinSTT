@@ -347,7 +347,7 @@ fn main() {
         let model_id = args
             .get(2)
             .cloned()
-            .unwrap_or_else(|| "chatterbox-multilingual".into());
+            .unwrap_or_else(|| "chatterbox-multilingual-v3".into());
         let rounds: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(5);
         let voice = args.get(4).cloned().unwrap_or_else(|| "default".into());
         let text = args
@@ -381,7 +381,7 @@ fn main() {
     let model_id = args
         .get(1)
         .cloned()
-        .unwrap_or_else(|| "chatterbox-multilingual".into());
+        .unwrap_or_else(|| "chatterbox-multilingual-v3".into());
     let reps: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(4);
     let voice = args.get(3).cloned().unwrap_or_else(|| "default".into());
     let text = args

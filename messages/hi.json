@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "आवाज़ का वर्णन",
     "voiceDesignPromptPlaceholder": "जैसे, हल्के ब्रिटिश लहजे वाला एक गर्म, धीमी आवाज़ वाला वर्णनकर्ता",
     "voiceDesignPromptEmptyHint": "मॉडल की अंतर्निहित आवाज़ पर लौटने के लिए खाली छोड़ें।",
+    "voiceDesignPresetsLabel": "तैयार आवाज़ें",
     "voiceDesignCharCounterLabel": "विवरण की लंबाई",
     "voiceDesignCharsRemaining": "{count} शेष",
     "voiceDesignGenerateLabel": "किरदार का विवरण",

@@ -138,6 +138,35 @@ pub(crate) fn cpu_session_with_intra_threads(
         .map_err(|err| format!("commit_from_file {}: {err}", path.display()))
 }
 
+/// Build a **CPU-only** session whose intra-op pool sleeps instead of busy-spinning
+/// between ops, optionally with an intra-op thread cap.
+///
+/// ORT's workers spin after every op by default. That costs nothing for one session, but an
+/// engine that runs several sessions back to back (Magpie: text encoder, decoder step, 16 local
+/// steps, then the codec) keeps every idle pool spinning against the active one. Measured on a
+/// 24-thread box with Magpie's four graphs in one process: a greedy 2.5 s sentence took 52 s
+/// with spinning and 15-18 s without, at identical outputs.
+pub(crate) fn cpu_session_without_spinning(
+    path: &Path,
+    reason: &'static str,
+    engine: &str,
+    intra_threads: Option<usize>,
+) -> Result<Session, String> {
+    log::debug!("[tts] {engine} CPU-pinned, intra-op spinning off ({reason})");
+    let builder = configure_session(
+        GraphOptimizationLevel::Level3,
+        intra_threads.map(|n| n.max(1)),
+        false,
+        Some(&[Accelerator::Cpu]),
+    )?;
+    let mut builder = builder
+        .with_intra_op_spinning(false)
+        .map_err(|err| format!("intra-op spinning: {err}"))?;
+    builder
+        .commit_from_file(path)
+        .map_err(|err| format!("commit_from_file {}: {err}", path.display()))
+}
+
 /// Input node names of a loaded session (e.g. Kokoro's `tokens` vs `input_ids`
 /// schema probe). Empty if the runtime exposes none.
 pub(crate) fn input_names(session: &Session) -> Vec<String> {
@@ -162,13 +191,8 @@ pub(crate) enum TtsOrtProviderPolicy {
     CpuOnly {
         reason: &'static str,
     },
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "staged for engines that should follow the active STT device"
-        )
-    )]
+    /// Follow the selected device (DirectML first on Windows). CosyVoice3's flow
+    /// estimator + HiFT vocoder use this; its LLM stays CPU-pinned.
     FollowDevice,
 }
 

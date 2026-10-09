@@ -12,7 +12,7 @@ const LABEL = "Inline tags";
 // The two shipped vocabularies as the CATALOG renders them (via
 // `formatInlineTagList`) and hands them to this component. They appear here as
 // fixtures, never as something the component is expected to assemble.
-const ORPHEUS_TAGS = "<laugh> <sigh> <gasp>";
+const MAYA1_TAGS = "<laugh> <sigh> <gasp>";
 const TURBO_TAGS = "[laugh] [cough]";
 
 /** `t` is a prop, so the harness supplies the REAL `tts` namespace — which also
@@ -31,7 +31,7 @@ function renderField(
 			blockedBy={null}
 			enabled={false}
 			onChange={onChange}
-			tagList={ORPHEUS_TAGS}
+			tagList={MAYA1_TAGS}
 			{...overrides}
 		/>,
 	);
@@ -57,7 +57,7 @@ describe("InlineTagsField", () => {
 
 	test("shows the selected engine's OWN vocabulary, not one fixed syntax", () => {
 		renderField();
-		expect(document.body.textContent).toContain(ORPHEUS_TAGS);
+		expect(document.body.textContent).toContain(MAYA1_TAGS);
 		cleanup();
 
 		// Square brackets for Chatterbox Turbo, from the very same component —

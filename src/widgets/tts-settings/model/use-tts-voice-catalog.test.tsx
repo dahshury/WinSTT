@@ -146,7 +146,7 @@ describe("useTtsVoiceCatalog", () => {
 		renderHook(() =>
 			useTtsVoiceCatalog(
 				true,
-				"chatterbox-multilingual",
+				"chatterbox-multilingual-v3",
 				"C:/appdata/tts/reference-voices/narrator-9f.wav",
 				update,
 				true,

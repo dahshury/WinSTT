@@ -318,18 +318,22 @@
 	--color-model-family-custom: var(--color-foreground-muted);
 	--color-tts-engine-kokoro: var(--color-model-family-whisper);
 	--color-tts-engine-kitten: var(--color-model-family-t-one);
+	--color-tts-engine-paradee: var(--color-model-family-lite-whisper);
 	--color-tts-engine-piper: var(--color-success);
 	--color-tts-engine-supertonic: var(--color-model-family-kaldi);
 	--color-tts-engine-chatterbox: var(--color-teal);
 	--color-tts-engine-qwen3tts: var(--color-model-family-qwen3);
-	--color-tts-engine-orpheus: var(--color-model-family-moonshine);
-	--color-tts-engine-spark: var(--color-model-family-nemo);
+	--color-tts-engine-maya1: var(--color-model-family-moonshine);
 	--color-tts-engine-neutts: var(--color-model-family-cohere);
 	--color-tts-engine-omnivoice: var(--color-model-family-sense-voice);
 	/* Same vendor as the Audio8-ASR STT family — share the accent so the brand reads
 	   consistently across the STT picker and the TTS engine list (this used to alias
 	   Lite-Whisper's blue, which collided with an unrelated family). */
 	--color-tts-engine-audio8: var(--color-model-family-audio8);
+	/* NVIDIA, like the NeMo STT families (Parakeet/Canary). */
+	--color-tts-engine-magpie: var(--color-model-family-nemo);
+	/* FunAudioLLM — the SenseVoice STT family's vendor, so it shares that accent. */
+	--color-tts-engine-cosyvoice3: var(--color-model-family-sense-voice);
 	--color-tts-engine-unknown: var(--color-foreground-muted);
 
 	/* Border — blue-tinted dark edges */

@@ -575,7 +575,7 @@ impl OmniVoiceEngine {
     }
 
     /// True when the three encode-only graphs are on disk, i.e. runtime cloning is
-    /// possible. Mirrors Spark's `cloning_ready` so a partial cache fails LOUDLY rather
+    /// possible. A partial cache must fail LOUDLY rather
     /// than silently synthesizing an unrelated voice.
     pub fn cloning_ready(&self) -> bool {
         ["acoustic_encoder", "semantic_encoder", "quantizer_encoder"]

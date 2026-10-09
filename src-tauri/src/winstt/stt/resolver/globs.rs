@@ -360,7 +360,7 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("tokenizer_config", "tokenizer_config.json".into()),
         ],
         EngineKind::Audio8Asr => {
-            // Audio8/Audio8-ASR-0.1B-onnx-runtime ships everything under `model_bundle/` with the
+            // Edge0/Audio8-ASR-0.1B-onnx-runtime ships everything under `model_bundle/` with the
             // `_` quant separator (`lm_cache_prefill_int8.onnx`). The int8/int4 LM graphs carry
             // `<stem>.onnx.data` external-data sidecars, which the automatic sidecar sweep
             // resolves — only the graphs themselves need logical keys.

@@ -376,7 +376,7 @@ async sttListModels() : Promise<CatalogModelInfo[]> {
 /**
  * `tts_transcribe_reference` — transcribe a cloning reference clip with the currently-loaded STT
  * model, to auto-fill the reference transcript (editable afterwards) for cloning models that need
- * it (Spark). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
+ * it (e.g. Qwen3-TTS Base). Decodes via the shared symphonia path (wav/mp3/flac/… → 16 kHz mono).
  *
  * It does NOT re-validate the clip's length. The only path it accepts is the managed
  * `tts/reference-voices` folder, which nothing but `tts_prepare_reference_clip` writes into, and
@@ -385,7 +385,7 @@ async sttListModels() : Promise<CatalogModelInfo[]> {
  * audio: a trimmed clip is stored at exactly `cap` seconds @ 24 kHz, and re-decoding it to 16 kHz
  * appends up to one frame of resampler zero-pad, so every trimmed clip measured ~`cap + 0.06 s`
  * and was refused with the self-contradictory "Reference clip is 30s — please use one under 30s.",
- * leaving Spark to clone with an empty transcript. The decode is bounded by TRUNCATING at the cap
+ * leaving the engine to clone with an empty transcript. The decode is bounded by TRUNCATING at the cap
  * instead, which can never refuse a clip the preparer just accepted.
  */
 async ttsTranscribeReference(path: string) : Promise<Result<string, string>> {
@@ -764,7 +764,7 @@ async generateVoiceDesignPrompt(description: string) : Promise<Result<string, st
  * `allowed_tags` are BARE names (`laugh`, `sigh`) and `syntax` selects the
  * engine's delimiters — both come from the model's catalog row
  * (`tags` / `tagSyntax`), never from a hardcoded list, because the two shipped
- * syntaxes are incompatible: Orpheus reads `<laugh>`, Chatterbox Turbo reads
+ * syntaxes are incompatible: Maya1 reads `<laugh>`, Chatterbox Turbo reads
  * `[laugh]`, and the wrong one is spoken aloud rather than rejected.
  *
  * The answer is filtered against `allowed_tags` and checked to confirm the
@@ -3866,7 +3866,7 @@ export type SystemInfoEntry = { total_ram_bytes: number; gpus: SystemInfoGpu[] }
 export type SystemInfoGpu = { name: string; total_vram_bytes: number }
 /**
  * Inline paralinguistic-tag syntax. TWO INCOMPATIBLE SYNTAXES ship in this
- * catalog — `orpheus-3b` emits `<laugh>`, `chatterbox-turbo` emits `[laugh]` —
+ * catalog — `maya1-3b` emits `<laugh>`, `chatterbox-turbo` emits `[laugh]` —
  * so no call site may hardcode brackets: read the syntax off the row and wrap
  * with [`TagSyntax::wrap`]. A third style is then a one-variant addition.
  *
@@ -3878,7 +3878,7 @@ export type TagSyntax =
  */
 "none" |
 /**
- * `<laugh>` — Orpheus.
+ * `<laugh>` — Maya1.
  */
 "angle" |
 /**
@@ -4132,9 +4132,9 @@ quantization?: string;
 voice?: string;
 /**
  * Reference-clip transcript for cloning models that need it (`cloning ==
- * zero_shot_audio_transcript`, e.g. Spark). Auto-filled by transcribing the uploaded
- * reference clip with the selected STT model, then user-editable. Empty otherwise.
- * HOT-SWAP (the Spark engine is rebuilt when this changes).
+ * zero_shot_audio_transcript`, e.g. Qwen3-TTS Base). Auto-filled by transcribing the
+ * uploaded reference clip with the selected STT model, then user-editable. Empty
+ * otherwise. HOT-SWAP (the cloning engine is rebuilt when this changes).
  */
 cloneRefText?: string;
 /**
@@ -4153,7 +4153,7 @@ voiceInstruct?: string; lang?: string;
  *
  * This flag only says "annotate"; the vocabulary AND the delimiters come
  * from the model's catalog row (`tags` / `tag_syntax`), because the two
- * shipped syntaxes are incompatible — Orpheus reads `<laugh>`, Chatterbox
+ * shipped syntaxes are incompatible — Maya1 reads `<laugh>`, Chatterbox
  * Turbo reads `[laugh]`, and the wrong one is SPOKEN rather than rejected.
  * Off by default: it costs one LLM round-trip before the first word.
  */

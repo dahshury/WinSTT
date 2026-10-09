@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "语音描述",
     "voiceDesignPromptPlaceholder": "例如：温暖、低沉的旁白，带一点英式口音",
     "voiceDesignPromptEmptyHint": "留空则回退到模型的内置语音。",
+    "voiceDesignPresetsLabel": "预设语音",
     "voiceDesignCharCounterLabel": "描述长度",
     "voiceDesignCharsRemaining": "还剩 {count}",
     "voiceDesignGenerateLabel": "角色描述",

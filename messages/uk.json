@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Опис голосу",
     "voiceDesignPromptPlaceholder": "напр. теплий низький диктор із легким британським акцентом",
     "voiceDesignPromptEmptyHint": "Залиште порожнім, щоб повернутися до вбудованого голосу моделі.",
+    "voiceDesignPresetsLabel": "Готові голоси",
     "voiceDesignCharCounterLabel": "Довжина опису",
     "voiceDesignCharsRemaining": "Залишилося {count}",
     "voiceDesignGenerateLabel": "Опис персонажа",

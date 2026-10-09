@@ -17,7 +17,7 @@ export const ttsSettingsSchema = z.object({
 	model: z.string().default("kokoro-82m"),
 	voice: z.string().default("af_heart"),
 	// Reference-clip transcript for cloning models that need it (cloning ===
-	// "zero_shot_audio_transcript", e.g. Spark). Auto-filled by transcribing the
+	// "zero_shot_audio_transcript", e.g. Qwen3-TTS Base). Auto-filled by transcribing the
 	// uploaded reference with the selected STT model, then user-editable. Mirrors
 	// the Rust `TtsSettings.clone_ref_text` default (empty) for the parity gate.
 	cloneRefText: z.string().default(""),
@@ -40,7 +40,7 @@ export const ttsSettingsSchema = z.object({
 	// insert the selected model's INLINE PARALINGUISTIC TAGS (`<laugh>`, `[sigh]`,
 	// …) where the delivery calls for them. Off by default: it costs an LLM
 	// round-trip before the first word is spoken, and only two shipped engines
-	// (Orpheus, Chatterbox Turbo) have a tag vocabulary at all. The allowed tags
+	// (Maya1, Chatterbox Turbo) have a tag vocabulary at all. The allowed tags
 	// AND their delimiters come from the selected model's catalog row — this flag
 	// only says "do it", never which syntax. Mirrors the Rust
 	// `TtsSettings.inline_tags` default (false) for the parity gate.

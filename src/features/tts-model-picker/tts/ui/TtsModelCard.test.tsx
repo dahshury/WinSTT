@@ -125,7 +125,7 @@ describe("TtsModelCard voice-capability badges", () => {
 		expect(screen.queryByText("Cloning + transcript")).toBeNull();
 	});
 
-	test("Spark's clip+transcript cloning is badged apart from clip-only cloning", () => {
+	test("clip+transcript cloning (Qwen3-TTS Base) is badged apart from clip-only cloning", () => {
 		// The distinction is load-bearing: this tier makes the user supply the
 		// exact transcript of the clip, not just the clip.
 		renderCard({

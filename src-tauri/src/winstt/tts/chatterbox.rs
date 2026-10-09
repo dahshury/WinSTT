@@ -1,9 +1,11 @@
 // Chatterbox (Resemble AI, MIT) voice-cloning TTS on ort 2.0 — ONE engine driving all
-// three published exports: `chatterbox-multilingual`, `chatterbox-turbo`, `chatterbox-nano`.
+// three published exports: `chatterbox-multilingual-v3`, `chatterbox-turbo`,
+// `chatterbox-nano-v1`.
 //
 // Faithful port of the verbatim onnxruntime pipelines shipped on the HF model cards
-// (onnx-community/chatterbox-multilingual-ONNX; ResembleAI/chatterbox-turbo-ONNX;
-// owensong/chatterbox-nano-ONNX). FOUR ort sessions:
+// (ResembleAI/chatterbox-turbo-ONNX; Masterx/chatterbox-multilingual-v3-ONNX, which keeps
+// the onnx-community V2 multilingual export's graph contract; Masterx/chatterbox-nano-ONNX,
+// which keeps Turbo's). FOUR ort sessions:
 //   1. speech_encoder      (ref wav 24k mono -> cond_emb, prompt_token, ref_x_vector, prompt_feat)  run ONCE
 //   2. embed_tokens        (ids [+position+exaggeration] -> inputs_embeds)                          run EVERY step
 //   3. language_model      (T3 backbone, KV-cache AR decode of S3 speech tokens)                    run EVERY step
@@ -25,11 +27,12 @@
 //     `transformers.js_config.kv_cache_dtype`). Seeding those with f32 empties is exactly the
 //     "Unexpected input data type" break the Cohere fp16 decoder hit, so the KV element type is
 //     read off the graph and the cache is carried in that dtype.
-// The two genuinely editorial differences (language tag, trailing silence tokens) are config.
+// The genuinely editorial differences (language tag, trailing silence tokens, V3's final-token
+// trim) are config. Text normalization (V3's NFKD) lives in each repo's `tokenizer.json`.
 //
 // Zero-shot cloning: a reference WAV (no transcript) -> speech_encoder. A bundled default voice is
-// used when none is supplied. EN-first: multilingual prepends the `[en]` language tag (turbo/nano
-// are English-only and take raw text); per-language CJK/he frontends are deferred.
+// used when none is supplied. Multilingual prepends a `[lang]` tag (turbo/nano are English-only and
+// take raw text); the zh (Cangjie) and ja (kanji→kana) frontends are deferred.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -51,6 +54,8 @@ const STOP_SPEECH_TOKEN: i64 = 6562;
 /// resolves the final phoneme instead of cutting it off (`SILENCE_TOKEN` in both
 /// reference scripts).
 const SILENCE_SPEECH_TOKEN: i64 = 4299;
+/// Output samples per S3 speech token: 24 kHz / 25 tokens per second.
+const SAMPLES_PER_SPEECH_TOKEN: usize = 960;
 const MAX_NEW_TOKENS: usize = 256;
 const REPETITION_PENALTY: f32 = 1.2;
 const DEFAULT_EXAGGERATION: f32 = 0.5;
@@ -58,7 +63,7 @@ const DEFAULT_EXAGGERATION: f32 = 0.5;
 /// Longest cycle [`loop_cycle`] will look for, in speech tokens. S3 codec tokens run at
 /// 25 Hz (1 token = 40 ms — measured: 255 tokens → 10.32 s), so the runaway that motivates
 /// this detector is a repeated *clause* of roughly 25-60 tokens, an order of magnitude
-/// longer than the 1-4 frame buzz `orpheus::loop_cycle` looks for. 64 tokens ≈ 2.6 s.
+/// longer than the 1-4 frame buzz `maya1::loop_cycle` looks for. 64 tokens ≈ 2.6 s.
 const LOOP_MAX_PERIOD_TOKENS: usize = 64;
 /// A cycle must repeat back-to-back at least this many times before it is called a loop.
 /// Two byte-identical copies of a ≥16-token span is already something a neural codec never
@@ -68,7 +73,7 @@ const LOOP_MIN_CYCLES: usize = 2;
 /// periods need proportionally MORE copies: 32 of a single token, 16 of a pair, 4 of an
 /// 8-token span, 2 of anything ≥ 16. Sustained phonemes and pauses legitimately repeat codec
 /// tokens for a few hundred ms; 1.28 s of *exact* repetition is pathological. This is ~2x
-/// more conservative than the 0.68 s the shipped Orpheus cut already uses. (The drift budget
+/// more conservative than the 0.68 s the shipped Maya1 cut already uses. (The drift budget
 /// below lets a *near*-constant run fire a couple of tokens early — the effective floor is
 /// ~1.2 s, not exactly 1.28 s; pinned by `loop_cycle_boundary_is_the_min_span`.)
 const LOOP_MIN_SPAN_TOKENS: usize = 32;
@@ -129,6 +134,11 @@ pub struct ChatterboxConfig {
     /// Codec tokens of silence appended after the generated speech tokens. The
     /// turbo/nano recipes append 3; multilingual appends none.
     pub trailing_silence_tokens: usize,
+    /// Drop the audio of the final generated speech token (multilingual V3 only). It is
+    /// emitted immediately before STOP with degraded attention and decodes into a short
+    /// trailing artifact, so upstream's V3 `generate` cuts the waveform to
+    /// `(n_tokens - 1) * 960` samples; this mirrors that.
+    pub trim_final_token: bool,
     /// Attenuate reference clips hotter than [`REF_PEAK_GATE`] down to
     /// [`REF_PEAK_TARGET`] before conditioning. See [`attenuate_hot_reference`]
     /// for the measurements. ONLY the multilingual export wants this: turbo
@@ -352,8 +362,7 @@ impl ChatterboxEngine {
                         &position_ids,
                         &ref_path,
                         exaggeration,
-                        self.config.trailing_silence_tokens,
-                        self.config.attenuate_hot_reference,
+                        &self.config,
                     )?);
                 }
                 Ok(out)
@@ -613,13 +622,13 @@ fn run_pipeline(
     position_ids: &[i64],
     ref_path: &Path,
     exaggeration: f32,
-    trailing_silence: usize,
-    attenuate_hot_ref: bool,
+    config: &ChatterboxConfig,
 ) -> ChatterboxResult<Vec<f32>> {
     let s = ids.len();
+    let trailing_silence = config.trailing_silence_tokens;
 
     // --- speech_encoder conditioning (cached per reference clip) ---
-    let cond = ensure_ref_conditioning(loaded, ref_path, attenuate_hot_ref)?;
+    let cond = ensure_ref_conditioning(loaded, ref_path, config.attenuate_hot_reference)?;
     let cond_emb = &cond.cond_emb; // [1, Lc, H]
     let prompt_token = &cond.prompt_token; // [1, Lp]
 
@@ -769,6 +778,7 @@ fn run_pipeline(
     } else {
         Vec::new()
     };
+    let generated = gen_mid.len();
     let prompt_vec: Vec<i64> = prompt_token.iter().copied().collect();
     let mut speech_tokens: Vec<i64> =
         Vec::with_capacity(prompt_vec.len() + gen_mid.len() + trailing_silence);
@@ -827,6 +837,9 @@ fn run_pipeline(
     // Peak-normalize if the vocoder output exceeds [-1,1] (Chatterbox can run hot)
     // so playback/WAV write doesn't hard-clip.
     let mut out: Vec<f32> = wav.iter().copied().collect();
+    if config.trim_final_token {
+        out.truncate(trimmed_len(out.len(), generated));
+    }
     let peak = out.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
     if peak > 1.0 {
         let gain = 0.99 / peak;
@@ -835,6 +848,15 @@ fn run_pipeline(
         }
     }
     Ok(out)
+}
+
+/// Waveform length after dropping the final speech token's audio (upstream V3:
+/// `wav[:max(1, n_tokens - 1) * 960]`). Never lengthens; nothing generated keeps all.
+fn trimmed_len(wav_len: usize, generated_tokens: usize) -> usize {
+    if generated_tokens == 0 {
+        return wav_len;
+    }
+    wav_len.min(generated_tokens.saturating_sub(1).max(1) * SAMPLES_PER_SPEECH_TOKEN)
 }
 
 /// A degenerate cycle found at the tail of the generated speech-token stream.
@@ -852,12 +874,12 @@ struct LoopCycle {
 /// reported as period 1 rather than as some multiple of itself.
 ///
 /// Deliberately NOT the `no_repeat_ngram` ban the Whisper decoder uses
-/// (`stt/whisper/token_select.rs`), for the same reason `orpheus::loop_cycle` isn't: banning
+/// (`stt/whisper/token_select.rs`), for the same reason `maya1::loop_cycle` isn't: banning
 /// a repeated n-gram is right for *text*, but S3 codec tokens repeat constantly during
 /// sustained phonemes and pauses, so a hard ban would distort ordinary speech. This looks
 /// only for the pathological case and cuts rather than bans.
 ///
-/// Scaled up from the Orpheus cut, which only ever sees 1-4 frame buzz: the failure here is
+/// Scaled up from the Maya1 cut, which only ever sees 1-4 frame buzz: the failure here is
 /// a repeated *clause*, tens of tokens long. The thresholds are set so the measured
 /// non-repetitive control (a 234-char chunk that legitimately generated 240 of 256 tokens)
 /// cannot fire — nothing under 1.28 s of near-exact repetition is touched.
@@ -938,8 +960,8 @@ fn run_embed(
 /// resampling behavior is unchanged. Anything else — an mp3/m4a/flac the user
 /// pointed `tts.voice` at directly, or a clip persisted before the picker
 /// existed — falls through to the shared symphonia decoder instead of failing at
-/// synthesis time. The cap is enforced here too: neither this engine nor Spark
-/// bounds the clip, and `speech_encoder` runs over the WHOLE thing.
+/// synthesis time. The cap is enforced here too: this engine does not
+/// otherwise bound the clip, and `speech_encoder` runs over the WHOLE thing.
 /// A reference clip louder than this drives the multilingual `speech_encoder` into the
 /// failure mode the shipped `default_voice.wav` exhibits (it measures peak 1.0802 — i.e.
 /// clipped): the opening words come out mangled, "The quick brown fox jumps over the lazy
@@ -1062,6 +1084,7 @@ mod tests {
             },
             language_tag: Some("en".to_string()),
             trailing_silence_tokens: 0,
+            trim_final_token: true,
             attenuate_hot_reference: true,
         };
         assert!(
@@ -1079,21 +1102,36 @@ mod tests {
     #[test]
     fn per_graph_filenames_can_mix_precisions() {
         let g = ChatterboxGraphs {
-            speech_encoder: "speech_encoder_q4f16.onnx".into(),
-            embed_tokens: "embed_tokens_fp16.onnx".into(),
+            speech_encoder: "speech_encoder_q4.onnx".into(),
+            embed_tokens: "embed_tokens_q4.onnx".into(),
             language_model: "language_model_q4f16.onnx".into(),
-            conditional_decoder: "conditional_decoder_q4.onnx".into(),
+            conditional_decoder: "conditional_decoder_q4f16.onnx".into(),
         };
         let c = ChatterboxConfig {
             cache_dir: PathBuf::from("/x/nano"),
             graphs: g,
             language_tag: None,
             trailing_silence_tokens: 3,
+            trim_final_token: false,
             attenuate_hot_reference: false,
         };
         let path = |n: &str| c.onnx(n).to_string_lossy().replace('\\', "/");
-        assert!(path(&c.graphs.embed_tokens).ends_with("onnx/embed_tokens_fp16.onnx"));
-        assert!(path(&c.graphs.conditional_decoder).ends_with("onnx/conditional_decoder_q4.onnx"));
+        assert!(path(&c.graphs.embed_tokens).ends_with("onnx/embed_tokens_q4.onnx"));
+        assert!(
+            path(&c.graphs.conditional_decoder).ends_with("onnx/conditional_decoder_q4f16.onnx")
+        );
+    }
+
+    /// V3's final-token trim matches upstream's `wav[:max(1, n - 1) * 960]` and can only
+    /// shorten the waveform.
+    #[test]
+    fn final_token_trim_drops_exactly_one_token_of_audio() {
+        assert_eq!(trimmed_len(10 * 960, 10), 9 * 960);
+        // The decoder can return slightly less than n * 960; the cut never pads.
+        assert_eq!(trimmed_len(5 * 960 - 7, 10), 5 * 960 - 7);
+        // A single token keeps its one frame (upstream's `max(1, ..)`).
+        assert_eq!(trimmed_len(960, 1), 960);
+        assert_eq!(trimmed_len(4000, 0), 4000);
     }
 
     #[test]

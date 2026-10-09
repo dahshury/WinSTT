@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Röstbeskrivning",
     "voiceDesignPromptPlaceholder": "t.ex. en varm berättarröst med låg tonhöjd och lätt brittisk accent",
     "voiceDesignPromptEmptyHint": "Lämna tomt för att falla tillbaka på modellens inbyggda röst.",
+    "voiceDesignPresetsLabel": "Färdiga röster",
     "voiceDesignCharCounterLabel": "Beskrivningens längd",
     "voiceDesignCharsRemaining": "{count} kvar",
     "voiceDesignGenerateLabel": "Karaktärsbeskrivning",

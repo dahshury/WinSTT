@@ -205,7 +205,7 @@ impl MelExtractor {
 ///   * `all_freqs = linspace(0, sr/2, n_freqs)` (linear Hz on the freq axis)
 ///   * mel points: Slaney hz↔mel (linear below 1 kHz, log above)
 ///   * triangular filters; Slaney area-normalize each filter by `2 / (f[i+2] - f[i])`.
-fn slaney_mel_filterbank(
+pub(crate) fn slaney_mel_filterbank(
     n_freqs: usize,
     f_min: f32,
     f_max: f32,

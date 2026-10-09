@@ -8,17 +8,18 @@
 //   cargo run --release --example tts_engine_bench -- supertonic M3 fr "Bonjour, ceci est une courte démonstration."
 //   cargo run --release --example tts_engine_bench -- chatterbox
 //   cargo run --release --example tts_engine_bench -- chatterbox chatterbox-turbo q4f16 default "text"
-//   cargo run --release --example tts_engine_bench -- chatterbox chatterbox-nano q4f16 <ref.wav> "text"
+//   cargo run --release --example tts_engine_bench -- chatterbox chatterbox-nano-v1 q4f16 <ref.wav> "text"
 //   cargo run --release --example tts_engine_bench -- qwen3 qwen3-tts-0.6b-customvoice int4 aiden "text"
 //   cargo run --release --example tts_engine_bench -- neutts neutts-2e int8 emily-neutral "text"
 //   cargo run --release --example tts_engine_bench -- neutts neutts-2e fp32 sophie-sad "text"
-//   cargo run --release --example tts_engine_bench -- orpheus orpheus-3b q4 tara "text"
+//   cargo run --release --example tts_engine_bench -- maya1 maya1-3b q4 "" "text"
+//   cargo run --release --example tts_engine_bench -- maya1 maya1-3b q8 "<voice description>" "text"
 //   cargo run --release --example tts_engine_bench -- audio8 audio8-tts-0.6b <ref.wav> "ref transcript" "text"
 //   cargo run --release --example tts_engine_bench -- audio8 audio8-tts-0.1b default "" "text"
 //
 // Model files live under  <repo>/.tts-cache/<catalog-id>/  (override WINSTT_TTS_CACHE),
 // laid out exactly like the TtsDownloadManager manifest so this exercises the real load
-// paths. The chatterbox/qwen3/neutts/orpheus/omnivoice modes drive the SHIPPING `TtsEngine`
+// paths. The chatterbox/qwen3/neutts/maya1/omnivoice modes drive the SHIPPING `TtsEngine`
 // adapters (not the raw engines) so the catalog→graph-set→session wiring is under test too.
 // espeak-ng is auto-pointed at the app-data runtime if it has been installed.
 
@@ -27,8 +28,8 @@ use std::time::Instant;
 
 use winstt_app_lib::winstt::tts::kitten::{KITTEN_SAMPLE_RATE, KittenConfig, KittenEngine};
 use winstt_app_lib::winstt::tts::local_engines::{
-    Audio8LocalEngine, Audio8Preview01LocalEngine, ChatterboxLocalEngine, NeuTtsLocalEngine,
-    OmniVoiceLocalEngine, OrpheusLocalEngine, Qwen3TtsLocalEngine,
+    Audio8LocalEngine, Audio8Preview01LocalEngine, ChatterboxLocalEngine, Maya1LocalEngine,
+    NeuTtsLocalEngine, OmniVoiceLocalEngine, Qwen3TtsLocalEngine,
 };
 use winstt_app_lib::winstt::tts::piper::{PiperConfig, PiperEngine};
 use winstt_app_lib::winstt::tts::qwen3_tts::Qwen3TtsVoiceMode;
@@ -259,15 +260,22 @@ fn run_chatterbox(model_id: &str, quant: &str, voice: &str, text: &str) {
 }
 
 /// Qwen3-TTS through the shipping adapter. `voice` is a preset timbre id on the
-/// CustomVoice checkpoints and a design prompt on VoiceDesign.
+/// CustomVoice checkpoints, a design prompt on VoiceDesign, and a reference-clip path on
+/// Base (transcript from `WINSTT_BENCH_REF_TEXT`; unset ⇒ x-vector-only cloning).
 fn run_qwen3(model_id: &str, quant: &str, voice: &str, text: &str) {
     eprintln!("\n=== QWEN3-TTS {model_id} quant={quant} voice={voice} ===");
     let mode = if model_id.contains("voicedesign") {
         Qwen3TtsVoiceMode::DesignPrompt
+    } else if model_id.ends_with("-base") {
+        Qwen3TtsVoiceMode::CloneReference
     } else {
         Qwen3TtsVoiceMode::PresetSpeaker
     };
-    let engine = Qwen3TtsLocalEngine::new(cache_root().join(model_id), quant.to_string(), mode);
+    let engine = Qwen3TtsLocalEngine::new(cache_root().join(model_id), quant.to_string(), mode)
+        .with_clone_reference(
+            std::env::var("WINSTT_BENCH_REF_TEXT").unwrap_or_default(),
+            winstt_app_lib::winstt::tts::catalog::reference_clip_cap_secs(model_id),
+        );
     let tag = model_id.replace("qwen3-tts-", "qwen3-");
     run_adapter(&engine, &tag, voice, "en", text);
 }
@@ -280,23 +288,16 @@ fn run_neutts(model_id: &str, quant: &str, voice: &str, text: &str) {
     run_adapter(&engine, &format!("neutts-{quant}"), voice, "en", text);
 }
 
-/// Orpheus through the shipping adapter. `voice` is one of the 8 fine-tuned English speaker
-/// ids (tara, leah, …). The `quant` slot exists only for CLI symmetry with the other
-/// multi-rung engines — `OrpheusLocalEngine` hardcodes the `onnx/model_q4.onnx` graph and the
-/// catalog publishes exactly one rung — so anything but `q4` is rejected rather than silently
-/// benchmarked as something it is not.
+/// Maya1 through the shipping adapter. `voice` is a free-text voice DESCRIPTION (empty = the
+/// engine's default description); `quant` picks the rung's graph exactly as the catalog does.
 ///
-/// The sampler is seeded from the prompt (`fnv1a_seed`), so a given text+voice always draws
-/// the same token stream: cold and warm render byte-identical audio and the RTF is a clean
-/// like-for-like measure across runs.
-fn run_orpheus(model_id: &str, quant: &str, voice: &str, text: &str) {
-    if quant != "q4" {
-        eprintln!("orpheus: only the q4 rung exists (got '{quant}')");
-        std::process::exit(2);
-    }
-    eprintln!("\n=== ORPHEUS {model_id} quant={quant} voice={voice} ===");
-    let engine = OrpheusLocalEngine::new(cache_root().join(model_id));
-    run_adapter(&engine, "orpheus", voice, "en", text);
+/// The sampler is seeded from the prompt (`fnv1a_seed`), so a given text+description always
+/// draws the same token stream: cold and warm render byte-identical audio and the RTF is a
+/// clean like-for-like measure across runs.
+fn run_maya1(model_id: &str, quant: &str, voice: &str, text: &str) {
+    eprintln!("\n=== MAYA1 {model_id} quant={quant} voice={voice:?} ===");
+    let engine = Maya1LocalEngine::new(cache_root().join(model_id), quant);
+    run_adapter(&engine, &format!("maya1-{quant}"), voice, "en", text);
 }
 
 /// OmniVoice through the shipping adapter. `voice` is either the `default` sentinel or a
@@ -367,7 +368,7 @@ fn main() {
             let model_id = args
                 .get(2)
                 .cloned()
-                .unwrap_or_else(|| "chatterbox-multilingual".into());
+                .unwrap_or_else(|| "chatterbox-multilingual-v3".into());
             let quant = args.get(3).cloned().unwrap_or_else(|| "q4".into());
             let voice = args.get(4).cloned().unwrap_or_else(|| "default".into());
             let text = args
@@ -402,15 +403,15 @@ fn main() {
                 .unwrap_or_else(|| DEFAULT_SENTENCE.into());
             run_neutts(&model_id, &quant, &voice, &text);
         }
-        "orpheus" => {
-            let model_id = args.get(2).cloned().unwrap_or_else(|| "orpheus-3b".into());
+        "maya1" => {
+            let model_id = args.get(2).cloned().unwrap_or_else(|| "maya1-3b".into());
             let quant = args.get(3).cloned().unwrap_or_else(|| "q4".into());
-            let voice = args.get(4).cloned().unwrap_or_else(|| "tara".into());
+            let voice = args.get(4).cloned().unwrap_or_default();
             let text = args
                 .get(5)
                 .cloned()
                 .unwrap_or_else(|| DEFAULT_SENTENCE.into());
-            run_orpheus(&model_id, &quant, &voice, &text);
+            run_maya1(&model_id, &quant, &voice, &text);
         }
         "omnivoice" => {
             let model_id = args
@@ -441,7 +442,7 @@ fn main() {
         }
         other => {
             eprintln!(
-                "unknown engine '{other}' (use: kitten | piper | supertonic | chatterbox | qwen3 | neutts | orpheus | omnivoice | audio8)"
+                "unknown engine '{other}' (use: kitten | piper | supertonic | chatterbox | qwen3 | neutts | maya1 | omnivoice | audio8)"
             );
             std::process::exit(2);
         }

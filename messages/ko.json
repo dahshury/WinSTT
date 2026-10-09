@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "음성 설명",
     "voiceDesignPromptPlaceholder": "예: 약간의 영국식 억양을 가진 따뜻하고 낮은 음색의 내레이터",
     "voiceDesignPromptEmptyHint": "비워두면 모델의 내장 음성으로 대체됩니다.",
+    "voiceDesignPresetsLabel": "기본 제공 음성",
     "voiceDesignCharCounterLabel": "설명 길이",
     "voiceDesignCharsRemaining": "{count}자 남음",
     "voiceDesignGenerateLabel": "캐릭터 설명",

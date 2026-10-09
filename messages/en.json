@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Voice description",
     "voiceDesignPromptPlaceholder": "e.g. a warm, low-pitched narrator with a slight British accent",
     "voiceDesignPromptEmptyHint": "Leave empty to fall back to the model's built-in voice.",
+    "voiceDesignPresetsLabel": "Ready-made voices",
     "voiceDesignCharCounterLabel": "Prompt length",
     "voiceDesignCharsRemaining": "{count} left",
     "voiceDesignGenerateLabel": "Character description",

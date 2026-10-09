@@ -13,7 +13,7 @@ describe("ttsSpeedRange", () => {
 
 	it("gives other local engines the full 0.5–2.0", () => {
 		expect(ttsSpeedRange("kokoro-82m")).toEqual({ min: 0.5, max: 2.0 });
-		expect(ttsSpeedRange("kitten-nano-0.2")).toEqual({ min: 0.5, max: 2.0 });
+		expect(ttsSpeedRange("kitten-nano-0.8")).toEqual({ min: 0.5, max: 2.0 });
 		expect(ttsSpeedRange(undefined)).toEqual({ min: 0.5, max: 2.0 });
 	});
 });

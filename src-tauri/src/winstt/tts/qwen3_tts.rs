@@ -3,16 +3,18 @@
 // `_ar_loop_cached` L407-447 + `decode_chunked` L197-211). See PORT_SPEC.md §5-§7 for
 // the verified algorithm.
 //
-// Drives BOTH published checkpoints — they ship the same graph layout and a byte-identical
+// Drives EVERY published checkpoint — they ship the same graph layout and a byte-identical
 // `inference.py`, and differ only in scale and in how the voice is steered:
 //   1.7B VoiceDesign  H=2048, no preset bank  → `voice` is a natural-language instruct.
 //   0.6B CustomVoice  H=1024, 9 preset timbres → `voice` names one (see Qwen3TtsVoiceMode).
+//   0.6B / 1.7B Base  zero-shot clone from a reference clip (see "Base cloning" below).
 // Every dim below is therefore read from `config.json`/the graphs, never hardcoded; the
 // shapes quoted are the 1.7B's.
 //
 // SIX ort sessions (manifest `sub_models`), all CPU (int4 talker uses MatMulNBits, a
 // standard-ORT contrib op; DirectML is not validated for this pipeline yet — CPU-only
-// for v1, cited in `build_session`):
+// for v1, cited in `build_session`), plus two encode-only graphs on a Base checkpoint
+// that are opened while a reference is prepared and dropped right after:
 //   text_embed      text_ids[B,T] i64            → [B,T,H]                         run per embed
 //   codec_embed     codec_ids[B,T] i64           → [B,T,H]                         run per embed
 //   talker_cache    inputs_embeds + position_ids + attention_mask + 56 past K/V
@@ -20,6 +22,8 @@
 //   code_predictor  talker_hidden[B,H] + codec_ids[B,16] → group_logits[B,15,≥2048]   run 15×/frame
 //   residual_embed  codec_ids[B,16] i64          → step_embed[B,H]                 run per frame
 //   tok_decoder     audio_codes[B,25,16] i64     → waveform[B,1,L] f32             run per 25-frame chunk
+//   tok_encoder     audio[B,1,24000] f32         → codes[B,F,16] i64               Base: per reference window
+//   speaker_encoder audio[B,L] f32 (24 kHz)      → x-vector[B,H]                   Base: once per reference
 //
 // Modeled on chatterbox.rs (CPU ONNX AR-LLM voice engine): `LazyOrtEngine` lazy load,
 // interior Mutex, per-file `build_session` → `provider::cpu_session`, host-side KV via
@@ -29,12 +33,24 @@
 // v1 scope (BUILD_PLAN.md §"Backend engine"): language Auto / nothink (the `lang` arg is
 // ignored — noted at the call site), `speed` ignored (natural rate). An empty `voice` is a
 // VALID default voice (skips the instruct prefix / the speaker row), never an error.
-// The base clone-from-a-clip path (`tok_encoder` + ref audio) is NOT ported — no shipped
-// entry uses it, which is why the download manifest skips that graph.
+//
+// Base cloning (upstream `Qwen3TTSModel.generate_voice_clone` → `create_voice_clone_prompt`
+// + `Qwen3TTSForConditionalGeneration.generate`), both upstream prompt modes:
+//   * x-vector only — the reference's `speaker_encoder` embedding is spliced into the codec
+//     prefill exactly where CustomVoice splices its preset-speaker row; the text body is
+//     the plain TTS body. Needs only the clip.
+//   * ICL — on top of that, the reference TRANSCRIPT is prepended to the text and the
+//     reference's codec codes (summed per frame through `residual_embed`, which IS the
+//     upstream per-frame sum of the 16 codebook embeddings) follow `codec_bos`, so the
+//     talker continues the reference voice. Needs clip + transcript; chosen whenever the
+//     transcript is non-empty.
+// The speaker encoder's mel front-end is baked into `speaker_encoder.onnx`, so the host
+// only hands it the clip as 24 kHz mono.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use ndarray::{Array2, Array3, ArrayD, IxDyn};
 use ort::session::{Session, SessionInputValue};
@@ -52,6 +68,7 @@ pub const QWEN3TTS_SAMPLE_RATE: u32 = 24_000;
 const DEC_FRAMES: usize = 25; // tok_decoder is exported at a fixed 25-frame length.
 const N_GROUPS: usize = 16; // codec codebooks per frame.
 const MAX_NEW_TOKENS: usize = 2048; // inference.py `generate` default.
+const MIN_NEW_TOKENS: usize = 2; // upstream `talker_kwargs["min_new_tokens"]`.
 
 // Production sampling defaults (inference.py `generate` signature L265-267). Greedy is
 // used implicitly when `do_sample` is false; we default to sampling for natural voices.
@@ -102,7 +119,7 @@ type NamedInput = (Cow<'static, str>, SessionInputValue<'static>);
 
 /// How the engine interprets the `voice` string it is handed.
 ///
-/// The two published checkpoints steer the voice through DIFFERENT mechanisms even
+/// The published checkpoints steer the voice through DIFFERENT mechanisms even
 /// though they share one export pipeline and one `inference.py`:
 ///   * VoiceDesign has no preset bank — `voice` is a natural-language instruct prompt
 ///     that is embedded and prepended to the talker prefill.
@@ -110,10 +127,70 @@ type NamedInput = (Cow<'static, str>, SessionInputValue<'static>);
 ///     `config.talker_config.spk_id` to a codec token embedded INTO the prefill.
 ///     (Despite the name, CustomVoice is not clone-from-a-clip; there is no reference
 ///     audio anywhere in this path.)
+///   * Base clones from a reference clip. The adapter resolves the clip, prepares it with
+///     [`Qwen3TtsEngine::prepare_reference`] and calls
+///     [`Qwen3TtsEngine::synthesize_cloned`]; a plain [`Qwen3TtsEngine::synthesize`] on a
+///     Base checkpoint speaks its own unconditioned voice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Qwen3TtsVoiceMode {
     DesignPrompt,
     PresetSpeaker,
+    CloneReference,
+}
+
+/// A Base-checkpoint voice prompt built from one reference clip (upstream
+/// `VoiceClonePromptItem`). Prepared once per (clip, transcript) and reused for every
+/// sentence of a read.
+#[derive(Clone, Debug)]
+pub struct Qwen3CloneReference {
+    /// `tok_encoder` codes of the clip, one 16-codebook row per 80 ms frame.
+    codes: Vec<[i64; N_GROUPS]>,
+    /// `speaker_encoder` x-vector, `[H]` (the talker hidden size).
+    xvector: Vec<f32>,
+    /// The clip's transcript, trimmed. Empty ⇒ x-vector-only mode (no ICL block).
+    ref_text: String,
+}
+
+impl Qwen3CloneReference {
+    /// True when the transcript is known, so the ICL prompt (reference codes + transcript)
+    /// is used on top of the x-vector.
+    pub fn is_icl(&self) -> bool {
+        !self.ref_text.is_empty()
+    }
+
+    /// Reference length in codec frames (12.5 Hz).
+    pub fn frames(&self) -> usize {
+        self.codes.len()
+    }
+}
+
+/// Speaker row spliced between the think tags and `codec_pad/codec_bos` (upstream
+/// `speaker_embed`): none, a CustomVoice preset (a codec-table token), or a Base
+/// reference x-vector (a raw `[H]` embedding).
+#[derive(Clone, Copy, Debug)]
+enum SpeakerCond<'a> {
+    None,
+    Token(i64),
+    Embedding(&'a [f32]),
+}
+
+/// The text embedding added to every generated frame's input (upstream
+/// `trailing_text_hidden`): `rows[step]` while streamed text remains, `pad` after it.
+/// Non-streaming prompts carry no rows, so every step adds `pad`.
+struct Trailing {
+    rows: Vec<f32>,
+    pad: Vec<f32>,
+}
+
+impl Trailing {
+    fn row(&self, step: usize, h: usize) -> &[f32] {
+        let start = step * h;
+        if start + h <= self.rows.len() {
+            &self.rows[start..start + h]
+        } else {
+            &self.pad
+        }
+    }
 }
 
 /// Token ids + dims resolved from `config.json` (falling back to PORT_SPEC §3).
@@ -236,6 +313,10 @@ pub struct Qwen3TtsEngine {
     /// How to read the `voice` argument (see [`Qwen3TtsVoiceMode`]).
     voice_mode: Qwen3TtsVoiceMode,
     inner: LazyOrtEngine<Loaded>,
+    /// The last prepared Base reference, keyed by a hash of (clip samples, transcript). A
+    /// read synthesizes sentence by sentence against ONE clip; re-running both encoders
+    /// per sentence would reload their sessions every time.
+    reference: Mutex<Option<(u64, Arc<Qwen3CloneReference>)>>,
 }
 
 impl Qwen3TtsEngine {
@@ -245,6 +326,7 @@ impl Qwen3TtsEngine {
             quant,
             voice_mode,
             inner: LazyOrtEngine::new(),
+            reference: Mutex::new(None),
         }
     }
 
@@ -261,6 +343,9 @@ impl Qwen3TtsEngine {
 
     pub fn shutdown(&self) {
         self.inner.shutdown();
+        if let Ok(mut r) = self.reference.lock() {
+            *r = None;
+        }
     }
 
     /// Map the quant id to the on-disk weights subdir (BUILD_PLAN §"HF sources").
@@ -275,6 +360,67 @@ impl Qwen3TtsEngine {
 
     fn weights_dir(&self) -> PathBuf {
         self.cache_dir.join(self.quant_subdir())
+    }
+
+    fn read_manifest(&self) -> serde_json::Value {
+        std::fs::read_to_string(self.weights_dir().join("manifest.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Null)
+    }
+
+    /// True when both reference encoders (`tok_encoder` + `speaker_encoder`) are on disk,
+    /// i.e. this checkpoint can clone. The adapter fails a clone request LOUDLY when this
+    /// is false instead of silently speaking the unconditioned voice.
+    pub fn cloning_ready(&self) -> bool {
+        let manifest = self.read_manifest();
+        CLONE_GRAPHS
+            .iter()
+            .all(|g| self.session_path(&manifest, g).is_file())
+    }
+
+    /// Build (or reuse) the Base voice prompt for one reference clip. `samples_24k` is the
+    /// clip as mono f32 @ 24 kHz; `ref_text` its transcript (empty ⇒ x-vector-only mode).
+    ///
+    /// Both encoders are opened here and dropped on return: they run once per clip, and
+    /// keeping them resident would pin their weights for the whole session.
+    pub fn prepare_reference(
+        &self,
+        samples_24k: &[f32],
+        ref_text: &str,
+    ) -> Qwen3TtsResult<Arc<Qwen3CloneReference>> {
+        let ref_text = ref_text.trim();
+        if samples_24k.is_empty() {
+            return Err(Qwen3TtsError::Inference("reference clip is empty".into()));
+        }
+        let key = reference_key(samples_24k, ref_text);
+        if let Ok(guard) = self.reference.lock()
+            && let Some((k, r)) = guard.as_ref()
+            && *k == key
+        {
+            return Ok(Arc::clone(r));
+        }
+        let manifest = self.read_manifest();
+        let [enc_path, spk_path] = CLONE_GRAPHS.map(|g| self.session_path(&manifest, g));
+        for p in [&enc_path, &spk_path] {
+            if !p.is_file() {
+                return Err(Qwen3TtsError::AssetsMissing(format!(
+                    "missing {} (Base cloning graph)",
+                    p.display()
+                )));
+            }
+        }
+        let codes = encode_reference_codes(&mut build_session(&enc_path)?, samples_24k)?;
+        let xvector = speaker_xvector(&mut build_session(&spk_path)?, samples_24k)?;
+        let reference = Arc::new(Qwen3CloneReference {
+            codes,
+            xvector,
+            ref_text: ref_text.to_string(),
+        });
+        if let Ok(mut guard) = self.reference.lock() {
+            *guard = Some((key, Arc::clone(&reference)));
+        }
+        Ok(reference)
     }
 
     /// Resolve `<weights_dir>/<manifest.sub_models[name].filename>`; falls back to
@@ -292,11 +438,7 @@ impl Qwen3TtsEngine {
 
     fn load(&self) -> Qwen3TtsResult<Loaded> {
         let wdir = self.weights_dir();
-        let manifest_path = wdir.join("manifest.json");
-        let manifest: serde_json::Value = std::fs::read_to_string(&manifest_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(serde_json::Value::Null);
+        let manifest = self.read_manifest();
 
         let names = [
             "text_embed",
@@ -396,13 +538,97 @@ impl Qwen3TtsEngine {
             || self.load(),
             |loaded| {
                 let (instruct, speaker) = match mode {
-                    Qwen3TtsVoiceMode::DesignPrompt => (voice, ""),
-                    Qwen3TtsVoiceMode::PresetSpeaker => ("", voice),
+                    Qwen3TtsVoiceMode::DesignPrompt => (voice, SpeakerCond::None),
+                    Qwen3TtsVoiceMode::PresetSpeaker => (
+                        "",
+                        speaker_token(&loaded.cfg, voice)
+                            .map_or(SpeakerCond::None, SpeakerCond::Token),
+                    ),
+                    // A Base checkpoint with no reference: its own unconditioned voice
+                    // (no speaker row). Cloning goes through `synthesize_cloned`.
+                    Qwen3TtsVoiceMode::CloneReference => ("", SpeakerCond::None),
                 };
-                generate(loaded, trimmed, instruct, speaker, seed)
+                let prompt = Prompt {
+                    text: trimmed,
+                    instruct,
+                    speaker,
+                    reference: None,
+                    streaming: false,
+                };
+                generate(loaded, &prompt, seed)
             },
         )
     }
+
+    /// Synthesize `text` in the voice of a prepared Base reference (see
+    /// [`Self::prepare_reference`]): ICL when the reference carries a transcript,
+    /// x-vector only otherwise. Returns mono f32 PCM @ 24 kHz.
+    pub fn synthesize_cloned(
+        &self,
+        text: &str,
+        reference: &Qwen3CloneReference,
+    ) -> Qwen3TtsResult<Vec<f32>> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let seed = fnv1a_seed(trimmed) ^ fnv1a_seed(&reference.ref_text);
+        self.inner.with_loaded(
+            || Qwen3TtsError::Session("lock poisoned".into()),
+            || Qwen3TtsError::Session("qwen3-tts session was not initialized".into()),
+            || self.load(),
+            |loaded| {
+                if reference.xvector.len() != loaded.cfg.hidden {
+                    return Err(Qwen3TtsError::Inference(format!(
+                        "reference x-vector has {} dims but the talker expects {}; it was \
+                         prepared with a different checkpoint",
+                        reference.xvector.len(),
+                        loaded.cfg.hidden
+                    )));
+                }
+                let prompt = Prompt {
+                    text: trimmed,
+                    instruct: "",
+                    speaker: SpeakerCond::Embedding(&reference.xvector),
+                    reference: reference.is_icl().then_some(reference),
+                    streaming: CLONE_STREAMING_PROMPT,
+                };
+                generate(loaded, &prompt, seed)
+            },
+        )
+    }
+}
+
+/// The graphs a Base checkpoint adds for cloning, in `prepare_reference` order.
+const CLONE_GRAPHS: [&str; 2] = ["tok_encoder", "speaker_encoder"];
+
+/// Upstream `generate_voice_clone` defaults to the STREAMING prompt layout
+/// (`non_streaming_mode=False`): only as much text as there are reference frames goes into
+/// the prefill, and the rest is fed one token per generated frame.
+const CLONE_STREAMING_PROMPT: bool = true;
+
+/// Everything `build_prefill` needs to assemble one talker prompt.
+struct Prompt<'a> {
+    text: &'a str,
+    /// VoiceDesign / CustomVoice style instruct; empty ⇒ none.
+    instruct: &'a str,
+    speaker: SpeakerCond<'a>,
+    /// Base ICL reference (codes + transcript). `None` ⇒ the plain TTS body.
+    reference: Option<&'a Qwen3CloneReference>,
+    /// Streaming layout (upstream `non_streaming_mode=False`) vs the full-text prefill.
+    streaming: bool,
+}
+
+/// Cache key of a prepared reference: FNV-1a over the clip samples and the transcript.
+fn reference_key(samples: &[f32], ref_text: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for s in samples {
+        for b in s.to_bits().to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    h ^ fnv1a_seed(ref_text).rotate_left(1)
 }
 
 fn build_session(path: &Path) -> Qwen3TtsResult<Session> {
@@ -495,6 +721,100 @@ fn residual_step_embed(sess: &mut Session, codes16: &[i64; N_GROUPS]) -> Qwen3Tt
     Ok(arr.iter().copied().collect())
 }
 
+/// residual_embed over many frames at once (the batch dim is dynamic): `[T,16]` →
+/// `[T,H]` flat. Used for the ICL reference codes, whose per-frame codebook-embedding
+/// sum is exactly upstream `generate_icl_prompt`'s `codec_embed`.
+fn residual_step_embeds(sess: &mut Session, codes: &[[i64; N_GROUPS]]) -> Qwen3TtsResult<Vec<f32>> {
+    if codes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let flat: Vec<i64> = codes.iter().flatten().copied().collect();
+    let t = Tensor::from_array(
+        Array2::from_shape_vec((codes.len(), N_GROUPS), flat)
+            .map_err(|e| Qwen3TtsError::Inference(format!("reference codes arr: {e}")))?,
+    )
+    .map_err(|e| Qwen3TtsError::Inference(format!("reference codes tensor: {e}")))?;
+    let out = sess
+        .run(ort::inputs! { "codec_ids" => t })
+        .map_err(|e| Qwen3TtsError::Inference(format!("residual_embed (reference): {e}")))?;
+    let arr = out_f32(&out, 0)?; // [T,H]
+    Ok(arr.iter().copied().collect())
+}
+
+// ── Base reference encoders ─────────────────────────────────────────────────────
+
+/// `tok_encoder` input length: the graph is exported at a fixed 1 s window.
+const ENC_WINDOW: usize = QWEN3TTS_SAMPLE_RATE as usize;
+/// Samples per codec frame (24 kHz / 12.5 Hz).
+const SAMPLES_PER_FRAME: usize = 1920;
+
+/// Reference clip → codec codes `[F,16]`, F = ceil(len / 1920).
+///
+/// `tok_encoder` only takes exactly 1 s, and 1 s is 12.5 frames, so the reference
+/// `inference.py` loop (encode back-to-back 1 s windows, concatenate) inserts half a frame
+/// of drift per second. Instead every window starts on a frame boundary and only the
+/// frames that lie wholly inside it are kept; consecutive windows advance by that many
+/// frames, and the tail window is zero-padded (as upstream does). On an 8 s clip the codec
+/// round trip of this layout is frame-exact (0-sample tail lag, log-mel L1 0.36) where
+/// back-to-back windows give 16 extra frames, a 1.3 s overrun and L1 2.56.
+fn encode_reference_codes(
+    sess: &mut Session,
+    samples: &[f32],
+) -> Qwen3TtsResult<Vec<[i64; N_GROUPS]>> {
+    let total_frames = samples.len().div_ceil(SAMPLES_PER_FRAME);
+    let keep_per_window = ENC_WINDOW / SAMPLES_PER_FRAME; // 12
+    let mut codes: Vec<[i64; N_GROUPS]> = Vec::with_capacity(total_frames);
+    let mut frame = 0usize;
+    while frame < total_frames {
+        let start = frame * SAMPLES_PER_FRAME;
+        let end = (start + ENC_WINDOW).min(samples.len());
+        let mut window = vec![0f32; ENC_WINDOW];
+        window[..end - start].copy_from_slice(&samples[start..end]);
+        let t = Tensor::from_array(
+            ArrayD::from_shape_vec(IxDyn(&[1, 1, ENC_WINDOW]), window)
+                .map_err(|e| Qwen3TtsError::Inference(format!("tok_encoder arr: {e}")))?,
+        )
+        .map_err(|e| Qwen3TtsError::Inference(format!("tok_encoder tensor: {e}")))?;
+        let out = sess
+            .run(ort::inputs! { "audio" => t })
+            .map_err(|e| Qwen3TtsError::Inference(format!("tok_encoder: {e}")))?;
+        let (shape, data) = out[0]
+            .try_extract_tensor::<i64>()
+            .map_err(|e| Qwen3TtsError::Inference(format!("tok_encoder codes: {e}")))?;
+        // [1, frames, 16]
+        let frames = shape.get(1).copied().unwrap_or(0).max(0) as usize;
+        if shape.len() != 3 || shape[2] as usize != N_GROUPS || data.len() < frames * N_GROUPS {
+            return Err(Qwen3TtsError::Inference(format!(
+                "tok_encoder returned shape {shape:?}"
+            )));
+        }
+        let take = keep_per_window.min(frames).min(total_frames - frame);
+        if take == 0 {
+            return Err(Qwen3TtsError::Inference(
+                "tok_encoder returned no frames".into(),
+            ));
+        }
+        codes.extend_from_slice(data[..take * N_GROUPS].as_chunks::<N_GROUPS>().0);
+        frame += take;
+    }
+    Ok(codes)
+}
+
+/// Reference clip (24 kHz mono) → speaker x-vector `[H]`. The mel front-end lives inside
+/// the graph (upstream `extract_speaker_embedding`).
+fn speaker_xvector(sess: &mut Session, samples: &[f32]) -> Qwen3TtsResult<Vec<f32>> {
+    let t = Tensor::from_array(
+        Array2::from_shape_vec((1, samples.len()), samples.to_vec())
+            .map_err(|e| Qwen3TtsError::Inference(format!("speaker audio arr: {e}")))?,
+    )
+    .map_err(|e| Qwen3TtsError::Inference(format!("speaker audio tensor: {e}")))?;
+    let out = sess
+        .run(ort::inputs! { "audio" => t })
+        .map_err(|e| Qwen3TtsError::Inference(format!("speaker_encoder: {e}")))?;
+    let arr = out_f32(&out, 0)?; // [1,H]
+    Ok(arr.iter().copied().collect())
+}
+
 /// code_predictor(talker_hidden[1,H], codec_ids[1,16]) → group_logits[1,15,V]
 /// (inference.py `predict_residual` L161-164). Returns the flat [15*V] row.
 fn code_predictor_logits(
@@ -539,28 +859,43 @@ fn append_rows(dst: &mut Vec<f32>, embeds: &ArrayD<f32>, start: usize, end: usiz
     dst.extend_from_slice(&flat[start * hidden..end * hidden]);
 }
 
-/// Build the talker prefill embed `[1, L, H]` (flat) and the trailing pad-embed `[H]`
-/// added to every generated step. Empty `instruct` ⇒ no instruct prefix (default voice)
-/// — PORT_SPEC §5 "Empty-instruct handling". Empty/unknown `speaker` ⇒ no speaker row
-/// (the checkpoint's default timbre); an unknown name is NOT an error, so a stale
-/// persisted selection still speaks.
+/// Tokenize with special tokens (so `<|im_start|>`/`<|im_end|>` map to their ids).
+fn tokenize(tokenizer: &Tokenizer, s: String) -> Qwen3TtsResult<Vec<i64>> {
+    let enc = tokenizer
+        .encode(s, true)
+        .map_err(|e| Qwen3TtsError::Tokenizer(e.to_string()))?;
+    Ok(enc.get_ids().iter().map(|&u| i64::from(u)).collect())
+}
+
+/// Element-wise `a + b` of two `[H]` rows, appended to `dst`.
+fn push_sum(dst: &mut Vec<f32>, a: &[f32], b: &[f32]) {
+    dst.extend(a.iter().zip(b).map(|(x, y)| x + y));
+}
+
+/// Build the talker prefill embed `[1, L, H]` (flat) and the per-step trailing text
+/// embeds. Empty `instruct` ⇒ no instruct prefix (default voice) — PORT_SPEC §5
+/// "Empty-instruct handling". `SpeakerCond::None` ⇒ no speaker row (the checkpoint's
+/// default timbre). A Base `reference` swaps the plain text body for the ICL block
+/// (upstream `generate_icl_prompt`).
 fn build_prefill(
     loaded: &mut Loaded,
-    text: &str,
-    instruct: &str,
-    speaker: &str,
-) -> Qwen3TtsResult<(Vec<f32>, usize, Vec<f32>)> {
+    prompt: &Prompt<'_>,
+) -> Qwen3TtsResult<(Vec<f32>, usize, Trailing)> {
+    let Prompt {
+        text,
+        instruct,
+        speaker,
+        reference,
+        streaming,
+    } = *prompt;
     let cfg = &loaded.cfg;
     let h = cfg.hidden;
 
-    // 0) assistant template → ids (inference.py L295-298). Encode WITH special tokens so
-    //    <|im_start|>/<|im_end|> map to their ids.
-    let assistant = format!("<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n");
-    let enc = loaded
-        .tokenizer
-        .encode(assistant, true)
-        .map_err(|e| Qwen3TtsError::Tokenizer(e.to_string()))?;
-    let input_id: Vec<i64> = enc.get_ids().iter().map(|&u| u as i64).collect();
+    // 0) assistant template → ids (inference.py L295-298).
+    let input_id = tokenize(
+        &loaded.tokenizer,
+        format!("<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n"),
+    )?;
     if input_id.len() < 9 {
         return Err(Qwen3TtsError::Inference(
             "text tokenized too short for the assistant template".into(),
@@ -581,20 +916,28 @@ fn build_prefill(
     let codec_prefill = [cfg.codec_nothink, cfg.codec_think_bos, cfg.codec_think_eos];
     let codec0 = embed_codec(&mut loaded.codec_embed, &codec_prefill)?; // [1,3,H]
     let codec1 = embed_codec(&mut loaded.codec_embed, &[cfg.codec_pad, cfg.codec_bos])?; // [1,2,H]
-    // 4) CustomVoice preset timbre: the speaker's codec token embeds to ONE row spliced
-    //    BETWEEN codec0 and codec1 (inference.py L322-330). VoiceDesign has an empty
-    //    `spk_id` map, so this is skipped and codec_input stays [1,5,H].
-    let speaker_row: Option<ArrayD<f32>> = match speaker_token(cfg, speaker) {
-        Some(id) => Some(embed_codec(&mut loaded.codec_embed, &[id])?), // [1,1,H]
-        None => None,
+    // 4) Speaker row spliced BETWEEN codec0 and codec1 (inference.py L322-330 / upstream
+    //    `speaker_embed`): a CustomVoice preset's codec-table embedding, or a Base
+    //    reference's x-vector verbatim. VoiceDesign has neither, so codec_input stays
+    //    [1,5,H].
+    let speaker_row: Option<Vec<f32>> = match speaker {
+        SpeakerCond::None => None,
+        SpeakerCond::Token(id) => Some(
+            embed_codec(&mut loaded.codec_embed, &[id])? // [1,1,H]
+                .iter()
+                .copied()
+                .collect(),
+        ),
+        SpeakerCond::Embedding(x) => Some(x.to_vec()),
     };
     let codec_len = 3 + usize::from(speaker_row.is_some()) + 2;
     let mut codec_input: Vec<f32> = Vec::with_capacity(codec_len * h);
     append_rows(&mut codec_input, &codec0, 0, 3, h);
     if let Some(row) = &speaker_row {
-        append_rows(&mut codec_input, row, 0, 1, h);
+        codec_input.extend_from_slice(&row[..h]);
     }
     append_rows(&mut codec_input, &codec1, 0, 2, h);
+    let codec_bos_row = &codec_input[(codec_len - 1) * h..codec_len * h];
 
     // 5) instruct prefix embeds (only when non-empty) (inference.py L332-336). Both
     //    checkpoints accept an instruct; VoiceDesign uses it to DESIGN the timbre,
@@ -602,12 +945,10 @@ fn build_prefill(
     let prefix: Option<Vec<f32>> = if instruct.is_empty() {
         None
     } else {
-        let instruct_text = format!("<|im_start|>user\n{instruct}<|im_end|>\n");
-        let ienc = loaded
-            .tokenizer
-            .encode(instruct_text, true)
-            .map_err(|e| Qwen3TtsError::Tokenizer(e.to_string()))?;
-        let iids: Vec<i64> = ienc.get_ids().iter().map(|&u| u as i64).collect();
+        let iids = tokenize(
+            &loaded.tokenizer,
+            format!("<|im_start|>user\n{instruct}<|im_end|>\n"),
+        )?;
         let iemb = embed_text(&mut loaded.text_embed, &iids)?; // [1,Lp,H]
         Some(iemb.iter().copied().collect())
     };
@@ -616,48 +957,115 @@ fn build_prefill(
     let role = embed_text(&mut loaded.text_embed, &input_id[..3])?;
 
     // 7) pad_block = concat([repeat(pad_e, codec_len-2), bos_e]) → [1,codec_len-1,H]
-    //    (inference.py L340-341). codec_len-2 = 3 pad rows + 1 bos row = 4 rows.
+    //    (inference.py L340-341).
     let pad_reps = codec_len - 2;
 
     // 8) talker_in = concat([role, pad_block + codec_input[:, :-1]]) (inference.py L342).
     //    pad_block has (pad_reps + 1) = codec_len-1 rows; codec_input[:, :-1] has
     //    codec_len-1 rows → elementwise sum.
     let mut talker: Vec<f32> = Vec::new();
-    // role rows (3)
     append_rows(&mut talker, &role, 0, 3, h);
-    // pad_block[r] + codec_input[r] for r in 0..codec_len-1
     for r in 0..(codec_len - 1) {
         // pad_block row r: first `pad_reps` rows are pad_e, the last is bos_e.
         let pb: &[f32] = if r < pad_reps { pad_e } else { bos_e };
-        let ci = &codec_input[r * h..(r + 1) * h];
-        talker.extend(pb.iter().zip(ci).map(|(a, b)| a + b));
+        push_sum(&mut talker, pb, &codec_input[r * h..(r + 1) * h]);
     }
 
-    // 9) body_ids = input_id[:, 3:-5]; text_body = embed_text(body_ids) → [1,Ltext,H];
-    //    block1 = concat([text_body, eos_e]) + embed_codec([[codec_pad]*(Ltext+1)])
-    //    (inference.py L344-348).
+    // 9) The text body. body_ids = input_id[:, 3:-5] (the text between the template's
+    //    role header and its `<|im_end|>\n<|im_start|>assistant\n` tail).
     let body_ids = &input_id[3..input_id.len() - 5];
-    let ltext = body_ids.len();
-    let text_body = embed_text(&mut loaded.text_embed, body_ids)?; // [1,Ltext,H]
-    let codec_pad_row = vec![cfg.codec_pad; ltext + 1];
-    let block1_codec = embed_codec(&mut loaded.codec_embed, &codec_pad_row)?; // [1,Ltext+1,H]
-    let bc_flat = block1_codec.as_slice().expect("block1_codec contiguous");
-    let tb_flat = text_body.as_slice().expect("text_body contiguous");
-    // block1 rows 0..Ltext = text_body + codec; row Ltext = eos_e + codec.
-    for r in 0..(ltext + 1) {
-        let text_row: &[f32] = if r < ltext {
-            &tb_flat[r * h..(r + 1) * h]
-        } else {
-            eos_e
-        };
-        let codec_row = &bc_flat[r * h..(r + 1) * h];
-        talker.extend(text_row.iter().zip(codec_row).map(|(a, b)| a + b));
-    }
+    let mut trailing_rows: Vec<f32> = Vec::new();
+    if let Some(reference) = reference {
+        // ICL (upstream `generate_icl_prompt`): text = [ref_text ‖ text] + eos, codec =
+        // codec_bos + per-frame sum of the reference codes. `[3:-2]` strips the role
+        // header and the trailing `<|im_end|>\n` of the reference template.
+        let ref_full = tokenize(
+            &loaded.tokenizer,
+            format!("<|im_start|>assistant\n{}<|im_end|>\n", reference.ref_text),
+        )?;
+        let ref_ids = ref_full
+            .get(3..ref_full.len().saturating_sub(2))
+            .unwrap_or(&[]);
+        let mut ids: Vec<i64> = Vec::with_capacity(ref_ids.len() + body_ids.len());
+        ids.extend_from_slice(ref_ids);
+        ids.extend_from_slice(body_ids);
+        let mut text_rows: Vec<f32> = embed_text(&mut loaded.text_embed, &ids)?
+            .iter()
+            .copied()
+            .collect();
+        text_rows.extend_from_slice(eos_e);
+        let t1 = text_rows.len() / h;
 
-    // 10) block2 = pad_e + embed_codec([[codec_bos]]) → [1,1,H] (inference.py L349).
-    let block2_codec = embed_codec(&mut loaded.codec_embed, &[cfg.codec_bos])?; // [1,1,H]
-    let b2_flat = block2_codec.as_slice().expect("block2 contiguous");
-    talker.extend(pad_e.iter().zip(&b2_flat[..h]).map(|(a, b)| a + b));
+        let mut codec_rows: Vec<f32> = codec_bos_row.to_vec();
+        codec_rows.extend(residual_step_embeds(
+            &mut loaded.residual_embed,
+            &reference.codes,
+        )?);
+        let t2 = codec_rows.len() / h;
+
+        if streaming {
+            // Pair text and codec rows one-to-one; text beyond the reference length is fed
+            // one row per generated frame, a shorter text is padded with tts_pad.
+            for r in 0..t2 {
+                let text_row = if r < t1 {
+                    &text_rows[r * h..(r + 1) * h]
+                } else {
+                    pad_e
+                };
+                push_sum(&mut talker, text_row, &codec_rows[r * h..(r + 1) * h]);
+            }
+            if t1 > t2 {
+                trailing_rows = text_rows[t2 * h..].to_vec();
+            }
+        } else {
+            // All text first (each row + codec_pad), then the codec rows (each + tts_pad).
+            let pads = embed_codec(&mut loaded.codec_embed, &vec![cfg.codec_pad; t1])?;
+            let pads = pads.as_slice().expect("codec pads contiguous");
+            for r in 0..t1 {
+                push_sum(
+                    &mut talker,
+                    &text_rows[r * h..(r + 1) * h],
+                    &pads[r * h..(r + 1) * h],
+                );
+            }
+            for r in 0..t2 {
+                push_sum(&mut talker, &codec_rows[r * h..(r + 1) * h], pad_e);
+            }
+        }
+    } else if streaming {
+        // Upstream streaming layout: only the first text token goes into the prefill
+        // (added to codec_bos); the rest + eos trail one row per generated frame.
+        let first = embed_text(&mut loaded.text_embed, &body_ids[..1])?;
+        push_sum(
+            &mut talker,
+            &first.as_slice().expect("first contiguous")[..h],
+            codec_bos_row,
+        );
+        if body_ids.len() > 1 {
+            trailing_rows = embed_text(&mut loaded.text_embed, &body_ids[1..])?
+                .iter()
+                .copied()
+                .collect();
+        }
+        trailing_rows.extend_from_slice(eos_e);
+    } else {
+        // block1 = concat([text_body, eos_e]) + embed_codec([[codec_pad]*(Ltext+1)]),
+        // block2 = pad_e + codec_bos (inference.py L344-349).
+        let ltext = body_ids.len();
+        let text_body = embed_text(&mut loaded.text_embed, body_ids)?; // [1,Ltext,H]
+        let block1_codec = embed_codec(&mut loaded.codec_embed, &vec![cfg.codec_pad; ltext + 1])?;
+        let bc_flat = block1_codec.as_slice().expect("block1_codec contiguous");
+        let tb_flat = text_body.as_slice().expect("text_body contiguous");
+        for r in 0..(ltext + 1) {
+            let text_row: &[f32] = if r < ltext {
+                &tb_flat[r * h..(r + 1) * h]
+            } else {
+                eos_e
+            };
+            push_sum(&mut talker, text_row, &bc_flat[r * h..(r + 1) * h]);
+        }
+        push_sum(&mut talker, pad_e, codec_bos_row);
+    }
 
     // 12) if prefix: talker_in = concat(prefix + [talker_in]) (inference.py L351-352).
     let full = if let Some(pre) = prefix {
@@ -669,8 +1077,12 @@ fn build_prefill(
         talker
     };
 
-    // 13) trailing = pad_e (added to every generated step's embed) (inference.py L354).
-    let trailing = pad_e.to_vec();
+    // 13) trailing: the streamed text rows, then pad_e on every later step
+    //     (inference.py L354 — non-streaming prompts are pad_e throughout).
+    let trailing = Trailing {
+        rows: trailing_rows,
+        pad: pad_e.to_vec(),
+    };
 
     let seq = full.len() / h;
     Ok((full, seq, trailing))
@@ -681,18 +1093,12 @@ fn build_prefill(
 /// Run the talker prefill + KV-cache decode + code_predictor inner loop, returning the
 /// generated codes `[T, 16]` (flattened row-major). Host-side KV threading (present →
 /// past each step, chatterbox style; plain `session.run`).
-fn generate(
-    loaded: &mut Loaded,
-    text: &str,
-    instruct: &str,
-    speaker: &str,
-    seed: u64,
-) -> Qwen3TtsResult<Vec<f32>> {
+fn generate(loaded: &mut Loaded, prompt: &Prompt<'_>, seed: u64) -> Qwen3TtsResult<Vec<f32>> {
     let cfg = loaded.cfg.clone();
     let h = cfg.hidden;
     let vocab = cfg.vocab;
 
-    let (prefill_flat, t0, trailing) = build_prefill(loaded, text, instruct, speaker)?;
+    let (prefill_flat, t0, trailing) = build_prefill(loaded, prompt)?;
 
     // suppress = [vocab-1024, vocab) except codec_eos (inference.py L413, PORT_SPEC §3).
     let suppress_lo = vocab.saturating_sub(1024);
@@ -728,13 +1134,15 @@ fn generate(
     // `total` is the running sequence length (starts at t0, not 0) — it feeds the
     // KV-cache position id each step, so it is not a plain 0-based loop counter.
     #[allow(clippy::explicit_counter_loop)]
-    for _step in 0..MAX_NEW_TOKENS {
+    for step in 0..MAX_NEW_TOKENS {
         // first = logits[0,-1] (f64); suppress; repetition penalty (inference.py L421-423).
         let mut first = last_step_logits_f64(&logits, vocab)?;
-        // suppress = [vocab-1024, vocab) except codec_eos → -inf on the first codebook.
+        // suppress = [vocab-1024, vocab) except codec_eos → -inf on the first codebook;
+        // codec_eos itself is also blocked until MIN_NEW_TOKENS frames exist (upstream
+        // `min_new_tokens=2`), so a prompt can never decode to silence.
         for (offset, v) in first[suppress_lo..].iter_mut().enumerate() {
             let id = (suppress_lo + offset) as i64;
-            if id != codec_eos {
+            if id != codec_eos || step < MIN_NEW_TOKENS {
                 *v = f64::NEG_INFINITY;
             }
         }
@@ -768,10 +1176,12 @@ fn generate(
         all_codes.push(codes16);
 
         // nxt = residual_embed(codes16) + trailing → [1,1,H] (inference.py L436).
+        // `trailing` is the streamed text row for this step (upstream
+        // `trailing_text_hidden[:, generation_step]`), tts_pad once it runs out.
         let step_embed = residual_step_embed(&mut loaded.residual_embed, &codes16)?;
         let nxt: Vec<f32> = step_embed
             .iter()
-            .zip(&trailing)
+            .zip(trailing.row(step, h))
             .map(|(a, b)| a + b)
             .collect();
         inputs_embeds = Array3::from_shape_vec((1, 1, h), nxt)
@@ -790,7 +1200,35 @@ fn generate(
     }
 
     // Decode codes [T,16] → 24 kHz f32 (PORT_SPEC §7).
-    decode_chunked(loaded, &all_codes)
+    match prompt.reference {
+        Some(reference) => decode_continuation(loaded, &reference.codes, &all_codes),
+        None => decode_chunked(loaded, &all_codes),
+    }
+}
+
+/// Decode an ICL continuation the way upstream does — reference codes + generated codes
+/// as ONE sequence, then cut the reference's share of the waveform — so the first
+/// generated frames are decoded with the reference as context instead of from silence.
+///
+/// `decode_chunked` decodes independent 25-frame windows, so only the reference frames
+/// that share a window with generated frames matter: prepending just `ref_len % 25` of
+/// them gives the same window alignment as decoding the full sequence, at a fraction of
+/// the cost.
+fn decode_continuation(
+    loaded: &mut Loaded,
+    reference: &[[i64; N_GROUPS]],
+    generated: &[[i64; N_GROUPS]],
+) -> Qwen3TtsResult<Vec<f32>> {
+    if generated.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ctx = reference.len() % DEC_FRAMES;
+    let mut codes: Vec<[i64; N_GROUPS]> = Vec::with_capacity(ctx + generated.len());
+    codes.extend_from_slice(&reference[reference.len() - ctx..]);
+    codes.extend_from_slice(generated);
+    let wav = decode_chunked(loaded, &codes)?;
+    let cut = ((wav.len() as f64) * (ctx as f64) / (codes.len() as f64)) as usize;
+    Ok(wav[cut.min(wav.len())..].to_vec())
 }
 
 /// Wraps the per-step present outputs so the caller can move them into the KV map.
@@ -1439,6 +1877,79 @@ mod tests {
         for v in QWEN3TTS_CUSTOMVOICE_VOICES {
             assert_eq!(speaker_token(&cfg, v.id), None);
         }
+    }
+
+    // ── Base cloning ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn trailing_feeds_streamed_rows_then_pad() {
+        let h = 2;
+        let t = Trailing {
+            rows: vec![1.0, 1.0, 2.0, 2.0],
+            pad: vec![9.0, 9.0],
+        };
+        assert_eq!(t.row(0, h), &[1.0, 1.0]);
+        assert_eq!(t.row(1, h), &[2.0, 2.0]);
+        // Past the streamed text every step adds tts_pad (upstream `generation_step >=
+        // trailing_text_hidden.shape[1]`).
+        assert_eq!(t.row(2, h), &[9.0, 9.0]);
+        assert_eq!(t.row(500, h), &[9.0, 9.0]);
+        // Non-streaming prompts: pad from the first step.
+        let none = Trailing {
+            rows: Vec::new(),
+            pad: vec![7.0, 7.0],
+        };
+        assert_eq!(none.row(0, h), &[7.0, 7.0]);
+    }
+
+    #[test]
+    fn clone_reference_mode_follows_the_transcript() {
+        let mut r = Qwen3CloneReference {
+            codes: vec![[0; N_GROUPS]; 3],
+            xvector: vec![0.0; 4],
+            ref_text: String::new(),
+        };
+        assert!(!r.is_icl(), "no transcript ⇒ x-vector-only");
+        assert_eq!(r.frames(), 3);
+        r.ref_text = "Hello there.".into();
+        assert!(r.is_icl(), "a transcript ⇒ ICL");
+    }
+
+    #[test]
+    fn reference_key_tracks_both_clip_and_transcript() {
+        let a = [0.1f32, -0.2, 0.3];
+        let b = [0.1f32, -0.2, 0.30001];
+        assert_eq!(reference_key(&a, "hi"), reference_key(&a, "hi"));
+        assert_ne!(reference_key(&a, "hi"), reference_key(&b, "hi"));
+        assert_ne!(reference_key(&a, "hi"), reference_key(&a, "ho"));
+        assert_ne!(reference_key(&a, ""), reference_key(&a, "hi"));
+    }
+
+    #[test]
+    fn cloning_needs_both_reference_encoders_on_disk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let w = dir.path().join("cpu_int4");
+        std::fs::create_dir_all(&w).unwrap();
+        let e = Qwen3TtsEngine::new(
+            dir.path().to_path_buf(),
+            "int4".into(),
+            Qwen3TtsVoiceMode::CloneReference,
+        );
+        assert!(!e.cloning_ready());
+        std::fs::write(w.join("tok_encoder.onnx"), b"x").unwrap();
+        assert!(!e.cloning_ready(), "speaker_encoder still missing");
+        std::fs::write(w.join("speaker_encoder.onnx"), b"x").unwrap();
+        assert!(e.cloning_ready());
+        // A missing graph is a loud AssetsMissing, not a silent default-voice fallback.
+        std::fs::remove_file(w.join("tok_encoder.onnx")).unwrap();
+        assert!(matches!(
+            e.prepare_reference(&[0.0; 4800], "hi"),
+            Err(Qwen3TtsError::AssetsMissing(_))
+        ));
+        assert!(matches!(
+            e.prepare_reference(&[], "hi"),
+            Err(Qwen3TtsError::Inference(_))
+        ));
     }
 
     /// PARITY: build the tokenizer from the reference fixtures (env-pointed, not

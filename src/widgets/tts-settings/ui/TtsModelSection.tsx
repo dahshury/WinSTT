@@ -41,10 +41,12 @@ export function TtsModelSection() {
 		onTtsDownloadAction,
 		openDetachedTtsPicker,
 		isSupertonicModel,
+		hasLanguageAxis,
 		isCloningModel,
 		isVoiceDesignModel,
 		inlineTags,
 		voiceDesignMaxChars,
+		voiceDesignPresets,
 		maxRefClipSecs,
 		referenceClip,
 		clonePresetOptions,
@@ -197,14 +199,14 @@ export function TtsModelSection() {
 								inlineTags={inlineTags}
 								isLoading={isLoading}
 								isSpeaking={isSpeaking}
-								language={isSupertonicModel ? supertonicLanguage : undefined}
+								language={hasLanguageAxis ? supertonicLanguage : undefined}
 								languageDefault={SUPERTONIC_DEFAULT_LANG}
 								languageGroups={languageGroups}
 								languagePlaceholder={t("language")}
 								langForVoice={langForVoice}
 								onGenerateVoiceDesignPrompt={generateVoiceDesignPrompt}
 								onLanguageChange={
-									isSupertonicModel ? handleLanguageChange : undefined
+									hasLanguageAxis ? handleLanguageChange : undefined
 								}
 								onSpeedChange={handleSpeedChange}
 								onSpeedReset={handleSpeedReset}
@@ -223,6 +225,7 @@ export function TtsModelSection() {
 								voiceDefault={voiceDefault}
 								voiceDesign={isVoiceDesignModel}
 								voiceDesignMaxChars={voiceDesignMaxChars}
+								voiceDesignPresets={voiceDesignPresets}
 								voiceGroups={voiceGroups}
 								voiceLibrary={
 									// Only the two engines whose voice is a user-authored

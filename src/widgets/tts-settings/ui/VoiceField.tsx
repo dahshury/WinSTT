@@ -145,7 +145,7 @@ export interface VoiceFieldClip {
 	error: string | null;
 	/** The model's reference budget in seconds (`maxRefClipSecs`). `0` = unknown. */
 	maxSecs: number;
-	/** This engine clones from clip + transcript (Spark), so the transcript is
+	/** This engine clones from clip + transcript (e.g. Qwen3-TTS Base), so the transcript is
 	 *  part of the voice. */
 	needsRefText: boolean;
 	/** Browse for MORE audio; receives what the voice already holds so the picker

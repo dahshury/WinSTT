@@ -166,9 +166,10 @@ pub fn init_settings_store(app: &AppHandle) {
 /// v1 `""`→`"auto"` step would keep flipping a deliberately-picked fp32).
 ///
 /// Additive schema growth needs NO migration (every field is `#[serde(default)]`);
-/// steps here are only for fields whose MEANING changed between versions. The one
-/// version-independent pass rewrites RETIRED STT catalog ids to their replacement
-/// (see `canonicalize_retired_stt_model_ids`).
+/// steps here are only for fields whose MEANING changed between versions. The two
+/// version-independent passes rewrite RETIRED STT catalog ids and REMOVED local TTS
+/// rows to their replacement (see `canonicalize_retired_stt_model_ids`,
+/// `migrate_retired_tts_models`).
 fn migrate_store_on_boot(store: &Store<tauri::Wry>) {
     let Some(value) = store.get(WINSTT_SETTINGS_KEY) else {
         return; // fresh install: seed_defaults writes a current-version tree
@@ -183,9 +184,9 @@ fn migrate_store_on_boot(store: &Store<tauri::Wry>) {
 }
 
 /// Pure core of [`migrate_store_on_boot`]: `Some(migrated tree)` when the
-/// recorded version is behind CURRENT or a retired STT catalog id was rewritten,
-/// `None` when the tree is already current (or not an object — the repair
-/// path's job).
+/// recorded version is behind CURRENT or a retired STT / removed TTS catalog id was
+/// rewritten, `None` when the tree is already current (or not an object — the
+/// repair path's job).
 fn migrated_settings_value(mut value: serde_json::Value) -> Option<serde_json::Value> {
     if !value.is_object() {
         return None;
@@ -206,7 +207,60 @@ fn migrated_settings_value(mut value: serde_json::Value) -> Option<serde_json::V
         changed = true;
     }
     changed |= canonicalize_retired_stt_model_ids(&mut value);
+    changed |= migrate_retired_tts_models(&mut value);
     changed.then_some(value)
+}
+
+/// Rewrite a persisted local-TTS selection naming a REMOVED catalog row to its
+/// replacement (`tts::catalog::RETIRED_TTS_MODELS`). Version-INDEPENDENT for the same
+/// reasons as [`canonicalize_retired_stt_model_ids`]: a catalog removal is not a schema
+/// change, and the step is idempotent (a replacement is never itself retired). Without
+/// it an unknown id silently falls back to the Kokoro engine and the picker shows a
+/// selection that no longer exists. Returns whether anything changed.
+fn migrate_retired_tts_models(value: &mut serde_json::Value) -> bool {
+    use crate::winstt::tts::catalog::{RETIRED_TTS_MODELS, RetiredVoice};
+
+    let Some(tts) = value
+        .get_mut("tts")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return false;
+    };
+    let Some(model) = tts.get("model").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    let Some(row) = RETIRED_TTS_MODELS.iter().find(|r| r.retired == model) else {
+        return false;
+    };
+    log::info!(
+        "[settings] tts.model: removed TTS model \"{}\" → \"{}\"",
+        row.retired,
+        row.replacement
+    );
+    tts.insert("model".into(), row.replacement.into());
+    tts.insert("quantization".into(), row.quant.into());
+    let voice = tts
+        .get("voice")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    match row.voice {
+        RetiredVoice::KeepKnown { known, default } => {
+            if !known(&voice) {
+                tts.insert("voice".into(), default.into());
+            }
+        }
+        RetiredVoice::ResetPresets(presets) => {
+            if voice.is_empty() || presets.contains(&voice.as_str()) {
+                tts.insert("voice".into(), "default".into());
+            }
+        }
+        RetiredVoice::Replace(to) => {
+            tts.insert("voice".into(), to.into());
+        }
+    }
+    true
 }
 
 /// Rewrite persisted STT selections that name a RETIRED catalog id to the row
@@ -1116,6 +1170,72 @@ mod tests {
     }
 
     #[test]
+    fn retired_kitten_nano_moves_to_0_8_keeping_the_voice() {
+        for old in ["kitten-nano-0.2", "kitten-nano-0.1"] {
+            let migrated = migrated_settings_value(serde_json::json!({
+                "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+                "tts": { "model": old, "quantization": "fp32", "voice": "expr-voice-2-f" }
+            }))
+            .expect("a retired TTS id must be rewritten");
+            assert_eq!(migrated["tts"]["model"], "kitten-nano-0.8");
+            // Same voice id exists in 0.8; the quant falls back to the row's default (fp32).
+            assert_eq!(migrated["tts"]["voice"], "expr-voice-2-f");
+            assert_eq!(migrated["tts"]["quantization"], "");
+            assert!(migrated_settings_value(migrated).is_none(), "idempotent");
+        }
+    }
+
+    #[test]
+    fn retired_kitten_with_a_foreign_voice_gets_the_kitten_default() {
+        let migrated = migrated_settings_value(serde_json::json!({
+            "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+            "tts": { "model": "kitten-nano-0.2", "voice": "af_heart" }
+        }))
+        .expect("a retired TTS id must be rewritten");
+        assert_eq!(
+            migrated["tts"]["voice"],
+            crate::winstt::tts::kitten::KITTEN_DEFAULT_VOICE
+        );
+    }
+
+    #[test]
+    fn retired_orpheus_selection_lands_on_maya1_with_the_default_voice() {
+        // An Orpheus user (preset voice `leo`, the only rung pinned) lands on Maya1 with an
+        // empty voice — the engine's default description — and the default quant, instead
+        // of a model id the picker no longer lists and a voice Maya1 would read as a
+        // one-word description. Everything else in the section is left alone.
+        let migrated = migrated_settings_value(serde_json::json!({
+            "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+            "tts": {
+                "enabled": true,
+                "model": "orpheus-3b",
+                "voice": "leo",
+                "quantization": "q4",
+                "inlineTags": true,
+                "speed": 1.2
+            }
+        }))
+        .expect("a retired TTS id must be rewritten");
+        assert_eq!(migrated["tts"]["model"], "maya1-3b");
+        assert_eq!(migrated["tts"]["voice"], "");
+        assert_eq!(migrated["tts"]["quantization"], "");
+        assert_eq!(migrated["tts"]["inlineTags"], true);
+        assert_eq!(migrated["tts"]["speed"], 1.2);
+        assert!(crate::winstt::tts::catalog::find("maya1-3b").is_some());
+        // Idempotent: the rewritten tree needs nothing further.
+        assert!(migrated_settings_value(migrated).is_none());
+    }
+
+    #[test]
+    fn live_tts_selection_is_not_touched() {
+        let value = serde_json::json!({
+            "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+            "tts": { "model": "maya1-3b", "voice": "Male, 40s, deep voice", "quantization": "q8" }
+        });
+        assert!(migrated_settings_value(value).is_none());
+    }
+
+    #[test]
     fn v0_store_with_a_retired_id_gets_both_migrations() {
         let migrated = migrated_settings_value(serde_json::json!({
             "model": { "model": "nemo-parakeet-tdt-0.6b-v3", "onnxQuantization": "" }
@@ -1123,6 +1243,100 @@ mod tests {
         .expect("v0 stores must migrate");
         assert_eq!(migrated["model"]["model"], "nemo-parakeet-tdt-0.6b-ultra");
         assert_eq!(migrated["model"]["onnxQuantization"], "auto");
+    }
+
+    fn current_store_with_tts(tts: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "schemaVersion": crate::winstt::settings_schema::CURRENT_SETTINGS_SCHEMA_VERSION,
+            "tts": tts
+        })
+    }
+
+    #[test]
+    fn a_spark_clone_setup_moves_to_qwen3_base_and_keeps_cloning() {
+        // The clip path and its transcript are what make the clone; both must survive,
+        // and the retired `q4` quant (not on the Qwen3 ladder) must not.
+        let clip = r"C:\Users\me\AppData\Roaming\winstt\tts\reference-voices\me.wav";
+        let migrated = migrated_settings_value(current_store_with_tts(serde_json::json!({
+            "enabled": true,
+            "model": "spark-tts-0.5b",
+            "quantization": "q4",
+            "voice": clip,
+            "cloneRefText": "Hello, this is my voice.",
+            "lang": "en"
+        })))
+        .expect("a Spark selection must migrate");
+        let tts = &migrated["tts"];
+        assert_eq!(tts["model"], "qwen3-tts-0.6b-base");
+        assert_eq!(tts["quantization"], "int4");
+        assert_eq!(tts["voice"], clip);
+        assert_eq!(tts["cloneRefText"], "Hello, this is my voice.");
+        assert_eq!(tts["enabled"], true);
+        assert_eq!(tts["lang"], "en");
+        // The target is a real cloning row whose ladder carries the migrated quant.
+        let row = crate::winstt::tts::catalog::find("qwen3-tts-0.6b-base").expect("row");
+        assert!(row.cloning.supports_cloning());
+        assert!(row.quant("int4").is_some());
+        // Idempotent.
+        assert!(migrated_settings_value(migrated).is_none());
+    }
+
+    #[test]
+    fn a_spark_preset_voice_becomes_the_base_default_voice() {
+        for voice in ["female", "male", "", "default"] {
+            let migrated = migrated_settings_value(current_store_with_tts(serde_json::json!({
+                "model": "spark-tts-0.5b",
+                "voice": voice
+            })))
+            .expect("a Spark selection must migrate");
+            assert_eq!(migrated["tts"]["voice"], "default", "voice {voice:?}");
+            assert_eq!(migrated["tts"]["model"], "qwen3-tts-0.6b-base");
+        }
+        // No voice key at all ⇒ the sentinel as well.
+        let migrated = migrated_settings_value(current_store_with_tts(
+            serde_json::json!({ "model": "spark-tts-0.5b" }),
+        ))
+        .expect("migrates");
+        assert_eq!(migrated["tts"]["voice"], "default");
+    }
+
+    #[test]
+    fn retired_chatterbox_rows_move_to_the_new_exports_keeping_the_voice() {
+        let clip = r"C:\Users\me\AppData\Roaming\winstt\tts\reference-voices\me.wav";
+        for (old, new, quant) in [
+            (
+                "chatterbox-multilingual",
+                "chatterbox-multilingual-v3",
+                "q4",
+            ),
+            ("chatterbox-nano", "chatterbox-nano-v1", ""),
+        ] {
+            for voice in ["default", clip] {
+                let migrated = migrated_settings_value(current_store_with_tts(serde_json::json!({
+                    "model": old,
+                    "quantization": "q4f16",
+                    "voice": voice
+                })))
+                .expect("a retired Chatterbox selection must migrate");
+                assert_eq!(migrated["tts"]["model"], new);
+                assert_eq!(migrated["tts"]["quantization"], quant);
+                assert_eq!(migrated["tts"]["voice"], voice);
+                assert!(migrated_settings_value(migrated).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn other_tts_selections_are_left_alone() {
+        for tts in [
+            serde_json::json!({ "model": "kokoro-82m", "voice": "af_heart" }),
+            serde_json::json!({ "model": "qwen3-tts-0.6b-base", "voice": "female" }),
+            serde_json::json!({}),
+        ] {
+            assert!(migrated_settings_value(current_store_with_tts(tts)).is_none());
+        }
+        // (Every retired row's replacement being a live row with that quant is
+        // `tts::catalog::tests::retired_tts_rows_point_at_live_rows`.)
     }
 
     #[test]

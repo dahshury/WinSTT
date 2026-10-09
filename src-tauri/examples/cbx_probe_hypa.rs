@@ -507,11 +507,11 @@ fn run_embed(
 
 fn graphs_for(model_id: &str, quant: &str) -> [String; 4] {
     match model_id {
-        "chatterbox-nano" => [
-            "speech_encoder_q4f16.onnx".into(),
-            "embed_tokens_fp16.onnx".into(),
+        "chatterbox-nano-v1" => [
+            "speech_encoder_q4.onnx".into(),
+            "embed_tokens_q4.onnx".into(),
             "language_model_q4f16.onnx".into(),
-            "conditional_decoder_q4.onnx".into(),
+            "conditional_decoder_q4f16.onnx".into(),
         ],
         "chatterbox-turbo" => {
             let s = if quant == "q4f16" { "q4f16" } else { "q4" };
@@ -567,7 +567,7 @@ fn run_gen(model_id: &str, quant: &str, out_dir: &Path, reps: usize) {
     let embed_wants_exag = declares_input(&embed_tokens, "exaggeration");
     let lm_wants_pos = declares_input(&language_model, "position_ids");
 
-    let is_multi = model_id == "chatterbox-multilingual";
+    let is_multi = model_id == "chatterbox-multilingual-v3";
     let language_tag: Option<String> = if is_multi {
         Some(std::env::var("CBX_LANG").unwrap_or_else(|_| "en".into()))
     } else {
@@ -1079,7 +1079,7 @@ fn main() {
             let model_id = args
                 .get(2)
                 .cloned()
-                .unwrap_or_else(|| "chatterbox-multilingual".into());
+                .unwrap_or_else(|| "chatterbox-multilingual-v3".into());
             let quant = args.get(3).cloned().unwrap_or_else(|| "q4".into());
             let out_dir = PathBuf::from(args.get(4).cloned().unwrap_or_else(|| "cbx_hypa".into()));
             let reps: usize = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(1);

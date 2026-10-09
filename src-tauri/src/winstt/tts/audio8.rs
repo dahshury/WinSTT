@@ -1,6 +1,6 @@
 // Audio8 TTS Preview 0.6B — faithful Rust port of the official ONNX runtime
 // (github.com/Audio8-AI/Audio8_TTS `onnx_runtime/arktts_runtime/{runtime,prompt,registration}.py`,
-// weights `Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4`, Apache-2.0).
+// weights `Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4`, Apache-2.0).
 //
 // DualAR architecture (Fish-Audio-S2-style): a 24-layer SLOW transformer predicts one
 // semantic token per audio frame; a 4-layer FAST transformer then predicts the frame's

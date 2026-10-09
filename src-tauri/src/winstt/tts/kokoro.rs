@@ -435,7 +435,7 @@ impl KokoroEngine {
 /// (last_nonsilent+1)*hop]` (clamped). Returns the trimmed samples as an owned Vec
 /// (matching the previous `data.to_vec()` contract). Conservative: if the clip is
 /// shorter than one frame, or all-silent, the input passes through unchanged.
-fn trim_silence(audio: &[f32]) -> Vec<f32> {
+pub(crate) fn trim_silence(audio: &[f32]) -> Vec<f32> {
     const FRAME: usize = 2048;
     const HOP: usize = 512;
     const TOP_DB: f32 = 60.0;
@@ -552,6 +552,72 @@ mod tests {
             .to_string_lossy()
             .replace('\\', "/");
         assert!(voice.ends_with("voices/af_heart.bin"), "{voice}");
+    }
+
+    /// Real-weights probe for the eSpeak→misaki question: synthesizes `WINSTT_G2P_SENTENCES` (one
+    /// per line) for each `voice:lang` in `WINSTT_KOKORO_VOICES` (default `af_heart:en-us`) through
+    /// the raw eSpeak spelling AND the misaki respelling, writing
+    /// `kokoro_{voice}_{espeak,misaki}_{NN}.wav` into `WINSTT_G2P_OUT` for an external ASR/WER pass.
+    /// Needs `WINSTT_KOKORO_DIR` (onnx/model_fp16.onnx + voices/*.bin) and the eSpeak-ng shared lib.
+    ///
+    /// Result (20 sentences, Whisper base.en, sentences either side rendered silent excluded):
+    /// af_heart 1.3% → 2.1%, am_michael 0.5% → 0.5%, bf_emma 1.6% → 1.6%, bm_george 1.9% → 2.5%
+    /// (eSpeak → misaki). Kokoro, unlike Paradee, copes with raw eSpeak spelling, so the
+    /// respelling is NOT applied on Kokoro's path.
+    #[test]
+    #[ignore = "needs the Kokoro weights + eSpeak-ng; see the doc comment"]
+    fn kokoro_g2p_probe_writes_wavs() {
+        use super::super::phonemize::{EspeakLibPhonemizer, MisakiPhonemizer};
+        let dir = PathBuf::from(std::env::var("WINSTT_KOKORO_DIR").expect("WINSTT_KOKORO_DIR"));
+        let out = PathBuf::from(std::env::var("WINSTT_G2P_OUT").expect("WINSTT_G2P_OUT"));
+        let text = std::fs::read_to_string(std::env::var("WINSTT_G2P_SENTENCES").unwrap()).unwrap();
+        let voices =
+            std::env::var("WINSTT_KOKORO_VOICES").unwrap_or_else(|_| "af_heart:en-us".into());
+        std::fs::create_dir_all(&out).unwrap();
+        let espeak = || {
+            Box::new(EspeakLibPhonemizer::discover().expect("espeak lib")) as Box<dyn Phonemizer>
+        };
+        let config = KokoroConfig {
+            cache_dir: dir,
+            device: TtsDevice::Cpu,
+            ..Default::default()
+        };
+        let engines = [
+            (
+                "espeak",
+                KokoroEngine::with_phonemizer(config.clone(), espeak()),
+            ),
+            (
+                "misaki",
+                KokoroEngine::with_phonemizer(
+                    config,
+                    // Both English variants, so the probe can measure en-gb too.
+                    Box::new(MisakiPhonemizer::new(espeak(), &["en-us", "en-gb"])),
+                ),
+            ),
+        ];
+        for spec in voices.split(',') {
+            let (voice, lang) = spec.split_once(':').expect("voice:lang");
+            for (tag, engine) in &engines {
+                let mut log = String::new();
+                for (i, line) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+                    let pcm = engine
+                        .synthesize(line, voice, lang, 1.0)
+                        .expect("synthesize");
+                    log.push_str(&format!(
+                        "{i:02}\t{}\n",
+                        engine.phonemizer.phonemize(line, lang).unwrap()
+                    ));
+                    crate::winstt::tts::write_probe_wav(
+                        &out.join(format!("kokoro_{voice}_{tag}_{i:02}.wav")),
+                        &pcm,
+                        KOKORO_SAMPLE_RATE,
+                    );
+                }
+                std::fs::write(out.join(format!("kokoro_{voice}_{tag}_phonemes.tsv")), log)
+                    .unwrap();
+            }
+        }
     }
 
     #[test]

@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Mô tả giọng nói",
     "voiceDesignPromptPlaceholder": "ví dụ: một người dẫn chuyện ấm áp, trầm giọng với chút giọng Anh",
     "voiceDesignPromptEmptyHint": "Để trống để quay lại giọng nói tích hợp sẵn của mô hình.",
+    "voiceDesignPresetsLabel": "Giọng có sẵn",
     "voiceDesignCharCounterLabel": "Độ dài mô tả",
     "voiceDesignCharsRemaining": "Còn {count}",
     "voiceDesignGenerateLabel": "Mô tả nhân vật",

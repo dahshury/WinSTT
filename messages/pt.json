@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Descrição da voz",
     "voiceDesignPromptPlaceholder": "ex.: um narrador caloroso e grave com um leve sotaque britânico",
     "voiceDesignPromptEmptyHint": "Deixe em branco para recorrer à voz integrada do modelo.",
+    "voiceDesignPresetsLabel": "Vozes prontas",
     "voiceDesignCharCounterLabel": "Comprimento da descrição",
     "voiceDesignCharsRemaining": "Faltam {count}",
     "voiceDesignGenerateLabel": "Descrição da personagem",

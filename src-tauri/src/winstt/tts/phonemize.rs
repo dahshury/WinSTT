@@ -23,12 +23,14 @@
 //   * `runtime` — the on-demand espeakng_loader runtime-pack installer.
 //   * `resolve` — espeak shared-lib / data-home path resolution.
 //   * `vocab`   — the Kokoro v1.0 phoneme→token-id vocab table.
+//   * `misaki`  — the eSpeak→misaki respelling Kokoro-family models were trained on.
 
 #![expect(
     dead_code,
     reason = "staged TTS phonemizer surface is defined ahead of call sites and wiring"
 )]
 
+mod misaki;
 mod resolve;
 mod runtime;
 mod vocab;
@@ -42,6 +44,7 @@ use std::sync::Mutex;
 // Re-export the public surface of the sibling modules so external import paths
 // (`phonemize::resolve_espeak_lib`, `phonemize::ensure_espeak_runtime`, …) stay
 // valid with ZERO edits at the call sites.
+pub use misaki::{MisakiPhonemizer, espeak_to_misaki};
 pub use resolve::resolve_espeak_lib;
 pub use runtime::{
     ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, EspeakRuntimePack,

@@ -238,7 +238,7 @@ fn resolved_from_snapshot_dir(
             )?;
             insert_existing(&mut files, "config", dir.join("config.json"))?;
         }
-        // ARK-ASR: point `STT_BENCH_SNAPSHOT_DIR` at a checkout of `Audio8/ark-asr-*-int8-onnx`
+        // ARK-ASR: point `STT_BENCH_SNAPSHOT_DIR` at a checkout of `Edge0/ark-asr-*-int8-onnx`
         // (flat root, single published precision).
         EngineKind::ArkAsr => {
             insert_existing(

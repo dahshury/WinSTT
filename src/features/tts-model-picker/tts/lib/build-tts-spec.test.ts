@@ -86,7 +86,7 @@ describe("buildTtsSpec", () => {
 			makeModel({ cloning: "zero_shot_audio_transcript" }),
 			t,
 		).features.find((f) => f.key === "cloning");
-		// Spark needs a transcript on top of the clip — a user reading the spec
+		// Qwen3-TTS Base uses a transcript on top of the clip — a user reading the spec
 		// card must be able to tell that apart from Chatterbox's clip-only tier.
 		expect(clipOnly?.label).not.toBe(withTranscript?.label);
 	});

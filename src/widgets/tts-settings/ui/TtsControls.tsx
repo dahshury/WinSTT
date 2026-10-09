@@ -9,7 +9,7 @@ import type { InlineTagsBlocker } from "../lib/inline-tags-gate";
 import type { SavedVoice, SavedVoiceValue } from "../model/voice-library";
 import { InlineTagsField } from "./InlineTagsField";
 import { TtsPreviewButton } from "./TtsPreviewButton";
-import { VoiceDesignField } from "./VoiceDesignField";
+import { type VoiceDesignPreset, VoiceDesignField } from "./VoiceDesignField";
 import { VoiceField, type VoiceFieldClip } from "./VoiceField";
 
 export interface TtsControlsProps {
@@ -39,6 +39,9 @@ export interface TtsControlsProps {
 	/** Character budget for the design prompt, from the model's catalog row.
 	 *  `0` = unknown → no cap is enforced and the counter is hidden. */
 	voiceDesignMaxChars?: number | undefined;
+	/** Ready-made design prompts the row ships (Maya1), offered as chips in the
+	 *  editor. Empty for rows without any. */
+	voiceDesignPresets?: readonly VoiceDesignPreset[] | undefined;
 	/** Persist the voice-design prompt (the overloaded `voice` field). Only used
 	 *  when `voiceDesign` is true. */
 	onVoiceDesignPromptChange?: ((prompt: string) => void) | undefined;
@@ -68,7 +71,7 @@ export interface TtsControlsProps {
 		  })
 		| undefined;
 	/** Inline paralinguistic-tag wiring. Present ONLY when the selected engine
-	 *  ships a tag vocabulary (Orpheus / Chatterbox Turbo today) — every other
+	 *  ships a tag vocabulary (Maya1 / Chatterbox Turbo today) — every other
 	 *  engine renders no row at all, since there is no capability to offer. */
 	inlineTags?:
 		| {
@@ -121,6 +124,7 @@ export function TtsControls({
 	voiceDefault = DEFAULT_SETTINGS.tts.voice,
 	voiceDesign = false,
 	voiceDesignMaxChars = 0,
+	voiceDesignPresets,
 	onVoiceDesignPromptChange,
 	onGenerateVoiceDesignPrompt,
 	voiceInstructSupported = false,
@@ -187,6 +191,7 @@ export function TtsControls({
 							/* no-op */
 						})
 					}
+					presets={voiceDesignPresets}
 					prompt={voice}
 					t={t}
 				/>

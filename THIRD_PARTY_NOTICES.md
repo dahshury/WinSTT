@@ -325,15 +325,15 @@ Qwen3-ASR, VibeVoice, Audio8).
   adapter over an 8-layer Qwen-style decoder), ONNX-runtime bundle.
   — **CC-BY-NC-4.0 (NonCommercial — commercial use is not permitted under this
   licence; verify per the model card before any commercial use).**
-  <https://huggingface.co/Audio8/Audio8-ASR-0.1B-onnx-runtime>
+  <https://huggingface.co/Edge0/Audio8-ASR-0.1B-onnx-runtime>
 - `ark-asr-0.6b` — the larger `arkasr` sibling (Whisper-large encoder + 0.6 B
   Qwen-style decoder), int8 ONNX export. — Apache-2.0 (NOT the 0.1 B's
-  non-commercial licence). <https://huggingface.co/Audio8/ARK-ASR-0.6B>
+  non-commercial licence). <https://huggingface.co/Edge0/ARK-ASR-0.6B>
 - `ark-asr-3b` — the 3 B `arkasr` model. Upstream ships safetensors only;
   the catalog points at our own int8 ONNX export,
   <https://huggingface.co/Masterx/ark-asr-3b-onnx>, which redistributes the
   upstream weights in converted form. — Apache-2.0, inherited from
-  <https://huggingface.co/Audio8/ARK-ASR-3B> (redistribution and modification
+  <https://huggingface.co/Edge0/ARK-ASR-3B> (redistribution and modification
   permitted; NOTICE attribution retained in the export's README).
 - `audio8-asr-infinite` — Edge0 Audio8-ASR-Infinite (Voxtral-Realtime causal
   audio tower + Qwen2.5-3B decoder, native streaming zh/en with semantic
@@ -353,8 +353,15 @@ TTS models are downloaded on demand from Hugging Face. The catalogue is in
 - **Kokoro-82M** — `onnx-community/Kokoro-82M-v1.0-ONNX` (ONNX re-export of
   hexgrad/Kokoro-82M). Apache-2.0, (c) hexgrad.
   <https://huggingface.co/hexgrad/Kokoro-82M>
-- **Kitten TTS Nano** — `KittenML/kitten-tts-nano-0.2`. — Apache-2.0 (verify
-  per the model card). <https://huggingface.co/KittenML>
+- **Paradee-8M** — `sahilmahendrakar/Paradee-8M-v1.0` (the author's own int8
+  ONNX graph, downloaded unmodified; distilled from Kokoro-82M's `af_heart`
+  voice). (c) Sahil Mahendrakar. — Apache-2.0.
+  <https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.0> —
+  <https://github.com/sahilmahendrakar/paradee>
+- **Kitten TTS 0.8 (Nano / Micro / Mini)** — `KittenML/kitten-tts-nano-0.8-int8`,
+  `KittenML/kitten-tts-nano-0.8-fp32`, `KittenML/kitten-tts-micro-0.8`,
+  `KittenML/kitten-tts-mini-0.8`. (c) KittenML. — Apache-2.0 (per each model
+  card). <https://huggingface.co/KittenML>
 - **Piper voices** — `rhasspy/piper-voices`. — MIT (voices vary; per-voice
   licenses are noted in the Piper repo). <https://github.com/rhasspy/piper>
 - **Supertonic** — `Supertone/supertonic-3`. — see the model card for terms
@@ -379,14 +386,49 @@ TTS models are downloaded on demand from Hugging Face. The catalogue is in
   `neuphonic/neucodec-onnx-decoder-int8` (the neural vocoder NeuTTS-2E decodes
   through). (c) Neuphonic Limited — Apache-2.0, no revenue threshold.
   <https://huggingface.co/neuphonic/neucodec>
-- **Audio8 TTS Preview 0.1B** — `Audio8/audio8-TTS-0.1B-ONNX-INT8`, Audio8's
-  own INT8 ONNX release of `Audio8/Audio8-TTS-Preview-0.1b` (per-token slow/fast
+- **Audio8 TTS Preview 0.1B** — `Edge0/audio8-TTS-0.1B-ONNX-INT8`, Audio8's
+  own INT8 ONNX release of `Edge0/Audio8-TTS-Preview-0.1b` (per-token slow/fast
   autoregressive graphs, fp16 codec decoder, and a packaged reference voice).
   (c) Audio8 — **Apache-2.0**, no revenue threshold. The download includes the
   repository's `runtime_manifest.json` and `reference_codes.npy`; the bundled
   reference voice is Audio8's and is covered by the same license.
-  <https://huggingface.co/Audio8/audio8-TTS-0.1B-ONNX-INT8> —
+  <https://huggingface.co/Edge0/audio8-TTS-0.1B-ONNX-INT8> —
   <https://github.com/Audio8-AI/Audio8_TTS>
+- **Chatterbox (Multilingual V3 / Nano / Turbo)** — (c) Resemble AI. — MIT.
+  Multilingual V3 and Nano are WinSTT's own ONNX exports of
+  `ResembleAI/chatterbox` (`Masterx/chatterbox-multilingual-v3-ONNX`,
+  `Masterx/chatterbox-nano-ONNX`); Turbo is Resemble AI's own
+  `ResembleAI/chatterbox-turbo-ONNX`. Generated audio carries Resemble AI's
+  Perth watermark. <https://huggingface.co/ResembleAI/chatterbox> —
+  <https://github.com/resemble-ai/chatterbox>
+- **Qwen3-TTS (VoiceDesign / CustomVoice / Base)** — ONNX exports by
+  onnx-community (`onnx-community/Qwen3-TTS-12Hz-*`) of the Qwen3-TTS 12Hz
+  checkpoints, plus their tokenizer/config from `Qwen/Qwen3-TTS-12Hz-*`.
+  (c) Alibaba Cloud (Qwen). — Apache-2.0.
+  <https://huggingface.co/collections/Qwen/qwen3-tts>
+- **Maya1** — WinSTT's own ONNX export `Masterx/maya1-ONNX` of
+  `maya-research/maya1`. (c) Maya Research. — Apache-2.0. Decodes through the
+  SNAC 24 kHz codec, `onnx-community/snac_24khz-ONNX` (ONNX export of
+  `hubertsiuzdak/snac_24khz`, (c) Hubert Siuzdak — MIT).
+  <https://huggingface.co/maya-research/maya1> —
+  <https://github.com/hubertsiuzdak/snac>
+- **Magpie TTS Multilingual 357M** — WinSTT's own ONNX export
+  `Masterx/magpie-tts-multilingual-357m-ONNX` of
+  `nvidia/magpie_tts_multilingual_357m`, including its NanoCodec decoder.
+  Licensed by NVIDIA Corporation under the NVIDIA Open Model License; WinSTT
+  downloads the Agreement (`LICENSE`) and `NOTICE` alongside the weights so every
+  copy carries them. <https://huggingface.co/nvidia/magpie_tts_multilingual_357m>
+  — <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
+- **Fun-CosyVoice3 0.5B** — WinSTT's own ONNX export
+  `Masterx/Fun-CosyVoice3-0.5B-2512-ONNX` (text/speech embeddings, Qwen2 LLM,
+  flow encoder, HiFT vocoder) plus the speaker encoder, speech tokenizer and DiT
+  estimator downloaded unmodified from `FunAudioLLM/Fun-CosyVoice3-0.5B-2512`.
+  (c) Tongyi Lab, Alibaba Group (FunAudioLLM). — Apache-2.0. Built-in voices:
+  `zh-female` is upstream's `asset/zero_shot_prompt.wav` (Apache-2.0); `en-male`
+  is LibriTTS-R test-clean utterance `8224_274384_000016_000000` (Koizumi et
+  al., derived from LibriTTS / LibriSpeech) — CC BY 4.0.
+  <https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512> —
+  <https://www.openslr.org/141/>
 
 The Piper recipe is derived from `OHF-Voice/piper1-gpl` (GPL-3.0); WinSTT's
 Piper inference is a clean-room ONNX runner and does not link GPL Piper code.

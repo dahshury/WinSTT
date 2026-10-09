@@ -224,9 +224,9 @@ describe("TtsModelSelector filters", () => {
 		renderInline([
 			...MODELS,
 			model({
-				id: "spark-clone",
-				displayName: "Spark Clone",
-				engine: "spark",
+				id: "qwen3-tts-0.6b-base",
+				displayName: "Qwen3 Base Clone",
+				engine: "qwen3tts",
 				cloning: "zero_shot_audio_transcript",
 			}),
 		]);
@@ -236,7 +236,7 @@ describe("TtsModelSelector filters", () => {
 		fireEvent.click(screen.getByRole("checkbox", { name: "Voice cloning" }));
 
 		const names = visibleModelNames();
-		expect(names.some((name) => name.includes("Spark Clone"))).toBe(true);
+		expect(names.some((name) => name.includes("Qwen3 Base Clone"))).toBe(true);
 		expect(names.some((name) => name.includes("Kokoro"))).toBe(false);
 		expect(names.some((name) => name.includes("Piper"))).toBe(false);
 		expect(

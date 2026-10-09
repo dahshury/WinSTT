@@ -94,7 +94,7 @@ impl TtsDownloadManager {
             client,
             inflight: Mutex::new(HashMap::new()),
         };
-        manager.cleanup_legacy_supertonic_cache();
+        manager.cleanup_legacy_caches();
         manager
     }
 
@@ -178,16 +178,21 @@ impl TtsDownloadManager {
         crate::winstt::tts::cache_dir(&self.app, model_id)
     }
 
-    fn cleanup_legacy_supertonic_cache(&self) {
-        for legacy_id in ["supertonic-en", "supertonic"] {
+    /// Remove cache dirs no catalog row will ever load again: the pre-catalog Supertonic ids
+    /// and every RETIRED catalog id (`catalog::RETIRED_TTS_MODELS` — e.g. the ~2.4 GB
+    /// `orpheus-3b` weights once Maya1 replaced it). The settings migration already moved
+    /// the selection off them, so nothing can be reading these files.
+    fn cleanup_legacy_caches(&self) {
+        let retired = catalog::RETIRED_TTS_MODELS.iter().map(|r| r.retired);
+        for legacy_id in ["supertonic-en", "supertonic"].into_iter().chain(retired) {
             let dir = self.model_cache_dir(legacy_id);
             if !dir.exists() {
                 continue;
             }
             match std::fs::remove_dir_all(&dir) {
-                Ok(()) => log::info!("[tts] removed legacy Supertonic cache at {}", dir.display()),
+                Ok(()) => log::info!("[tts] removed retired TTS cache at {}", dir.display()),
                 Err(err) => log::warn!(
-                    "[tts] failed to remove legacy Supertonic cache at {}: {err}",
+                    "[tts] failed to remove retired TTS cache at {}: {err}",
                     dir.display()
                 ),
             }
@@ -212,22 +217,16 @@ impl TtsDownloadManager {
                 entry.hf_repo, p
             )
         };
-        // Qwen3-TTS Voice Design pulls weights + config/tokenizer from TWO repos, so
+        // Qwen3-TTS (every checkpoint) pulls weights + config/tokenizer from TWO repos, so
         // it emits fully-qualified (url, local) pairs directly (the shared `url()`
         // only knows `entry.hf_repo`). See PORT_SPEC §1 + BUILD_PLAN "Wiring".
         if matches!(entry.engine, TtsEngineId::Qwen3Tts) {
             return Self::qwen3_tts_manifest(entry, quant, dir);
         }
-        // Orpheus pulls the LLM from `entry.hf_repo` and the SNAC vocoder from a SECOND repo
+        // Maya1 pulls the LLM from `entry.hf_repo` and the SNAC vocoder from a SECOND repo
         // (onnx-community/snac_24khz-ONNX), so it emits fully-qualified (url, local) pairs.
-        if matches!(entry.engine, TtsEngineId::Orpheus) {
-            return Self::orpheus_manifest(entry, dir);
-        }
-        // Spark pulls the LLM/vocoder/tokenizer from `entry.hf_repo` (Fhrozen) and the zero-shot
-        // CLONING graphs from a SECOND repo (DgDev91/SparkTTS-ONNX), so it also emits fully-qualified
-        // pairs. The 4 cloning graphs land flat in the cache dir for `SparkEngine::load_cloning`.
-        if matches!(entry.engine, TtsEngineId::Spark) {
-            return Self::spark_manifest(entry, dir);
+        if matches!(entry.engine, TtsEngineId::Maya1) {
+            return Self::maya1_manifest(entry, quant, dir);
         }
         // NeuTTS-2e pulls the backbone from `entry.hf_repo` and the NeuCodec decoder from one
         // of TWO first-party repos (one per precision), so it emits fully-qualified pairs.
@@ -240,6 +239,11 @@ impl TtsDownloadManager {
         if matches!(entry.engine, TtsEngineId::OmniVoice) {
             return Self::omnivoice_manifest(dir);
         }
+        // CosyVoice3 spans TWO repos: our export (LLM + embeddings + flow encoder + HiFT +
+        // bundled voices) and upstream FunAudioLLM, whose own ONNX graphs are used as-is.
+        if matches!(entry.engine, TtsEngineId::CosyVoice3) {
+            return Self::cosyvoice3_manifest(entry, quant, dir);
+        }
         // Audio8 0.1B is one repo but a NON-FLAT layout (tokenizer/ subdir) plus two
         // non-graph runtime files, so it emits fully-qualified pairs of its own.
         if entry.id == "audio8-tts-0.1b" {
@@ -248,16 +252,29 @@ impl TtsDownloadManager {
         // (hf_path, local_relative)
         let pairs: Vec<(String, String)> = match entry.engine {
             TtsEngineId::Kitten => {
-                // The graph filename differs per Kitten model (v0.1 vs v0.2); the
-                // voices.npz + config.json names are shared. Read the graph name from
-                // the catalog id so the right model file is fetched from its repo.
-                let graph = catalog::kitten_model_file(entry.id);
-                vec![
-                    (graph.to_string(), graph.to_string()),
-                    ("voices.npz".into(), "voices.npz".into()),
-                    ("config.json".into(), "config.json".into()),
+                // KittenML publishes nano's int8 and fp32 rungs as SEPARATE repos with the
+                // same graph filename, so the files come from the rung's own repo and the
+                // graph lands under a quant-suffixed name (both rungs share one cache
+                // dir). voices.npz + config.json are byte-identical across nano's two
+                // repos, so they are shared. See `catalog::kitten_files`.
+                let files = catalog::kitten_files(entry.id, quant);
+                let url =
+                    |p: &str| format!("https://huggingface.co/{}/resolve/main/{p}", files.repo);
+                return [
+                    (files.remote_graph, files.local_graph),
+                    ("voices.npz", "voices.npz"),
+                    ("config.json", "config.json"),
                 ]
+                .into_iter()
+                .map(|(remote, local)| (url(remote), dir.join(local)))
+                .collect();
             }
+            // Paradee: one self-contained graph (its vocab IS Kokoro's, compiled in), the
+            // int8 rung its publisher recommends ("the fp32 sounds the same").
+            TtsEngineId::Paradee => vec![(
+                format!("onnx/{}", crate::winstt::tts::paradee::PARADEE_GRAPH),
+                format!("onnx/{}", crate::winstt::tts::paradee::PARADEE_GRAPH),
+            )],
             TtsEngineId::Piper => {
                 // Piper is unlike the other engines: each "voice" is its OWN full VITS
                 // model (~30-90 MB), and the curated set totals ~3.4 GB — far too large
@@ -342,15 +359,26 @@ impl TtsDownloadManager {
             .iter()
             .map(|p| ((*p).to_string(), (*p).to_string()))
             .collect(),
+            // Magpie: one repo. The quant picks the three step graphs; the NanoCodec decoder,
+            // the embedding tables, the tokenizer config + G2P dictionaries and the NVIDIA
+            // Open Model License / NOTICE (redistribution condition) are shared by both rungs.
+            TtsEngineId::Magpie => {
+                let set = crate::winstt::tts::magpie::magpie_graph_set(quant);
+                [set.text_encoder, set.decoder_step, set.local_step]
+                    .iter()
+                    .chain(crate::winstt::tts::magpie::MAGPIE_SHARED_FILES)
+                    .map(|p| ((*p).to_string(), (*p).to_string()))
+                    .collect()
+            }
             // Chatterbox emits fully-qualified pairs: only the multilingual repo publishes
             // a `default_voice.wav`, so turbo/nano borrow it from there (second repo).
             TtsEngineId::Chatterbox => return Self::chatterbox_manifest(entry, quant, dir),
             // Handled above via early return (two-repo / multi-repo, fully-qualified URLs).
             TtsEngineId::Qwen3Tts => unreachable!("qwen3-tts manifest is built above"),
-            TtsEngineId::Orpheus => unreachable!("orpheus manifest is built above"),
-            TtsEngineId::Spark => unreachable!("spark manifest is built above"),
+            TtsEngineId::Maya1 => unreachable!("maya1 manifest is built above"),
             TtsEngineId::NeuTts => unreachable!("neutts manifest is built above"),
             TtsEngineId::OmniVoice => unreachable!("omnivoice manifest is built above"),
+            TtsEngineId::CosyVoice3 => unreachable!("cosyvoice3 manifest is built above"),
         };
         pairs
             .into_iter()
@@ -365,7 +393,7 @@ impl TtsDownloadManager {
     /// clip. `registration/codec_encoder_fp16.onnx` (+414 MB) is skipped: it only exists to
     /// encode NEW reference clips, and this row does not expose cloning.
     fn audio8_01_manifest(dir: &Path) -> Vec<(String, PathBuf)> {
-        const REPO: &str = "Audio8/audio8-TTS-0.1B-ONNX-INT8";
+        const REPO: &str = "Edge0/audio8-TTS-0.1B-ONNX-INT8";
         AUDIO8_01_FILES
             .iter()
             .map(|path| {
@@ -406,8 +434,9 @@ impl TtsDownloadManager {
         }
         pairs.push((repo_url("tokenizer.json"), dir.join("tokenizer.json")));
         // The multilingual export ships neither the HF config JSONs nor a GPT-2 tokenizer
-        // config; turbo/nano do. Guard so the older entry's file set is unchanged.
-        if entry.id != "chatterbox-multilingual" {
+        // config; turbo/nano do.
+        let multilingual = entry.id == "chatterbox-multilingual-v3";
+        if !multilingual {
             for f in [
                 "tokenizer_config.json",
                 "config.json",
@@ -417,14 +446,19 @@ impl TtsDownloadManager {
                 pairs.push((repo_url(f), dir.join(f)));
             }
         }
-        pairs.push((
-            "https://huggingface.co/onnx-community/chatterbox-multilingual-ONNX/resolve/main/default_voice.wav".to_string(),
-            dir.join("default_voice.wav"),
-        ));
+        // Our two exports publish the default voice themselves; ResembleAI's Turbo repo
+        // publishes none, so Turbo keeps fetching the byte-identical clip from the
+        // onnx-community multilingual repo it always used.
+        let voice_url = if entry.id == "chatterbox-turbo" {
+            "https://huggingface.co/onnx-community/chatterbox-multilingual-ONNX/resolve/main/default_voice.wav".to_string()
+        } else {
+            repo_url("default_voice.wav")
+        };
+        pairs.push((voice_url, dir.join("default_voice.wav")));
         pairs
     }
 
-    /// Qwen3-TTS Voice Design manifest (PORT_SPEC §1 + BUILD_PLAN "Wiring"):
+    /// Qwen3-TTS manifest (every checkpoint) (PORT_SPEC §1 + BUILD_PLAN "Wiring"):
     ///   - ONNX weights from `entry.hf_repo` (onnx-community) under the quant subdir
     ///     `cpu_int4|cpu_fp16|cpu_fp32` at repo ROOT → local `<subdir>/<file>`.
     ///     int4 = 6 single-file `.onnx` + `manifest.json`; fp16/fp32 ADD the
@@ -433,10 +467,13 @@ impl TtsDownloadManager {
     ///     (config.json, generation_config.json, tokenizer_config.json, vocab.json,
     ///     merges.txt).
     ///
-    /// `tok_encoder.onnx` is deliberately NOT fetched for either checkpoint: it is the
-    /// audio tokenizer used only by the base (clone-from-clip) path, which the ONNX
-    /// pipeline here never runs — fetching it would add 225 MB of dead weight and would
-    /// make the aggregate progress bar stall short of 100 %.
+    /// The two clone-from-clip graphs — `tok_encoder.onnx` (reference audio → codec
+    /// codes) and `speaker_encoder.onnx` (reference audio → x-vector) — are fetched ONLY
+    /// for the Base rows (`cloning` supported): VoiceDesign/CustomVoice never run them, and
+    /// CustomVoice/VoiceDesign do not even publish a speaker encoder. Fetching them there
+    /// would add 225 MB of dead weight and stall the aggregate progress bar short of 100 %.
+    /// The Base repos also publish a no-cache `talker.onnx`, which is skipped everywhere
+    /// (the engine only runs `talker_cache`).
     fn qwen3_tts_manifest(
         entry: &TtsModelEntry,
         quant: &str,
@@ -466,7 +503,13 @@ impl TtsDownloadManager {
 
         let mut pairs: Vec<(String, PathBuf)> = Vec::new();
 
-        // Six generation sub-models + the wiring manifest, under the quant subdir.
+        // Six generation sub-models (+ the two reference encoders on a Base row) + the
+        // wiring manifest, under the quant subdir.
+        let clone_graphs: &[&str] = if entry.cloning.supports_cloning() {
+            &["tok_encoder.onnx", "speaker_encoder.onnx"]
+        } else {
+            &[]
+        };
         for onnx in [
             "text_embed.onnx",
             "codec_embed.onnx",
@@ -474,7 +517,10 @@ impl TtsDownloadManager {
             "code_predictor.onnx",
             "residual_embed.onnx",
             "tok_decoder.onnx",
-        ] {
+        ]
+        .iter()
+        .chain(clone_graphs)
+        {
             pairs.push((
                 weights_url(&format!("{subdir}/{onnx}")),
                 dir.join(subdir).join(onnx),
@@ -485,9 +531,10 @@ impl TtsDownloadManager {
         // not a blanket "not int4" rule: the 1.7B has it for fp16 AND fp32, the 0.6B only
         // for fp32 (its fp16 talker is a single 892 MB file). Fetching a sidecar that does
         // not exist 404s the whole download, so this is keyed off the real file trees.
-        let has_talker_sidecar = match entry.id {
-            "qwen3-tts-0.6b-customvoice" => subdir == "cpu_fp32",
-            _ => subdir != "cpu_int4",
+        let has_talker_sidecar = if entry.id.starts_with("qwen3-tts-0.6b-") {
+            subdir == "cpu_fp32"
+        } else {
+            subdir != "cpu_int4"
         };
         if has_talker_sidecar {
             let sidecar = "talker_cache.onnx.data";
@@ -515,11 +562,14 @@ impl TtsDownloadManager {
         pairs
     }
 
-    /// Orpheus manifest: q4 Llama (+ external data shards) + tokenizer from `entry.hf_repo`, and the
-    /// SNAC 24 kHz vocoder decoder from the SEPARATE `onnx-community/snac_24khz-ONNX` repo. Local
-    /// layout: `onnx/` (LLM, so `.onnx_data` sidecars resolve) + `snac/decoder_model.onnx` + root
-    /// `tokenizer.json` — matching `OrpheusLocalEngine`'s fixed load paths.
-    fn orpheus_manifest(entry: &TtsModelEntry, dir: &Path) -> Vec<(String, PathBuf)> {
+    /// Maya1 manifest: the selected rung's decoder graph (+ its external-data shard) and the
+    /// tokenizer from `entry.hf_repo`, and the SNAC 24 kHz vocoder decoder from the SEPARATE
+    /// `onnx-community/snac_24khz-ONNX` repo (Maya1 decodes with the same
+    /// `hubertsiuzdak/snac_24khz` codec that repo exports). Local layout: `onnx/` (LLM, so the
+    /// `.onnx_data` sidecar resolves) + `snac/decoder_model.onnx` + root `tokenizer.json` —
+    /// matching `Maya1LocalEngine`'s load paths. Graph names come from
+    /// [`catalog::maya1_graph_files`], the same mapping the engine loads through.
+    fn maya1_manifest(entry: &TtsModelEntry, quant: &str, dir: &Path) -> Vec<(String, PathBuf)> {
         let llm_url = |p: &str| {
             format!(
                 "https://huggingface.co/{}/resolve/main/{}",
@@ -529,14 +579,10 @@ impl TtsDownloadManager {
         let snac_url = |p: &str| {
             format!("https://huggingface.co/onnx-community/snac_24khz-ONNX/resolve/main/{p}")
         };
-        let mut pairs: Vec<(String, PathBuf)> = Vec::new();
-        for f in [
-            "onnx/model_q4.onnx",
-            "onnx/model_q4.onnx_data",
-            "onnx/model_q4.onnx_data_1",
-        ] {
-            pairs.push((llm_url(f), dir.join(f)));
-        }
+        let mut pairs: Vec<(String, PathBuf)> = catalog::maya1_graph_files(quant)
+            .iter()
+            .map(|f| (llm_url(f), dir.join(f)))
+            .collect();
         pairs.push((llm_url("tokenizer.json"), dir.join("tokenizer.json")));
         pairs.push((
             snac_url("onnx/decoder_model.onnx"),
@@ -626,38 +672,35 @@ impl TtsDownloadManager {
         pairs
     }
 
-    /// Spark manifest: Qwen0.5B LLM + BiCodec vocoder + tokenizer from `entry.hf_repo` (Fhrozen),
-    /// plus the 4 zero-shot CLONING graphs from `DgDev91/SparkTTS-ONNX` (wav2vec2 fp16 + mel +
-    /// speaker + encoder-quantizer) flattened into the cache dir for `SparkEngine::load_cloning`.
-    fn spark_manifest(entry: &TtsModelEntry, dir: &Path) -> Vec<(String, PathBuf)> {
-        let base_url = |p: &str| {
+    /// CosyVoice3 manifest: the shared export files + the selected quant's LLM graph and its
+    /// `.data` sidecar from `entry.hf_repo`, plus CAM++ / the speech tokenizer / the DiT
+    /// estimator straight from upstream `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` (not
+    /// republished). Every file lands flat (voices under `voices/`) for
+    /// `CosyVoice3Engine::load`.
+    fn cosyvoice3_manifest(
+        entry: &TtsModelEntry,
+        quant: &str,
+        dir: &Path,
+    ) -> Vec<(String, PathBuf)> {
+        let export = |p: &str| format!("https://huggingface.co/{}/resolve/main/{p}", entry.hf_repo);
+        let upstream = |p: &str| {
             format!(
-                "https://huggingface.co/{}/resolve/main/{}",
-                entry.hf_repo, p
+                "https://huggingface.co/{}/resolve/main/{p}",
+                catalog::COSYVOICE3_UPSTREAM_REPO
             )
         };
-        let clone_url =
-            |p: &str| format!("https://huggingface.co/DgDev91/SparkTTS-ONNX/resolve/main/{p}");
-        let mut pairs: Vec<(String, PathBuf)> = vec![
-            (
-                base_url("LLM/onnx/model_q4.onnx"),
-                dir.join("model_q4.onnx"),
-            ),
-            (base_url("bicodec.onnx"), dir.join("bicodec.onnx")),
-            (base_url("LLM/tokenizer.json"), dir.join("tokenizer.json")),
-            (
-                base_url("LLM/tokenizer_config.json"),
-                dir.join("tokenizer_config.json"),
-            ),
-        ];
-        for f in [
-            "wav2vec2_model_fp16.onnx",
-            "mel_spectrogram.onnx",
-            "speaker_encoder_tokenizer.onnx",
-            "bicodec_encoder_quantizer.onnx",
-        ] {
-            pairs.push((clone_url(f), dir.join(f)));
-        }
+        let llm = catalog::cosyvoice3_graph_set(quant).llm;
+        let llm_data = format!("{llm}.data");
+        let mut pairs: Vec<(String, PathBuf)> = catalog::COSYVOICE3_EXPORT_FILES
+            .iter()
+            .chain([llm, llm_data.as_str()].iter())
+            .map(|p| (export(p), dir.join(p)))
+            .collect();
+        pairs.extend(
+            catalog::COSYVOICE3_UPSTREAM_FILES
+                .iter()
+                .map(|p| (upstream(p), dir.join(p))),
+        );
         pairs
     }
 
@@ -1018,7 +1061,7 @@ mod tests {
     /// The true upstream size of every blob the TTS manifests fetch, keyed by (HF repo,
     /// repo-relative path). Read from `https://huggingface.co/api/models/<repo>?blobs=true`
     /// on 2026-07-25 and, for every row this machine has cached
-    /// (`chatterbox-multilingual`, `kokoro-82m`, `orpheus-3b`, `spark-tts-0.5b`),
+    /// (`chatterbox-multilingual`, `kokoro-82m`, `orpheus-3b` — rows since retired),
     /// cross-checked byte for byte against the files on disk.
     ///
     /// This table — not the catalog — is the ground truth: `TtsQuant::size_bytes` is a
@@ -1031,27 +1074,45 @@ mod tests {
     /// One row per file, kept off rustfmt so the table reads as data.
     #[rustfmt::skip]
     const BLOB_BYTES: &[(&str, &str, u64)] = &[
-        // Audio8/audio8-TTS-0.1B-ONNX-INT8 (blobs API, 2026-08-30)
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "runtime_manifest.json", 1_424),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "slow_ar_int8.onnx", 4_820_700),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "slow_ar_int8.onnx.data", 133_471_232),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "fast_ar_int8.onnx", 511_306),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "fast_ar_int8.onnx.data", 36_718_592),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "codec_decoder_fp16.onnx", 594_319),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "codec_decoder_fp16.onnx.data", 260_741_440),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "tokenizer/tokenizer.json", 5_852_397),
-        ("Audio8/audio8-TTS-0.1B-ONNX-INT8", "reference_codes.npy", 8_928),
+        // Masterx/Fun-CosyVoice3-0.5B-2512-ONNX (our export; re-listed after upload)
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "tokenizer.json", 10_573_953),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "text_embedding_fp16.onnx", 272_269_531),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "speech_embedding.onnx", 24_231_610),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "flow_encoder.onnx", 4_468_501),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "hift.onnx", 83_437_283),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "voices/zh-female.wav", 334_138),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "voices/en-male.wav", 418_604),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "llm.onnx", 1_011_491),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "llm.onnx.data", 1_455_799_296),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "llm_int8.onnx", 3_155_420),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "llm_int8.onnx.data", 364_146_048),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "llm_q4.onnx", 1_052_253),
+        ("Masterx/Fun-CosyVoice3-0.5B-2512-ONNX", "llm_q4.onnx.data", 227_689_392),
+        // FunAudioLLM/Fun-CosyVoice3-0.5B-2512 (upstream tree API, 2026-10-08)
+        ("FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "campplus.onnx", 28_303_423),
+        ("FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "speech_tokenizer_v3.onnx", 969_451_503),
+        ("FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "flow.decoder.estimator.fp32.onnx", 1_326_216_933),
+        // Edge0/audio8-TTS-0.1B-ONNX-INT8 (blobs API, 2026-08-30)
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "runtime_manifest.json", 1_424),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "slow_ar_int8.onnx", 4_820_700),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "slow_ar_int8.onnx.data", 133_471_232),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "fast_ar_int8.onnx", 511_306),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "fast_ar_int8.onnx.data", 36_718_592),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "codec_decoder_fp16.onnx", 594_319),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "codec_decoder_fp16.onnx.data", 260_741_440),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "tokenizer/tokenizer.json", 5_852_397),
+        ("Edge0/audio8-TTS-0.1B-ONNX-INT8", "reference_codes.npy", 8_928),
 
-        // Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "slow_ar_int4.onnx", 900_218),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "slow_ar_int4.onnx.data", 290_267_090),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "fast_ar_int4.onnx", 156_318),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "fast_ar_int4.onnx.data", 35_055_104),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "codec_decoder_fp16.onnx", 594_319),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "codec_decoder_fp16.onnx.data", 260_741_440),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "registration/codec_encoder_fp16.onnx", 940_787),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "registration/codec_encoder_fp16.onnx.data", 414_425_088),
-        ("Audio8/Audio8-TTS-Preview-0.6B-ONNX-INT4", "tokenizer/tokenizer.json", 12_217_872),
+        // Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "slow_ar_int4.onnx", 900_218),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "slow_ar_int4.onnx.data", 290_267_090),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "fast_ar_int4.onnx", 156_318),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "fast_ar_int4.onnx.data", 35_055_104),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "codec_decoder_fp16.onnx", 594_319),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "codec_decoder_fp16.onnx.data", 260_741_440),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "registration/codec_encoder_fp16.onnx", 940_787),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "registration/codec_encoder_fp16.onnx.data", 414_425_088),
+        ("Edge0/Audio8-TTS-Preview-0.6B-ONNX-INT4", "tokenizer/tokenizer.json", 12_217_872),
 
         // Danny-Dasilva/neutts-2e-onnx
         ("Danny-Dasilva/neutts-2e-onnx", "config.json", 1_652),
@@ -1060,25 +1121,91 @@ mod tests {
         ("Danny-Dasilva/neutts-2e-onnx", "model.onnx", 1_390_321_808),
         ("Danny-Dasilva/neutts-2e-onnx", "tokenizer.json", 24_063_947),
 
-        // DgDev91/SparkTTS-ONNX
-        ("DgDev91/SparkTTS-ONNX", "bicodec_encoder_quantizer.onnx", 122_407_119),
-        ("DgDev91/SparkTTS-ONNX", "mel_spectrogram.onnx", 4_500_887),
-        ("DgDev91/SparkTTS-ONNX", "speaker_encoder_tokenizer.onnx", 23_852_747),
-        ("DgDev91/SparkTTS-ONNX", "wav2vec2_model_fp16.onnx", 631_289_801),
-
-        // Fhrozen/Spark-TTS-0.5B-ONNX
-        ("Fhrozen/Spark-TTS-0.5B-ONNX", "bicodec.onnx", 385_417_099),
-        ("Fhrozen/Spark-TTS-0.5B-ONNX", "LLM/onnx/model_q4.onnx", 819_707_255),
-        ("Fhrozen/Spark-TTS-0.5B-ONNX", "LLM/tokenizer_config.json", 2_577_032),
-        ("Fhrozen/Spark-TTS-0.5B-ONNX", "LLM/tokenizer.json", 14_129_172),
-
         // k2-fsa/OmniVoice
         ("k2-fsa/OmniVoice", "tokenizer.json", 11_423_986),
 
-        // KittenML/kitten-tts-nano-0.2
-        ("KittenML/kitten-tts-nano-0.2", "config.json", 177),
-        ("KittenML/kitten-tts-nano-0.2", "kitten_tts_nano_v0_2.onnx", 23_804_156),
-        ("KittenML/kitten-tts-nano-0.2", "voices.npz", 10_294),
+        // KittenML/kitten-tts-micro-0.8
+        ("KittenML/kitten-tts-micro-0.8", "config.json", 473),
+        ("KittenML/kitten-tts-micro-0.8", "kitten_tts_micro_v0_8.onnx", 41_384_970),
+        ("KittenML/kitten-tts-micro-0.8", "voices.npz", 3_278_902),
+
+        // KittenML/kitten-tts-mini-0.8
+        ("KittenML/kitten-tts-mini-0.8", "config.json", 470),
+        ("KittenML/kitten-tts-mini-0.8", "kitten_tts_mini_v0_8.onnx", 78_268_016),
+        ("KittenML/kitten-tts-mini-0.8", "voices.npz", 3_278_902),
+
+        // KittenML/kitten-tts-nano-0.8-fp32
+        ("KittenML/kitten-tts-nano-0.8-fp32", "config.json", 688),
+        ("KittenML/kitten-tts-nano-0.8-fp32", "kitten_tts_nano_v0_8.onnx", 56_767_095),
+        ("KittenML/kitten-tts-nano-0.8-fp32", "voices.npz", 3_278_902),
+
+        // KittenML/kitten-tts-nano-0.8-int8
+        ("KittenML/kitten-tts-nano-0.8-int8", "config.json", 688),
+        ("KittenML/kitten-tts-nano-0.8-int8", "kitten_tts_nano_v0_8.onnx", 24_369_971),
+        ("KittenML/kitten-tts-nano-0.8-int8", "voices.npz", 3_278_902),
+
+        // Masterx/magpie-tts-multilingual-357m-ONNX (local export sizes, verified against the uploaded repo)
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "LICENSE", 10_494),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "NOTICE", 67),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "audio_embeddings.bin", 99_483_648),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "codec_decoder.onnx", 128_130_025),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "decoder_step.onnx", 455_444_206),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "decoder_step_int8.onnx", 119_720_820),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "local_step.onnx", 156_330_855),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "local_step_int8.onnx", 113_947_162),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "speaker_context.bin", 3_333_120),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "text_encoder.onnx", 439_566_205),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "text_encoder_int8.onnx", 390_242_041),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/de_nv230119.dict", 4_313_907),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/de_nv230119.heteronym", 44_566),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/en_heteronyms-052722.txt", 1_606),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/en_ipa_cmudict-0.7b_nv23.01.txt", 3_093_097),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/es_ES_nv230301.dict", 2_230_910),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/hi_phoneme_merged_phoneme_dict.dict", 7_319_864),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/magpie_tokenizers.json", 16_139),
+        ("Masterx/magpie-tts-multilingual-357m-ONNX", "tokenizer/pt_br_prondict-v1.0.dict", 3_580_284),
+
+        // Masterx/chatterbox-multilingual-v3-ONNX
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "default_voice.wav", 714_320),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/conditional_decoder.onnx", 6_371_670),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/conditional_decoder.onnx_data", 533_970_816),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/embed_tokens.onnx", 17_616),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/embed_tokens.onnx_data", 68_808_704),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/language_model_q4.onnx", 228_633),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/language_model_q4.onnx_data", 353_621_248),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/speech_encoder.onnx", 1_204_600),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "onnx/speech_encoder.onnx_data", 591_274_880),
+        ("Masterx/chatterbox-multilingual-v3-ONNX", "tokenizer.json", 72_765),
+
+        // Masterx/chatterbox-nano-ONNX
+        ("Masterx/chatterbox-nano-ONNX", "config.json", 1_234),
+        ("Masterx/chatterbox-nano-ONNX", "default_voice.wav", 714_320),
+        ("Masterx/chatterbox-nano-ONNX", "generation_config.json", 55),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/conditional_decoder_q4.onnx", 2_179_022),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/conditional_decoder_q4.onnx_data", 246_397_384),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/conditional_decoder_q4f16.onnx", 2_394_210),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/conditional_decoder_q4f16.onnx_data", 162_996_136),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/embed_tokens_q4.onnx", 3_197),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/embed_tokens_q4.onnx_data", 27_964_788),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/language_model_q4.onnx", 108_402),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/language_model_q4.onnx_data", 83_330_000),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/language_model_q4f16.onnx", 109_622),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/language_model_q4f16.onnx_data", 64_861_690),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/speech_encoder_q4.onnx", 1_105_930),
+        ("Masterx/chatterbox-nano-ONNX", "onnx/speech_encoder_q4.onnx_data", 130_857_924),
+        ("Masterx/chatterbox-nano-ONNX", "preprocessor_config.json", 130),
+        ("Masterx/chatterbox-nano-ONNX", "tokenizer.json", 3_562_272),
+        ("Masterx/chatterbox-nano-ONNX", "tokenizer_config.json", 414),
+
+        // Masterx/maya1-ONNX (our export; sizes of the uploaded files)
+        ("Masterx/maya1-ONNX", "onnx/model_q4.onnx", 247_281),
+        ("Masterx/maya1-ONNX", "onnx/model_q4.onnx_data", 1_992_945_664),
+        ("Masterx/maya1-ONNX", "onnx/model_q4.onnx_data_1", 1_697_603_584),
+        ("Masterx/maya1-ONNX", "onnx/model_q8.onnx", 250_447),
+        ("Masterx/maya1-ONNX", "onnx/model_q8.onnx_data", 1_992_404_992),
+        ("Masterx/maya1-ONNX", "onnx/model_q8.onnx_data_1", 1_978_662_912),
+        ("Masterx/maya1-ONNX", "onnx/model_q8.onnx_data_2", 877_599_744),
+        ("Masterx/maya1-ONNX", "tokenizer.json", 22_853_258),
 
         // neuphonic/neucodec-onnx-decoder
         ("neuphonic/neucodec-onnx-decoder", "model.onnx", 782_565_930),
@@ -1088,15 +1215,6 @@ mod tests {
 
         // onnx-community/chatterbox-multilingual-ONNX
         ("onnx-community/chatterbox-multilingual-ONNX", "default_voice.wav", 714_320),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/conditional_decoder.onnx", 6_350_448),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/conditional_decoder.onnx_data", 533_970_816),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/embed_tokens.onnx", 13_286),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/embed_tokens.onnx_data", 68_390_912),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/language_model_q4.onnx", 227_911),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/language_model_q4.onnx_data", 353_621_248),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/speech_encoder.onnx", 1_184_608),
-        ("onnx-community/chatterbox-multilingual-ONNX", "onnx/speech_encoder.onnx_data", 591_274_880),
-        ("onnx-community/chatterbox-multilingual-ONNX", "tokenizer.json", 71_798),
 
         // onnx-community/Kokoro-82M-v1.0-ONNX
         ("onnx-community/Kokoro-82M-v1.0-ONNX", "onnx/model_fp16.onnx", 163_234_740),
@@ -1107,11 +1225,35 @@ mod tests {
         ("onnx-community/OmniVoice-Onnx", "audio_tokenizer/quantizer_encoder.onnx", 12_131_293),
         ("onnx-community/OmniVoice-Onnx", "audio_tokenizer/semantic_encoder.onnx", 436_736_856),
 
-        // onnx-community/orpheus-3b-0.1-ft-ONNX
-        ("onnx-community/orpheus-3b-0.1-ft-ONNX", "onnx/model_q4.onnx", 281_966),
-        ("onnx-community/orpheus-3b-0.1-ft-ONNX", "onnx/model_q4.onnx_data", 2_085_583_936),
-        ("onnx-community/orpheus-3b-0.1-ft-ONNX", "onnx/model_q4.onnx_data_1", 337_790_976),
-        ("onnx-community/orpheus-3b-0.1-ft-ONNX", "tokenizer.json", 15_722_697),
+        // onnx-community/Qwen3-TTS-12Hz-0.6B-Base
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/code_predictor.onnx", 285_552_428),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/codec_embed.onnx", 6_291_797),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/manifest.json", 800),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/residual_embed.onnx", 69_215_780),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/speaker_encoder.onnx", 36_104_723),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/talker_cache.onnx", 891_756_744),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/text_embed.onnx", 634_920_759),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/tok_decoder.onnx", 458_268_831),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp16/tok_encoder.onnx", 225_554_101),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/code_predictor.onnx", 570_723_513),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/codec_embed.onnx", 12_583_206),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/manifest.json", 800),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/residual_embed.onnx", 138_419_704),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/speaker_encoder.onnx", 36_104_723),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/talker_cache.onnx", 4_551_308),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/talker_cache.onnx.data", 1_774_452_736),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/text_embed.onnx", 1_269_839_332),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/tok_decoder.onnx", 458_268_831),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_fp32/tok_encoder.onnx", 225_554_101),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/code_predictor.onnx", 91_668_866),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/codec_embed.onnx", 2_015_779),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/manifest.json", 794),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/residual_embed.onnx", 22_179_258),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/speaker_encoder.onnx", 36_104_723),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/talker_cache.onnx", 288_573_853),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/text_embed.onnx", 203_384_915),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/tok_decoder.onnx", 458_268_831),
+        ("onnx-community/Qwen3-TTS-12Hz-0.6B-Base", "cpu_int4/tok_encoder.onnx", 225_554_101),
 
         // onnx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice
         ("onnx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice", "cpu_fp16/code_predictor.onnx", 285_552_428),
@@ -1136,6 +1278,37 @@ mod tests {
         ("onnx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice", "cpu_int4/talker_cache.onnx", 288_573_853),
         ("onnx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice", "cpu_int4/text_embed.onnx", 203_384_915),
         ("onnx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice", "cpu_int4/tok_decoder.onnx", 458_268_831),
+
+        // onnx-community/Qwen3-TTS-12Hz-1.7B-Base
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/code_predictor.onnx", 354_761_116),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/codec_embed.onnx", 12_583_253),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/manifest.json", 800),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/residual_embed.onnx", 138_421_796),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/speaker_encoder.onnx", 48_691_731),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/talker_cache.onnx", 4_562_040),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/talker_cache.onnx.data", 2_831_388_672),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/text_embed.onnx", 639_117_111),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/tok_decoder.onnx", 458_268_831),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp16/tok_encoder.onnx", 225_554_101),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/code_predictor.onnx", 709_140_126),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/codec_embed.onnx", 25_166_118),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/manifest.json", 800),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/residual_embed.onnx", 276_831_737),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/speaker_encoder.onnx", 48_691_731),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/talker_cache.onnx", 4_551_434),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/talker_cache.onnx.data", 5_662_834_688),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/text_embed.onnx", 1_278_232_036),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/tok_decoder.onnx", 458_268_831),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_fp32/tok_encoder.onnx", 225_554_101),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/code_predictor.onnx", 113_841_219),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/codec_embed.onnx", 4_031_014),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/manifest.json", 800),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/residual_embed.onnx", 44_346_842),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/speaker_encoder.onnx", 48_691_731),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/talker_cache.onnx", 911_514_323),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/text_embed.onnx", 204_732_501),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/tok_decoder.onnx", 458_268_831),
+        ("onnx-community/Qwen3-TTS-12Hz-1.7B-Base", "cpu_int4/tok_encoder.onnx", 225_554_101),
 
         // onnx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign
         ("onnx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "cpu_fp16/code_predictor.onnx", 354_761_116),
@@ -1165,20 +1338,12 @@ mod tests {
         // onnx-community/snac_24khz-ONNX
         ("onnx-community/snac_24khz-ONNX", "onnx/decoder_model.onnx", 52_600_822),
 
-        // owensong/chatterbox-nano-ONNX
-        ("owensong/chatterbox-nano-ONNX", "config.json", 1_206),
-        ("owensong/chatterbox-nano-ONNX", "generation_config.json", 55),
-        ("owensong/chatterbox-nano-ONNX", "onnx/conditional_decoder_q4.onnx", 2_179_022),
-        ("owensong/chatterbox-nano-ONNX", "onnx/conditional_decoder_q4.onnx_data", 246_397_384),
-        ("owensong/chatterbox-nano-ONNX", "onnx/embed_tokens_fp16.onnx", 1_520),
-        ("owensong/chatterbox-nano-ONNX", "onnx/embed_tokens_fp16.onnx_data", 87_304_704),
-        ("owensong/chatterbox-nano-ONNX", "onnx/language_model_q4f16.onnx", 522_078),
-        ("owensong/chatterbox-nano-ONNX", "onnx/language_model_q4f16.onnx_data", 55_911_658),
-        ("owensong/chatterbox-nano-ONNX", "onnx/speech_encoder_q4f16.onnx", 1_219_352),
-        ("owensong/chatterbox-nano-ONNX", "onnx/speech_encoder_q4f16.onnx_data", 176_273_652),
-        ("owensong/chatterbox-nano-ONNX", "preprocessor_config.json", 130),
-        ("owensong/chatterbox-nano-ONNX", "tokenizer_config.json", 414),
-        ("owensong/chatterbox-nano-ONNX", "tokenizer.json", 3_562_272),
+        // Qwen/Qwen3-TTS-12Hz-0.6B-Base
+        ("Qwen/Qwen3-TTS-12Hz-0.6B-Base", "config.json", 4_494),
+        ("Qwen/Qwen3-TTS-12Hz-0.6B-Base", "generation_config.json", 245),
+        ("Qwen/Qwen3-TTS-12Hz-0.6B-Base", "merges.txt", 1_671_839),
+        ("Qwen/Qwen3-TTS-12Hz-0.6B-Base", "tokenizer_config.json", 7_344),
+        ("Qwen/Qwen3-TTS-12Hz-0.6B-Base", "vocab.json", 2_776_833),
 
         // Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
         ("Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "config.json", 4_908),
@@ -1186,6 +1351,13 @@ mod tests {
         ("Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "merges.txt", 1_671_839),
         ("Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "tokenizer_config.json", 7_344),
         ("Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "vocab.json", 2_776_833),
+
+        // Qwen/Qwen3-TTS-12Hz-1.7B-Base
+        ("Qwen/Qwen3-TTS-12Hz-1.7B-Base", "config.json", 4_494),
+        ("Qwen/Qwen3-TTS-12Hz-1.7B-Base", "generation_config.json", 245),
+        ("Qwen/Qwen3-TTS-12Hz-1.7B-Base", "merges.txt", 1_671_839),
+        ("Qwen/Qwen3-TTS-12Hz-1.7B-Base", "tokenizer_config.json", 7_344),
+        ("Qwen/Qwen3-TTS-12Hz-1.7B-Base", "vocab.json", 2_776_833),
 
         // Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
         ("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", "config.json", 4_421),
@@ -1220,6 +1392,9 @@ mod tests {
         // rhasspy/piper-voices
         ("rhasspy/piper-voices", "en/en_US/lessac/medium/en_US-lessac-medium.onnx", 63_201_294),
         ("rhasspy/piper-voices", "en/en_US/lessac/medium/en_US-lessac-medium.onnx.json", 4_885),
+
+        // sahilmahendrakar/Paradee-8M-v1.0
+        ("sahilmahendrakar/Paradee-8M-v1.0", "onnx/paradee_int8.onnx", 9_037_971),
 
         // Supertone/supertonic-3
         ("Supertone/supertonic-3", "onnx/duration_predictor.onnx", 3_700_147),
@@ -1281,7 +1456,7 @@ mod tests {
     /// the picker's fit hint. Nothing in the shipping code re-derives it, so a wrong
     /// number is invisible until a user watches a bar stall — which is exactly how
     /// `chatterbox-multilingual` (over by 94,179,773 B → stuck at 94.3%),
-    /// `kokoro-82m` (over by one voice file), `spark-tts-0.5b` (a rounded guess) and
+    /// `kokoro-82m` (over by one voice file) and
     /// all three `qwen3-tts-1.7b-voicedesign` rungs drifted. This is the gate that
     /// makes the sum authoritative for the whole catalog.
     #[test]

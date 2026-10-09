@@ -7,7 +7,7 @@ type TagRow = Pick<TtsModelInfo, "tagSyntax" | "tags">;
 // The two shipped vocabularies, written the way the CATALOG carries them: BARE
 // names plus a syntax. The delimiters below appear only in the expectations, as
 // the thing the gate must produce — never as an input.
-const ORPHEUS: TagRow = { tagSyntax: "angle", tags: ["laugh", "sigh", "gasp"] };
+const MAYA1: TagRow = { tagSyntax: "angle", tags: ["laugh", "sigh", "gasp"] };
 const TURBO: TagRow = { tagSyntax: "square", tags: ["laugh", "cough"] };
 const KOKORO: TagRow = { tagSyntax: "none", tags: [] };
 
@@ -16,7 +16,7 @@ describe("deriveInlineTagsGate", () => {
 		expect(
 			deriveInlineTagsGate({
 				cloud: false,
-				model: ORPHEUS,
+				model: MAYA1,
 				postProcessingReady: true,
 			}),
 		).toEqual({
@@ -25,7 +25,7 @@ describe("deriveInlineTagsGate", () => {
 			tagList: "<laugh> <sigh> <gasp>",
 		});
 		// Same flag, same code path, incompatible syntax — a `[laugh]` fed to
-		// Orpheus (or `<laugh>` to Turbo) is SPOKEN, not ignored.
+		// Maya1 (or `<laugh>` to Turbo) is SPOKEN, not ignored.
 		expect(
 			deriveInlineTagsGate({
 				cloud: false,
@@ -68,7 +68,7 @@ describe("deriveInlineTagsGate", () => {
 	test("supported but blocked while post-processing can't run", () => {
 		const gate = deriveInlineTagsGate({
 			cloud: false,
-			model: ORPHEUS,
+			model: MAYA1,
 			postProcessingReady: false,
 		});
 		// Still SUPPORTED: the row stays visible and disabled so the user can find
@@ -85,7 +85,7 @@ describe("deriveInlineTagsGate", () => {
 		expect(
 			deriveInlineTagsGate({
 				cloud: true,
-				model: ORPHEUS,
+				model: MAYA1,
 				postProcessingReady: true,
 			}).supported,
 		).toBe(false);

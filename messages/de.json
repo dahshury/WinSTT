@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "Stimmenbeschreibung",
     "voiceDesignPromptPlaceholder": "z. B. ein warmer, tiefer Erzähler mit leichtem britischem Akzent",
     "voiceDesignPromptEmptyHint": "Leer lassen, um auf die integrierte Stimme des Modells zurückzugreifen.",
+    "voiceDesignPresetsLabel": "Fertige Stimmen",
     "voiceDesignCharCounterLabel": "Länge der Beschreibung",
     "voiceDesignCharsRemaining": "{count} übrig",
     "voiceDesignGenerateLabel": "Figurenbeschreibung",

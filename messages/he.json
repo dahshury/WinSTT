@@ -1291,6 +1291,7 @@
     "voiceDesignPromptLabel": "תיאור הקול",
     "voiceDesignPromptPlaceholder": "לדוגמה: מספר חם בעל קול נמוך עם מבטא בריטי קל",
     "voiceDesignPromptEmptyHint": "השאר ריק כדי לחזור לקול המובנה של המודל.",
+    "voiceDesignPresetsLabel": "קולות מוכנים",
     "voiceDesignCharCounterLabel": "אורך התיאור",
     "voiceDesignCharsRemaining": "נותרו {count}",
     "voiceDesignGenerateLabel": "תיאור הדמות",

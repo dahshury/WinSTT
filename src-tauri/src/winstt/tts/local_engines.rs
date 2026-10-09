@@ -14,70 +14,79 @@ use super::catalog;
 use super::chatterbox::{
     CHATTERBOX_SAMPLE_RATE, ChatterboxConfig, ChatterboxEngine, ChatterboxGraphs,
 };
+use super::cosyvoice3::{
+    self, COSYVOICE3_BUILTIN_VOICES, COSYVOICE3_SAMPLE_RATE, CosyVoice3Engine, CosyVoice3Error,
+    CosyVoice3Files,
+};
 use super::kitten::{KITTEN_SAMPLE_RATE, KittenConfig, KittenEngine};
+use super::magpie::{MAGPIE_SAMPLE_RATE, MagpieEngine};
+use super::maya1::{MAYA1_DEFAULT_DESCRIPTION, MAYA1_SAMPLE_RATE, MAYA1_TEMPERATURE, Maya1Engine};
 use super::neutts::{NEUTTS_SAMPLE_RATE, NeuTtsEngine};
 use super::omnivoice::{OMNIVOICE_SAMPLE_RATE, OmniVoiceEngine};
-use super::orpheus::{ORPHEUS_SAMPLE_RATE, OrpheusEngine};
+use super::paradee::{PARADEE_SAMPLE_RATE, PARADEE_VOICE, ParadeeConfig, ParadeeEngine};
 use super::piper::{PiperConfig, PiperEngine};
 use super::qwen3_tts::{QWEN3TTS_SAMPLE_RATE, Qwen3TtsEngine, Qwen3TtsVoiceMode};
-use super::spark::{SPARK_SAMPLE_RATE, SparkEngine};
 use super::supertonic::{
     SUPERTONIC_DEFAULT_VOICE, SUPERTONIC_SAMPLE_RATE, SUPERTONIC_SPEED_MAX, SUPERTONIC_SPEED_MIN,
     SupertonicConfig, SupertonicEngine,
 };
-use super::{Gender, SentenceAudio, TtsDevice, TtsEngine, TtsError, TtsResult, VoiceInfo};
+use super::{
+    ChunkSink, Gender, SentenceAudio, SynthesisChunk, TtsDevice, TtsEngine, TtsError, TtsResult,
+    VoiceInfo,
+};
 
 // ---------------------------------------------------------------------------
 // Per-engine voice catalogs
 // ---------------------------------------------------------------------------
 
-/// KittenTTS nano 8 voices (English). Internal ids are the npz keys.
+/// KittenTTS 0.8 voices (English; identical ids across nano/micro/mini). Internal ids are the
+/// npz keys; labels are the names KittenML's own `voice_aliases` give them.
 pub const KITTEN_VOICES: &[VoiceInfo] = &[
     VoiceInfo {
         id: "expr-voice-2-f",
-        label: "Kitten 2 (Female)",
+        label: "Bella",
         language: "en-us",
         gender: Gender::Female,
     },
     VoiceInfo {
         id: "expr-voice-3-f",
-        label: "Kitten 3 (Female)",
+        label: "Luna",
         language: "en-us",
         gender: Gender::Female,
     },
     VoiceInfo {
         id: "expr-voice-4-f",
-        label: "Kitten 4 (Female)",
+        label: "Rosie",
         language: "en-us",
         gender: Gender::Female,
     },
     VoiceInfo {
         id: "expr-voice-5-f",
-        label: "Kitten 5 (Female)",
+        label: "Kiki",
         language: "en-us",
         gender: Gender::Female,
     },
     VoiceInfo {
         id: "expr-voice-2-m",
-        label: "Kitten 2 (Male)",
+        label: "Jasper",
         language: "en-us",
         gender: Gender::Male,
     },
     VoiceInfo {
         id: "expr-voice-3-m",
-        label: "Kitten 3 (Male)",
+        label: "Bruno",
         language: "en-us",
         gender: Gender::Male,
     },
     VoiceInfo {
         id: "expr-voice-4-m",
-        label: "Kitten 4 (Male)",
+        label: "Hugo",
         language: "en-us",
         gender: Gender::Male,
     },
     VoiceInfo {
         id: "expr-voice-5-m",
-        label: "Kitten 5 (Male)",
+        label: "Leo",
         language: "en-us",
         gender: Gender::Male,
     },
@@ -277,7 +286,7 @@ pub const CHATTERBOX_VOICES: &[VoiceInfo] = &[VoiceInfo {
 /// Why a `[xx]` tag may or may not be usable for real text.
 ///
 /// Every variant below has a REAL single-token `[xx]` entry in the shipped
-/// `chatterbox-multilingual` `tokenizer.json` — the classification is about what
+/// `chatterbox-multilingual-v3` `tokenizer.json` — the classification is about what
 /// happens to the TEXT after the tag, not about the tag itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChatterboxLangSupport {
@@ -293,23 +302,28 @@ enum ChatterboxLangSupport {
     Untrained,
 }
 
-/// `chatterbox-multilingual` language tags, VERIFIED against the shipped
+/// `chatterbox-multilingual-v3` language tags, VERIFIED against the shipped
 /// `tokenizer.json` (2,454 entries) rather than assumed: each `[xx]` below is one
 /// token whose id is quoted, and `[zz]`/`[th]`/`[uk]`/`[fa]` (absent) shatter into
 /// `[` + letters + `]` instead. The prompt is `[tag]` + text — see
 /// `ChatterboxLocalEngine::synthesize_sentence`.
 ///
-/// The four `NeedsFrontend` rows are measured, not guessed. Tokenizing native-script
+/// The three `NeedsFrontend` rows are measured, not guessed. Tokenizing native-script
 /// samples through the real vocab gives:
 ///   * zh — 0 CJK-Han tokens exist at all; every hanzi is `[UNK]`. Upstream converts
 ///     to Cangjie first, which is what the vocab's 40 `[cj_*]` tokens are for.
 ///   * ja — kana are present (137 tokens) but kanji are `[UNK]` (same missing Han
 ///     block), so real Japanese needs a kana/romaji frontend (pykakasi).
-///   * ko — 256 conjoining-jamo tokens but only 10 precomposed Hangul syllables, so
-///     ordinary Korean is `[UNK]` until it is decomposed to jamo.
-///   * he — letters tokenize, but the vocab carries 24 niqqud marks, i.e. the model
-///     was trained on DIACRITIZED Hebrew; undiacritized input is ambiguous and
-///     upstream runs a dicta diacritizer first.
+///   * he — tokenizes cleanly, and upstream's V3 frontend feeds it undiacritized, but
+///     the output is not usable: on our ONNX export the plain-text sentence stopped
+///     after ~2 s of audio and Whisper-small read it back at 84% CER. Kept off the
+///     advertised list until a diacritizer (dicta, which V2 used) or a better
+///     measurement says otherwise.
+///
+/// `ko` needed a frontend under the V2 export and no longer does: the vocab has 256
+/// conjoining-jamo tokens but only 10 precomposed Hangul syllables, and the V3
+/// `tokenizer.json`'s NFKD normalizer decomposes every syllable into those jamo, so
+/// ordinary Korean tokenizes with zero `[UNK]` (measured 4.8% CER through Whisper-small).
 const CHATTERBOX_LANGUAGES: &[(&str, ChatterboxLangSupport)] = &[
     // ── on the upstream model card's 23-language list ────────────────────────
     ("en", ChatterboxLangSupport::Supported), // 708
@@ -322,7 +336,7 @@ const CHATTERBOX_LANGUAGES: &[(&str, ChatterboxLangSupport)] = &[
     ("fr", ChatterboxLangSupport::Supported), // 634
     (
         "he",
-        ChatterboxLangSupport::NeedsFrontend("niqqud diacritization (dicta)"),
+        ChatterboxLangSupport::NeedsFrontend("Hebrew diacritization (dicta)"),
     ), // 2110
     ("hi", ChatterboxLangSupport::Supported), // 722
     ("it", ChatterboxLangSupport::Supported), // 637
@@ -330,10 +344,7 @@ const CHATTERBOX_LANGUAGES: &[(&str, ChatterboxLangSupport)] = &[
         "ja",
         ChatterboxLangSupport::NeedsFrontend("kanji→kana (pykakasi)"),
     ), // 723
-    (
-        "ko",
-        ChatterboxLangSupport::NeedsFrontend("Hangul→jamo decomposition"),
-    ), // 724
+    ("ko", ChatterboxLangSupport::Supported), // 724
     ("ms", ChatterboxLangSupport::Supported), // 2109
     ("nl", ChatterboxLangSupport::Supported), // 709
     ("no", ChatterboxLangSupport::Supported), // 714
@@ -385,7 +396,7 @@ fn primary_subtag(code: &str) -> String {
 }
 
 /// The `[tag]` to prefix for `code`, or `None` when the tokenizer has no single-token
-/// tag for it. Returns a tag for `zh`/`ja`/`ko`/`he` too: those cannot be ADVERTISED
+/// tag for it. Returns a tag for `zh`/`ja` too: those cannot be ADVERTISED
 /// (see [`chatterbox_advertised_languages`]), but if a caller asks for one anyway the
 /// correct tag is strictly better conditioning than silently claiming English.
 fn chatterbox_language_tag(code: &str) -> Option<&'static str> {
@@ -400,14 +411,15 @@ fn chatterbox_language_tag(code: &str) -> Option<&'static str> {
         .map(|(c, _)| *c)
 }
 
-/// The languages `chatterbox-multilingual` can HONESTLY be advertised with: an
+/// The languages `chatterbox-multilingual-v3` can HONESTLY be advertised with: an
 /// upstream-trained language whose text this app can actually tokenize.
 ///
-/// This is what `catalog.rs`'s `chatterbox-multilingual` row must carry in its
-/// `languages:` field. It is 19, not the 23 on the upstream model card, because
-/// `zh`/`ja`/`ko`/`he` need script frontends this app does not ship (see
+/// This is what `catalog.rs`'s `chatterbox-multilingual-v3` row must carry in its
+/// `languages:` field. It is 20, not the 23 on the upstream model card, because
+/// `zh`/`ja`/`he` need text frontends this app does not ship (see
 /// [`ChatterboxLangSupport::NeedsFrontend`]) — the tag is real, the text is not
-/// representable. Re-check this function before widening that row.
+/// representable (zh/ja) or not intelligible without one (he). Re-check this function
+/// before widening that row.
 pub fn chatterbox_advertised_languages() -> Vec<&'static str> {
     CHATTERBOX_LANGUAGES
         .iter()
@@ -495,9 +507,9 @@ pub struct KittenLocalEngine {
     engine: KittenEngine,
 }
 impl KittenLocalEngine {
-    /// `model_filename` is the per-model graph name on HF (`kitten_tts_nano_v0_1.onnx`
-    /// for nano-0.1, `kitten_tts_nano_v0_2.onnx` for nano-0.2) — both share the same
-    /// `voices.npz` voice set and input signature, so only the graph file differs.
+    /// `model_filename` is the LOCAL graph name for the selected row + rung
+    /// (`catalog::kitten_files(..).local_graph`); every 0.8 size shares the input signature
+    /// and keeps its own `voices.npz` + `config.json` next to the graph.
     pub fn new(cache_dir: PathBuf, model_filename: impl Into<String>) -> Self {
         Self {
             engine: KittenEngine::new(KittenConfig {
@@ -528,6 +540,64 @@ impl TtsEngine for KittenLocalEngine {
     }
     fn list_voices(&self) -> Vec<VoiceInfo> {
         KITTEN_VOICES.to_vec()
+    }
+    fn is_ready(&self) -> bool {
+        self.engine.is_ready()
+    }
+    fn warm_up(&self) -> TtsResult<()> {
+        self.engine
+            .warm_up()
+            .map_err(|e| TtsError::Engine(e.to_string()))
+    }
+    fn shutdown(&self) {
+        self.engine.shutdown();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Paradee
+// ---------------------------------------------------------------------------
+
+/// Paradee speaks exactly one voice — its Kokoro teacher's `af_heart` (same id as Kokoro's,
+/// so a Kokoro af_heart selection carries over verbatim).
+pub const PARADEE_VOICES: &[VoiceInfo] = &[VoiceInfo {
+    id: PARADEE_VOICE,
+    label: "Heart",
+    language: "en-us",
+    gender: Gender::Female,
+}];
+
+pub struct ParadeeLocalEngine {
+    engine: ParadeeEngine,
+}
+impl ParadeeLocalEngine {
+    pub fn new(cache_dir: PathBuf) -> Self {
+        Self {
+            engine: ParadeeEngine::new(ParadeeConfig::new(cache_dir)),
+        }
+    }
+}
+impl TtsEngine for ParadeeLocalEngine {
+    /// `voice` / `lang` are ignored: the one voice is baked into the weights, and the
+    /// model only knows American English phonemes.
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        _voice: &str,
+        _lang: &str,
+        speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        let samples = self
+            .engine
+            .synthesize(text, speed)
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: PARADEE_SAMPLE_RATE,
+        })
+    }
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        PARADEE_VOICES.to_vec()
     }
     fn is_ready(&self) -> bool {
         self.engine.is_ready()
@@ -722,13 +792,15 @@ impl ChatterboxLocalEngine {
     ///     caller's language (see `synthesize_sentence`); turbo/nano are English-only
     ///     exports whose reference scripts tokenize raw text;
     ///   * turbo/nano append 3 silence codec tokens so their one-step distilled decoder
-    ///     resolves the final phoneme instead of clipping it.
+    ///     resolves the final phoneme instead of clipping it;
+    ///   * multilingual V3 drops the audio of the final speech token (upstream's V3
+    ///     `generate`: it is emitted right before STOP and decodes into a short artifact).
     ///
     /// Everything else (layer count, KV heads/dim, KV element type, which optional inputs
     /// each graph takes) is read off the loaded graphs by the engine.
     pub fn new(cache_dir: PathBuf, model_id: &str, quant: &str) -> Self {
         let set = catalog::chatterbox_graph_set(model_id, quant);
-        let is_multilingual = model_id == "chatterbox-multilingual";
+        let is_multilingual = model_id == "chatterbox-multilingual-v3";
         Self {
             engine: ChatterboxEngine::new(ChatterboxConfig {
                 cache_dir,
@@ -744,6 +816,7 @@ impl ChatterboxLocalEngine {
                 // Leaving it Some(..) here would double-prefix into `[en][fr]…`.
                 language_tag: None,
                 trailing_silence_tokens: if is_multilingual { 0 } else { 3 },
+                trim_final_token: is_multilingual,
                 // Multilingual ONLY. The bundled `default_voice.wav` is clipped (peak
                 // 1.0802) and that is what mangles sentence openings there — measured
                 // 0/10 clean renders of the pangram, 10/10 after rescaling to peak 0.30.
@@ -813,25 +886,95 @@ impl TtsEngine for ChatterboxLocalEngine {
     }
 }
 
+/// Qwen3-TTS Base has no preset voices — the voice comes from a reference clip. One
+/// sentinel entry, exactly like OMNIVOICE_VOICES. Must equal the catalog rows'
+/// `num_voices`.
+pub const QWEN3TTS_BASE_VOICES: &[VoiceInfo] = &[VoiceInfo {
+    id: "default",
+    label: "Default voice (or clone from a clip)",
+    language: "en",
+    gender: Gender::Female,
+}];
+
 // ---------------------------------------------------------------------------
-// Qwen3-TTS Voice Design (autoregressive LLM-codec; voice via text prompt)
+// Qwen3-TTS (autoregressive LLM-codec; voice via design prompt, preset timbre, or a
+// reference clip on the Base checkpoints)
 // ---------------------------------------------------------------------------
 
 pub struct Qwen3TtsLocalEngine {
     engine: Qwen3TtsEngine,
     voice_mode: Qwen3TtsVoiceMode,
+    /// Reference-clip transcript (settings.tts.clone_ref_text) for Base cloning: present
+    /// ⇒ ICL prompt, blank ⇒ x-vector-only. Part of the engine fingerprint, so editing
+    /// it rebuilds.
+    clone_ref_text: String,
+    /// Reference trim for Base cloning, in seconds (the catalog row's cap).
+    ref_cap_secs: u32,
 }
 impl Qwen3TtsLocalEngine {
     /// `quant` selects the on-disk weights subdir (`int4`|`fp16`|`fp32`; the
     /// engine maps it to `cpu_int4`|`cpu_fp16`|`cpu_fp32`). Passed through from the
     /// manager's `tts.quantization` (default `int4`). `voice_mode` decides how
-    /// `tts.voice` is read: a design prompt (VoiceDesign) or a preset timbre name
-    /// (CustomVoice) — see [`Qwen3TtsVoiceMode`].
+    /// `tts.voice` is read: a design prompt (VoiceDesign), a preset timbre name
+    /// (CustomVoice) or a reference-clip path (Base) — see [`Qwen3TtsVoiceMode`].
     pub fn new(cache_dir: PathBuf, quant: String, voice_mode: Qwen3TtsVoiceMode) -> Self {
         Self {
             engine: Qwen3TtsEngine::new(cache_dir, quant, voice_mode),
             voice_mode,
+            clone_ref_text: String::new(),
+            ref_cap_secs: catalog::MAX_CLONE_REF_SECS,
         }
+    }
+
+    /// Base cloning inputs: the reference transcript (blank ⇒ x-vector-only) and the
+    /// row's reference cap in seconds. Ignored by VoiceDesign / CustomVoice.
+    #[must_use]
+    pub fn with_clone_reference(mut self, clone_ref_text: String, ref_cap_secs: u32) -> Self {
+        self.clone_ref_text = clone_ref_text;
+        self.ref_cap_secs = ref_cap_secs;
+        self
+    }
+
+    /// Base: clone `voice` (a reference-clip path) when it names an existing file.
+    fn synthesize_base(
+        &self,
+        text: &str,
+        voice: &str,
+        lang: &str,
+        speed: f32,
+    ) -> TtsResult<Vec<f32>> {
+        let ref_path = (!voice.is_empty() && std::path::Path::new(voice).is_file())
+            .then(|| std::path::Path::new(voice));
+        let Some(path) = ref_path else {
+            // The "default" sentinel (or a stale non-clip value): the checkpoint's own voice.
+            return self
+                .engine
+                .synthesize(text, "", lang, speed)
+                .map_err(|e| TtsError::Engine(e.to_string()));
+        };
+        if !self.engine.cloning_ready() {
+            return Err(TtsError::Engine(
+                "Qwen3-TTS Base cloning graphs (tok_encoder / speaker_encoder) are not \
+                 downloaded for this model"
+                    .into(),
+            ));
+        }
+        // Capped, not rejected; resampled to the codec's native 24 kHz mono.
+        let clip = crate::winstt::managers::transcode::decode_reference_clip(
+            path,
+            QWEN3TTS_SAMPLE_RATE,
+            self.ref_cap_secs,
+        )
+        .map_err(TtsError::Engine)?;
+        let reference = self
+            .engine
+            .prepare_reference(&clip.samples, &self.clone_ref_text)
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        // `lang` / `speed` are ignored exactly as on the other checkpoints (Auto/nothink,
+        // natural rate).
+        self.engine
+            .synthesize_cloned(text, &reference)
+            .map_err(|e| TtsError::Engine(e.to_string()))
     }
 }
 impl TtsEngine for Qwen3TtsLocalEngine {
@@ -842,14 +985,18 @@ impl TtsEngine for Qwen3TtsLocalEngine {
         lang: &str,
         speed: f32,
     ) -> TtsResult<SentenceAudio> {
-        // Both checkpoints overload `voice`, exactly as Chatterbox overloads it for the
+        // Every checkpoint overloads `voice`, exactly as Chatterbox overloads it for the
         // ref-clip path: Voice Design reads it as the design PROMPT (natural-language
-        // voice description), Custom Voice as one of its 9 preset timbre names. Empty is
-        // valid either way — the model falls back to its own default voice.
-        let samples = self
-            .engine
-            .synthesize(text, voice, lang, speed)
-            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        // voice description), Custom Voice as one of its 9 preset timbre names, Base as a
+        // reference-clip path. Empty / the sentinel is valid everywhere — the model falls
+        // back to its own default voice.
+        let samples = match self.voice_mode {
+            Qwen3TtsVoiceMode::CloneReference => self.synthesize_base(text, voice, lang, speed)?,
+            Qwen3TtsVoiceMode::DesignPrompt | Qwen3TtsVoiceMode::PresetSpeaker => self
+                .engine
+                .synthesize(text, voice, lang, speed)
+                .map_err(|e| TtsError::Engine(e.to_string()))?,
+        };
         Ok(SentenceAudio::F32le {
             samples,
             sample_rate: QWEN3TTS_SAMPLE_RATE,
@@ -859,6 +1006,7 @@ impl TtsEngine for Qwen3TtsLocalEngine {
         match self.voice_mode {
             Qwen3TtsVoiceMode::PresetSpeaker => QWEN3TTS_CUSTOMVOICE_VOICES.to_vec(),
             Qwen3TtsVoiceMode::DesignPrompt => QWEN3TTS_VOICES.to_vec(),
+            Qwen3TtsVoiceMode::CloneReference => QWEN3TTS_BASE_VOICES.to_vec(),
         }
     }
     fn is_ready(&self) -> bool {
@@ -875,69 +1023,77 @@ impl TtsEngine for Qwen3TtsLocalEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Orpheus (3B Llama → SNAC codec; 8 preset English voices w/ emotion tags)
+// Maya1 (3B Llama → SNAC codec; voice from a natural-language description + emotion tags)
 // ---------------------------------------------------------------------------
 
-/// The 8 fine-tuned Orpheus voices (canopylabs card). `tara` is the recommended default.
-pub const ORPHEUS_VOICE_INFOS: &[VoiceInfo] = &[
+/// Maya1 has no preset speakers: `tts.voice` holds a free-text voice DESCRIPTION (the
+/// voice-design prompt). The first entry is the empty "use the default description"
+/// sentinel every voice-design row lists; the rest are ready-made descriptions the
+/// voice-design editor offers as one-click presets — their `id` IS the description that gets
+/// stored, phrased in the card's attribute vocabulary (`prompt.txt`). Each one was rendered
+/// and transcribed back through Whisper when the export was validated.
+pub const MAYA1_VOICE_INFOS: &[VoiceInfo] = &[
     VoiceInfo {
-        id: "tara",
-        label: "Tara",
+        id: "",
+        label: "Default voice (or describe one with a prompt)",
         language: "en",
         gender: Gender::Female,
     },
     VoiceInfo {
-        id: "leah",
-        label: "Leah",
+        id: MAYA1_DEFAULT_DESCRIPTION,
+        label: "Warm narrator (female)",
         language: "en",
         gender: Gender::Female,
     },
     VoiceInfo {
-        id: "jess",
-        label: "Jess",
-        language: "en",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "mia",
-        label: "Mia",
-        language: "en",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "zoe",
-        label: "Zoe",
-        language: "en",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "leo",
-        label: "Leo",
+        id: "Realistic male voice in the 30s age with a american accent. Normal pitch, warm timbre, conversational pacing, neutral tone delivery at med intensity, podcast domain, podcast_host role, neutral delivery.",
+        label: "Podcast host (male)",
         language: "en",
         gender: Gender::Male,
     },
     VoiceInfo {
-        id: "dan",
-        label: "Dan",
+        id: "Female, in her 30s with an American accent and is an event host, energetic, clear diction.",
+        label: "Energetic event host (female)",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "Realistic male voice in the 40s age with a british accent. Low pitch, deep timbre, slow pacing, storyteller role, neutral tone at medium intensity.",
+        label: "British storyteller (male)",
         language: "en",
         gender: Gender::Male,
     },
     VoiceInfo {
-        id: "zac",
-        label: "Zac",
+        id: "Realistic female voice in the 20s age with an indian accent. Normal pitch, smooth timbre, brisk pacing, customer_support_agent role, neutral tone at low intensity.",
+        label: "Support agent (female)",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "Creative, ai_machine_voice character. Male voice in their 20s with a american accent. Normal pitch, robotic timbre, conversational pacing, neutral tone at med intensity.",
+        label: "AI machine (male)",
+        language: "en",
+        gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "Dark villain character, Male voice in their 40s with a British accent. low pitch, gravelly timbre, slow pacing, angry tone at high intensity.",
+        label: "Dark villain (male)",
         language: "en",
         gender: Gender::Male,
     },
 ];
 
-pub struct OrpheusLocalEngine {
+pub struct Maya1LocalEngine {
     cache_dir: PathBuf,
-    engine: Mutex<Option<OrpheusEngine>>,
+    graph: &'static str,
+    engine: Mutex<Option<Maya1Engine>>,
 }
-impl OrpheusLocalEngine {
-    pub fn new(cache_dir: PathBuf) -> Self {
+impl Maya1LocalEngine {
+    /// `quant` is the resolved catalog rung; it selects `onnx/{graph}.onnx`. CPU-pinned.
+    pub fn new(cache_dir: PathBuf, quant: &str) -> Self {
         Self {
             cache_dir,
+            graph: catalog::maya1_graph(quant),
             engine: Mutex::new(None),
         }
     }
@@ -945,20 +1101,21 @@ impl OrpheusLocalEngine {
         let mut guard = self
             .engine
             .lock()
-            .map_err(|_| TtsError::Engine("orpheus lock poisoned".into()))?;
+            .map_err(|_| TtsError::Engine("maya1 lock poisoned".into()))?;
         if guard.is_none() {
-            let eng = OrpheusEngine::load(
-                &self.cache_dir.join("onnx/model_q4.onnx"),
+            let eng = Maya1Engine::load(
+                &self.cache_dir.join(format!("onnx/{}.onnx", self.graph)),
                 &self.cache_dir.join("snac/decoder_model.onnx"),
                 &self.cache_dir.join("tokenizer.json"),
             )
             .map_err(|e| TtsError::Engine(e.to_string()))?;
+            log::info!("[tts] maya1 loaded {} on CPU", self.graph);
             *guard = Some(eng);
         }
         Ok(())
     }
 }
-impl TtsEngine for OrpheusLocalEngine {
+impl TtsEngine for Maya1LocalEngine {
     fn synthesize_sentence(
         &self,
         text: &str,
@@ -970,165 +1127,32 @@ impl TtsEngine for OrpheusLocalEngine {
         let mut guard = self
             .engine
             .lock()
-            .map_err(|_| TtsError::Engine("orpheus lock poisoned".into()))?;
+            .map_err(|_| TtsError::Engine("maya1 lock poisoned".into()))?;
         let eng = guard
             .as_mut()
-            .ok_or_else(|| TtsError::Engine("orpheus not loaded".into()))?;
+            .ok_or_else(|| TtsError::Engine("maya1 not loaded".into()))?;
+        // `voice` is the description; empty → the engine's default description.
         let out = eng
-            .synthesize(text, voice, 0.6)
+            .synthesize(text, voice, MAYA1_TEMPERATURE)
             .map_err(|e| TtsError::Engine(e.to_string()))?;
         // A runaway decode still yields audio, but it is salvage, not a normal render — say so
         // rather than handing back ~30 s of degenerate buzz as if the sentence had rendered.
         if !out.stop.is_clean() {
             log::warn!(
-                "[tts] orpheus decode did not terminate cleanly (voice={voice}, stop={:?}, \
-                 tokens={}, {:.2}s) — audio salvaged from a runaway",
+                "[tts] maya1 decode did not terminate cleanly (stop={:?}, tokens={}, {:.2}s) — \
+                 audio salvaged from a runaway",
                 out.stop,
                 out.tokens,
-                out.samples.len() as f32 / ORPHEUS_SAMPLE_RATE as f32
+                out.samples.len() as f32 / MAYA1_SAMPLE_RATE as f32
             );
         }
         Ok(SentenceAudio::F32le {
             samples: out.samples,
-            sample_rate: ORPHEUS_SAMPLE_RATE,
+            sample_rate: MAYA1_SAMPLE_RATE,
         })
     }
     fn list_voices(&self) -> Vec<VoiceInfo> {
-        ORPHEUS_VOICE_INFOS.to_vec()
-    }
-    fn is_ready(&self) -> bool {
-        self.engine.lock().is_ok_and(|g| g.is_some())
-    }
-    fn warm_up(&self) -> TtsResult<()> {
-        self.ensure_loaded()
-    }
-    fn shutdown(&self) {
-        if let Ok(mut g) = self.engine.lock() {
-            *g = None;
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Spark-TTS (Qwen0.5B → BiCodec; voice creation by gender)
-// ---------------------------------------------------------------------------
-
-/// Spark voice-creation presets — the timbre is generated; gender steers it.
-pub const SPARK_VOICE_INFOS: &[VoiceInfo] = &[
-    VoiceInfo {
-        id: "female",
-        label: "Female",
-        language: "en",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "male",
-        label: "Male",
-        language: "en",
-        gender: Gender::Male,
-    },
-];
-
-pub struct SparkLocalEngine {
-    cache_dir: PathBuf,
-    /// Reference-clip transcript (settings.tts.clone_ref_text) — used when `voice` is a ref path.
-    clone_ref_text: String,
-    engine: Mutex<Option<SparkEngine>>,
-}
-impl SparkLocalEngine {
-    pub fn new(cache_dir: PathBuf, clone_ref_text: String) -> Self {
-        Self {
-            cache_dir,
-            clone_ref_text,
-            engine: Mutex::new(None),
-        }
-    }
-    fn ensure_loaded(&self) -> TtsResult<()> {
-        let mut guard = self
-            .engine
-            .lock()
-            .map_err(|_| TtsError::Engine("spark lock poisoned".into()))?;
-        if guard.is_none() {
-            let mut eng = SparkEngine::load(
-                &self.cache_dir.join("model_q4.onnx"),
-                &self.cache_dir.join("bicodec.onnx"),
-                &self.cache_dir.join("tokenizer.json"),
-            )
-            .map_err(|e| TtsError::Engine(e.to_string()))?;
-            // Attach the cloning graphs when present (downloaded by the Spark manifest).
-            let w2v = self.cache_dir.join("wav2vec2_model_fp16.onnx");
-            if w2v.exists() {
-                eng.load_cloning(
-                    &w2v,
-                    &self.cache_dir.join("mel_spectrogram.onnx"),
-                    &self.cache_dir.join("speaker_encoder_tokenizer.onnx"),
-                    &self.cache_dir.join("bicodec_encoder_quantizer.onnx"),
-                )
-                .map_err(|e| TtsError::Engine(e.to_string()))?;
-            }
-            *guard = Some(eng);
-        }
-        Ok(())
-    }
-}
-impl TtsEngine for SparkLocalEngine {
-    fn synthesize_sentence(
-        &self,
-        text: &str,
-        voice: &str,
-        _lang: &str,
-        _speed: f32,
-    ) -> TtsResult<SentenceAudio> {
-        self.ensure_loaded()?;
-        // A `voice` that resolves to an existing file is a CLONE reference clip; a preset
-        // ("female"/"male"/"") is voice creation.
-        let ref_path =
-            (!voice.is_empty() && std::path::Path::new(voice).is_file()).then(|| voice.to_string());
-        // Capped, not rejected: wav2vec2's attention is quadratic in clip length
-        // AND the resulting semantic tokens are prepended to EVERY sentence's
-        // prompt, so an uncapped clip taxes the whole read.
-        let ref16k = match &ref_path {
-            Some(p) => Some(
-                crate::winstt::managers::transcode::decode_reference_clip(
-                    std::path::Path::new(p),
-                    SPARK_SAMPLE_RATE,
-                    crate::winstt::tts::catalog::MAX_CLONE_REF_SECS,
-                )
-                .map(|clip| clip.samples)
-                .map_err(TtsError::Engine)?,
-            ),
-            None => None,
-        };
-        let mut guard = self
-            .engine
-            .lock()
-            .map_err(|_| TtsError::Engine("spark lock poisoned".into()))?;
-        let eng = guard
-            .as_mut()
-            .ok_or_else(|| TtsError::Engine("spark not loaded".into()))?;
-        let samples = match ref16k {
-            Some(ref16k) => {
-                if !eng.cloning_ready() {
-                    return Err(TtsError::Engine(
-                        "Spark cloning graphs not downloaded for this model".into(),
-                    ));
-                }
-                eng.synthesize_clone(text, &ref16k, &self.clone_ref_text)
-                    .map_err(|e| TtsError::Engine(e.to_string()))?
-            }
-            None => {
-                let gender = if voice.is_empty() { "female" } else { voice };
-                eng.synthesize(text, gender)
-                    .map_err(|e| TtsError::Engine(e.to_string()))?
-            }
-        };
-        Ok(SentenceAudio::F32le {
-            samples,
-            sample_rate: SPARK_SAMPLE_RATE,
-        })
-    }
-    fn list_voices(&self) -> Vec<VoiceInfo> {
-        SPARK_VOICE_INFOS.to_vec()
+        MAYA1_VOICE_INFOS.to_vec()
     }
     fn is_ready(&self) -> bool {
         self.engine.lock().is_ok_and(|g| g.is_some())
@@ -1402,6 +1426,117 @@ impl TtsEngine for NeuTtsLocalEngine {
 }
 
 // ---------------------------------------------------------------------------
+// Magpie-TTS Multilingual (NVIDIA; 5 baked speakers x 10 languages)
+// ---------------------------------------------------------------------------
+
+/// The five baked Magpie speakers, in `speaker_context.bin` order (ids from
+/// `magpie::MAGPIE_SPEAKERS`). Every speaker speaks every supported language, so the
+/// `language` field is the speakers' native English. Must equal the catalog's `num_voices`.
+pub const MAGPIE_VOICES: &[VoiceInfo] = &[
+    VoiceInfo {
+        id: "aria",
+        label: "Aria",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "jason",
+        label: "Jason",
+        language: "en",
+        gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "john",
+        label: "John",
+        language: "en",
+        gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "leo",
+        label: "Leo",
+        language: "en",
+        gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "sofia",
+        label: "Sofia",
+        language: "en",
+        gender: Gender::Female,
+    },
+];
+
+/// Magpie adapter: four ORT sessions + the raw embedding tables, loaded lazily from the
+/// per-model cache dir; `quant` picks the step-graph rung via `magpie::magpie_graph_set`,
+/// the same mapping the download manifest fetches through.
+pub struct MagpieLocalEngine {
+    cache_dir: PathBuf,
+    quant: String,
+    engine: Mutex<Option<MagpieEngine>>,
+}
+impl MagpieLocalEngine {
+    pub fn new(cache_dir: PathBuf, quant: String) -> Self {
+        Self {
+            cache_dir,
+            quant,
+            engine: Mutex::new(None),
+        }
+    }
+    fn ensure_loaded(&self) -> TtsResult<()> {
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("magpie lock poisoned".into()))?;
+        if guard.is_none() {
+            let eng = MagpieEngine::load(&self.cache_dir, &self.quant)
+                .map_err(|e| TtsError::Engine(e.to_string()))?;
+            *guard = Some(eng);
+        }
+        Ok(())
+    }
+}
+impl TtsEngine for MagpieLocalEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        voice: &str,
+        lang: &str,
+        _speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        self.ensure_loaded()?;
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("magpie lock poisoned".into()))?;
+        let eng = guard
+            .as_mut()
+            .ok_or_else(|| TtsError::Engine("magpie not loaded".into()))?;
+        // `speed` is ignored: the decoder has no duration control and resampling the codec
+        // output would pitch-shift it (same call as NeuTTS).
+        let samples = eng
+            .synthesize(text, voice, lang)
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: MAGPIE_SAMPLE_RATE,
+        })
+    }
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        MAGPIE_VOICES.to_vec()
+    }
+    fn is_ready(&self) -> bool {
+        self.engine.lock().is_ok_and(|g| g.is_some())
+    }
+    fn warm_up(&self) -> TtsResult<()> {
+        self.ensure_loaded()
+    }
+    fn shutdown(&self) {
+        if let Ok(mut g) = self.engine.lock() {
+            *g = None;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OmniVoice (Qwen3-0.6B masked-refinement -> Higgs codec; clone from a clip)
 // ---------------------------------------------------------------------------
 
@@ -1480,8 +1615,8 @@ impl TtsEngine for OmniVoiceLocalEngine {
         // "default" sentinel is the no-reference path.
         let ref_path =
             (!voice.is_empty() && std::path::Path::new(voice).is_file()).then(|| voice.to_string());
-        // Capped, not rejected. OmniVoice's native rate IS 24 kHz, so unlike Spark there is
-        // no resample on this branch at all.
+        // Capped, not rejected. OmniVoice's native rate IS 24 kHz, so there is no resample
+        // on this branch at all.
         //
         // The cap is THIS ROW'S (5 s), not the shared 30 s: the masked-refinement step is
         // O(num_step * L^2) with L including the reference frames, so every sentence of the
@@ -1789,14 +1924,192 @@ impl TtsEngine for Audio8LocalEngine {
 }
 
 // ---------------------------------------------------------------------------
+// Fun-CosyVoice3 0.5B (Qwen2 LM -> DiT flow matching -> HiFT; clone from a clip)
+// ---------------------------------------------------------------------------
+
+/// The built-in reference voices shipped in the model repo (`voices/<id>.wav`), in the
+/// same order as [`COSYVOICE3_BUILTIN_VOICES`]. Must equal the catalog row's
+/// `num_voices`. A reference-clip path in `tts.voice` clones instead.
+pub const COSYVOICE3_VOICES: &[VoiceInfo] = &[
+    VoiceInfo {
+        id: "zh-female",
+        label: "Mandarin (Female)",
+        language: "cmn",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "en-male",
+        label: "English (Male)",
+        language: "en-us",
+        gender: Gender::Male,
+    },
+];
+
+/// This engine's catalog row id — the reference trim asks the catalog for THIS row's cap.
+const COSYVOICE3_MODEL_ID: &str = "cosyvoice3-0.5b";
+
+pub struct CosyVoice3LocalEngine {
+    cache_dir: PathBuf,
+    files: CosyVoice3Files,
+    device: TtsDevice,
+    /// Reference-clip transcript (settings.tts.clone_ref_text). OPTIONAL here: with it
+    /// the LLM is primed zero-shot (best similarity); blank falls back to upstream's
+    /// cross-lingual mode. Part of the engine fingerprint, so editing it rebuilds.
+    clone_ref_text: String,
+    /// Style instruction (settings.tts.voice_instruct) — upstream `inference_instruct2`.
+    voice_instruct: String,
+    engine: Mutex<Option<CosyVoice3Engine>>,
+}
+
+impl CosyVoice3LocalEngine {
+    pub fn new(
+        cache_dir: PathBuf,
+        quant: &str,
+        device: TtsDevice,
+        clone_ref_text: String,
+        voice_instruct: String,
+    ) -> Self {
+        Self {
+            cache_dir,
+            files: catalog::cosyvoice3_graph_set(quant),
+            device,
+            clone_ref_text,
+            voice_instruct,
+            engine: Mutex::new(None),
+        }
+    }
+
+    fn ensure_loaded(&self) -> TtsResult<()> {
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("cosyvoice3 lock poisoned".into()))?;
+        if guard.is_none() {
+            let eng = CosyVoice3Engine::load(&self.cache_dir, &self.files, self.device)
+                .map_err(|e| TtsError::Engine(e.to_string()))?;
+            *guard = Some(eng);
+        }
+        Ok(())
+    }
+
+    /// `(clip path, transcript)` for `voice`: a user clip with the settings transcript,
+    /// or a bundled voice with its own transcript (unknown ids → the first bundled one).
+    fn resolve_voice(&self, voice: &str) -> (PathBuf, String) {
+        let path = std::path::Path::new(voice);
+        if !voice.is_empty() && path.is_file() {
+            return (path.to_path_buf(), self.clone_ref_text.clone());
+        }
+        let builtin = cosyvoice3::builtin_voice(voice).unwrap_or(&COSYVOICE3_BUILTIN_VOICES[0]);
+        (
+            cosyvoice3::builtin_voice_path(&self.cache_dir, builtin.id),
+            builtin.transcript.to_string(),
+        )
+    }
+
+    fn render(
+        &self,
+        text: &str,
+        voice: &str,
+        speed: f32,
+        cancel: &dyn Fn() -> bool,
+    ) -> TtsResult<Vec<f32>> {
+        self.ensure_loaded()?;
+        let (clip, transcript) = self.resolve_voice(voice);
+        if !clip.is_file() {
+            return Err(TtsError::Engine(format!(
+                "CosyVoice3 reference voice missing: {}",
+                clip.display()
+            )));
+        }
+        let mut guard = self
+            .engine
+            .lock()
+            .map_err(|_| TtsError::Engine("cosyvoice3 lock poisoned".into()))?;
+        let eng = guard
+            .as_mut()
+            .ok_or_else(|| TtsError::Engine("cosyvoice3 not loaded".into()))?;
+        // Decoding is deferred into `ensure_prompt` (cache miss only) and capped at THIS
+        // row's budget — upstream asserts <= 30 s for the speech tokenizer.
+        let cap = catalog::reference_clip_cap_secs(COSYVOICE3_MODEL_ID);
+        let prompt = eng
+            .ensure_prompt(&clip, &transcript, |rate| {
+                crate::winstt::managers::transcode::decode_reference_clip(&clip, rate, cap)
+                    .map(|c| c.samples)
+            })
+            .map_err(|e| TtsError::Engine(e.to_string()))?;
+        let instruct = {
+            let t = self.voice_instruct.trim();
+            (!t.is_empty()).then_some(t)
+        };
+        eng.synthesize(text, &prompt, instruct, speed, cancel)
+            .map_err(|e| match e {
+                CosyVoice3Error::Cancelled => TtsError::Cancelled,
+                other => TtsError::Engine(other.to_string()),
+            })
+    }
+}
+
+impl TtsEngine for CosyVoice3LocalEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        voice: &str,
+        _lang: &str,
+        speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        // `lang` is ignored: CosyVoice3 has no language tag — it follows the text.
+        let samples = self.render(text, voice, speed, &|| false)?;
+        Ok(SentenceAudio::F32le {
+            samples,
+            sample_rate: COSYVOICE3_SAMPLE_RATE,
+        })
+    }
+
+    /// Same single chunk as the default, but the sink's cancel flag is polled inside
+    /// the LLM decode and the ODE loop, so Stop lands mid-sentence instead of after it.
+    fn synthesize_stream(
+        &self,
+        text: &str,
+        voice: &str,
+        _lang: &str,
+        speed: f32,
+        sink: &dyn ChunkSink,
+    ) -> TtsResult<()> {
+        let samples = self.render(text, voice, speed, &|| sink.is_cancelled())?;
+        sink.push(SynthesisChunk::f32le(
+            samples,
+            COSYVOICE3_SAMPLE_RATE,
+            0,
+            false,
+        ));
+        Ok(())
+    }
+
+    fn list_voices(&self) -> Vec<VoiceInfo> {
+        COSYVOICE3_VOICES.to_vec()
+    }
+    fn is_ready(&self) -> bool {
+        self.engine.lock().is_ok_and(|g| g.is_some())
+    }
+    fn warm_up(&self) -> TtsResult<()> {
+        self.ensure_loaded()
+    }
+    fn shutdown(&self) {
+        if let Ok(mut g) = self.engine.lock() {
+            *g = None;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The 23 languages upstream's model card claims — which is what the
-    /// `chatterbox-multilingual` catalog row USED to advertise, before the four with no
-    /// usable vocab were dropped. A local copy on purpose: the tests below assert the
+    /// The 23 languages upstream's model card claims — which is what the multilingual
+    /// catalog row USED to advertise, before the ones with no usable vocab were
+    /// dropped. A local copy on purpose: the tests below assert the
     /// engine's classification against this fixed list, and the catalog-side test
     /// (`chatterbox_multilingual_advertises_exactly_what_the_engine_can_speak`) is what
     /// ties the row itself to `chatterbox_advertised_languages`.
@@ -1805,9 +2118,10 @@ mod tests {
         "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh",
     ];
 
-    /// The four whose text this app cannot feed correctly — they tokenize to `[UNK]`
-    /// (or, for `he`, to undiacritized ambiguity) no matter which tag is prefixed.
-    const NEEDS_MISSING_FRONTEND: &[&str] = &["he", "ja", "ko", "zh"];
+    /// The three whose text this app cannot feed correctly — Han characters tokenize to
+    /// `[UNK]` no matter which tag is prefixed (ja/zh), and undiacritized Hebrew comes
+    /// out unintelligible (he).
+    const NEEDS_MISSING_FRONTEND: &[&str] = &["he", "ja", "zh"];
 
     #[test]
     fn every_catalog_language_has_a_real_single_token_tag() {
@@ -1852,7 +2166,7 @@ mod tests {
     }
 
     #[test]
-    fn advertised_languages_drop_the_four_that_need_a_missing_frontend() {
+    fn advertised_languages_drop_the_three_that_need_a_missing_frontend() {
         let advertised = chatterbox_advertised_languages();
         for code in NEEDS_MISSING_FRONTEND {
             assert!(
@@ -1863,15 +2177,15 @@ mod tests {
             // correct tag beats silently claiming English.
             assert_eq!(chatterbox_language_tag(code), Some(*code));
         }
-        // Exactly the upstream-trained set minus those four.
+        // Exactly the upstream-trained set minus those three.
         assert_eq!(
             advertised,
             vec![
-                "en", "ar", "da", "de", "el", "es", "fi", "fr", "hi", "it", "ms", "nl", "no", "pl",
-                "pt", "ru", "sv", "sw", "tr"
+                "en", "ar", "da", "de", "el", "es", "fi", "fr", "hi", "it", "ko", "ms", "nl", "no",
+                "pl", "pt", "ru", "sv", "sw", "tr"
             ]
         );
-        assert_eq!(advertised.len(), CATALOG_ADVERTISED.len() - 4);
+        assert_eq!(advertised.len(), CATALOG_ADVERTISED.len() - 3);
         // Never advertise a language upstream does not claim, even where the vocab
         // happens to carry a tag (cs/hu/ro/sk/bg/vi/ta/ea).
         for code in ["cs", "hu", "ro", "sk", "bg", "vi", "ta", "ea"] {
@@ -1907,7 +2221,7 @@ mod tests {
 
     #[test]
     fn multilingual_prompt_follows_the_callers_language() {
-        let eng = chatterbox_engine("chatterbox-multilingual");
+        let eng = chatterbox_engine("chatterbox-multilingual-v3");
         assert!(eng.tagged);
         assert_eq!(eng.chatterbox_prompt("Bonjour.", "fr"), "[fr]Bonjour.");
         assert_eq!(eng.chatterbox_prompt("Hallo.", "de-DE"), "[de]Hallo.");
@@ -1918,7 +2232,7 @@ mod tests {
 
     #[test]
     fn multilingual_prompt_falls_back_to_english_not_to_a_junk_tag() {
-        let eng = chatterbox_engine("chatterbox-multilingual");
+        let eng = chatterbox_engine("chatterbox-multilingual-v3");
         // Empty lang is the warm-up / hotkey path; unknown codes are stale settings.
         assert_eq!(eng.chatterbox_prompt("Hello.", ""), "[en]Hello.");
         assert_eq!(eng.chatterbox_prompt("Hello.", "zz"), "[en]Hello.");
@@ -1927,7 +2241,7 @@ mod tests {
 
     #[test]
     fn multilingual_prompt_trims_like_the_engine_and_passes_blanks_through() {
-        let eng = chatterbox_engine("chatterbox-multilingual");
+        let eng = chatterbox_engine("chatterbox-multilingual-v3");
         // The engine trims BEFORE prefixing when it owns the tag; matching that keeps
         // the prompt byte-identical to the pre-existing single-language behaviour.
         assert_eq!(eng.chatterbox_prompt("  Hello.  ", "en"), "[en]Hello.");
@@ -1939,7 +2253,7 @@ mod tests {
 
     #[test]
     fn english_only_exports_are_never_tagged() {
-        for model_id in ["chatterbox-turbo", "chatterbox-nano"] {
+        for model_id in ["chatterbox-turbo", "chatterbox-nano-v1"] {
             let eng = chatterbox_engine(model_id);
             assert!(!eng.tagged, "{model_id} must not be tagged");
             // Even an explicit language is ignored: these exports tokenize raw text.
@@ -1966,5 +2280,73 @@ mod tests {
             catalog::reference_clip_cap_secs(OMNIVOICE_MODEL_ID) < catalog::MAX_CLONE_REF_SECS,
             "the per-row cap must actually be tighter than the shared default"
         );
+    }
+
+    /// End-to-end Chatterbox synthesis through the shipping adapter (catalog graph set,
+    /// `[lang]` prefixing, final-token trim, trailing silence) on REAL downloaded weights.
+    /// Writes one WAV per line of the texts file so an external ASR can score WER.
+    ///
+    ///   WINSTT_CBX_E2E_DIR    model dir laid out like the download manifest
+    ///   WINSTT_CBX_E2E_MODEL  catalog id (default `chatterbox-multilingual-v3`)
+    ///   WINSTT_CBX_E2E_QUANT  quant rung (default: the row's default)
+    ///   WINSTT_CBX_E2E_TEXTS  UTF-8 file of `lang<TAB>text` lines
+    ///   WINSTT_CBX_E2E_OUT    output dir for `<n>_<lang>.wav`
+    ///   WINSTT_CBX_E2E_REF    optional reference clip (default: the bundled voice)
+    #[test]
+    #[ignore = "requires downloaded Chatterbox weights (WINSTT_CBX_E2E_*)"]
+    fn chatterbox_e2e_writes_wavs_for_wer() {
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let dir = PathBuf::from(env("WINSTT_CBX_E2E_DIR").expect("set WINSTT_CBX_E2E_DIR"));
+        let model =
+            env("WINSTT_CBX_E2E_MODEL").unwrap_or_else(|| "chatterbox-multilingual-v3".into());
+        let entry = catalog::find(&model).expect("catalog row");
+        let quant =
+            env("WINSTT_CBX_E2E_QUANT").unwrap_or_else(|| entry.default_quant().to_string());
+        let texts =
+            std::fs::read_to_string(env("WINSTT_CBX_E2E_TEXTS").expect("set WINSTT_CBX_E2E_TEXTS"))
+                .expect("read texts");
+        let out = PathBuf::from(env("WINSTT_CBX_E2E_OUT").expect("set WINSTT_CBX_E2E_OUT"));
+        std::fs::create_dir_all(&out).expect("out dir");
+        let voice = env("WINSTT_CBX_E2E_REF").unwrap_or_else(|| "default".into());
+
+        let engine = ChatterboxLocalEngine::new(dir, &model, &quant);
+        engine.warm_up().expect("warm up");
+        for (n, line) in texts.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            let (lang, text) = line.split_once('\t').expect("lang<TAB>text");
+            let started = std::time::Instant::now();
+            let SentenceAudio::F32le {
+                samples,
+                sample_rate,
+            } = engine
+                .synthesize_sentence(text, &voice, lang, 1.0)
+                .expect("synthesize")
+            else {
+                panic!("chatterbox returns f32 PCM");
+            };
+            let secs = samples.len() as f32 / sample_rate as f32;
+            let rms =
+                (samples.iter().map(|x| x * x).sum::<f32>() / samples.len().max(1) as f32).sqrt();
+            println!(
+                "CBX_E2E {n} {lang} {secs:.2}s rms={rms:.4} wall={:.2}s",
+                started.elapsed().as_secs_f32()
+            );
+            assert!(samples.iter().all(|x| x.is_finite()), "non-finite PCM");
+            assert!(
+                secs > 0.3 && rms > 0.005,
+                "{n}: silent or empty ({secs:.2}s, rms {rms})"
+            );
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            };
+            let mut w = hound::WavWriter::create(out.join(format!("{n:02}_{lang}.wav")), spec)
+                .expect("wav");
+            for s in samples {
+                w.write_sample(s).expect("write");
+            }
+            w.finalize().expect("finalize");
+        }
     }
 }

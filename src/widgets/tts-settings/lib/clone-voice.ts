@@ -123,18 +123,18 @@ export function isAuthoredVoice(input: {
  * Does the reference clip currently in effect still owe us its transcript?
  *
  * The transcript is a property of the CLIP, not of the gesture that adopted it:
- * a clip can arrive from a model switch (dropped under Chatterbox, then Spark is
- * selected) or from a saved library entry captured under an engine that needed
- * no transcript. Both leave `cloneRefText` empty while the selected engine
- * clones from clip + transcript, and Spark then prepends the reference's
- * semantic tokens with no matching text — the exact misalignment the transcript
- * exists to prevent.
+ * a clip can arrive from a model switch (dropped under Chatterbox, then Qwen3-TTS
+ * Base is selected) or from a saved library entry captured under an engine that
+ * needed no transcript. Both leave `cloneRefText` empty while the selected engine
+ * clones from clip + transcript, and Qwen3-TTS Base then falls back to its weaker
+ * speaker-embedding-only clone instead of continuing the reference (ICL) — the
+ * quality loss the transcript exists to prevent.
  */
 export function needsReferenceTranscript(input: {
 	/** A prepare/transcribe round-trip is already running. */
 	busy: boolean;
 	cloneRefText: string;
-	/** The selected engine clones from clip + transcript (`spark-tts-0.5b`). */
+	/** The selected engine clones from clip + transcript (e.g. `qwen3-tts-0.6b-base`). */
 	needsRefText: boolean;
 	/** Read-aloud is on. Deriving the transcript runs the STT model, so it is
 	 *  never spent on a feature that is currently switched off — merely opening

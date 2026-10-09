@@ -140,8 +140,8 @@ describe("needsReferenceTranscript", () => {
 	};
 
 	test("a clip that arrived without its transcript still owes one", () => {
-		// Dropped under a clip-only cloner, then Spark selected: `cloneRefText` is
-		// empty and nothing else would ever fill it, so Spark would clone against
+		// Dropped under a clip-only cloner, then Qwen3-TTS Base selected: `cloneRefText` is
+		// empty and nothing else would ever fill it, so the engine would clone against
 		// an EMPTY reference transcript.
 		expect(needsReferenceTranscript(owed)).toBe(true);
 		// Whitespace is not a transcript.

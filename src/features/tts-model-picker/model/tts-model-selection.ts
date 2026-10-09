@@ -29,6 +29,8 @@ export function defaultVoiceForTtsModel(
 			return "af_heart";
 		case "kitten":
 			return "expr-voice-5-m";
+		case "paradee":
+			return "af_heart";
 		case "piper":
 			return "en_US-lessac-medium";
 		case "supertonic":
@@ -37,17 +39,24 @@ export function defaultVoiceForTtsModel(
 			return "default";
 		case "qwen3tts":
 		case "qwen3-tts":
-			return "vivian";
-		case "orpheus":
-			return "tara";
-		case "spark":
-			return "female";
+			// The Base checkpoints clone from a clip and expose only the "default"
+			// sentinel; CustomVoice names one of its preset timbres.
+			return info?.cloning !== undefined && info.cloning !== "none"
+				? "default"
+				: "vivian";
+		// Voice-design row (caught above): the voice IS a description, empty = default.
+		case "maya1":
+			return "";
 		case "neutts":
 			return "emily-neutral";
 		case "omnivoice":
 			return "default";
 		case "audio8":
 			return "default";
+		case "magpie":
+			return "sofia";
+		case "cosyvoice3":
+			return "en-male";
 		default:
 			return modelId === SUPERTONIC_TTS_MODEL_ID
 				? SUPERTONIC_DEFAULT_VOICE
@@ -107,6 +116,17 @@ export function resolveTtsModelSelectionPatch(
 			...voicePatch,
 			lang: SUPERTONIC_DEFAULT_LANG,
 			speed: clampSupertonicSpeed(currentSpeed),
+			...quantPatch,
+		};
+	}
+	if (nextInfo?.engine === "magpie") {
+		// Magpie's five voices speak all ten languages, so the speech language is
+		// its own axis; seed English rather than carry over a language (say a
+		// Kokoro `cmn`) that Magpie cannot speak.
+		return {
+			model: nextModel,
+			...voicePatch,
+			lang: SUPERTONIC_DEFAULT_LANG,
 			...quantPatch,
 		};
 	}

@@ -170,7 +170,8 @@ export function useTtsModelSection() {
 		? pickCachedTtsModel(ttsModels, ttsStatesById)
 		: null;
 	const isCloningModel = (selectedModelInfo?.cloning ?? "none") !== "none";
-	// Cloning models that need the reference-clip TRANSCRIPT (Spark) — the UI collects it
+	// Cloning models that use the reference-clip TRANSCRIPT (OmniVoice, Audio8, Qwen3-TTS
+	// Base) — the UI collects it
 	// (auto-transcribed with the selected STT model into an editable field).
 	const needsRefText =
 		selectedModelInfo?.cloning === "zero_shot_audio_transcript";
@@ -236,7 +237,11 @@ export function useTtsModelSection() {
 	);
 	const isSupertonicModel =
 		selectedModelInfo?.engine === "supertonic" || model === SUPERTONIC_MODEL_ID;
-	const supertonicLanguage = isSupertonicModel
+	// Engines whose every voice speaks every catalog language (Supertonic,
+	// Magpie) pick the speech language on its own axis, not through the voice.
+	const hasLanguageAxis =
+		isSupertonicModel || selectedModelInfo?.engine === "magpie";
+	const supertonicLanguage = hasLanguageAxis
 		? resolveSupertonicLanguage(lang, catalog)
 		: lang;
 	const effectiveSpeed = isSupertonicModel
@@ -336,21 +341,28 @@ export function useTtsModelSection() {
 	} = useTtsPlayback();
 
 	const downloadProgress = useTtsDownloadProgress(installPhase);
-	const voiceGroups = isSupertonicModel
+	const voiceGroups = hasLanguageAxis
 		? buildStyleVoiceGroups(catalog)
 		: buildVoiceGroups(catalog);
-	// A cloning engine's own voices ("default", or Spark's female/male) — offered
+	// A cloning engine's own voices (the "default" sentinel) — offered
 	// as a flat list beside the clip card, since the clip overrides them.
 	const clonePresetOptions = catalog.voices.map((v) => ({
 		id: v.id,
 		label: v.label,
 	}));
-	const languageGroups = isSupertonicModel
+	// A voice-design row's ready-made prompts (Maya1's voice descriptions): every
+	// catalog voice except the empty "default" sentinel, whose `id` IS the prompt.
+	const voiceDesignPresets = isVoiceDesignModel
+		? catalog.voices
+				.filter((v) => v.id.trim().length > 0)
+				.map((v) => ({ id: v.id, label: v.label }))
+		: [];
+	const languageGroups = hasLanguageAxis
 		? buildLanguageGroups(catalog, t("language"))
 		: undefined;
 
 	const langForVoice = (voiceId: string): string =>
-		isSupertonicModel
+		hasLanguageAxis
 			? supertonicLanguage
 			: (catalog.voices.find((v) => v.id === voiceId)?.language ??
 				deriveLanguage(voiceId));
@@ -472,10 +484,11 @@ export function useTtsModelSection() {
 
 	// The reference transcript is a property of the CLIP, not of the gesture that
 	// adopted it. A clip can also arrive from a model switch (dropped under a
-	// clip-only cloner, then Spark is selected) or from a library entry saved
-	// under an engine that needed no transcript — both would otherwise leave Spark
+	// clip-only cloner, then Qwen3-TTS Base is selected) or from a library entry saved
+	// under an engine that needed no transcript — both would otherwise leave the engine
 	// cloning against an EMPTY reference transcript, which is exactly the
-	// text/semantic-token misalignment the transcript exists to prevent.
+	// text/reference misalignment (or weaker no-transcript clone) the transcript exists
+	// to prevent.
 	//
 	// The STORED clip is transcribed, never the user's original file: the text
 	// must describe exactly the audio the engine will hear, and the stored clip is
@@ -558,7 +571,7 @@ export function useTtsModelSection() {
 			update({ voice: nextVoice });
 			return;
 		}
-		if (isSupertonicModel) {
+		if (hasLanguageAxis) {
 			update({ voice: nextVoice, lang: supertonicLanguage });
 			previewVoice(nextVoice, supertonicLanguage);
 			return;
@@ -905,7 +918,9 @@ export function useTtsModelSection() {
 			? t("noVoicesYet")
 			: isSupertonicModel
 				? "10 style voices; choose the speech language separately."
-				: t("voiceCaption");
+				: hasLanguageAxis
+					? "Every voice speaks every language; choose the speech language separately."
+					: t("voiceCaption");
 
 	const installing =
 		!isCloud && (installPhase !== null || downloadProgress.active);
@@ -1033,9 +1048,11 @@ export function useTtsModelSection() {
 		openDetachedTtsPicker: (rect: DOMRect) =>
 			openModelPickerAtRect(rect, { pickerKind: "tts" }),
 		isSupertonicModel,
+		hasLanguageAxis,
 		isCloningModel,
 		isVoiceDesignModel,
 		voiceDesignMaxChars,
+		voiceDesignPresets,
 		maxRefClipSecs: effectiveMaxRefSecs,
 		referenceClip,
 		clonePresetOptions,

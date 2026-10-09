@@ -1,6 +1,7 @@
 import {
 	AudioWave02Icon,
 	CatIcon,
+	FeatherIcon,
 	FlashIcon,
 	VoiceIcon,
 	WaterfallUp01Icon,
@@ -15,7 +16,7 @@ import {
 
 /**
  * TTS engine key — the `engine` discriminator on {@link TtsModelInfo}. The
- * catalog ships four engines (Kokoro / Kitten / Piper / Supertonic); the
+ * catalog ships many engines (Kokoro / Kitten / Paradee / Piper / …); the
  * `string` fallback keeps the picker forward-compatible with any engine the
  * server starts emitting before this config is updated (it falls back to the
  * neutral default config rather than throwing).
@@ -64,6 +65,14 @@ const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
 		logoSrc: "/provider-icons/kittenml.webp",
 		chip: "bg-tts-engine-kitten/15 text-tts-engine-kitten",
 	},
+	// Paradee's author publishes no logo (a personal HF account), so the engine
+	// keeps the HugeIcon glyph — a feather for the catalog's lightest voice.
+	paradee: {
+		icon: FeatherIcon,
+		label: "Paradee",
+		maker: "Sahil Mahendrakar",
+		chip: "bg-tts-engine-paradee/15 text-tts-engine-paradee",
+	},
 	piper: {
 		icon: WaterfallUp01Icon,
 		label: "Piper",
@@ -92,19 +101,13 @@ const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
 		logoSrc: "/provider-icons/qwen.svg",
 		chip: "bg-tts-engine-qwen3tts/15 text-tts-engine-qwen3tts",
 	},
-	orpheus: {
+	// Maya Research publishes no SVG mark — canonical Hugging Face org avatar (webp).
+	maya1: {
 		icon: VoiceIcon,
-		label: "Orpheus",
-		maker: "Canopy Labs",
-		logoSrc: "/provider-icons/canopylabs.svg",
-		chip: "bg-tts-engine-orpheus/15 text-tts-engine-orpheus",
-	},
-	spark: {
-		icon: FlashIcon,
-		label: "Spark-TTS",
-		maker: "SparkAudio",
-		logoSrc: "/provider-icons/sparkaudio.jpg",
-		chip: "bg-tts-engine-spark/15 text-tts-engine-spark",
+		label: "Maya1",
+		maker: "Maya Research",
+		logoSrc: "/provider-icons/maya-research.webp",
+		chip: "bg-tts-engine-maya1/15 text-tts-engine-maya1",
 	},
 	// Neither vendor publishes an SVG mark (checked neuphonic.com, k2-fsa.github.io and
 	// both GitHub orgs), so these are the canonical Hugging Face org avatars — the same
@@ -132,6 +135,22 @@ const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
 		// Same traced SVG the STT Audio8 family uses — the vendor avatar renders as a solid tile.
 		logoSrc: "/provider-icons/audio8.svg",
 		chip: "bg-tts-engine-audio8/15 text-tts-engine-audio8",
+	},
+	magpie: {
+		icon: VoiceIcon,
+		label: "Magpie",
+		maker: "NVIDIA",
+		logoSrc: "/provider-icons/nvidia.svg",
+		chip: "bg-tts-engine-magpie/15 text-tts-engine-magpie",
+	},
+	// FunAudioLLM ships no SVG mark — same Hugging Face org avatar the SenseVoice STT
+	// family already bundles.
+	cosyvoice3: {
+		icon: VoiceIcon,
+		label: "CosyVoice3",
+		maker: "FunAudioLLM",
+		logoSrc: "/provider-icons/funaudiollm.png",
+		chip: "bg-tts-engine-cosyvoice3/15 text-tts-engine-cosyvoice3",
 	},
 };
 
@@ -171,7 +190,8 @@ export function getEngineLogoSrc(engine: TtsEngineKey | string): string | null {
  */
 const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
 	kokoro: ["hexgrad", "kokoro-82m", "82m"],
-	kitten: ["kittenml", "kitten ml", "nano"],
+	kitten: ["kittenml", "kitten ml", "nano", "micro", "mini"],
+	paradee: ["paradee", "kokoro", "heart", "distilled", "tiny", "fast"],
 	piper: ["rhasspy", "vits", "lessac", "en-us"],
 	supertonic: ["supertone", "supertonic-3", "multilingual", "webgpu"],
 	chatterbox: ["resemble", "resemble ai", "voice cloning", "multilingual"],
@@ -181,16 +201,19 @@ const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
 		"qwen3-tts",
 		"alibaba",
 		"voice design",
+		"voice cloning",
+		"clone",
+		"base",
 		"multilingual",
 	],
-	orpheus: ["canopy", "canopy labs", "llama", "emotion", "expressive", "snac"],
-	spark: [
-		"sparkaudio",
-		"spark tts",
-		"bicodec",
-		"qwen",
-		"voice creation",
-		"clone",
+	maya1: [
+		"maya",
+		"maya research",
+		"llama",
+		"voice design",
+		"emotion",
+		"expressive",
+		"snac",
 	],
 	neutts: [
 		"neuphonic",
@@ -221,6 +244,28 @@ const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
 		"fish",
 		"voice cloning",
 		"zero-shot",
+		"multilingual",
+	],
+	magpie: [
+		"nvidia",
+		"magpie",
+		"nemo",
+		"nanocodec",
+		"multilingual",
+		"hindi",
+		"arabic",
+	],
+	cosyvoice3: [
+		"funaudiollm",
+		"fun audio llm",
+		"alibaba",
+		"tongyi",
+		"cosyvoice",
+		"cosy voice",
+		"fun-cosyvoice3",
+		"voice cloning",
+		"zero-shot",
+		"instruct",
 		"multilingual",
 	],
 };
@@ -337,7 +382,7 @@ export interface TtsCapabilityCopy {
  * Human label for a model's voice-cloning capability. `'none'` returns `null`
  * (no chip rendered); the two zero-shot tiers are labelled DIFFERENTLY because
  * they change what the user has to supply — a clip alone (Chatterbox) versus a
- * clip *and* its exact transcript (Spark). The reference-clip budget comes from
+ * clip *and* its exact transcript (Qwen3-TTS Base). The reference-clip budget comes from
  * the catalog row (`maxRefClipSecs`), never from a number typed into the UI.
  */
 export function cloningLabel(
@@ -378,7 +423,7 @@ export function voiceDesignLabel(t: ModelPickerTranslateFn): TtsCapabilityCopy {
 }
 
 /** Delimiters per {@link TtsTagSyntax}. The ONE place either style is written
- *  down — Orpheus's `<laugh>` and Chatterbox Turbo's `[laugh]` are not
+ *  down — Maya1's `<laugh>` and Chatterbox Turbo's `[laugh]` are not
  *  interchangeable, so no call site may hardcode a bracket. */
 const TAG_DELIMITERS: Record<TtsTagSyntax, readonly [string, string] | null> = {
 	none: null,

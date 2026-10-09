@@ -1,6 +1,6 @@
 // Audio8-ASR engine (`arkasr`: Qwen3-ASR audio tower + MLP adapter → 8-layer Qwen-style causal LM).
 //
-// Source: Audio8/Audio8-ASR-0.1B-onnx-runtime — `asr_onnx_runtime.py::OnnxCacheAsrEngine`
+// Source: Edge0/Audio8-ASR-0.1B-onnx-runtime — `asr_onnx_runtime.py::OnnxCacheAsrEngine`
 // (the bundle's own reference runtime) + `model_bundle/metadata.json`.
 //
 // Pipeline:

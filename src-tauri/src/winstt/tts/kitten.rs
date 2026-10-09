@@ -1,14 +1,18 @@
-// KittenTTS nano (StyleTTS2-derived, single-graph) on ort 2.0.0-rc.12.
+// KittenTTS 0.8 (nano / micro / mini — StyleTTS2-derived, single-graph) on ort.
 //
-// Recipe verified verbatim from KittenML/KittenTTS `kittentts/onnx_model.py` +
-// devnen/Kitten-TTS-Server `engine.py` (see TTS research run, model:kitten):
+// Recipe verified verbatim from KittenML/KittenTTS `kittenml/kittentts_legacy/onnx_model.py`
+// (the ONNX backend the 0.8 repos' `"type": "ONNX2"` config selects):
 //   text --espeak-ng IPA(with_stress)--> phonemes
 //        --basic_english_tokenize (re.findall \w+|[^\w\s]) + ' '.join--> phoneme string
 //        --StyleTTS2 dense symbol table (char->index)--> ids
-//        --[0] ++ ids ++ [0]--> input_ids
+//        --[0] ++ ids ++ [10, 0]--> input_ids   (10 = `…`, the end marker upstream appends)
 //   inputs : input_ids [1,N] i64, style [1,256] f32 (voice row = min(text_chars, rows-1)),
-//            speed [1] f32
+//            speed [1] f32 — the requested speed TIMES the voice's `speed_priors` entry from
+//            the repo's config.json (nano 0.8 ships 0.8/0.9 priors; micro/mini ship none)
 //   output : waveform f32 @ 24 kHz mono; DROP the last 5000 samples (KittenML tail crop)
+//
+// All three 0.8 sizes share this exact signature and the 8 `expr-voice-*` ids; each repo ships
+// its OWN `voices.npz` ([400, 256] f32 per voice), so the voice packs are not interchangeable.
 //
 // Differences from kokoro.rs (do NOT copy Kokoro's vocab/indexing here):
 //  * vocab is the DENSE positional StyleTTS2 table (not Kokoro's sparse config.json map);
@@ -37,6 +41,8 @@ pub const KITTEN_STYLE_DIM: usize = 256;
 const KITTEN_TAIL_CROP: usize = 5000;
 /// Default voice when none/unknown requested.
 pub const KITTEN_DEFAULT_VOICE: &str = "expr-voice-5-m";
+/// The `…` token upstream appends before the closing pad (`tokens.append(10)`).
+const KITTEN_END_TOKEN: i64 = 10;
 
 #[derive(Debug, thiserror::Error)]
 pub enum KittenError {
@@ -122,6 +128,32 @@ fn kitten_text_to_ids(phonemes: &str) -> Vec<i64> {
     ids
 }
 
+/// `[0] ++ ids ++ [10, 0]` — upstream's `insert(0, 0)` + `append(10)` + `append(0)`.
+fn kitten_input_ids(mapped: &[i64]) -> Vec<i64> {
+    let mut input_ids = Vec::with_capacity(mapped.len() + 3);
+    input_ids.push(0i64);
+    input_ids.extend_from_slice(mapped);
+    input_ids.push(KITTEN_END_TOKEN);
+    input_ids.push(0i64);
+    input_ids
+}
+
+/// `speed_priors` from a KittenML `config.json` (`{"expr-voice-2-f": 0.8, ...}`). A missing or
+/// malformed file, or a config without the key (micro/mini 0.8 ship none), yields no priors:
+/// the neutral 1.0 multiplier, never an error.
+fn parse_speed_priors(config_json: &str) -> HashMap<String, f32> {
+    serde_json::from_str::<serde_json::Value>(config_json)
+        .ok()
+        .and_then(|v| v.get("speed_priors")?.as_object().cloned())
+        .map(|m| {
+            m.into_iter()
+                .filter_map(|(k, v)| Some((k, v.as_f64()? as f32)))
+                .filter(|(_, prior)| prior.is_finite() && *prior > 0.0)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // ---------------------------------------------------------------------------
 // Voice pack — voices.npz (zip of <expr-voice-*>.npy f32 arrays). Each array is
 // [rows, 256] (or [256] / [1,256]); the style row is min(text_chars, rows-1).
@@ -168,14 +200,14 @@ impl KittenVoices {
         Ok(Self { voices })
     }
 
-    fn get(&self, voice_id: &str) -> KittenResult<&KittenVoiceStyle> {
-        if let Some(v) = self.voices.get(voice_id) {
-            return Ok(v);
-        }
-        // fall back to the default voice if the requested one is unknown
+    /// The style table for `voice_id` plus the id it RESOLVED to: an unknown id falls back to
+    /// the default voice, and the speed prior must follow the voice actually used.
+    fn get(&self, voice_id: &str) -> KittenResult<(&str, &KittenVoiceStyle)> {
         self.voices
-            .get(KITTEN_DEFAULT_VOICE)
-            .or_else(|| self.voices.values().next())
+            .get_key_value(voice_id)
+            .or_else(|| self.voices.get_key_value(KITTEN_DEFAULT_VOICE))
+            .or_else(|| self.voices.iter().next())
+            .map(|(id, v)| (id.as_str(), v))
             .ok_or_else(|| KittenError::Voice(format!("unknown voice id '{voice_id}'")))
     }
 }
@@ -237,14 +269,17 @@ pub struct KittenConfig {
     pub cache_dir: PathBuf,
     pub model_filename: String,
     pub voices_filename: String,
+    /// The repo's `config.json` — optional at load; only its `speed_priors` are read.
+    pub config_filename: String,
     pub device: TtsDevice,
 }
 impl Default for KittenConfig {
     fn default() -> Self {
         Self {
             cache_dir: PathBuf::new(),
-            model_filename: "kitten_tts_nano_v0_1.onnx".to_string(),
+            model_filename: "kitten_tts_nano_v0_8.onnx".to_string(),
             voices_filename: "voices.npz".to_string(),
+            config_filename: "config.json".to_string(),
             device: TtsDevice::Cpu,
         }
     }
@@ -256,6 +291,9 @@ impl KittenConfig {
     pub fn voices_path(&self) -> PathBuf {
         self.cache_dir.join(&self.voices_filename)
     }
+    pub fn config_path(&self) -> PathBuf {
+        self.cache_dir.join(&self.config_filename)
+    }
     pub fn assets_present(&self) -> bool {
         self.model_path().exists() && self.voices_path().exists()
     }
@@ -264,6 +302,8 @@ impl KittenConfig {
 struct LoadedKitten {
     session: ort::session::Session,
     voices: KittenVoices,
+    /// Per-voice speed multipliers from config.json (`speed_priors`); absent → 1.0.
+    speed_priors: HashMap<String, f32>,
     active_providers: Vec<String>,
 }
 
@@ -335,11 +375,7 @@ impl KittenEngine {
         if mapped.is_empty() {
             return Ok(Vec::new());
         }
-        // [0] ++ ids ++ [0] (v0.1 / kitten_tts_nano_v0_1.onnx — no middle 10).
-        let mut input_ids = Vec::with_capacity(mapped.len() + 2);
-        input_ids.push(0i64);
-        input_ids.extend_from_slice(&mapped);
-        input_ids.push(0i64);
+        let input_ids = kitten_input_ids(&mapped);
 
         self.inner.with_loaded(
             || KittenError::Session("kitten lock poisoned".into()),
@@ -357,18 +393,24 @@ impl KittenEngine {
             |loaded| {
                 // Style row indexed by RAW INPUT TEXT char count (NOT token count).
                 let text_chars = trimmed.chars().count();
-                let style_row = loaded.voices.get(voice)?.row_for(text_chars).to_vec();
-                self.run_inference(loaded, &input_ids, &style_row, speed)
+                let (voice_id, style) = loaded.voices.get(voice)?;
+                let style_row = style.row_for(text_chars).to_vec();
+                let prior = loaded.speed_priors.get(voice_id).copied().unwrap_or(1.0);
+                self.run_inference(loaded, &input_ids, &style_row, speed * prior)
             },
         )
     }
 
     fn load(&self) -> KittenResult<LoadedKitten> {
         let voices = KittenVoices::load(&self.config.voices_path())?;
+        let speed_priors = std::fs::read_to_string(self.config.config_path())
+            .map(|json| parse_speed_priors(&json))
+            .unwrap_or_default();
         let (session, active_providers) = self.build_session()?;
         Ok(LoadedKitten {
             session,
             voices,
+            speed_priors,
             active_providers,
         })
     }
@@ -460,6 +502,87 @@ mod tests {
         // "ðə, kwɪk." → word/punct split, single-space join.
         let ids = kitten_text_to_ids("\u{00F0}\u{0259}, kw\u{026A}k.");
         assert!(!ids.is_empty());
+    }
+
+    #[test]
+    fn input_ids_carry_the_upstream_end_marker() {
+        assert_eq!(kitten_input_ids(&[5, 6]), vec![0, 5, 6, 10, 0]);
+        // 10 is the `…` glyph in the dense table — the marker upstream appends.
+        assert_eq!(kitten_vocab().get(&'\u{2026}'), Some(&KITTEN_END_TOKEN));
+    }
+
+    #[test]
+    fn speed_priors_parse_from_the_0_8_config() {
+        let nano =
+            r#"{"type": "ONNX2", "speed_priors": {"expr-voice-2-f": 0.8, "expr-voice-4-m": 0.9}}"#;
+        let p = parse_speed_priors(nano);
+        assert_eq!(p.get("expr-voice-2-f"), Some(&0.8));
+        assert_eq!(p.get("expr-voice-4-m"), Some(&0.9));
+        // micro/mini ship none; garbage / absent → no priors, never an error.
+        assert!(parse_speed_priors(r#"{"speed_priors": {}}"#).is_empty());
+        assert!(parse_speed_priors(r#"{"name": "x"}"#).is_empty());
+        assert!(parse_speed_priors("not json").is_empty());
+        assert!(parse_speed_priors(r#"{"speed_priors": {"v": -1, "w": "fast"}}"#).is_empty());
+    }
+
+    #[test]
+    fn unknown_voice_resolves_to_the_default_id() {
+        let style = || KittenVoiceStyle {
+            data: vec![0.0; KITTEN_STYLE_DIM],
+            rows: 1,
+        };
+        let voices = KittenVoices {
+            voices: HashMap::from([
+                (KITTEN_DEFAULT_VOICE.to_string(), style()),
+                ("expr-voice-2-f".to_string(), style()),
+            ]),
+        };
+        assert_eq!(voices.get("expr-voice-2-f").unwrap().0, "expr-voice-2-f");
+        // The prior must follow the voice actually used, so the fallback reports its id.
+        assert_eq!(voices.get("af_heart").unwrap().0, KITTEN_DEFAULT_VOICE);
+    }
+
+    /// Real-weights probe: synthesizes `WINSTT_G2P_SENTENCES` (one per line) with every
+    /// `tag=dir/graph.onnx` in `WINSTT_KITTEN_GRAPHS` (comma-separated; each dir holds that
+    /// repo's voices.npz + config.json) for `WINSTT_KITTEN_VOICE` (default expr-voice-2-f),
+    /// writing `kitten_{tag}_{NN}.wav` into `WINSTT_G2P_OUT` for an external ASR/WER pass.
+    #[test]
+    #[ignore = "needs the KittenML 0.8 weights + eSpeak-ng; see the doc comment"]
+    fn kitten_probe_writes_wavs() {
+        let out = PathBuf::from(std::env::var("WINSTT_G2P_OUT").expect("WINSTT_G2P_OUT"));
+        let text = std::fs::read_to_string(std::env::var("WINSTT_G2P_SENTENCES").unwrap()).unwrap();
+        let graphs = std::env::var("WINSTT_KITTEN_GRAPHS").expect("WINSTT_KITTEN_GRAPHS");
+        let voice =
+            std::env::var("WINSTT_KITTEN_VOICE").unwrap_or_else(|_| "expr-voice-2-f".into());
+        std::fs::create_dir_all(&out).unwrap();
+        for spec in graphs.split(',') {
+            let (tag, graph) = spec.split_once('=').expect("tag=path");
+            let graph = PathBuf::from(graph);
+            let engine = KittenEngine::new(KittenConfig {
+                cache_dir: graph.parent().unwrap().to_path_buf(),
+                model_filename: graph.file_name().unwrap().to_string_lossy().into_owned(),
+                ..Default::default()
+            });
+            engine.warm_up().expect("warm up");
+            let started = std::time::Instant::now();
+            let mut samples = 0usize;
+            for (i, line) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+                let pcm = engine
+                    .synthesize(line, &voice, "en-us", 1.0)
+                    .expect("synth");
+                samples += pcm.len();
+                crate::winstt::tts::write_probe_wav(
+                    &out.join(format!("kitten_{tag}_{i:02}.wav")),
+                    &pcm,
+                    KITTEN_SAMPLE_RATE,
+                );
+            }
+            let audio_s = samples as f64 / f64::from(KITTEN_SAMPLE_RATE);
+            println!(
+                "{tag}: RTF {:.3} ({audio_s:.1}s audio)",
+                started.elapsed().as_secs_f64() / audio_s
+            );
+        }
     }
 
     #[test]

@@ -18,7 +18,7 @@ export interface InlineTagsFieldProps {
 /**
  * The read-aloud "Inline tags" switch: run the text through the post-processing
  * LLM before synthesis so it can insert the SELECTED model's inline
- * paralinguistic tags (`<laugh>` on Orpheus, `[laugh]` on Chatterbox Turbo)
+ * paralinguistic tags (`<laugh>` on Maya1, `[laugh]` on Chatterbox Turbo)
  * where the delivery calls for them.
  *
  * The tooltip quotes the model's real vocabulary — it arrives from the catalog

@@ -41,12 +41,14 @@ use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::tts::catalog::{self, TtsEngineId};
 use crate::winstt::tts::local_engines::{
     AUDIO8_01_VOICES, AUDIO8_VOICES, Audio8LocalEngine, Audio8Preview01LocalEngine,
-    CHATTERBOX_VOICES, ChatterboxLocalEngine, KITTEN_VOICES, KittenLocalEngine, NEUTTS_VOICE_INFOS,
-    NeuTtsLocalEngine, OMNIVOICE_VOICES, ORPHEUS_VOICE_INFOS, OmniVoiceLocalEngine,
-    OrpheusLocalEngine, PiperLocalEngine, QWEN3TTS_CUSTOMVOICE_VOICES, QWEN3TTS_VOICES,
-    Qwen3TtsLocalEngine, SPARK_VOICE_INFOS, SUPERTONIC_VOICES, SparkLocalEngine,
-    SupertonicLocalEngine, piper_voice_infos,
+    CHATTERBOX_VOICES, COSYVOICE3_VOICES, ChatterboxLocalEngine, CosyVoice3LocalEngine,
+    KITTEN_VOICES, KittenLocalEngine, MAGPIE_VOICES, MAYA1_VOICE_INFOS, MagpieLocalEngine,
+    Maya1LocalEngine, NEUTTS_VOICE_INFOS, NeuTtsLocalEngine, OMNIVOICE_VOICES,
+    OmniVoiceLocalEngine, PARADEE_VOICES, ParadeeLocalEngine, PiperLocalEngine,
+    QWEN3TTS_BASE_VOICES, QWEN3TTS_CUSTOMVOICE_VOICES, QWEN3TTS_VOICES, Qwen3TtsLocalEngine,
+    SUPERTONIC_VOICES, SupertonicLocalEngine, piper_voice_infos,
 };
+use crate::winstt::tts::magpie::MAGPIE_LANGUAGES;
 use crate::winstt::tts::phonemize::{
     ESPEAK_RUNTIME_COMPONENT_ID, ESPEAK_RUNTIME_COMPONENT_LABEL, EspeakCliPhonemizer, Phonemizer,
     ensure_espeak_runtime, espeak_runtime_available, espeak_runtime_pack,
@@ -161,12 +163,14 @@ fn tts_engine_key(source: TtsSource, fingerprint: &str) -> String {
 /// get downloaded are the files that get loaded (only Qwen3-TTS ships a ladder).
 /// How a Qwen3-TTS catalog row reads `tts.voice`. The VoiceDesign checkpoint has no
 /// preset bank (`voice_design: true`, `num_voices: 0`) and treats it as an instruct
-/// prompt; every other Qwen3-TTS row is a CustomVoice checkpoint whose `voice` names one
-/// of its preset timbres. Driven off the catalog facets so a future checkpoint needs no
-/// code change here.
+/// prompt; a Base checkpoint (`cloning` supported) reads it as a reference-clip path
+/// (or the "default" sentinel); every other Qwen3-TTS row is a CustomVoice checkpoint
+/// whose `voice` names one of its preset timbres. Driven off the catalog facets so a
+/// future checkpoint needs no code change here.
 fn qwen3_tts_voice_mode(model_id: &str) -> Qwen3TtsVoiceMode {
     match catalog::find(model_id) {
         Some(entry) if entry.voice_design => Qwen3TtsVoiceMode::DesignPrompt,
+        Some(entry) if entry.cloning.supports_cloning() => Qwen3TtsVoiceMode::CloneReference,
         _ => Qwen3TtsVoiceMode::PresetSpeaker,
     }
 }
@@ -207,7 +211,7 @@ fn effective_cloud_provider(s: &WinsttSettings) -> TtsCloudProvider {
 /// Whether a system `espeak-ng` CLI is on PATH (cross-platform). Probes the same
 /// binary the CLI phonemizer would shell out to (honoring `ESPEAK_NG_BIN` /
 /// `WINSTT_ESPEAK_NG`) via a cheap `--version` call. Used to relax the espeak
-/// gate for CLI-capable engines (Kokoro/Kitten) when the in-process shared lib is
+/// gate for CLI-capable engines (Kokoro/Kitten/Paradee) when the in-process shared lib is
 /// absent, so the engine's CLI fallback can run instead of dropping the request.
 fn espeak_cli_available() -> bool {
     EspeakCliPhonemizer::default().is_available()
@@ -570,10 +574,11 @@ impl TtsManager {
                 // Quant is part of the fingerprint so a quant swap (only Qwen3-TTS
                 // ships a ladder today) rebuilds the engine; other engines carry an
                 // empty quant, leaving their fingerprint unchanged. `clone_ref_text` is
-                // included so editing a Spark clone reference transcript rebuilds the
-                // engine (it's a construction-time field); empty for every other engine,
-                // so their fingerprint is unaffected. `voice_instruct` likewise, for the
-                // rows whose prompt carries a dedicated instruct span (OmniVoice).
+                // included so editing a clone reference transcript (OmniVoice, Audio8,
+                // Qwen3-TTS Base) rebuilds the engine (it's a construction-time field);
+                // empty for every other engine, so their fingerprint is unaffected.
+                // `voice_instruct` likewise, for the rows whose prompt carries a
+                // dedicated instruct span (OmniVoice).
                 format!(
                     "local|{}|{device_tag}|{}|{}|{}",
                     settings.tts.model,
@@ -619,10 +624,20 @@ impl TtsManager {
     fn build_local_engine_for(&self, settings: &WinsttSettings) -> Arc<dyn TtsEngine> {
         let model_id = settings.tts.model.clone();
         match catalog::find(&model_id).map(|e| e.engine) {
+            // Kitten 0.8 (nano/micro/mini): the persisted `tts.quantization` picks nano's
+            // rung (int8|fp32), whose graph lands under a quant-suffixed local name.
             Some(TtsEngineId::Kitten) => Arc::new(KittenLocalEngine::new(
                 self.model_cache_dir(&model_id),
-                catalog::kitten_model_file(&model_id),
+                catalog::kitten_files(
+                    &model_id,
+                    &resolve_selected_quant(&model_id, &settings.tts.quantization),
+                )
+                .local_graph,
             )),
+            // Paradee: one int8 graph, one baked-in voice — nothing to plumb.
+            Some(TtsEngineId::Paradee) => {
+                Arc::new(ParadeeLocalEngine::new(self.model_cache_dir(&model_id)))
+            }
             // Piper is ONE multilingual model whose voice (`tts.voice`) selects which
             // `{stem}.onnx` to load; the engine lazily warms per-voice and the
             // download manager fetches the selected voice's files on demand.
@@ -641,28 +656,42 @@ impl TtsManager {
                 &model_id,
                 &resolve_selected_quant(&model_id, &settings.tts.quantization),
             )),
-            // Qwen3-TTS Voice Design: the persisted `tts.quantization` selects the
-            // weights precision (int4|fp16|fp32); empty falls back to the catalog's
-            // default quant (int4). The engine treats `tts.voice` as the design prompt.
-            Some(TtsEngineId::Qwen3Tts) => Arc::new(Qwen3TtsLocalEngine::new(
+            // Qwen3-TTS (VoiceDesign / CustomVoice / Base): the persisted `tts.quantization`
+            // selects the weights precision (int4|fp16|fp32); empty falls back to the
+            // catalog's default quant (int4). `tts.voice` is the design prompt, a preset
+            // timbre, or (Base) a reference-clip path whose transcript is
+            // `tts.clone_ref_text` — already part of the engine fingerprint, so editing
+            // the transcript rebuilds the engine.
+            Some(TtsEngineId::Qwen3Tts) => Arc::new(
+                Qwen3TtsLocalEngine::new(
+                    self.model_cache_dir(&model_id),
+                    resolve_selected_quant(&model_id, &settings.tts.quantization),
+                    qwen3_tts_voice_mode(&model_id),
+                )
+                .with_clone_reference(
+                    settings.tts.clone_ref_text.clone(),
+                    catalog::reference_clip_cap_secs(&model_id),
+                ),
+            ),
+            // Maya1 (3B Llama → SNAC): an LLM-codec engine that loads its ONNX from the
+            // per-model cache dir populated by the download manager. `tts.voice` is the
+            // voice DESCRIPTION (a voice-design row; empty = its default description), and
+            // the persisted `tts.quantization` picks the decoder graph rung (CPU-pinned).
+            Some(TtsEngineId::Maya1) => Arc::new(Maya1LocalEngine::new(
                 self.model_cache_dir(&model_id),
-                resolve_selected_quant(&model_id, &settings.tts.quantization),
-                qwen3_tts_voice_mode(&model_id),
-            )),
-            // Orpheus (3B Llama → SNAC) + Spark (Qwen0.5B → BiCodec): CPU-pinned LLM-codec
-            // engines that load their ONNX from the per-model cache dir populated by the
-            // download manager. `tts.voice` = preset voice id (Orpheus) / gender (Spark).
-            Some(TtsEngineId::Orpheus) => {
-                Arc::new(OrpheusLocalEngine::new(self.model_cache_dir(&model_id)))
-            }
-            Some(TtsEngineId::Spark) => Arc::new(SparkLocalEngine::new(
-                self.model_cache_dir(&model_id),
-                settings.tts.clone_ref_text.clone(),
+                &resolve_selected_quant(&model_id, &settings.tts.quantization),
             )),
             // NeuTTS-2e (Qwen3 → NeuCodec): the persisted `tts.quantization` picks the rung
             // (int8|fp32), which selects BOTH the backbone graph and the matching NeuCodec
             // decoder. `tts.voice` is a `{speaker}-{emotion}` id.
             Some(TtsEngineId::NeuTts) => Arc::new(NeuTtsLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                resolve_selected_quant(&model_id, &settings.tts.quantization),
+            )),
+            // Magpie-TTS (NVIDIA): the persisted `tts.quantization` picks the step-graph rung
+            // (int8|fp32); the codec + tables are shared. `tts.voice` is a baked speaker id and
+            // `tts.lang` picks the text frontend.
+            Some(TtsEngineId::Magpie) => Arc::new(MagpieLocalEngine::new(
                 self.model_cache_dir(&model_id),
                 resolve_selected_quant(&model_id, &settings.tts.quantization),
             )),
@@ -686,6 +715,17 @@ impl TtsManager {
                 self.model_cache_dir(&model_id),
                 settings.tts.clone_ref_text.clone(),
             )),
+            // CosyVoice3: `tts.quantization` picks the LLM rung (int8|q4|fp32); the flow
+            // estimator + HiFT follow the shared model device (DirectML on Auto). `tts.voice`
+            // is a bundled voice id or a reference-clip path; the clip transcript and the
+            // style instruction are fingerprinted construction-time inputs.
+            Some(TtsEngineId::CosyVoice3) => Arc::new(CosyVoice3LocalEngine::new(
+                self.model_cache_dir(&model_id),
+                &resolve_selected_quant(&model_id, &settings.tts.quantization),
+                self.local_config_from(settings).device,
+                settings.tts.clone_ref_text.clone(),
+                settings.tts.voice_instruct.clone(),
+            )),
             // Kokoro (and any unknown id) → the existing Kokoro engine + cache.
             _ => Arc::new(KokoroLocalEngine::new(self.local_config_from(settings))),
         }
@@ -696,7 +736,7 @@ impl TtsManager {
         let engine = catalog::find(model_id).map_or(TtsEngineId::Kokoro, |e| e.engine);
         matches!(
             engine,
-            TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Piper
+            TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Paradee | TtsEngineId::Piper
         )
     }
 
@@ -708,7 +748,10 @@ impl TtsManager {
     fn selected_engine_accepts_cli_for(settings: &WinsttSettings) -> bool {
         let model_id = &settings.tts.model;
         let engine = catalog::find(model_id).map_or(TtsEngineId::Kokoro, |e| e.engine);
-        matches!(engine, TtsEngineId::Kokoro | TtsEngineId::Kitten)
+        matches!(
+            engine,
+            TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Paradee
+        )
     }
 
     fn ensure_espeak_runtime_for_settings(
@@ -721,7 +764,7 @@ impl TtsManager {
         }
         // No in-process shared lib. Where there's a pinned runtime pack (Windows)
         // we keep downloading it — the in-process lib is faster than a per-sentence
-        // subprocess. Only where there's no downloadable pack (Unix) do Kokoro/Kitten
+        // subprocess. Only where there's no downloadable pack (Unix) do Kokoro/Kitten/Paradee
         // degrade to a system `espeak-ng` CLI (their phonemizer's built-in fallback),
         // which satisfies the runtime with no download — the common case where
         // `apt install espeak-ng` ships the CLI even when the -dev .so is absent.
@@ -914,6 +957,7 @@ impl TtsManager {
         let selected_engine = catalog::find(&model_id).map(|e| e.engine);
         let voices_src: Vec<VoiceInfo> = match selected_engine {
             Some(TtsEngineId::Kitten) => KITTEN_VOICES.to_vec(),
+            Some(TtsEngineId::Paradee) => PARADEE_VOICES.to_vec(),
             // Piper exposes its full curated multilingual voice list (one good voice
             // per language); each voice downloads on demand when selected.
             Some(TtsEngineId::Piper) => piper_voice_infos(),
@@ -926,16 +970,22 @@ impl TtsManager {
             Some(TtsEngineId::Qwen3Tts) => match qwen3_tts_voice_mode(&model_id) {
                 Qwen3TtsVoiceMode::PresetSpeaker => QWEN3TTS_CUSTOMVOICE_VOICES.to_vec(),
                 Qwen3TtsVoiceMode::DesignPrompt => QWEN3TTS_VOICES.to_vec(),
+                // Base: one sentinel entry; the real voice is a reference clip.
+                Qwen3TtsVoiceMode::CloneReference => QWEN3TTS_BASE_VOICES.to_vec(),
             },
-            Some(TtsEngineId::Orpheus) => ORPHEUS_VOICE_INFOS.to_vec(),
-            Some(TtsEngineId::Spark) => SPARK_VOICE_INFOS.to_vec(),
+            // Voice design: the "" default sentinel plus ready-made descriptions the
+            // prompt editor offers as presets (see MAYA1_VOICE_INFOS).
+            Some(TtsEngineId::Maya1) => MAYA1_VOICE_INFOS.to_vec(),
             // 4 speakers x 7 emotions as flat `{speaker}-{emotion}` ids — see NEUTTS_VOICE_INFOS.
             Some(TtsEngineId::NeuTts) => NEUTTS_VOICE_INFOS.to_vec(),
+            // Five baked speakers; every one speaks all ten frontend languages.
+            Some(TtsEngineId::Magpie) => MAGPIE_VOICES.to_vec(),
             // No preset bank — one sentinel entry; the real voice comes from a reference
             // clip, which the ZeroShotAudioText cloning facet surfaces in the dropdown.
             Some(TtsEngineId::OmniVoice) => OMNIVOICE_VOICES.to_vec(),
             Some(TtsEngineId::Audio8) if model_id == "audio8-tts-0.1b" => AUDIO8_01_VOICES.to_vec(),
             Some(TtsEngineId::Audio8) => AUDIO8_VOICES.to_vec(),
+            Some(TtsEngineId::CosyVoice3) => COSYVOICE3_VOICES.to_vec(),
             _ => KOKORO_VOICE_CATALOG.to_vec(),
         };
         let voices = voices_src
@@ -949,6 +999,7 @@ impl TtsManager {
             .collect();
         let language_src = match selected_engine {
             Some(TtsEngineId::Supertonic) => SUPERTONIC_LANGUAGES,
+            Some(TtsEngineId::Magpie) => MAGPIE_LANGUAGES,
             _ => SUPPORTED_LANGUAGES,
         };
         let languages = language_src
@@ -1131,16 +1182,19 @@ impl TtsManager {
         let mut unavailable = false;
         if matches!(
             entry.engine,
-            TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Piper
+            TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Paradee | TtsEngineId::Piper
         ) {
-            // Kokoro/Kitten can run off a system espeak-ng CLI when no shared lib
+            // Kokoro/Kitten/Paradee can run off a system espeak-ng CLI when no shared lib
             // AND no downloadable pack is present; Piper needs the lib. Count the
             // CLI as "installed" for the CLI-capable engines so the estimate
             // doesn't demand a nonexistent runtime pack on Unix. Where a pack
             // exists (Windows) the CLI never masks the download.
             let runtime_bytes = espeak_runtime_pack().map_or(0, |p| p.size_bytes);
             let cli_fallback = espeak_runtime_pack().is_none()
-                && matches!(entry.engine, TtsEngineId::Kokoro | TtsEngineId::Kitten)
+                && matches!(
+                    entry.engine,
+                    TtsEngineId::Kokoro | TtsEngineId::Kitten | TtsEngineId::Paradee
+                )
                 && espeak_cli_available();
             let runtime_installed = espeak_runtime_available() || cli_fallback;
             unavailable = !runtime_installed && espeak_runtime_pack().is_none();
