@@ -23,7 +23,7 @@ fn write_frame(file: &mut File, pcm: Option<&[f32]>) -> io::Result<()> {
     file.write_all(&count.to_le_bytes())?;
     let mut buffer = [0u8; 8192];
     for samples in pcm.chunks(buffer.len() / 4) {
-        for (bytes, sample) in buffer.chunks_exact_mut(4).zip(samples) {
+        for (bytes, sample) in buffer.as_chunks_mut::<4>().0.iter_mut().zip(samples) {
             bytes.copy_from_slice(&sample.to_le_bytes());
         }
         file.write_all(&buffer[..samples.len() * 4])?;
@@ -107,8 +107,10 @@ impl ReplayLog {
                     file.read_exact(&mut scratch[..samples * 4])?;
                     frame.extend(
                         scratch[..samples * 4]
-                            .chunks_exact(4)
-                            .map(|sample| f32::from_le_bytes(sample.try_into().unwrap())),
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|&sample| f32::from_le_bytes(sample)),
                     );
                 }
                 consume(Some(&frame))?;

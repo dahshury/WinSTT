@@ -122,8 +122,10 @@ pub(super) fn read<T: DeserializeOwned>(reader: &mut impl Read) -> io::Result<(T
         reader.read_exact(&mut scratch[..count * 4])?;
         pcm.extend(
             scratch[..count * 4]
-                .chunks_exact(4)
-                .map(|sample| f32::from_le_bytes(sample.try_into().unwrap())),
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&sample| f32::from_le_bytes(sample)),
         );
     }
     Ok((message, pcm))
