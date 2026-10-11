@@ -1,4 +1,4 @@
-// The static STT catalog: the `ModelEntry` row shape + the verbatim 70-row `STT_CATALOG`
+// The static STT catalog: the `ModelEntry` row shape + the verbatim 84-row `STT_CATALOG`
 // const ported from `catalog.json`. Pure data, no policy. The precision/EP resolution policy
 // that consumes these rows lives in the sibling `policy` module.
 
@@ -35,7 +35,7 @@ pub struct ModelEntry {
 /// Counts (asserted in tests): whisper 16, moonshine 17, nemo 30, kaldi 5, gigaam 2,
 /// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2, vibevoice 1, audio8 4.
 pub const STT_CATALOG: &[ModelEntry] = &[
-    // ── Whisper family (15) ──────────────────────────────────────────────────────────────
+    // ── Whisper family (16) ──────────────────────────────────────────────────────────────
     ModelEntry {
         id: "tiny",
         display_name: "Whisper Tiny",

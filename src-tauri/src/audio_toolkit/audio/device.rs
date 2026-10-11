@@ -15,16 +15,16 @@ pub(crate) fn device_display_name(device: &cpal::Device) -> Result<String, cpal:
 
 pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, cpal::DevicesError> {
     let host = crate::audio_toolkit::get_cpal_host();
-    let default_name = host
+    let default_id = host
         .default_input_device()
-        .and_then(|d| device_display_name(&d).ok());
+        .and_then(|device| device.id().ok());
 
     let mut out = Vec::<CpalDeviceInfo>::new();
 
     for (index, device) in host.input_devices()?.enumerate() {
         let name = device_display_name(&device).unwrap_or_else(|_| "Unknown".into());
 
-        let is_default = Some(name.clone()) == default_name;
+        let is_default = default_id.is_some() && device.id().ok() == default_id;
 
         out.push(CpalDeviceInfo {
             index: index.to_string(),
@@ -39,16 +39,16 @@ pub fn list_input_devices() -> Result<Vec<CpalDeviceInfo>, cpal::DevicesError> {
 
 pub fn list_output_devices() -> Result<Vec<CpalDeviceInfo>, cpal::DevicesError> {
     let host = crate::audio_toolkit::get_cpal_host();
-    let default_name = host
+    let default_id = host
         .default_output_device()
-        .and_then(|d| device_display_name(&d).ok());
+        .and_then(|device| device.id().ok());
 
     let mut out = Vec::<CpalDeviceInfo>::new();
 
     for (index, device) in host.output_devices()?.enumerate() {
         let name = device_display_name(&device).unwrap_or_else(|_| "Unknown".into());
 
-        let is_default = Some(name.clone()) == default_name;
+        let is_default = default_id.is_some() && device.id().ok() == default_id;
 
         out.push(CpalDeviceInfo {
             index: index.to_string(),

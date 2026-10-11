@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "インポート",
+    "export": "エクスポート",
+    "hint": "JSON、CSV、単語リストをインポートできます。既存の項目は保持されます。",
+    "hintSnippets": "JSON、CSV をインポートできます。既存の項目は保持されます。",
+    "imported": "{count}件追加、重複{skipped}件をスキップしました。",
+    "limitError": "ファイルまたは統合後の項目数が上限を超えています。",
+    "importError": "インポートできませんでした。形式と項目を確認してください。",
+    "exportError": "ファイルを保存できませんでした。"
+  },
   "common": {
     "search": "検索",
     "columns": "列",
@@ -109,6 +119,7 @@
     "tabAbout": "情報",
     "tabAboutTooltip": "バージョン、アップデート、ライセンス、通知、起動設定。",
     "minimize": "最小化",
+    "backToTop": "先頭に戻る",
     "close": "閉じる",
     "searchPlaceholder": "設定を検索…",
     "searchPlaceholderShort": "検索…",

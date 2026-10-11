@@ -5,6 +5,10 @@ use clap::Parser;
 use winstt_app_lib::CliArgs;
 
 fn main() {
+    // Dispatch before Clap, single-instance handling, webviews, or background managers.
+    if winstt_app_lib::winstt::stt::inference::is_worker_invocation() {
+        std::process::exit(winstt_app_lib::winstt::stt::inference::run_worker());
+    }
     let cli_args = CliArgs::parse();
 
     if let Some(exit_code) = winstt_app_lib::cli::run_headless(&cli_args) {

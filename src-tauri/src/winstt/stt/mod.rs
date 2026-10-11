@@ -31,6 +31,8 @@ mod formatting;
 pub mod fp16_patch;
 /// Embedded GigaAM v3 analysis window [320] + 64-mel filterbank [161,64] (from onnx_asr fbanks.npz).
 pub mod gigaam_v3_consts;
+/// Supervised out-of-process inference used by the desktop and headless app.
+pub mod inference;
 /// Log-mel feature extraction (Slaney 80/128-mel) shared by Whisper-family engines.
 pub mod mel;
 /// Moonshine ONNX engine (raw-audio encoder + 3-graph decoder KV-cache, SentencePiece tokenizer).
@@ -172,7 +174,7 @@ impl EngineKind {
 /// language when multilingual). Fields the resolved engine doesn't honor are
 /// silently ignored (Moonshine ignores `language`; Cohere ignores
 /// `initial_prompt_text`; etc.).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct TranscribeOptions {
     /// Whisper/NeMo/SenseVoice language hint (`"en"`, `"ru"`, `""` = auto).
     pub language: Option<String>,
@@ -198,7 +200,7 @@ pub struct TranscribeOptions {
 }
 
 /// One word with start/end seconds (cross-attention DTW result).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WordResult {
     pub text: String,
     pub start: f32,
@@ -206,7 +208,7 @@ pub struct WordResult {
 }
 
 /// One `(start_s, end_s, text)` Whisper segment.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Segment {
     pub start: f32,
     pub end: f32,
@@ -214,7 +216,7 @@ pub struct Segment {
 }
 
 /// Full transcription result. Mirrors `TimestampedResult` from `asr.py`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Transcription {
     pub text: String,
     pub segments: Option<Vec<Segment>>,
@@ -222,7 +224,7 @@ pub struct Transcription {
 }
 
 /// One native-streaming update from a cache-aware engine.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NativeStreamUpdate {
     pub text: String,
     pub is_final: bool,
@@ -328,7 +330,7 @@ pub trait Transcriber: Send {
 /// Resolved file set for ONE model at ONE quantization. Produced by the resolver
 /// (03_stt_engine.md §2). Keys are the logical names each engine's loader looks
 /// up (`encoder`, `decoder`, `vocab`, `tokenizer`, `model`, `joiner`, …).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ResolvedModel {
     pub files: std::collections::BTreeMap<String, PathBuf>,
     /// The quantization that was actually resolved on disk (after int8-preferred
@@ -338,6 +340,7 @@ pub struct ResolvedModel {
 }
 
 /// Everything an engine needs to build its ORT sessions.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EngineConfig {
     pub model_name: String,
     pub family: String,

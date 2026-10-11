@@ -126,7 +126,11 @@ export function InlineInputDeviceList({
 				<SortableOptionRows
 					onReorder={(orderedIds) =>
 						onPriorityChange(
-							priorityFromReorderedOptions(deviceOptions, orderedIds),
+							priorityFromReorderedOptions(
+								deviceOptions,
+								orderedIds,
+								inputDevicePriority,
+							),
 						)
 					}
 					onSortingChange={setDragSorting}

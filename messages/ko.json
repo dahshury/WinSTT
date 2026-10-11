@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "가져오기",
+    "export": "내보내기",
+    "hint": "JSON, CSV 또는 단어 목록을 가져옵니다. 기존 항목은 유지됩니다.",
+    "hintSnippets": "JSON 또는 CSV를 가져옵니다. 기존 항목은 유지됩니다.",
+    "imported": "{count}개 추가, 중복 {skipped}개 건너뜀.",
+    "limitError": "파일 또는 병합된 목록이 항목 제한을 초과합니다.",
+    "importError": "파일을 가져올 수 없습니다. 형식과 항목을 확인하세요.",
+    "exportError": "파일을 저장할 수 없습니다."
+  },
   "common": {
     "search": "검색",
     "columns": "열",
@@ -109,6 +119,7 @@
     "tabAbout": "정보",
     "tabAboutTooltip": "버전, 업데이트, 라이선스, 고지사항, 시작 환경설정.",
     "minimize": "최소화",
+    "backToTop": "맨 위로",
     "close": "닫기",
     "searchPlaceholder": "설정 검색…",
     "searchPlaceholderShort": "검색…",

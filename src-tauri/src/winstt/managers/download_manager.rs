@@ -224,6 +224,23 @@ async fn verify_hf_integrity(path: PathBuf, etag: &str) -> Result<Option<u64>, S
     }
 }
 
+async fn verify_download_integrity(
+    path: PathBuf,
+    owner: &str,
+    name: &str,
+    repo_path: &str,
+    etag: &str,
+) -> Result<Option<u64>, String> {
+    if resolver::pins::revision(owner, name) == "main" {
+        return verify_hf_integrity(path, etag).await;
+    }
+    let started = Instant::now();
+    resolver::pins::verify(owner, name, repo_path, path)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(Some(started.elapsed().as_millis() as u64))
+}
+
 impl TransferControl for DownloadHandle {
     fn subscribe(&self) -> tokio::sync::watch::Receiver<TransferControlState> {
         self.flags.subscribe()
@@ -896,7 +913,7 @@ impl DownloadManager {
         };
 
         // Stream each planned file. The PRIMARY path is our own chunked HTTP downloader
-        // (`stream_file_into_hf_cache`) — plain `GET …/resolve/main/<path>` with HTTP-Range resume
+        // (`stream_file_into_hf_cache`) — plain `GET …/resolve/<revision>/<path>` with HTTP-Range resume
         // and a per-CHUNK pause/cancel check, so stop/pause are honored MID-FILE (the whole point of
         // the rewrite). It writes into hf-hub's own cache layout, so the resolver / cache_probe /
         // delete paths are unchanged. hf-hub's `download_file` (which may use xet, and whose progress
@@ -935,7 +952,12 @@ impl DownloadManager {
         // every subsequent file repeats it. With every planned file's size known here, progress runs
         // a single monotonic 0→100%. Best-effort: an empty/partial map (offline, private/gated repo,
         // off-catalog local model) simply degrades to the old per-file growing total.
-        let plan_sizes = fetch_repo_file_sizes(&http, &model).await;
+        let plan_sizes = fetch_repo_file_sizes(
+            &http,
+            &model,
+            Quantization::parse(&quantization).unwrap_or(Quantization::Default),
+        )
+        .await;
         if !plan_sizes.is_empty() {
             for p in &planned {
                 if let Some(&sz) = plan_sizes.get(p) {
@@ -1072,7 +1094,7 @@ impl DownloadManager {
 
     /// Our own cancellable, resumable, byte-level-progress downloader for ONE planned file.
     ///
-    /// `GET {endpoint}/{owner}/{name}/resolve/main/{repo_path}` straight over HTTP (no xet). Bytes
+    /// `GET {endpoint}/{owner}/{name}/resolve/{revision}/{repo_path}` straight over HTTP (no xet). Bytes
     /// stage under `blobs/<etag>.incomplete` (the SAME staging name hf-hub uses → either side can
     /// resume the other's partial via HTTP Range), then move to the FINAL file at
     /// `snapshots/<commit>/<repo_path>` + a `refs/main` pointer — the layout the resolver /
@@ -1114,7 +1136,9 @@ impl DownloadManager {
             log::warn!("[stt-download] unsafe repo path for {model}@{quantization}: {repo_path}");
             return StreamOutcome::Failed;
         };
-        let url = format!("https://huggingface.co/{owner}/{name}/resolve/main/{encoded_path}");
+        let revision = resolver::pins::revision(&owner, &name);
+        let url =
+            format!("https://huggingface.co/{owner}/{name}/resolve/{revision}/{encoded_path}");
 
         // HEAD (no-redirect) for the cache-layout identity: commit + etag + size live on HF's 302,
         // not on the CDN response. Any status is fine as long as those headers are present. Plain
@@ -1135,6 +1159,11 @@ impl DownloadManager {
             return StreamOutcome::Failed;
         };
         let size = header_size(headers).unwrap_or(0);
+        if revision != "main" && commit != revision {
+            return StreamOutcome::IntegrityFailed(format!(
+                "requested pinned revision {revision} but Hub returned {commit}"
+            ));
+        }
 
         let cache_dir = match hf_hub::HFClient::new() {
             Ok(c) => c.cache_dir().to_path_buf(),
@@ -1167,7 +1196,8 @@ impl DownloadManager {
         // Final file already present (a prior run finished it, or it survived): ensure refs/main and
         // settle. After a delete the snapshot is gone, so this won't fire → a real re-download runs.
         if snapshot.is_file() {
-            match verify_hf_integrity(snapshot.clone(), &etag).await {
+            match verify_download_integrity(snapshot.clone(), &owner, &name, repo_path, &etag).await
+            {
                 Ok(Some(elapsed_ms)) => {
                     handle
                         .verification_ms
@@ -1179,7 +1209,9 @@ impl DownloadManager {
                     return StreamOutcome::IntegrityFailed(error);
                 }
             }
-            if let Err(e) = ensure_cache_ref(&ref_file, &commit) {
+            if revision == "main"
+                && let Err(e) = ensure_cache_ref(&ref_file, &commit)
+            {
                 log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
                 return StreamOutcome::Failed;
             }
@@ -1253,7 +1285,7 @@ impl DownloadManager {
         // The shared transfer moved the staged bytes to the FINAL snapshot path (no kept blob copy).
         // Verify the content identity BEFORE publishing the cache ref/installation. Hashing runs on
         // a blocking worker so large model files never stall Tauri's async executor.
-        match verify_hf_integrity(snapshot.clone(), &etag).await {
+        match verify_download_integrity(snapshot.clone(), &owner, &name, repo_path, &etag).await {
             Ok(Some(elapsed_ms)) => {
                 handle
                     .verification_ms
@@ -1266,7 +1298,9 @@ impl DownloadManager {
             }
         }
         // Finish the HF cache pointer and verify cache-only resolution can see it.
-        if let Err(e) = ensure_cache_ref(&ref_file, &commit) {
+        if revision == "main"
+            && let Err(e) = ensure_cache_ref(&ref_file, &commit)
+        {
             log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
             return StreamOutcome::Failed;
         }

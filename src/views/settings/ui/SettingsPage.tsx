@@ -4,6 +4,7 @@ import {
 	AiChat02Icon,
 	AiEditingIcon,
 	AiVoiceGeneratorIcon,
+	ArrowUp01Icon,
 	Books02Icon,
 	Cancel01Icon,
 	ChartHistogramIcon,
@@ -946,9 +947,20 @@ export function SettingsPage() {
 	// the immediate activeTab (not the deferred contentTab) so the reset lands as
 	// the new tab becomes active. Mirrors the onboarding wizard's step reset.
 	const contentViewportRef = useRef<HTMLDivElement>(null);
+	const [isContentScrolled, setIsContentScrolled] = useState(false);
 	useEffect(() => {
-		contentViewportRef.current?.scrollTo({ top: 0 });
+		contentViewportRef.current?.scrollTo({ top: 0, behavior: "instant" });
+		setIsContentScrolled(false);
 	}, [activeTab]);
+	const scrollToTopActivation = useTouchActivation(() => {
+		const reducedMotion = window.matchMedia?.(
+			"(prefers-reduced-motion: reduce)",
+		).matches;
+		contentViewportRef.current?.scrollTo({
+			top: 0,
+			behavior: reducedMotion ? "instant" : "smooth",
+		});
+	});
 	// The OS window is fully transparent — html/body must be too, or WebView2
 	// paints an opaque page background behind the rounded card.
 	useTransparentBody();
@@ -1037,8 +1049,7 @@ export function SettingsPage() {
 								offset={2}
 								shadowLevel={5}
 							>
-								{/* Close button — floats in the top-right corner so it's the only
-								    chrome painted over the tab content. There's no full-width header
+								{/* Corner buttons float over the tab content. There's no full-width header
 								    BAND reserving an empty strip above the content anymore: the
 								    scroll area fills the card to the top and gets a normal symmetric
 								    inset (matching the px/pb below). Scrolled content dissolves at the
@@ -1052,6 +1063,17 @@ export function SettingsPage() {
 								    above the card; no title text — the active tab's name lives in the
 								    sidebar rail. Every tab's first section leads with a left-aligned
 								    title, so the corner button never sits over a section's controls. */}
+								{isContentScrolled ? (
+									<BaseButton
+										aria-label={t("backToTop")}
+										className="titlebar-no-drag absolute end-10 top-1.5 z-titlebar flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-surface-5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent"
+										title={t("backToTop")}
+										type="button"
+										{...scrollToTopActivation}
+									>
+										<HugeiconsIcon icon={ArrowUp01Icon} size={15} />
+									</BaseButton>
+								) : null}
 								<BaseButton
 									aria-label={t("close")}
 									className="titlebar-no-drag group absolute end-1.5 top-1.5 z-titlebar flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-on-error focus-visible:ring-2 focus-visible:ring-accent"
@@ -1066,6 +1088,13 @@ export function SettingsPage() {
 								</BaseButton>
 								<ScrollArea
 									className="min-h-0 flex-1"
+									onScrollCapture={(event) => {
+										const viewport = contentViewportRef.current;
+										// Nested lists must not toggle the page's back-to-top control.
+										if (viewport && event.target === viewport) {
+											setIsContentScrolled(viewport.scrollTop > 1);
+										}
+									}}
 									revealScrollbarOnHover={false}
 									rubberBandOnTouch
 									verticalOnly

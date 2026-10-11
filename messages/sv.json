@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "Importera",
+    "export": "Exportera",
+    "hint": "Importera JSON, CSV eller en ordlista. Befintliga poster behålls.",
+    "hintSnippets": "Importera JSON eller CSV. Befintliga poster behålls.",
+    "imported": "{count} tillagda; {skipped} dubbletter överhoppade.",
+    "limitError": "Filen eller den sammanslagna samlingen överskrider gränserna.",
+    "importError": "Kunde inte importera filen. Kontrollera format och poster.",
+    "exportError": "Kunde inte spara filen."
+  },
   "common": {
     "search": "Sök",
     "columns": "Kolumner",
@@ -109,6 +119,7 @@
     "tabAbout": "Om",
     "tabAboutTooltip": "Version, uppdateringar, licens, meddelanden och startinställningar.",
     "minimize": "Minimera",
+    "backToTop": "Till toppen",
     "close": "Stäng",
     "searchPlaceholder": "Sök inställningar…",
     "searchPlaceholderShort": "Sök…",

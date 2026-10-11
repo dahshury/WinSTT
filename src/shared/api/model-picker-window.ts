@@ -1,4 +1,5 @@
 import { commands } from "@/bindings";
+import { setModelPickerWindowOpen } from "./model-picker-window-state";
 
 export type ModelPickerKind =
 	| "llm-ollama"
@@ -57,16 +58,27 @@ export function openModelPickerAtRect(
 	if (options.pickerTarget !== undefined) {
 		payload.pickerTarget = options.pickerTarget;
 	}
-	void commands.openWindow(
-		"model-picker",
-		payload.x,
-		payload.y,
-		payload.width,
-		payload.height,
-		payload.pickerKind ?? null,
-		payload.pickerFeature ?? null,
-		payload.pickerTarget ?? null,
-	);
+	// Suppress existing cards and pending hover delays before native placement.
+	setModelPickerWindowOpen(true);
+	void commands
+		.openWindow(
+			"model-picker",
+			payload.x,
+			payload.y,
+			payload.width,
+			payload.height,
+			payload.pickerKind ?? null,
+			payload.pickerFeature ?? null,
+			payload.pickerTarget ?? null,
+		)
+		.then(
+			(result) => {
+				if (result.status === "error") {
+					setModelPickerWindowOpen(false);
+				}
+			},
+			() => setModelPickerWindowOpen(false),
+		);
 }
 
 /** Open either LLM selector in the shared detached picker window. */
@@ -86,5 +98,6 @@ export function openLlmModelPickerAtRect(
 }
 
 export function closeModelPicker(): void {
+	setModelPickerWindowOpen(false);
 	void commands.closeWindow("model-picker");
 }

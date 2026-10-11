@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { matchesFuzzySearch } from "@/shared/lib/fuzzy-search";
+import { ModelSelectorHoverDisabledContext } from "@/shared/lib/model-selector-hover";
 import { ModelPickerShortcutContext } from "./model-picker-shortcuts";
 import { ModelPickerPanelBody } from "./ModelPickerPanelBody";
 import { useScrollSelectedIntoView } from "./use-scroll-selected-into-view";
@@ -483,7 +484,9 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 					</div>
 				) : (
 					<>
-						<div className="w-full">{trigger}</div>
+						<ModelSelectorHoverDisabledContext.Provider value={effectiveOpen}>
+							<div className="w-full">{trigger}</div>
+						</ModelSelectorHoverDisabledContext.Provider>
 						<Combobox.Portal keepMounted>
 							<Combobox.Positioner
 								align="start"

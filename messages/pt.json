@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "Importar",
+    "export": "Exportar",
+    "hint": "Importe JSON, CSV ou uma lista de palavras. As entradas existentes são mantidas.",
+    "hintSnippets": "Importe JSON ou CSV. As entradas existentes são mantidas.",
+    "imported": "Adicionadas: {count}; duplicatas ignoradas: {skipped}.",
+    "limitError": "O arquivo ou a coleção mesclada excede os limites.",
+    "importError": "Não foi possível importar o arquivo. Verifique o formato e as entradas.",
+    "exportError": "Não foi possível salvar o arquivo."
+  },
   "common": {
     "search": "Pesquisar",
     "columns": "Colunas",
@@ -109,6 +119,7 @@
     "tabAbout": "Acerca de",
     "tabAboutTooltip": "Versão, atualizações, licença, avisos e preferências de arranque.",
     "minimize": "Minimizar",
+    "backToTop": "Voltar ao topo",
     "close": "Fechar",
     "searchPlaceholder": "Pesquisar configurações…",
     "searchPlaceholderShort": "Pesquisar…",

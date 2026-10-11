@@ -52,7 +52,11 @@ export function InputDeviceSelect({
 				: {
 						onReorder: (orderedIds: string[]) =>
 							onPriorityChange(
-								priorityFromReorderedOptions(deviceOptions, orderedIds),
+								priorityFromReorderedOptions(
+									deviceOptions,
+									orderedIds,
+									inputDevicePriority,
+								),
 							),
 					})}
 			{...(reorderHandleLabel === undefined ? {} : { reorderHandleLabel })}

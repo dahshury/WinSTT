@@ -346,6 +346,17 @@ async settingsExportFull(llmConfigurations: string | null) : Promise<Result<Sett
 }
 },
 /**
+ * Export the current renderer edits through a native save dialog without exporting settings.
+ */
+async settingsExportVocabulary(kind: string, data: string) : Promise<Result<SettingsExportResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("settings_export_vocabulary", { kind, data }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return __commandError__(e);
+}
+},
+/**
  * `settings_import_full` — pick a JSON settings backup, reconcile unavailable
  * model/provider preferences for this machine, then persist through the normal
  * settings path so runtime side effects and settings:changed broadcasts match
@@ -2525,7 +2536,8 @@ inputDeviceIndex?: number | null;
  * Microphone preference order (cpal device NAMES, highest first). When
  * non-empty, the first CONNECTED entry wins on every stream open,
  * overriding `input_device_index` (which the renderer keeps re-pointed at
- * the same effective device). Empty = plain index selection. HOT-SWAP.
+ * the same effective device). No connected preference = OS default, never
+ * a stale index. Empty = legacy index selection or OS default. HOT-SWAP.
  * Zod `.catch([])`.
  */
 inputDevicePriority?: string[];

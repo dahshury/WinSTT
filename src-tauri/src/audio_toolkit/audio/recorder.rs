@@ -239,52 +239,104 @@ fn plan_stop_chunk(
     }
 }
 
-fn send_input_callback_chunk(
-    worker_tx: &mpsc::Sender<WorkerMsg>,
-    samples: &mut Vec<f32>,
-    recycle_rx: &mpsc::Receiver<Vec<f32>>,
-    stop_requested: bool,
-    send_eos: bool,
-    eos_sent: &mut bool,
-) {
-    if stop_requested && *eos_sent {
-        return;
-    }
+const CALLBACK_PACKET_SAMPLES: usize = 256;
 
-    if !samples.is_empty() {
-        let next_capacity = samples.capacity().max(samples.len());
-        let chunk = std::mem::take(samples);
-        match worker_tx.send(WorkerMsg::Audio(AudioChunk::Samples(chunk))) {
-            Ok(()) => {
-                *samples = match recycle_rx.try_recv() {
-                    Ok(mut recycled) => {
-                        recycled.clear();
-                        if recycled.capacity() < next_capacity {
-                            recycled.reserve(next_capacity - recycled.capacity());
-                        }
-                        recycled
-                    }
-                    Err(_) => Vec::with_capacity(next_capacity),
+#[derive(Debug)]
+struct CapturePacket {
+    samples: [f32; CALLBACK_PACKET_SAMPLES],
+    len: usize,
+    end: bool,
+}
+
+/// Wait-free, fixed-size writes only. Reserve one slot for the ordered stop marker.
+/// Overflow fails the take explicitly instead of silently returning truncated speech.
+fn push_capture_samples(
+    producer: &mut rtrb::Producer<CapturePacket>,
+    samples: impl Iterator<Item = f32>,
+    end: bool,
+    fault: &AtomicBool,
+) -> bool {
+    let mut samples = samples.peekable();
+    loop {
+        let mut packet = CapturePacket {
+            samples: [0.0; CALLBACK_PACKET_SAMPLES],
+            len: 0,
+            end: false,
+        };
+        for sample in samples.by_ref().take(CALLBACK_PACKET_SAMPLES) {
+            packet.samples[packet.len] = sample;
+            packet.len += 1;
+        }
+        let last = samples.peek().is_none();
+        packet.end = end && last;
+        if packet.len == 0 && !packet.end {
+            return true;
+        }
+        if producer.slots() <= usize::from(!packet.end) || producer.push(packet).is_err() {
+            fault.store(true, Ordering::Release);
+            // The reserved slot still allows stop to complete after dropped audio.
+            if end {
+                let marker = CapturePacket {
+                    samples: [0.0; CALLBACK_PACKET_SAMPLES],
+                    len: 0,
+                    end: true,
                 };
+                return producer.push(marker).is_ok();
             }
-            Err(err) => {
-                log::error!("Failed to send samples");
-                match err.0 {
-                    WorkerMsg::Audio(AudioChunk::Samples(mut returned)) => {
-                        returned.clear();
-                        *samples = returned;
-                    }
-                    WorkerMsg::Audio(AudioChunk::EndOfStream) | WorkerMsg::Command(_) => {}
-                }
-            }
+            return false;
+        }
+        if last {
+            return true;
         }
     }
+}
 
-    if send_eos {
-        let _ = worker_tx.send(WorkerMsg::Audio(AudioChunk::EndOfStream));
-        *eos_sent = true;
-    } else if !stop_requested {
-        *eos_sent = false;
+/// All allocation, recycling, channel sends and diagnostics happen off the CPAL callback.
+fn bridge_capture(
+    mut consumer: rtrb::Consumer<CapturePacket>,
+    worker_tx: mpsc::Sender<WorkerMsg>,
+    recycle_rx: mpsc::Receiver<Vec<f32>>,
+    gap_ms: Arc<AtomicU64>,
+) {
+    loop {
+        let gap = gap_ms.swap(0, Ordering::Relaxed);
+        if gap >= 100 {
+            log::warn!("[audio] capture callback gap={gap}ms while stream remained open");
+        }
+        let mut samples = recycle_rx.try_recv().unwrap_or_default();
+        samples.clear();
+        let mut end = false;
+        while let Ok(packet) = consumer.pop() {
+            samples.extend_from_slice(&packet.samples[..packet.len]);
+            if packet.end {
+                end = true;
+                break;
+            }
+            if samples.len() >= 4096 {
+                break;
+            }
+        }
+        let had_samples = !samples.is_empty();
+        if had_samples
+            && worker_tx
+                .send(WorkerMsg::Audio(AudioChunk::Samples(samples)))
+                .is_err()
+        {
+            break;
+        }
+        if end
+            && worker_tx
+                .send(WorkerMsg::Audio(AudioChunk::EndOfStream))
+                .is_err()
+        {
+            break;
+        }
+        if !had_samples && !end {
+            if consumer.is_abandoned() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 }
 
@@ -295,6 +347,8 @@ pub struct RealtimeAudioProgress {
 }
 
 pub struct AudioRecorder {
+    capture_fault: Arc<AtomicBool>,
+    stream_fault: Arc<AtomicBool>,
     device: Option<Device>,
     worker_tx: Option<mpsc::Sender<WorkerMsg>>,
     worker_handle: Option<std::thread::JoinHandle<()>>,
@@ -339,6 +393,8 @@ pub struct AudioRecorder {
 impl AudioRecorder {
     pub fn new() -> Self {
         AudioRecorder {
+            capture_fault: Arc::new(AtomicBool::new(false)),
+            stream_fault: Arc::new(AtomicBool::new(false)),
             device: None,
             worker_tx: None,
             worker_handle: None,
@@ -420,6 +476,7 @@ impl AudioRecorder {
             return Ok(()); // already open
         }
 
+        self.stream_fault.store(false, Ordering::Release);
         let (worker_tx, worker_rx) = mpsc::channel::<WorkerMsg>();
         let public_worker_tx = worker_tx.clone();
         let (recycle_tx, recycle_rx) = mpsc::channel::<Vec<f32>>();
@@ -446,6 +503,8 @@ impl AudioRecorder {
         // Clone the realtime gate so run_consumer can skip the mirror extend when off.
         let realtime_enabled = self.realtime_enabled.clone();
         let realtime_audio_signal = self.realtime_audio_signal.clone();
+        let capture_fault = self.capture_fault.clone();
+        let stream_fault = self.stream_fault.clone();
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -482,6 +541,8 @@ impl AudioRecorder {
                         stop_flag_for_stream,
                         epoch,
                         stop_deadline_for_stream.clone(),
+                        capture_fault.clone(),
+                        stream_fault.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::I8 => AudioRecorder::build_stream::<i8>(
@@ -494,6 +555,8 @@ impl AudioRecorder {
                         stop_flag_for_stream,
                         epoch,
                         stop_deadline_for_stream.clone(),
+                        capture_fault.clone(),
+                        stream_fault.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::I16 => AudioRecorder::build_stream::<i16>(
@@ -506,6 +569,8 @@ impl AudioRecorder {
                         stop_flag_for_stream,
                         epoch,
                         stop_deadline_for_stream.clone(),
+                        capture_fault.clone(),
+                        stream_fault.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::I32 => AudioRecorder::build_stream::<i32>(
@@ -518,6 +583,8 @@ impl AudioRecorder {
                         stop_flag_for_stream,
                         epoch,
                         stop_deadline_for_stream.clone(),
+                        capture_fault.clone(),
+                        stream_fault.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::F32 => AudioRecorder::build_stream::<f32>(
@@ -530,6 +597,8 @@ impl AudioRecorder {
                         stop_flag_for_stream,
                         epoch,
                         stop_deadline_for_stream.clone(),
+                        capture_fault.clone(),
+                        stream_fault.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     sample_format => {
@@ -605,6 +674,10 @@ impl AudioRecorder {
     }
 
     pub fn start(&self) -> Result<(), AudioRecorderError> {
+        if self.stream_fault.load(Ordering::Acquire) {
+            return Err(AudioRecorderError::CaptureFault);
+        }
+        self.capture_fault.store(false, Ordering::Release);
         if let Some(tx) = &self.worker_tx {
             tx.send(WorkerMsg::Command(Cmd::Start))
                 .map_err(|err| AudioRecorderError::CommandChannel(err.to_string()))?;
@@ -623,9 +696,13 @@ impl AudioRecorder {
         } else {
             return Ok(CapturedAudio::default());
         }
-        resp_rx
+        let capture = resp_rx
             .recv_timeout(STOP_DRAIN_BUDGET + Duration::from_millis(250))
-            .map_err(|err| AudioRecorderError::ResponseChannel(err.to_string()))
+            .map_err(|err| AudioRecorderError::ResponseChannel(err.to_string()))?;
+        if self.capture_fault.load(Ordering::Acquire) || self.stream_fault.load(Ordering::Acquire) {
+            return Err(AudioRecorderError::CaptureFault);
+        }
+        Ok(capture)
     }
 
     /// Back-compat wrapper returning ONLY the samples of the capture. Thin shim over
@@ -700,12 +777,17 @@ impl AudioRecorder {
         // Stop instant in nanos since `epoch`; 0 = no stop pending. Written by run_consumer
         // BEFORE it raises `stop_flag` (Release/Acquire pairing on the flag).
         stop_deadline: Arc<AtomicU64>,
+        capture_fault: Arc<AtomicBool>,
+        stream_fault: Arc<AtomicBool>,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
     where
         T: Sample + SizedSample + Send + 'static,
         f32: cpal::FromSample<T>,
     {
-        let mut output_buffer = Vec::new();
+        let capacity = (sample_rate as usize * 2).div_ceil(CALLBACK_PACKET_SAMPLES) + 2;
+        let (mut producer, consumer) = rtrb::RingBuffer::new(capacity);
+        let gap_ms = Arc::new(AtomicU64::new(0));
+        let callback_gap = gap_ms.clone();
         let mut eos_sent = false;
         let mut last_callback_at: Option<Instant> = None;
 
@@ -727,10 +809,7 @@ impl AudioRecorder {
             if let Some(previous) = last_callback_at {
                 let gap = callback_at.saturating_duration_since(previous);
                 if gap >= Duration::from_millis(100) {
-                    log::warn!(
-                        "[audio] capture callback gap={}ms while stream remained open",
-                        gap.as_millis()
-                    );
+                    callback_gap.fetch_max(gap.as_millis() as u64, Ordering::Relaxed);
                 }
             }
             last_callback_at = Some(callback_at);
@@ -740,16 +819,30 @@ impl AudioRecorder {
                 return;
             }
 
-            output_buffer.clear();
-
-            if channels == 1 {
-                output_buffer.reserve(data.len());
-                output_buffer.extend(data.iter().map(|&sample| sample.to_sample::<f32>()));
+            let frame_count = data.len() / channels;
+            let plan = if stop_requested {
+                let deadline = stop_deadline.load(Ordering::Acquire);
+                let now_nanos = u64::try_from(epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                let deadline = if deadline == 0 { now_nanos } else { deadline };
+                let ts = info.timestamp();
+                let lag = ts
+                    .callback
+                    .duration_since(&ts.capture)
+                    .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+                plan_stop_chunk(now_nanos, lag, deadline, frame_count, sample_rate)
             } else {
-                let frame_count = data.len() / channels;
-                output_buffer.reserve(frame_count);
-
-                for frame in data.chunks_exact(channels) {
+                StopChunkPlan {
+                    keep_frames: frame_count,
+                    end_of_stream: false,
+                }
+            };
+            let samples = data
+                .chunks_exact(channels)
+                .take(plan.keep_frames)
+                .map(|frame| {
+                    if channels == 1 {
+                        return frame[0].to_sample::<f32>();
+                    }
                     if calib_frames < calib_budget {
                         for (c, &sample) in frame.iter().enumerate() {
                             let v = f64::from(sample.to_sample::<f32>());
@@ -760,18 +853,10 @@ impl AudioRecorder {
                         if calib_frames >= calib_budget {
                             downmix_mode =
                                 decide_downmix_mode(&calib_sumsq, &calib_sum, calib_frames);
-                            match downmix_mode {
-                                DownmixMode::SelectChannel(idx) => log::debug!(
-                                    "Downmix: dead channel detected (>20 dB imbalance); selecting channel {idx} of {channels}"
-                                ),
-                                DownmixMode::Mean => log::debug!(
-                                    "Downmix: {channels} channels balanced; using mean downmix"
-                                ),
-                            }
                         }
                     }
 
-                    let mono_sample = match downmix_mode {
+                    match downmix_mode {
                         DownmixMode::Mean => {
                             frame
                                 .iter()
@@ -780,48 +865,27 @@ impl AudioRecorder {
                                 / channels as f32
                         }
                         DownmixMode::SelectChannel(idx) => frame[idx].to_sample::<f32>(),
-                    };
-                    output_buffer.push(mono_sample);
-                }
+                    }
+                });
+            let pushed =
+                push_capture_samples(&mut producer, samples, plan.end_of_stream, &capture_fault);
+            if plan.end_of_stream && pushed {
+                eos_sent = true;
+            } else if !stop_requested {
+                eos_sent = false;
             }
-
-            let mut send_eos = false;
-            if stop_requested {
-                // Timestamp-bounded stop: keep only the frames captured at or before the
-                // stop deadline, and close the stream's take exactly when delivered audio
-                // catches up to it (see `plan_stop_chunk`). A 0 deadline means the stop was
-                // signalled without a stamp (defensive) — treat as "cut here, now".
-                let deadline = stop_deadline.load(Ordering::Acquire);
-                let now_nanos = u64::try_from(epoch.elapsed().as_nanos()).unwrap_or(u64::MAX);
-                let deadline = if deadline == 0 { now_nanos } else { deadline };
-                let lag = {
-                    let ts = info.timestamp();
-                    ts.callback
-                        .duration_since(&ts.capture)
-                        .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-                };
-                let plan =
-                    plan_stop_chunk(now_nanos, lag, deadline, output_buffer.len(), sample_rate);
-                output_buffer.truncate(plan.keep_frames);
-                send_eos = plan.end_of_stream;
-            }
-
-            send_input_callback_chunk(
-                &worker_tx,
-                &mut output_buffer,
-                &recycle_rx,
-                stop_requested,
-                send_eos,
-                &mut eos_sent,
-            );
         };
 
-        device.build_input_stream(
+        let stream = device.build_input_stream(
             &config.clone().into(),
             stream_cb,
-            |err| log::error!("Stream error: {}", err),
+            move |_err| {
+                stream_fault.store(true, Ordering::Release);
+            },
             None,
-        )
+        )?;
+        std::thread::spawn(move || bridge_capture(consumer, worker_tx, recycle_rx, gap_ms));
+        Ok(stream)
     }
 
     fn get_preferred_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, String> {
@@ -966,6 +1030,8 @@ pub enum AudioDeviceError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioRecorderError {
+    #[error("microphone capture lost audio or the input stream failed; please retry the recording")]
+    CaptureFault,
     #[error(transparent)]
     Device(#[from] AudioDeviceError),
 
@@ -1022,9 +1088,9 @@ mod tests {
     use std::{sync::mpsc, time::Duration};
 
     use super::{
-        AudioChunk, AudioDeviceError, Cmd, WorkerMsg, drain_to_end_of_stream,
-        is_microphone_access_denied, is_no_input_device_error, plan_stop_chunk,
-        send_input_callback_chunk,
+        AudioChunk, AudioDeviceError, CapturePacket, Cmd, WorkerMsg, bridge_capture,
+        drain_to_end_of_stream, is_microphone_access_denied, is_no_input_device_error,
+        plan_stop_chunk, push_capture_samples,
     };
 
     #[test]
@@ -1090,40 +1156,62 @@ mod tests {
     }
 
     #[test]
-    fn stop_callback_sends_current_samples_before_end_of_stream() {
+    fn ring_preserves_samples_and_ordered_stop_marker() {
+        let (mut producer, consumer) = rtrb::RingBuffer::<CapturePacket>::new(8);
+        let fault = std::sync::atomic::AtomicBool::new(false);
+        assert!(push_capture_samples(
+            &mut producer,
+            [0.25, -0.5, 0.75].into_iter(),
+            true,
+            &fault
+        ));
+        drop(producer);
         let (tx, rx) = mpsc::channel();
-        let (_recycle_tx, recycle_rx) = mpsc::channel();
-        let mut samples = vec![0.25, -0.5, 0.75];
-        let mut eos_sent = false;
-
-        send_input_callback_chunk(&tx, &mut samples, &recycle_rx, true, true, &mut eos_sent);
-
+        let (_, recycled) = mpsc::channel();
+        bridge_capture(
+            consumer,
+            tx,
+            recycled,
+            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        );
         match rx.recv().unwrap() {
             WorkerMsg::Audio(AudioChunk::Samples(samples)) => {
-                assert_eq!(samples, vec![0.25, -0.5, 0.75]);
+                assert_eq!(samples, [0.25, -0.5, 0.75])
             }
-            WorkerMsg::Audio(AudioChunk::EndOfStream) | WorkerMsg::Command(_) => {
-                panic!("expected samples before end-of-stream");
-            }
+            _ => panic!("expected samples before stop"),
         }
         assert!(matches!(
             rx.recv().unwrap(),
             WorkerMsg::Audio(AudioChunk::EndOfStream)
         ));
-        assert!(eos_sent);
+        assert!(!fault.load(std::sync::atomic::Ordering::Acquire));
     }
 
     #[test]
-    fn stop_callback_drops_callbacks_after_end_of_stream_was_sent() {
-        let (tx, rx) = mpsc::channel();
-        let (_recycle_tx, recycle_rx) = mpsc::channel();
-        let mut samples = vec![1.0];
-        let mut eos_sent = true;
-
-        send_input_callback_chunk(&tx, &mut samples, &recycle_rx, true, true, &mut eos_sent);
-
-        assert!(rx.try_recv().is_err());
-        assert!(eos_sent);
+    fn saturated_ring_marks_capture_fault_but_delivers_stop() {
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<CapturePacket>::new(2);
+        let fault = std::sync::atomic::AtomicBool::new(false);
+        assert!(push_capture_samples(
+            &mut producer,
+            [0.25].into_iter(),
+            false,
+            &fault
+        ));
+        assert!(!push_capture_samples(
+            &mut producer,
+            [0.5].into_iter(),
+            false,
+            &fault
+        ));
+        assert!(push_capture_samples(
+            &mut producer,
+            [].into_iter(),
+            true,
+            &fault
+        ));
+        assert!(fault.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(consumer.pop().unwrap().samples[0], 0.25);
+        assert!(consumer.pop().unwrap().end);
     }
 
     // ---- plan_stop_chunk: the timestamp-bounded stop boundary ---------------------- //
@@ -1324,26 +1412,6 @@ mod tests {
         assert!(matches!(pending_commands.pop_front(), Some(Cmd::Start)));
         assert!(matches!(pending_commands.pop_front(), Some(Cmd::Stop(_))));
         assert!(pending_commands.is_empty());
-    }
-
-    #[test]
-    fn stop_callback_reuses_recycled_buffer_after_send() {
-        let (tx, rx) = mpsc::channel();
-        let (recycle_tx, recycle_rx) = mpsc::channel();
-        let recycled = Vec::<f32>::with_capacity(64);
-        recycle_tx.send(recycled).unwrap();
-        let mut samples = vec![1.0, 2.0];
-        let mut eos_sent = false;
-
-        send_input_callback_chunk(&tx, &mut samples, &recycle_rx, false, false, &mut eos_sent);
-
-        assert!(matches!(
-            rx.recv().unwrap(),
-            WorkerMsg::Audio(AudioChunk::Samples(_))
-        ));
-        assert!(samples.is_empty());
-        assert!(samples.capacity() >= 64);
-        assert!(!eos_sent);
     }
 
     // ---------- capture-core reworks ------------------------------------- //

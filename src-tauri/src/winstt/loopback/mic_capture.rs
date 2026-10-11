@@ -42,6 +42,8 @@ enum WorkerMessage {
 pub struct MicrophoneCapture {
     stop_tx: Option<Sender<WorkerMessage>>,
     worker: Option<JoinHandle<()>>,
+    sink: Option<Sender<Vec<f32>>>,
+    device_id: Option<cpal::DeviceId>,
 }
 
 impl Default for MicrophoneCapture {
@@ -55,6 +57,8 @@ impl MicrophoneCapture {
         Self {
             stop_tx: None,
             worker: None,
+            sink: None,
+            device_id: None,
         }
     }
 
@@ -62,25 +66,28 @@ impl MicrophoneCapture {
         self.worker.is_some()
     }
 
-    /// Open the preferred (or default) input device and stream 16 kHz mono f32
-    /// frames onto `sink`. `preferred_names` is the user's microphone priority
-    /// list (first match wins); empty / no match falls back to the default
-    /// input device. Returns the resolved device name.
+    /// Open the input resolved by the shared recording manager and stream
+    /// 16 kHz mono f32 frames onto `sink`. An absent selection uses the OS
+    /// default input device. Returns the resolved device name.
     pub fn start(
         &mut self,
-        preferred_names: Vec<String>,
+        selected_device: Option<cpal::Device>,
         sink: Sender<Vec<f32>>,
     ) -> Result<String, String> {
         if self.is_active() {
             return Err("microphone capture already active".to_string());
         }
+        let selected_device = selected_device
+            .or_else(|| crate::audio_toolkit::get_cpal_host().default_input_device());
+        self.device_id = selected_device.as_ref().and_then(|device| device.id().ok());
+        self.sink = Some(sink.clone());
         let (worker_tx, worker_rx) = mpsc::channel::<WorkerMessage>();
         let callback_tx = worker_tx.clone();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<String, String>>(1);
 
         let worker = std::thread::Builder::new()
             .name("listen-mic-capture".into())
-            .spawn(move || worker_body(preferred_names, sink, callback_tx, worker_rx, ready_tx))
+            .spawn(move || worker_body(selected_device, sink, callback_tx, worker_rx, ready_tx))
             .map_err(|e| format!("spawn mic capture thread: {e}"))?;
 
         match ready_rx.recv_timeout(OPEN_TIMEOUT) {
@@ -110,6 +117,22 @@ impl MicrophoneCapture {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        self.sink = None;
+        self.device_id = None;
+    }
+
+    /// Keep the existing mixer channel alive while replacing only its input
+    /// stream. A failed reopen retains that channel for the next device event.
+    pub fn update_device(&mut self, selected_device: Option<cpal::Device>) -> Result<(), String> {
+        let Some(sink) = self.sink.clone() else {
+            return Ok(());
+        };
+        let next_id = selected_device.as_ref().and_then(|device| device.id().ok());
+        if self.is_active() && next_id.is_some() && next_id == self.device_id {
+            return Ok(());
+        }
+        self.stop();
+        self.start(selected_device, sink).map(|_| ())
     }
 }
 
@@ -119,35 +142,15 @@ impl Drop for MicrophoneCapture {
     }
 }
 
-fn pick_device(host: &cpal::Host, preferred_names: &[String]) -> Option<cpal::Device> {
-    if !preferred_names.is_empty()
-        && let Ok(devices) = host.input_devices()
-    {
-        let devices: Vec<cpal::Device> = devices.collect();
-        for wanted in preferred_names {
-            let wanted = wanted.trim();
-            if wanted.is_empty() {
-                continue;
-            }
-            for device in &devices {
-                if device_display_name(device).is_ok_and(|name| name.eq_ignore_ascii_case(wanted)) {
-                    return Some(device.clone());
-                }
-            }
-        }
-    }
-    host.default_input_device()
-}
-
 fn worker_body(
-    preferred_names: Vec<String>,
+    selected_device: Option<cpal::Device>,
     sink: Sender<Vec<f32>>,
     worker_tx: Sender<WorkerMessage>,
     worker_rx: mpsc::Receiver<WorkerMessage>,
     ready_tx: mpsc::SyncSender<Result<String, String>>,
 ) {
     let host = crate::audio_toolkit::get_cpal_host();
-    let Some(device) = pick_device(&host, &preferred_names) else {
+    let Some(device) = selected_device.or_else(|| host.default_input_device()) else {
         let _ = ready_tx.send(Err("no input device found".to_string()));
         return;
     };
@@ -253,4 +256,22 @@ where
             None,
         )
         .map_err(|e| format!("build mic input stream: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn microphone_stop_releases_channel_retained_for_reconnect() {
+        let (sink, receiver) = mpsc::channel();
+        let mut capture = MicrophoneCapture::new();
+        // A failed reopen has no worker, but keeps the forwarder alive.
+        capture.sink = Some(sink);
+        capture.stop();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
 }

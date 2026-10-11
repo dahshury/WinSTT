@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-alpha.11"
+version = "0.1.3-beta.1"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
@@ -69,6 +69,8 @@ tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 once_cell = "1"
+tempfile = "3" # anonymous, automatically removed streaming-recovery spool
+rtrb = "0.4" # wait-free audio callback transport
 # Callback-backed timed mutex acquisition for the encoder dictionary and Enigo
 # input state. Already in Tauri's dependency graph; declaring it directly lets
 # both paths park until release while preserving their bounded lock waits.

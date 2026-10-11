@@ -37,7 +37,7 @@ use cpal::{
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
 
@@ -356,6 +356,12 @@ pub fn refresh_audio_devices_and_emit(app: &AppHandle) -> Vec<AudioDevicePayload
         AudioDeviceChangeDetectedPayload {},
     );
     if input_devices_changed {
+        // Run capture lifecycle work off the command/UI thread. This also
+        // follows default-endpoint changes while no renderer window is open.
+        let refresh_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            refresh_active_microphone_streams(&refresh_app)
+        });
         let _ = app.emit(
             AUDIO_DEVICES_CHANGED_EVENT,
             AudioDevicesChangedPayload {
@@ -372,6 +378,22 @@ pub fn refresh_audio_devices_and_emit(app: &AppHandle) -> Vec<AudioDevicePayload
         );
     }
     devices
+}
+
+/// Apply the same input policy to dictation and the microphone leg of Listen
+/// mode. Call from a worker: opening Bluetooth audio may block.
+pub(crate) fn refresh_active_microphone_streams(app: &AppHandle) {
+    if let Some(manager) = app.try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+        && let Err(err) = manager.update_selected_device()
+    {
+        log::warn!("[devices] microphone refresh failed: {err}");
+    }
+    if let Some(manager) =
+        app.try_state::<Arc<crate::winstt::managers::loopback_manager::LoopbackManager>>()
+        && let Err(err) = manager.refresh_microphone_device()
+    {
+        log::warn!("[listen] microphone refresh failed: {err}");
+    }
 }
 
 /// Force a fresh OS input-device enumeration from the renderer IPC surface.
@@ -408,10 +430,7 @@ fn resolve_level_source(
         Some(index) => devices
             .iter()
             .find(|d| d.index.parse::<i32>().ok() == Some(index)),
-        None => devices
-            .iter()
-            .find(|d| d.is_default)
-            .or_else(|| devices.first()),
+        None => devices.iter().find(|d| d.is_default),
     }?;
     Some((selected.index.clone(), selected.device.clone()))
 }

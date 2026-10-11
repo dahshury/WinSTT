@@ -1,6 +1,7 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { Z_INDEX } from "@/shared/config/z-index";
+import { useModelSelectorHoverDisabled } from "@/shared/lib/model-selector-hover";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 
 export interface TooltipProps {
@@ -45,8 +46,9 @@ function TooltipBody({
 	footer?: string | undefined;
 	side?: TooltipProps["side"];
 }) {
+	const disabled = useModelSelectorHoverDisabled();
 	return (
-		<TooltipPrimitive.Root>
+		<TooltipPrimitive.Root disabled={disabled}>
 			<TooltipPrimitive.Trigger
 				render={cloneElement(children, {
 					suppressHydrationWarning: true,

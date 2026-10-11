@@ -1394,7 +1394,7 @@ fn validate_general_settings(general: &GeneralSettings) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_dictionary(dictionary: &[DictionaryEntry]) -> Result<(), String> {
+pub(super) fn validate_dictionary(dictionary: &[DictionaryEntry]) -> Result<(), String> {
     validate_collection_len("dictionary", dictionary.len(), MAX_DICTIONARY_ENTRIES)?;
     for (index, entry) in dictionary.iter().enumerate() {
         let base = format!("dictionary[{index}]");
@@ -1416,7 +1416,7 @@ fn validate_dictionary(dictionary: &[DictionaryEntry]) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_snippets(snippets: &[SnippetEntry]) -> Result<(), String> {
+pub(super) fn validate_snippets(snippets: &[SnippetEntry]) -> Result<(), String> {
     validate_collection_len("snippets", snippets.len(), MAX_SNIPPETS)?;
     for (index, entry) in snippets.iter().enumerate() {
         let base = format!("snippets[{index}]");

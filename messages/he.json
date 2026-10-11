@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "ייבוא",
+    "export": "ייצוא",
+    "hint": "ייבוא JSON, CSV או רשימת מילים. הערכים הקיימים נשמרים.",
+    "hintSnippets": "ייבוא JSON או CSV. הערכים הקיימים נשמרים.",
+    "imported": "נוספו {count}; דולגו {skipped} כפילויות.",
+    "limitError": "הקובץ או האוסף הממוזג חורג מהמגבלות.",
+    "importError": "לא ניתן לייבא את הקובץ. יש לבדוק את הפורמט והערכים.",
+    "exportError": "לא ניתן לשמור את הקובץ."
+  },
   "common": {
     "search": "חיפוש",
     "columns": "עמודות",
@@ -109,6 +119,7 @@
     "tabAbout": "אודות",
     "tabAboutTooltip": "גרסה, עדכונים, רישיון, הודעות והעדפות אתחול.",
     "minimize": "מזעור",
+    "backToTop": "חזרה למעלה",
     "close": "סגירה",
     "searchPlaceholder": "חיפוש בהגדרות…",
     "searchPlaceholderShort": "חיפוש…",

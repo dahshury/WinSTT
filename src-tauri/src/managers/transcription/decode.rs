@@ -422,6 +422,8 @@ impl TranscriptionManager {
                     }
                 }
             }));
+            let LoadedEngine::Winstt(backend) = &engine;
+            self.set_active_engine_providers(Some(backend.active_providers().to_vec()));
             match transcribe_result {
                 Ok(inner_result) => {
                     if let Err(e) = &inner_result {

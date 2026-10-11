@@ -42,6 +42,11 @@ pub enum ClipboardSnapshot {
     Empty,
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn is_hglobal_format(format: u32) -> bool {
+    win::is_hglobal_format(format)
+}
+
 impl ClipboardSnapshot {
     /// One-line summary for the paste-phase logs (never the content itself).
     pub fn describe(&self) -> String {

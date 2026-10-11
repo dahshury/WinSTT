@@ -1,8 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
+import { setModelPickerWindowOpen } from "@/shared/api/model-picker-window-state";
 import { Tooltip } from "./Tooltip";
 
 describe("Tooltip", () => {
+	test("dismisses an active selector tooltip while the detached picker is open", async () => {
+		render(
+			<Tooltip content="Model details" delay={0}>
+				<button data-testid="model-trigger" type="button">
+					Selected model
+				</button>
+			</Tooltip>,
+		);
+		const trigger = screen.getByTestId("model-trigger");
+		fireEvent.pointerEnter(trigger);
+		fireEvent.mouseEnter(trigger);
+		fireEvent.focus(trigger);
+		await screen.findByText("Model details");
+		try {
+			act(() => setModelPickerWindowOpen(true));
+			await waitFor(() => {
+				expect(screen.queryByText("Model details") === null).toBe(true);
+			});
+			fireEvent.mouseEnter(trigger);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 60));
+			});
+			expect(screen.queryByText("Model details") === null).toBe(true);
+		} finally {
+			act(() => setModelPickerWindowOpen(false));
+		}
+	});
+
 	test("renders the trigger element", () => {
 		render(
 			<Tooltip content="Help">

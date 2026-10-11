@@ -7,7 +7,7 @@ corrections, snippets, transcription history, optional LLM cleanup, and
 text-to-speech.
 
 **Docs:** [winstt.github.io/WinSTT](https://winstt.github.io/WinSTT/) ·
-**Latest alpha:** [GitHub Releases](https://github.com/dahshury/WinSTT/releases)
+**First beta:** [WinSTT v0.1.3-beta.1](https://github.com/dahshury/WinSTT/releases/tag/v0.1.3-beta.1)
 
 <p align="center">
   <img src="docs/public/screenshots/main.png" alt="WinSTT main window with a live audio visualizer, hotkey, microphone, and model footer." width="840">
@@ -20,15 +20,15 @@ One click, straight to the file — no scrolling through the releases page.
 <!-- DOWNLOAD_BADGES:START -->
 
 <p align="center">
-  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.11/WinSTT.exe"><img alt="Download WinSTT for Windows" src="https://img.shields.io/badge/Download--Windows-0A66C2?style=for-the-badge&logo=windows11&logoColor=white&labelColor=0A66C2"></a>
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-beta.1/WinSTT.exe"><img alt="Download WinSTT for Windows" src="https://img.shields.io/badge/Download--Windows-0A66C2?style=for-the-badge&logo=windows11&logoColor=white&labelColor=0A66C2"></a>
   &nbsp;
-  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.11/WinSTT_0.1.3-alpha.11_aarch64.dmg"><img alt="Download WinSTT for macOS" src="https://img.shields.io/badge/Download--macOS-111111?style=for-the-badge&logo=apple&logoColor=white&labelColor=111111"></a>
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-beta.1/WinSTT_0.1.3-beta.1_aarch64.dmg"><img alt="Download WinSTT for macOS" src="https://img.shields.io/badge/Download--macOS-111111?style=for-the-badge&logo=apple&logoColor=white&labelColor=111111"></a>
   &nbsp;
-  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.11/WinSTT_0.1.3-alpha.11_amd64.AppImage"><img alt="Download WinSTT for Linux" src="https://img.shields.io/badge/Download--Linux-F5B700?style=for-the-badge&logo=linux&logoColor=black&labelColor=F5B700"></a>
+  <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-beta.1/WinSTT_0.1.3-beta.1_amd64.AppImage"><img alt="Download WinSTT for Linux" src="https://img.shields.io/badge/Download--Linux-F5B700?style=for-the-badge&logo=linux&logoColor=black&labelColor=F5B700"></a>
 </p>
 
 <p align="center">
-  <sub><a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.11/WinSTT-portable.zip">Windows portable (.zip)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.11/WinSTT_0.1.3-alpha.11_amd64.deb">Debian / Ubuntu (.deb)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-alpha.11/WinSTT-0.1.3-alpha.11-1.x86_64.rpm">Fedora / RHEL (.rpm)</a> · <a href="https://github.com/dahshury/WinSTT/releases/tag/v0.1.3-alpha.11">All v0.1.3-alpha.11 assets</a></sub>
+  <sub><a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-beta.1/WinSTT-portable.zip">Windows portable (.zip)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-beta.1/WinSTT_0.1.3-beta.1_amd64.deb">Debian / Ubuntu (.deb)</a> · <a href="https://github.com/dahshury/WinSTT/releases/download/v0.1.3-beta.1/WinSTT-0.1.3-beta.1-1.x86_64.rpm">Fedora / RHEL (.rpm)</a> · <a href="https://github.com/dahshury/WinSTT/releases/tag/v0.1.3-beta.1">All v0.1.3-beta.1 assets</a></sub>
 </p>
 
 <!-- DOWNLOAD_BADGES:END -->
@@ -82,9 +82,9 @@ does not jump between short and tall media.
 - Four recording modes: push-to-talk, toggle, listen, and wake word.
 - On-device STT through ONNX Runtime via `ort`, with CPU fallback and
   platform accelerators where available.
-- 70+ model catalog covering Whisper, NeMo, Moonshine, GigaAM, Kaldi, and more.
-- Real-time preview with a fast model while the main model produces the final
-  text.
+- 84-model catalog covering Whisper, NeMo, Moonshine, GigaAM, Kaldi, and more.
+- Real-time preview shares the selected STT engine. Native streaming models carry
+  state across chunks and can reuse the finalized stream for the transcript.
 - Optional LLM cleanup through local Ollama or opt-in cloud providers.
 - Text-to-speech, dictionary corrections, snippets, and searchable history.
 

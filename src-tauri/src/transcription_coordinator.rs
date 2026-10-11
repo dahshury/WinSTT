@@ -47,6 +47,7 @@ pub(crate) fn cancel_current_dictation_session() -> Option<u64> {
     }
     let session_id = current_dictation_session();
     CANCELLED_DICTATION_THROUGH.fetch_max(session_id, Ordering::SeqCst);
+    crate::winstt::stt::inference::cancel_active();
     // Wake the post-processing watcher so an in-flight LLM cleanup is dropped
     // now instead of when its next cancellation-aware await resolves.
     crate::actions::notify_post_processing_escape();

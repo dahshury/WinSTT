@@ -5431,6 +5431,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtrb"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9278fb35b3e730abe136e9b395b5b81b96d06b9f5478a50f0c8430a2237b22de"
+
+[[package]]
 name = "rubato"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9028,7 +9034,7 @@ dependencies = [
 
 [[package]]
 name = "winstt"
-version = "0.1.3-alpha.11"
+version = "0.1.3-beta.1"
 dependencies = [
  "anyhow",
  "atspi",
@@ -9071,6 +9077,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rodio",
+ "rtrb",
  "rubato",
  "rusqlite",
  "rusqlite_migration",
@@ -9118,7 +9125,7 @@ dependencies = [
 
 [[package]]
 name = "winstt-context-sidecar"
-version = "0.1.3-alpha.11"
+version = "0.1.3-beta.1"
 dependencies = [
  "atspi",
  "ort",

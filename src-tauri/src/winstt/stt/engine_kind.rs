@@ -14,7 +14,7 @@ use super::Quantization;
 /// decode loop (e.g. Vosk + Zipformer = transducer; Dolphin + SenseVoice = bare
 /// CTC over a self-contained graph). Runtime provider routing is keyed to this
 /// engine kind; catalog `family` remains input metadata for model resolution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EngineKind {
     /// Optimum split encoder + `decoder_model_merged.onnx` with `use_cache_branch`
     /// and IoBinding KV-cache. Covers whisper-*, lite-whisper-*, distil-whisper-*,

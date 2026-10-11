@@ -428,7 +428,16 @@ fn run_catalog_mode(cat_id: &str) {
         language: bench_language.clone(),
     };
     let build_started = Instant::now();
-    let mut engine = match build_engine(cfg) {
+    // Compare the same export/audio/providers across direct and supervised execution.
+    // Build the application binary in the same profile first when using the worker.
+    let isolated = std::env::var("STT_BENCH_ISOLATED").is_ok();
+    eprintln!("isolated  : {isolated}");
+    let built = if isolated {
+        winstt_app_lib::winstt::stt::inference::load(cfg)
+    } else {
+        build_engine(cfg)
+    };
+    let mut engine = match built {
         Ok(e) => e,
         Err(e) => {
             eprintln!("BUILD FAILED: {e}");
@@ -497,7 +506,24 @@ fn run_catalog_mode(cat_id: &str) {
             ..Default::default()
         };
         eprintln!("pass_start : pass={pass} label={label}");
-        let text = if segment {
+        let stream_chunk = std::env::var("STT_BENCH_STREAM_CHUNK_MS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|ms| *ms > 0);
+        let text = if let Some(ms) = stream_chunk {
+            if !engine.supports_native_streaming() {
+                Err(SttError::Unsupported(
+                    "benchmark requires a native streaming model",
+                ))
+            } else {
+                engine.stream_reset();
+                let chunk_samples = ms.saturating_mul(16).max(1);
+                audio
+                    .chunks(chunk_samples)
+                    .try_for_each(|chunk| engine.stream_accept(chunk).map(|_| ()))
+                    .and_then(|()| engine.stream_finalize())
+            }
+        } else if segment {
             match segment_vad.as_mut() {
                 Some(vad) => winstt_app_lib::winstt::stt::vad_segment::vad_segment_decode(
                     engine.as_mut(),

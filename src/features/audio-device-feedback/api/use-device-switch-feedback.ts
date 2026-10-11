@@ -64,9 +64,10 @@ export const __test_shouldResetSavedOutputDevice = shouldResetSavedOutputDevice;
  * index isn't in it (e.g. the user previously picked an MME duplicate that
  * the WASAPI-only enumeration no longer surfaces, or a USB mic that has
  * been unplugged), we auto-reset to ``null`` so the UI shows "System
- * default" instead of an orphaned selection. The server-side fallback in
- * ``PyAudioSource.setup`` already handles the audio side; this keeps the UI
- * truthful.
+ * default" instead of an orphaned selection. The Rust recording manager
+ * applies the same fallback. Named preferences survive disconnection and
+ * resolve again when the microphone reconnects; valid legacy selections are
+ * upgraded to names after settings hydrate.
  *
  * Output devices use browser-owned ``deviceId`` values because Web Audio
  * ``setSinkId`` needs them. The same hook reconciles a saved
@@ -85,6 +86,7 @@ export const __test_shouldResetSavedOutputDevice = shouldResetSavedOutputDevice;
 export function useDeviceSwitchFeedback(): void {
 	const t = useTranslations("audio");
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
+	const isLoaded = useSettingsStore((s) => s.isLoaded);
 	const savedIndex = useSettingsStore(
 		(s) => s.settings.audio?.inputDeviceIndex,
 	);
@@ -119,20 +121,18 @@ export function useDeviceSwitchFeedback(): void {
 	}, [updateAudio, refresh, showEphemeral, t]);
 
 	useEffect(() => {
-		if (!shouldResetSavedIndex(savedIndex, devices)) {
-			return;
-		}
-		// When a preference order resolves to a connected device, the
-		// priority-sync effect below owns the re-point — resetting to null here
-		// would only add a redundant save (and a "System default" flicker).
-		if (resolveEffectivePriorityDeviceIndex(devices, savedPriority) != null) {
+		if (
+			!isLoaded ||
+			savedPriority.length > 0 ||
+			!shouldResetSavedIndex(savedIndex, devices)
+		) {
 			return;
 		}
 		updateAudio({ inputDeviceIndex: null });
 		// Same partial-save rationale as the device-switch-failed handler above —
 		// only the `audio` section is this hook's concern.
 		settingsSave({ audio: useSettingsStore.getState().settings.audio });
-	}, [devices, savedIndex, savedPriority, updateAudio]);
+	}, [devices, isLoaded, savedIndex, savedPriority, updateAudio]);
 
 	// Preference-order enforcement (`audio.inputDevicePriority`, drag-sorted in
 	// the mic pickers): whenever the device list or the order changes, re-point
@@ -141,21 +141,31 @@ export function useDeviceSwitchFeedback(): void {
 	// keeps the pickers' checkmark on the device the recorder will actually
 	// open (the backend applies the same rule at stream-open time).
 	useEffect(() => {
-		if (devices.length === 0 || savedPriority.length === 0) {
+		if (!isLoaded || devices.length === 0) {
+			return;
+		}
+		if (savedPriority.length === 0) {
+			// Upgrade an existing numbered selection while its device is known.
+			// Future reconnects resolve the name instead of reusing the ordinal.
+			const selected = devices.find((device) => device.index === savedIndex);
+			if (selected) {
+				updateAudio({ inputDevicePriority: [selected.name] });
+				settingsSave({ audio: useSettingsStore.getState().settings.audio });
+			}
 			return;
 		}
 		const effective = resolveEffectivePriorityDeviceIndex(
 			devices,
 			savedPriority,
 		);
-		if (effective == null || String(effective) === String(savedIndex)) {
+		if (effective === (savedIndex ?? null)) {
 			return;
 		}
 		updateAudio({ inputDeviceIndex: effective });
 		// Partial save, same rationale as above; immediate (no debounce) so the
 		// backend's live-read sees the new index before the next stream open.
 		settingsSave({ audio: useSettingsStore.getState().settings.audio });
-	}, [devices, savedIndex, savedPriority, updateAudio]);
+	}, [devices, isLoaded, savedIndex, savedPriority, updateAudio]);
 
 	useEffect(() => {
 		if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputSinkIds)) {

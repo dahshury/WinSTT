@@ -76,10 +76,14 @@ pub(super) fn header_size(h: &reqwest::header::HeaderMap) -> Option<u64> {
 pub(super) async fn fetch_repo_file_sizes(
     http: &reqwest::Client,
     model: &str,
+    quant: crate::winstt::stt::Quantization,
 ) -> BTreeMap<String, u64> {
-    let Some((owner, name)) = resolver::resolve_repo(model) else {
+    let Some((owner, name)) = resolver::resolve_repo_for_quant(model, quant) else {
         return BTreeMap::new();
     };
+    if let Some(sizes) = resolver::pins::file_sizes(&owner, &name) {
+        return sizes;
+    }
     // The model-info endpoint (`/api/models/…`), NOT the resolve host path the file streamer uses.
     let url = format!("https://huggingface.co/api/models/{owner}/{name}?blobs=true");
     // Bound the whole probe with reqwest's REQUEST-level `.timeout()`: this seeds the progress

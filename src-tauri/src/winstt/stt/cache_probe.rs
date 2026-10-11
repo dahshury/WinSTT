@@ -16,7 +16,7 @@
 // resolver downloads into → badge↔load agreement). For each catalog model we:
 //   1. resolve its HF repo id (resolver::resolve_repo),
 //   2. find that repo in the cache scan (if absent → every quant is `not_cached`),
-//   3. collect the cached file names across all snapshot revisions,
+//   3. collect each snapshot revision separately,
 //   4. for each available quantization, glob the engine's REQUIRED graph file(s)
 //      (resolver::file_globs for the model's EngineKind) against the cached names and check
 //      external-data completeness. All required graphs present + complete → `cached`; some
@@ -343,7 +343,8 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
     // repo's in-flight STAGING total (`blobs/<etag>.incomplete` — bytes of a file mid-transfer that
     // isn't a committed snapshot file yet). An interrupted multi-GB download leaves these, and they
     // are real progress, so they count toward the repo's partial quant.
-    let mut repo_files: BTreeMap<String, Vec<(String, u64, bool)>> = BTreeMap::new();
+    type SnapshotFiles = Vec<(String, u64, bool)>;
+    let mut repo_files: BTreeMap<String, Vec<SnapshotFiles>> = BTreeMap::new();
     let mut repo_staging: BTreeMap<String, u64> = BTreeMap::new();
     for repo in &scan.repos {
         let repo_key = repo.repo_id.to_ascii_lowercase();
@@ -353,14 +354,11 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
         if verify {
             repo_staging.insert(repo_key.clone(), staging_bytes_in(&repo.repo_path));
         }
-        let mut files: Vec<(String, u64, bool)> = Vec::new();
-        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut snapshots = Vec::new();
         for rev in &repo.revisions {
+            let mut files: Vec<(String, u64, bool)> = Vec::new();
             for f in &rev.files {
                 let posix = f.file_name.replace('\\', "/");
-                if !seen.insert(posix.clone()) {
-                    continue;
-                }
                 // A `.onnx` graph is "complete" iff its referenced external-data sidecars are all on
                 // disk; `verify_external_data_complete` self-limits its protobuf parse to <64 MB
                 // graphs. Non-`.onnx` files (vocab/tokenizer/config/sidecars) are always `true`.
@@ -371,8 +369,9 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
                 };
                 files.push((posix, f.size_on_disk, complete));
             }
+            snapshots.push(files);
         }
-        repo_files.insert(repo_key, files);
+        repo_files.insert(repo_key, snapshots);
     }
 
     for m in models {
@@ -393,7 +392,7 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
                 .copied()
                 .unwrap_or(0);
             let (state, bytes) = match cached {
-                Some(files) => quant_state(&m.id, kind, quant, files),
+                Some(snapshots) => snapshot_state(&m.id, kind, quant, snapshots),
                 None => (CacheState::NotCached, 0),
             };
             // Fold the repo's in-flight `.incomplete` staging bytes into a PARTIAL quant's progress
@@ -412,9 +411,62 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
     out
 }
 
+// A quant is ready only when one snapshot is ready. Split partial revisions never form a model.
+fn snapshot_state(
+    model: &str,
+    kind: EngineKind,
+    quant: Quantization,
+    snapshots: &[Vec<(String, u64, bool)>],
+) -> (CacheState, u64) {
+    snapshots
+        .iter()
+        .map(|files| quant_state(model, kind, quant, files))
+        .max_by_key(|(state, bytes)| {
+            (
+                match state {
+                    CacheState::Cached => 2,
+                    CacheState::Partial => 1,
+                    CacheState::NotCached => 0,
+                },
+                *bytes,
+            )
+        })
+        .unwrap_or((CacheState::NotCached, 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_revisions_do_not_badge_a_model_as_cached() {
+        let snapshots = vec![
+            vec![("encoder-model.onnx".into(), 10, true)],
+            vec![("decoder_joint-model.onnx".into(), 20, true)],
+        ];
+        let kind = EngineKind::NemoRnnt;
+        assert_ne!(
+            snapshot_state(
+                "nemo-parakeet-rnnt-0.6b",
+                kind,
+                Quantization::Default,
+                &snapshots
+            )
+            .0,
+            CacheState::Cached
+        );
+        let merged = snapshots.into_iter().flatten().collect::<Vec<_>>();
+        assert_eq!(
+            quant_state(
+                "nemo-parakeet-rnnt-0.6b",
+                kind,
+                Quantization::Default,
+                &merged
+            )
+            .0,
+            CacheState::Cached
+        );
+    }
 
     #[test]
     fn engine_kind_dispatch_matches_family() {

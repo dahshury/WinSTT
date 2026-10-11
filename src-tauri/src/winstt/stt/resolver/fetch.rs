@@ -283,7 +283,8 @@ async fn resolve_remote(
 
     // Enumerate the repo's file list (`ModelInfo.siblings[].rfilename`) so we can glob-match like
     // Python's `path.glob(...)` does against the snapshot — but without downloading everything first.
-    let tree_paths = list_repo_tree(&repo).await?;
+    let revision = super::pins::revision(&owner, &name);
+    let tree_paths = list_repo_tree(&repo, revision).await?;
 
     // Plan the required (logical-key) files by matching each glob against the tree.
     let globs = file_globs(&req.model_id, req.kind, req.effective_quant);
@@ -362,7 +363,7 @@ async fn resolve_remote(
             // unbounded network download that blocks the model load. Accept it ONLY if already
             // cached; otherwise fail fast with an actionable message so the UI can route the user
             // to the download flow (which shows progress + supports pause/cancel).
-            match download_one(&repo, &pf.repo_path, true).await {
+            match download_one(&repo, &pf.repo_path, true, revision).await {
                 Ok(p) => p,
                 Err(_) => {
                     return Err(SttError::Resolve(format!(
@@ -373,7 +374,7 @@ async fn resolve_remote(
                 }
             }
         } else {
-            download_one(&repo, &pf.repo_path, cache_only).await?
+            download_one(&repo, &pf.repo_path, cache_only, revision).await?
         };
         if let Some(key) = pf.key {
             files.insert(key.to_string(), local.clone());
@@ -396,8 +397,10 @@ async fn download_one(
     repo: &hf_hub::HFRepository<hf_hub::RepoTypeModel>,
     repo_path: &str,
     cache_only: bool,
+    revision: &str,
 ) -> SttResult<PathBuf> {
     repo.download_file()
+        .revision(revision)
         .filename(repo_path)
         .local_files_only(cache_only)
         .send()
@@ -439,20 +442,36 @@ async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel
         .iter()
         .find(|r| r.repo_id.to_ascii_lowercase() == repo_key)
         .ok_or_else(|| SttError::Resolve(format!("{owner}/{name} not in local cache")))?;
-    let mut cached: Vec<(String, PathBuf)> = Vec::new();
-    {
-        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for rev in &repo.revisions {
-            for f in &rev.files {
-                let posix = f.file_name.replace('\\', "/");
-                if posix.is_empty() || !seen.insert(posix.clone()) {
-                    continue;
-                }
-                cached.push((posix, f.file_path.clone()));
-            }
+    let pinned = super::pins::revision(&owner, &name);
+    let mut revisions: Vec<_> = repo.revisions.iter().collect();
+    // Prefer the shipped revision, then newest complete legacy snapshots. Never combine them.
+    revisions.sort_by(|a, b| {
+        (b.commit_hash == pinned)
+            .cmp(&(a.commit_hash == pinned))
+            .then_with(|| b.last_modified.cmp(&a.last_modified))
+    });
+    for revision in revisions {
+        let cached: Vec<_> = revision
+            .files
+            .iter()
+            .map(|file| (file.file_name.replace('\\', "/"), file.file_path.clone()))
+            .collect();
+        if let Ok(resolved) = resolve_snapshot(req, &cached)
+            && all_onnx_complete(&resolved)
+        {
+            return Ok(resolved);
         }
     }
+    Err(SttError::Resolve(format!(
+        "no complete snapshot for {owner}/{name}; download the model again"
+    )))
+}
 
+fn resolve_snapshot(
+    req: &ResolveRequest,
+    cached: &[(String, PathBuf)],
+) -> SttResult<ResolvedModel> {
+    let (owner, name) = resolve_repo_for_quant(&req.model_id, req.effective_quant).unwrap();
     // Plan the required (logical-key) files by matching each glob against the cached file list —
     // the SAME planning logic as `resolve_remote`, just over the on-disk snapshot instead of the
     // remote tree. A missing required file is a cache miss (→ network pass).
@@ -539,7 +558,8 @@ pub async fn plan_quant_download(
         .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
     let repo = client.model(owner.clone(), name.clone());
-    let tree_paths = list_repo_tree(&repo).await?;
+    let revision = super::pins::revision(&owner, &name);
+    let tree_paths = list_repo_tree(&repo, revision).await?;
 
     let globs = file_globs(model_id, kind, quant);
     let mut planned: Vec<String> = Vec::new();
@@ -625,15 +645,23 @@ pub async fn download_planned_file(
     let (owner, name) = resolve_repo_for_quant(model_id, quant)
         .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
-    let repo = client.model(owner, name);
+    let revision = super::pins::revision(&owner, &name);
+    let repo = client.model(owner.clone(), name.clone());
     let progress: hf_hub::progress::Progress = progress.into();
-    repo.download_file()
+    let path = repo
+        .download_file()
+        .revision(revision)
         .filename(&repo_path)
         .local_files_only(cache_only)
         .progress(progress)
         .send()
         .await
-        .map_err(|e| SttError::Resolve(format!("download {repo_path}: {e}")))
+        .map_err(|e| SttError::Resolve(format!("download {repo_path}: {e}")))?;
+    if cache_only {
+        Ok(path)
+    } else {
+        super::pins::verify(&owner, &name, &repo_path, path).await
+    }
 }
 
 /// True iff `repo_path` is already present + complete in the HF cache (used to skip already-cached
@@ -663,12 +691,14 @@ pub async fn is_file_cached(model_id: &str, repo_path: &str, quant: Quantization
 /// `rfilename` is a flat `String` we can glob directly.
 async fn list_repo_tree(
     repo: &hf_hub::HFRepository<hf_hub::RepoTypeModel>,
+    revision: &str,
 ) -> SttResult<Vec<String>> {
     // The HF `/api/models/{id}` response includes `siblings` (rfilename) by default, so a
     // plain `info().send()` should populate `ModelInfo.siblings`. If the builder gates siblings
     // behind an expand flag (e.g. `.expand("siblings")` / `.files(true)`), add it on the next line.
     let info = repo
         .info()
+        .revision(revision)
         .send()
         .await
         .map_err(|e| SttError::Resolve(format!("repo info: {e}")))?;

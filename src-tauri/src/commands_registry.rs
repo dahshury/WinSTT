@@ -104,6 +104,7 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         winstt::commands::settings::winstt_patch_settings,
         winstt::commands::settings::settings_reset_defaults,
         winstt::commands::settings_transfer::settings_export_full,
+        winstt::commands::settings_transfer::settings_export_vocabulary,
         winstt::commands::settings_transfer::settings_import_full,
         winstt::commands::stt::stt_list_models,
         winstt::commands::stt::tts_transcribe_reference,

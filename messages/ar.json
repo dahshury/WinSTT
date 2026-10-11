@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "استيراد",
+    "export": "تصدير",
+    "hint": "استورد JSON أو CSV أو قائمة كلمات. تُحفظ الإدخالات الحالية.",
+    "hintSnippets": "استورد JSON أو CSV. تُحفظ الإدخالات الحالية.",
+    "imported": "أُضيف {count}؛ تم تخطي {skipped} من التكرارات.",
+    "limitError": "يتجاوز الملف أو المجموعة المدمجة حدود الإدخالات.",
+    "importError": "تعذّر استيراد الملف. تحقق من تنسيقه وإدخالاته.",
+    "exportError": "تعذّر حفظ الملف."
+  },
   "common": {
     "search": "بحث",
     "columns": "الأعمدة",
@@ -109,6 +119,7 @@
     "tabAbout": "حول",
     "tabAboutTooltip": "الإصدار، والتحديثات، والترخيص، والإشعارات، وتفضيلات بدء التشغيل.",
     "minimize": "تصغير",
+    "backToTop": "العودة إلى الأعلى",
     "close": "إغلاق",
     "searchPlaceholder": "البحث في الإعدادات…",
     "searchPlaceholderShort": "بحث…",

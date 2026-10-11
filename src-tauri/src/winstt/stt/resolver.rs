@@ -42,6 +42,7 @@
 mod fetch;
 mod globs;
 mod moved_repos;
+pub(crate) mod pins;
 mod sidecars;
 
 pub use fetch::*;

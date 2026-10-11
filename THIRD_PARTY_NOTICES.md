@@ -83,7 +83,7 @@ crate's upstream repository, linked below.
 | rustfft                                   | MIT OR Apache-2.0             | <https://github.com/ejmahler/RustFFT>                                                                                      |
 | rayon                                     | MIT OR Apache-2.0             | <https://github.com/rayon-rs/rayon>                                                                                        |
 | num_cpus                                  | MIT OR Apache-2.0             | <https://github.com/seanmonstar/num_cpus>                                                                                  |
-| sherpa-onnx                               | Apache-2.0                    | KWS wake word + speaker-embedding diarization (linked as a shared DLL on Windows). <https://github.com/k2-fsa/sherpa-onnx> |
+| sherpa-onnx                               | Apache-2.0                    | Reference for the native ORT keyword-spotting decoder and exported STT/KWS models; no sherpa runtime DLL is bundled. <https://github.com/k2-fsa/sherpa-onnx> |
 | ferrous-opencc                            | Apache-2.0                    | Chinese text conversion for TTS. <https://github.com/apoint123/ferrous-opencc>                                             |
 | libloading                                | ISC                           | `dlopen` of the espeak-ng shared lib. <https://github.com/nagisa/rust_libloading>                                          |
 | enigo                                     | MIT                           | Synthetic keyboard input for paste. <https://github.com/enigo-rs/enigo>                                                    |
@@ -202,12 +202,19 @@ demand rather than shipping them in the installer.
   redistribution terms before commercial distribution.)**
   <https://github.com/microsoft/DirectML>
 
-### sherpa-onnx (bundled shared DLL)
+### sherpa-onnx reference implementation
 
-- The `sherpa-onnx` crate is linked in `shared` mode on Windows, so
-  `sherpa-onnx-c-api.dll` is shipped alongside the executable. Apache-2.0,
-  (c) the k2-fsa / sherpa-onnx authors.
-  <https://github.com/k2-fsa/sherpa-onnx>
+WinSTT ports keyword spotting and several STT decoders to its own Rust + ONNX
+Runtime implementation. It does not link or bundle `sherpa-onnx-c-api.dll`.
+The sherpa reference code and KWS model exports are Apache-2.0, copyright the
+k2-fsa / sherpa-onnx authors. <https://github.com/k2-fsa/sherpa-onnx>
+
+### Handy clipboard transactions
+
+The Windows and macOS receipt-sequenced paste implementation is adapted from
+Handy commit `48a3d8e9`, MIT, copyright (c) 2025 CJ Pais.
+<https://github.com/cjpais/Handy>. Its license is retained in
+`src-tauri/src/paste_tx/LICENSE-Handy`.
 
 ### Silero VAD model (bundled)
 
@@ -438,7 +445,9 @@ Piper inference is a clean-room ONNX runner and does not link GPL Piper code.
 ## Speaker diarization model
 
 Downloaded (from Hugging Face, at a pinned revision) only if the user enables
-Speaker Diarization; not bundled with WinSTT.
+Speaker Diarization; not bundled with WinSTT. The current engine is a streaming
+Sortformer for up to eight speakers, replacing the retired segmentation/embedding
+cascade, with a roughly 104 MB int8 step graph.
 
 - `nvidia/Nemotron-3-Diarization` (revision `f667ed73aee57d40cc39428eb768b4fd87a0a29e`)
   — OpenMDW License Agreement, version 1.1 (OpenMDW-1.1), NVIDIA Corporation.
@@ -460,9 +469,10 @@ Speaker Diarization; not bundled with WinSTT.
 
 ## Wake-word engines
 
-### sherpa-onnx KWS (default)
+### Native ORT KWS (default)
 
-- The default wake-word path downloads the sherpa-onnx KWS Zipformer model
+- WinSTT runs its own Rust keyword spotter on ONNX Runtime. The default path
+  downloads the sherpa-onnx KWS Zipformer model
   (`sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`) from the
   k2-fsa/sherpa-onnx GitHub releases. Apache-2.0.
   <https://github.com/k2-fsa/sherpa-onnx>

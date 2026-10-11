@@ -11,6 +11,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { AudioDevice } from "../model/audio-device";
 import {
+	applyDeviceSelection,
 	buildInputDeviceOptions,
 	inputDeviceIconForName,
 	priorityFromReorderedOptions,
@@ -117,7 +118,7 @@ describe("buildInputDeviceOptions", () => {
 
 	test("falls back to defaultLabel for currentDeviceLabel when id is not found", () => {
 		const result = buildInputDeviceOptions([], 99, "System Default");
-		// index 99 not in the list → currentDeviceId="99" but no matching opt → fallback
+		expect(result.currentDeviceId).toBe("default");
 		expect(result.currentDeviceLabel).toBe("System Default");
 	});
 
@@ -241,7 +242,7 @@ describe("buildInputDeviceOptions", () => {
 		expect(result.currentDeviceLabel).toBe("USB Mic");
 	});
 
-	test("falls back to the explicit index, then default, when no priority entry is connected", () => {
+	test("ignores a reused index when no named preference is connected", () => {
 		const devices = [makeDevice(0, "Built-in Mic")];
 		const withIndex = buildInputDeviceOptions(
 			devices,
@@ -250,7 +251,7 @@ describe("buildInputDeviceOptions", () => {
 			null,
 			["Unplugged Mic"],
 		);
-		expect(withIndex.currentDeviceId).toBe("0");
+		expect(withIndex.currentDeviceId).toBe("default");
 
 		const withoutIndex = buildInputDeviceOptions(
 			devices,
@@ -260,6 +261,20 @@ describe("buildInputDeviceOptions", () => {
 			["Unplugged Mic"],
 		);
 		expect(withoutIndex.currentDeviceId).toBe("default");
+	});
+
+	test("duplicate names mark the same priority endpoint as the recorder", () => {
+		const result = buildInputDeviceOptions(
+			[makeDevice(0, "USB Mic"), makeDevice(1, "USB Mic")],
+			1,
+			"System Default",
+			null,
+			["USB Mic"],
+		);
+		expect(result.currentDeviceId).toBe("0");
+		expect(
+			result.deviceOptions.find((option) => option.label === "USB Mic")?.id,
+		).toBe("0");
 	});
 
 	test("empty priority list preserves enumeration order", () => {
@@ -314,6 +329,20 @@ describe("promoteDeviceNameToTop", () => {
 });
 
 describe("priorityFromReorderedOptions", () => {
+	test("retains a disconnected headset's priority across a reorder", () => {
+		const options = [
+			{ id: "default", label: "System Default" },
+			{ id: "0", label: "WO Mic" },
+			{ id: "1", label: "USB Mic" },
+		];
+		expect(
+			priorityFromReorderedOptions(
+				options,
+				["default", "1", "0"],
+				["Sony Headset", "WO Mic", "USB Mic"],
+			),
+		).toEqual(["Sony Headset", "USB Mic", "WO Mic"]);
+	});
 	test("maps ordered option ids back to device names, dropping the default row", () => {
 		const devices = [makeDevice(0, "Built-in Mic"), makeDevice(1, "USB Mic")];
 		const { deviceOptions } = buildInputDeviceOptions(
@@ -336,5 +365,43 @@ describe("priorityFromReorderedOptions", () => {
 		expect(priorityFromReorderedOptions(deviceOptions, ["9", "0"])).toEqual([
 			"Built-in Mic",
 		]);
+	});
+});
+
+describe("applyDeviceSelection", () => {
+	test("the first explicit selection persists the name for reconnects", () => {
+		const indexes: (number | null)[] = [];
+		const priorities: string[][] = [];
+		applyDeviceSelection({
+			id: "1",
+			options: [{ id: "1", label: "Sony Headset" }],
+			priority: [],
+			onChange: (index) => indexes.push(index),
+			onPriorityChange: (priority) => priorities.push(priority),
+		});
+		expect(indexes).toEqual([1]);
+		expect(priorities).toEqual([["Sony Headset"]]);
+		const reconnected = buildInputDeviceOptions(
+			[makeDevice(1, "WO Mic"), makeDevice(4, "Sony Headset")],
+			1,
+			"System Default",
+			null,
+			priorities[0],
+		);
+		expect(reconnected.currentDeviceId).toBe("4");
+	});
+
+	test("system default clears named preferences", () => {
+		const indexes: (number | null)[] = [];
+		const priorities: string[][] = [];
+		applyDeviceSelection({
+			id: "default",
+			options: [],
+			priority: ["Sony Headset"],
+			onChange: (index) => indexes.push(index),
+			onPriorityChange: (priority) => priorities.push(priority),
+		});
+		expect(indexes).toEqual([null]);
+		expect(priorities).toEqual([[]]);
 	});
 });

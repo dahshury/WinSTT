@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "Nhập",
+    "export": "Xuất",
+    "hint": "Nhập JSON, CSV hoặc danh sách từ. Các mục hiện có được giữ lại.",
+    "hintSnippets": "Nhập JSON hoặc CSV. Các mục hiện có được giữ lại.",
+    "imported": "Đã thêm {count}; bỏ qua {skipped} mục trùng lặp.",
+    "limitError": "Tệp hoặc danh sách hợp nhất vượt quá giới hạn.",
+    "importError": "Không thể nhập tệp. Kiểm tra định dạng và các mục.",
+    "exportError": "Không thể lưu tệp."
+  },
   "common": {
     "search": "Tìm kiếm",
     "columns": "Cột",
@@ -109,6 +119,7 @@
     "tabAbout": "Giới thiệu",
     "tabAboutTooltip": "Phiên bản, cập nhật, giấy phép, thông báo và tùy chọn khởi động.",
     "minimize": "Thu nhỏ",
+    "backToTop": "Về đầu trang",
     "close": "Đóng",
     "searchPlaceholder": "Tìm kiếm cài đặt…",
     "searchPlaceholderShort": "Tìm kiếm…",

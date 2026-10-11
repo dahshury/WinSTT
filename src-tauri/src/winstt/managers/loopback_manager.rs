@@ -557,30 +557,39 @@ impl LoopbackManager {
         let mut mix_microphone = false;
         if capture_microphone {
             let (mic_tx, mic_rx) = mpsc::channel::<Vec<f32>>();
-            let preferred = read_settings_raw(&self.app).audio.input_device_priority;
-            match self.mic.lock_recover().start(preferred, mic_tx) {
+            let selected = self
+                .app
+                .state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+                .get_effective_microphone_device();
+            let mic_result = self.mic.lock_recover().start(selected, mic_tx);
+            match mic_result {
                 Ok(name) => {
                     log::info!("[listen] microphone mix enabled device='{name}'");
-                    let mic_forward_tx = frame_tx.clone();
-                    match std::thread::Builder::new()
-                        .name("listen-mic-forward".into())
-                        .spawn(move || {
-                            for chunk in mic_rx.iter() {
-                                if mic_forward_tx.send(ListenFrame::Mic(chunk)).is_err() {
-                                    break;
-                                }
-                            }
-                        }) {
-                        Ok(_) => mix_microphone = true,
-                        Err(e) => {
-                            log::warn!("[listen] failed to spawn mic forwarder: {e}");
-                            self.mic.lock_recover().stop();
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[listen] microphone mix requested but the mic could not be opened: {err}; continuing with system audio only"
+                    );
+                }
+            }
+            // Keep the microphone channel even when startup found no usable
+            // input. A later connection can restore it without a new session;
+            // the mixer flushes system audio alone while the mic is absent.
+            let mic_forward_tx = frame_tx.clone();
+            match std::thread::Builder::new()
+                .name("listen-mic-forward".into())
+                .spawn(move || {
+                    for chunk in mic_rx.iter() {
+                        if mic_forward_tx.send(ListenFrame::Mic(chunk)).is_err() {
+                            break;
                         }
                     }
+                }) {
+                Ok(_) => mix_microphone = true,
+                Err(e) => {
+                    log::warn!("[listen] failed to spawn mic forwarder: {e}");
+                    self.mic.lock_recover().stop();
                 }
-                Err(err) => log::warn!(
-                    "[listen] microphone mix requested but the mic could not be opened: {err}; continuing with system audio only"
-                ),
             }
         }
         // The consumer's channel disconnects once every forwarder has exited.
@@ -633,6 +642,16 @@ impl LoopbackManager {
 
         self.emit_session_snapshot();
         Ok(started_device)
+    }
+
+    /// Switch the microphone leg without interrupting system audio or the
+    /// running Listen session's transcript.
+    pub(crate) fn refresh_microphone_device(&self) -> Result<(), String> {
+        let selected = self
+            .app
+            .state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+            .get_effective_microphone_device();
+        self.mic.lock_recover().update_device(selected)
     }
 
     /// Stop loopback capture + the consumer thread, then persist the finished
@@ -1686,6 +1705,25 @@ mod tests {
         let mut mixer = ListenMixer::new();
         mixer.push_loopback(&vec![0.1; MIX_MAX_BUFFER_SAMPLES + 4800]);
         assert_eq!(mixer.loopback.len(), MIX_MAX_BUFFER_SAMPLES);
+    }
+
+    #[test]
+    fn listen_mixer_recovers_when_the_microphone_reconnects() {
+        let mut mixer = ListenMixer::new();
+        mixer.push_loopback(&vec![0.2; VAD_FRAME_SAMPLES * 12]);
+        let system_only = mixer.drain_ready();
+        assert_eq!(system_only.len(), 12);
+        assert!(
+            system_only
+                .iter()
+                .flatten()
+                .all(|sample| (*sample - 0.2).abs() < 1e-6)
+        );
+        mixer.push_mic(&vec![0.3; VAD_FRAME_SAMPLES]);
+        mixer.push_loopback(&vec![0.2; VAD_FRAME_SAMPLES]);
+        let resumed = mixer.drain_ready();
+        assert_eq!(resumed.len(), 1);
+        assert!(resumed[0].iter().all(|sample| (*sample - 0.5).abs() < 1e-6));
     }
 
     #[test]

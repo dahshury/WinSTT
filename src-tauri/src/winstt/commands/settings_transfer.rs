@@ -921,6 +921,74 @@ pub async fn settings_export_full(
     Ok(SettingsExportResult::ok_with(out_path))
 }
 
+/// Validate and serialize a vocabulary-only archive.
+fn vocabulary_export_json(kind: &str, data: &str) -> Result<Vec<u8>, String> {
+    if data.len() > 20 * 1024 * 1024 {
+        return Err("Vocabulary export exceeds 20 MiB".into());
+    }
+    // Re-serialize typed entries so arbitrary settings/secret fields cannot enter the export.
+    let entries = match kind {
+        "dictionary" => {
+            let entries: Vec<crate::winstt::settings_schema::DictionaryEntry> =
+                serde_json::from_str(data).map_err(|error| error.to_string())?;
+            super::settings::validate_dictionary(&entries)?;
+            serde_json::to_value(entries)
+        }
+        "snippets" => {
+            let entries: Vec<crate::winstt::settings_schema::SnippetEntry> =
+                serde_json::from_str(data).map_err(|error| error.to_string())?;
+            super::settings::validate_snippets(&entries)?;
+            serde_json::to_value(entries)
+        }
+        _ => return Err("Unknown vocabulary kind".into()),
+    }
+    .map_err(|error| error.to_string())?;
+    serde_json::to_vec_pretty(&serde_json::json!({
+        "format": "winstt-vocabulary", "version": 1, "kind": kind, "entries": entries
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Export the current renderer edits through a native save dialog without exporting settings.
+#[tauri::command]
+#[specta::specta]
+pub async fn settings_export_vocabulary(
+    app: AppHandle,
+    webview: WebviewWindow,
+    kind: String,
+    data: String,
+) -> Result<SettingsExportResult, String> {
+    command_auth::authorize_webview(
+        &webview,
+        "settings-transfer",
+        "export vocabulary",
+        SETTINGS_TRANSFER_ALLOWED_WINDOWS,
+        "",
+    )?;
+    let bytes = vocabulary_export_json(&kind, &data)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(chosen) = app
+            .dialog()
+            .file()
+            .add_filter("JSON", &["json"])
+            .set_file_name(format!("winstt-{kind}.json"))
+            .blocking_save_file()
+        else {
+            return SettingsExportResult::cancelled();
+        };
+        let path = match chosen.into_path() {
+            Ok(path) => path,
+            Err(error) => return SettingsExportResult::failed(error.to_string()),
+        };
+        match std::fs::write(&path, bytes) {
+            Ok(()) => SettingsExportResult::ok_with(path),
+            Err(error) => SettingsExportResult::failed(error.to_string()),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// `settings_import_full` — pick a JSON settings backup, reconcile unavailable
 /// model/provider preferences for this machine, then persist through the normal
 /// settings path so runtime side effects and settings:changed broadcasts match
@@ -1016,6 +1084,25 @@ pub async fn settings_import_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vocabulary_export_contains_only_validated_entries() {
+        let bytes = vocabulary_export_json(
+            "dictionary",
+            r#"[{"id":"a","term":"WinSTT","apiKey":"never export"}]"#,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["format"], "winstt-vocabulary");
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["entries"][0]["term"], "WinSTT");
+        assert!(value["entries"][0].get("apiKey").is_none());
+        assert!(vocabulary_export_json("settings", "[]").is_err());
+        assert!(
+            vocabulary_export_json("snippets", r#"[{"id":"a","trigger":"x","expansion":""}]"#)
+                .is_err()
+        );
+    }
 
     fn availability(stt: &[&str], ollama: &[&str], tts: &[&str]) -> SettingsAvailability {
         SettingsAvailability {

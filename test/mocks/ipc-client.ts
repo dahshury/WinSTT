@@ -193,9 +193,10 @@ function reshapeNativeEvent(channel: string, payload: unknown): unknown {
 export function ipcClientMock(): Record<
 	keyof typeof import("@/shared/api/ipc-client"),
 	unknown
-> {
+> &
+	Record<string, unknown> {
 	return {
-		// Low-level wrappers (re-exported by the real module)
+		// Legacy low-level helpers are test-only extras. Required production exports remain typed.
 		noop,
 		waitForPendingNativeListeners: async () => true,
 		send,

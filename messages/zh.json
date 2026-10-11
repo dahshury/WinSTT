@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "导入",
+    "export": "导出",
+    "hint": "导入 JSON、CSV 或词汇列表。现有条目将保留。",
+    "hintSnippets": "导入 JSON 或 CSV。现有条目将保留。",
+    "imported": "已添加 {count} 项，跳过 {skipped} 项重复条目。",
+    "limitError": "文件或合并后的列表超出条目限制。",
+    "importError": "无法导入文件。请检查格式和条目。",
+    "exportError": "无法保存文件。"
+  },
   "common": {
     "search": "搜索",
     "columns": "列",
@@ -109,6 +119,7 @@
     "tabAbout": "关于",
     "tabAboutTooltip": "版本、更新、许可证、声明和启动偏好设置。",
     "minimize": "最小化",
+    "backToTop": "返回顶部",
     "close": "关闭",
     "searchPlaceholder": "搜索设置…",
     "searchPlaceholderShort": "搜索…",

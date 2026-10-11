@@ -54,8 +54,13 @@ jobs:
             exit 1
           fi
 
-          if [[ "$version" != *"-alpha"* ]]; then
-            echo "::error::Alpha-only release policy is active; version must include -alpha. Got: $version"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)\.[0-9]+$ ]]; then
+            echo "::error::Prerelease version must use -alpha.N or -beta.N. Got: $version"
+            exit 1
+          fi
+
+          if [ ! -s "docs/releases/$version.md" ]; then
+            echo "::error::Missing curated release notes: docs/releases/$version.md"
             exit 1
           fi
 
@@ -385,7 +390,7 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate release notes
+      - name: Prepare curated release notes
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -393,6 +398,14 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           $tag = "v$env:VERSION"
+          $curatedNotesPath = "docs/releases/$env:VERSION.md"
+          if (-not (Test-Path -LiteralPath $curatedNotesPath)) {
+            throw "Missing curated release notes: $curatedNotesPath"
+          }
+          $curatedNotes = Get-Content -LiteralPath $curatedNotesPath -Raw
+          if ([string]::IsNullOrWhiteSpace($curatedNotes)) {
+            throw "Curated release notes are empty: $curatedNotesPath"
+          }
           $previousTag = git tag --list "v*" --sort=-creatordate |
             Where-Object { $_ -ne $tag } |
             Select-Object -First 1
@@ -432,7 +445,7 @@ jobs:
 
           $sinceTitle = if ($previousTag) { "## Changes since $previousTag" } else { "## Changes in this release" }
           @(
-            "# WinSTT $env:VERSION",
+            $curatedNotes.TrimEnd(),
             "",
             $sinceTitle,
             "",

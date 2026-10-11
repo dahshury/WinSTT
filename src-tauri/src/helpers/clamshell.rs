@@ -5,8 +5,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
 #[cfg(target_os = "windows")]
 use std::sync::{Condvar, Mutex, PoisonError};
-#[cfg(target_os = "windows")]
-use tauri::Manager;
 
 #[cfg(target_os = "windows")]
 const WINDOWS_LID_UNKNOWN: i8 = -1;
@@ -183,14 +181,7 @@ fn watch_windows_lid_reconfigure(app: tauri::AppHandle) {
             continue;
         }
 
-        let Some(audio_manager) =
-            app.try_state::<std::sync::Arc<crate::managers::audio::AudioRecordingManager>>()
-        else {
-            continue;
-        };
-        if let Err(err) = audio_manager.update_selected_device() {
-            log::warn!("[clamshell] failed to apply Windows lid microphone change: {err}");
-        }
+        crate::winstt::commands::audio_devices::refresh_active_microphone_streams(&app);
     }
 }
 

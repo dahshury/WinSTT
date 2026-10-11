@@ -9,7 +9,7 @@
 /// The precision tier actually loaded. Maps to the HF file suffix
 /// (`""` → default fp32 export, `fp16`, `int8`, `int4`, `q4`, `q4f16`, `bnb4`, `uint8`).
 /// `None`/`Default` means "the unsuffixed export on disk".
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Quantization {
     #[default]
     Default, // ""  — unsuffixed export
@@ -70,7 +70,7 @@ impl Quantization {
 /// Resolved ORT execution-provider intent. The user-facing setting
 /// (`auto` / `cuda` / `directml` / `cpu` …) is collapsed to one of these by
 /// `resolve_accelerator` (ported in 03_stt_engine.md §9).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Accelerator {
     Cpu,
     Cuda,

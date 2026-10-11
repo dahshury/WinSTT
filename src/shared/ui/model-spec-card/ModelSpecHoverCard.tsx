@@ -3,6 +3,7 @@
 import { PreviewCard } from "@base-ui/react/preview-card";
 import { cloneElement, type ReactElement } from "react";
 import { Z_INDEX } from "@/shared/config/z-index";
+import { useModelSelectorHoverDisabled } from "@/shared/lib/model-selector-hover";
 import { SurfaceProvider, surfaceClasses } from "@/shared/lib/surface";
 import { ModelSpecCard } from "./ModelSpecCard";
 import { InsideModelSpecHoverCardProvider } from "./spec-hover-context";
@@ -58,8 +59,18 @@ export function ModelSpecHoverCard({
 	align = "center",
 	sideOffset = 8,
 }: ModelSpecHoverCardProps) {
+	const disabled = useModelSelectorHoverDisabled();
 	if (!spec) {
 		return children;
+	}
+	if (disabled) {
+		// Unmount the hover primitive to cancel pending delays and discard its
+		// open state. Keep the context so nested name tooltips stay suppressed.
+		return (
+			<InsideModelSpecHoverCardProvider value={true}>
+				{children}
+			</InsideModelSpecHoverCardProvider>
+		);
 	}
 	return (
 		<InsideModelSpecHoverCardProvider value={true}>

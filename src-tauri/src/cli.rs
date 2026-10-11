@@ -519,7 +519,7 @@ fn build_headless_engine(model: &ResolvedHeadlessModel) -> CliResult<Box<dyn Tra
             && model.quantization == Quantization::Fp16,
         language: None,
     };
-    stt::build_engine(config).map_err(|error| CliError(format!("model load failed: {error}")))
+    stt::inference::load(config).map_err(|error| CliError(format!("model load failed: {error}")))
 }
 
 fn decode_audio(

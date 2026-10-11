@@ -49,7 +49,7 @@ impl VerifyProbe {
 }
 
 pub(super) async fn probe_verify(probe: VerifyProbe, api_key: &str) -> VerifyCredentialPayload {
-    let client = reqwest::Client::new();
+    let client = crate::winstt::net::http_client();
     let mut rb = client.get(probe.url()).timeout(Duration::from_secs(10));
     rb = match probe {
         VerifyProbe::ElevenLabs => rb.header("xi-api-key", api_key),

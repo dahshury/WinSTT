@@ -533,8 +533,8 @@ pub(super) fn apply_audio_runtime_settings(
         audio_manager.apply_vad_settings(next);
     }
 
-    if input_device_changed && let Err(err) = audio_manager.update_selected_device() {
-        log::warn!("[settings] failed to apply microphone device change: {err}");
+    if input_device_changed {
+        crate::winstt::commands::audio_devices::refresh_active_microphone_streams(app);
     }
 }
 

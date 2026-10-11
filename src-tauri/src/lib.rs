@@ -16,6 +16,7 @@ mod foreground_window;
 mod helpers;
 mod input;
 mod managers;
+mod paste_tx;
 pub mod portable;
 mod settings;
 mod shortcut;
@@ -1148,6 +1149,7 @@ fn cleanup_runtime_models_on_exit(app: &AppHandle) {
 
     let started = Instant::now();
     log::info!("[shutdown] unloading model runtimes");
+    winstt::stt::inference::cancel_active();
 
     // Put every mixer session we ducked back FIRST (bounded wait). Windows
     // persists per-app session volumes, so quitting while ducked would leave

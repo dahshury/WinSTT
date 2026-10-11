@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { NATIVE_EVENTS } from "./native-events";
@@ -8,11 +8,14 @@ const SRC = join(import.meta.dir, "..", "..");
 
 function sourceFiles(directory: string): string[] {
 	const files: string[] = [];
-	for (const entry of readdirSync(directory)) {
-		const path = join(directory, entry);
-		if (statSync(path).isDirectory()) {
+	for (const entry of readdirSync(directory, { withFileTypes: true })) {
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) {
 			files.push(...sourceFiles(path));
-		} else if (/\.(?:ts|tsx)$/.test(entry) && !entry.includes(".test.")) {
+		} else if (
+			/\.(?:ts|tsx)$/.test(entry.name) &&
+			!entry.name.includes(".test.")
+		) {
 			files.push(path);
 		}
 	}
@@ -35,7 +38,9 @@ describe("native boundary", () => {
 			.sort();
 
 		expect(offenders).toEqual([]);
-	});
+		// The full production-tree read takes ~15s on the Windows development disk.
+		// Keep the assertion intact and give this filesystem audit an explicit budget.
+	}, 30_000);
 
 	test("maps compatibility event labels to canonical backend names", () => {
 		expect(nativeEventName(NATIVE_EVENTS.STT_REALTIME_TEXT)).toBe(

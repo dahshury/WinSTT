@@ -1,12 +1,12 @@
 use crate::audio_toolkit::{
-    AudioRecorder, CapturedAudio, CpalDeviceInfo, RealtimeAudioProgress, SileroVad,
-    list_input_devices,
+    AudioRecorder, CapturedAudio, RealtimeAudioProgress, SileroVad, list_input_devices,
     vad::{LiveVad, SmoothedVad, VAD_SPEECH_THRESHOLD, VadRuntimeConfig},
 };
 use crate::helpers::clamshell;
 use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
 use crate::winstt::settings_store::read_settings_raw;
 use crate::winstt::sync_ext::MutexExt;
+use cpal::traits::DeviceTrait;
 use log::{debug, error, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -469,6 +469,8 @@ pub struct AudioRecordingManager {
 
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
     is_open: Arc<Mutex<bool>>,
+    opened_device_id: Arc<Mutex<Option<cpal::DeviceId>>>,
+    device_refresh_pending: Arc<AtomicBool>,
     is_recording: Arc<Mutex<bool>>,
     did_mute: Arc<Mutex<bool>>,
     close_generation: Arc<AtomicU64>,
@@ -513,6 +515,23 @@ fn choose_priority_device_position(names: &[&str], priority: &[String]) -> Optio
     })
 }
 
+/// Named preferences never fall through to a stale enumeration index. System
+/// default honors the OS endpoint even when it is a virtual microphone.
+fn choose_microphone_device_position(
+    devices: &[(i64, &str, bool)],
+    selected_index: Option<i64>,
+    priority: &[String],
+) -> Option<usize> {
+    let default = devices.iter().position(|device| device.2);
+    if !priority.is_empty() {
+        let names: Vec<_> = devices.iter().map(|device| device.1).collect();
+        return choose_priority_device_position(&names, priority).or(default);
+    }
+    selected_index
+        .and_then(|index| devices.iter().position(|device| device.0 == index))
+        .or(default)
+}
+
 fn realtime_audio_wait_pending(
     progress: &RealtimeAudioProgress,
     offset: usize,
@@ -542,6 +561,8 @@ impl AudioRecordingManager {
 
             recorder: Arc::new(Mutex::new(None)),
             is_open: Arc::new(Mutex::new(false)),
+            opened_device_id: Arc::new(Mutex::new(None)),
+            device_refresh_pending: Arc::new(AtomicBool::new(false)),
             is_recording: Arc::new(Mutex::new(false)),
             did_mute: Arc::new(Mutex::new(false)),
             close_generation: Arc::new(AtomicU64::new(0)),
@@ -572,126 +593,50 @@ impl AudioRecordingManager {
 
     /* ---------- helper methods --------------------------------------------- */
 
-    fn get_effective_microphone_device(&self) -> Option<cpal::Device> {
-        // Some Windows hosts expose SILENT virtual/loopback inputs ("WO Mic",
-        // "Stereo Mix", "Voicemeeter", …). When "Default" is selected we honor the OS
-        // default input first; only if THAT is one of these known-silent virtual
-        // endpoints do we fall through to the first real physical input (level=0.00 on
-        // a silent default → a dead visualizer + no captured audio).
-        //
-        // The blocklist matches WHOLE WORDS / identities, not bare substrings: a naked
-        // "cable" / "aggregate" substring rejected legitimate products (e.g. a USB
-        // device whose name contains "Cable") and every macOS "Aggregate Device", so
-        // those two are matched as standalone tokens (or known full product names)
-        // rather than anywhere-in-the-string.
-        fn is_likely_virtual(name: &str) -> bool {
-            let lower = name.to_lowercase();
-            // Phrase markers that are unambiguous as substrings (no false positives on
-            // real hardware names).
-            const SUBSTRING_MARKERS: &[&str] = &[
-                "stereo mix",
-                "what u hear",
-                "wo mic",
-                "loopback",
-                "wavetable",
-                "stereo out",
-                "mono mix",
-                "voicemeeter",
-                "vb-audio",
-                "vb-cable",
-            ];
-            if SUBSTRING_MARKERS.iter().any(|p| lower.contains(p)) {
-                return true;
-            }
-            // Whole-word markers: split on non-alphanumeric so "cable" / "aggregate" /
-            // "virtual" only match as standalone tokens, not as a slice of a larger
-            // word inside a real product name.
-            const WORD_MARKERS: &[&str] = &["cable", "aggregate", "virtual"];
-            lower
-                .split(|c: char| !c.is_alphanumeric())
-                .any(|tok| WORD_MARKERS.contains(&tok))
-        }
-
-        fn device_matches_index(device: &CpalDeviceInfo, selected_index: i64) -> bool {
-            selected_index >= 0 && device.index.parse::<i64>().ok() == Some(selected_index)
-        }
-
-        fn choose_default_device(devices: &[CpalDeviceInfo]) -> Option<usize> {
-            devices
-                .iter()
-                .position(|d| d.is_default && !is_likely_virtual(&d.name))
-                .or_else(|| devices.iter().position(|d| !is_likely_virtual(&d.name)))
-                .or_else(|| devices.iter().position(|d| d.is_default))
-                .or_else(|| (!devices.is_empty()).then_some(0usize))
-        }
-
-        // Device selection is canonical in `settings.audio.*`; `None` means
-        // the system-default input.
+    pub(crate) fn get_effective_microphone_device(&self) -> Option<cpal::Device> {
         let settings = read_settings_raw(&self.app_handle);
         let use_clamshell_mic = clamshell::is_clamshell().unwrap_or(false)
             && settings.audio.clamshell_microphone.is_some();
-
         let selected_index = if use_clamshell_mic {
             settings.audio.clamshell_microphone
         } else {
             settings.audio.input_device_index
         };
-
+        let priority = if use_clamshell_mic {
+            &[][..]
+        } else {
+            settings.audio.input_device_priority.as_slice()
+        };
         match list_input_devices() {
             Ok(devices) => {
-                // Preference order (drag-sorted in the pickers) wins when set: the
-                // highest-priority CONNECTED name is used even if `input_device_index`
-                // still points at a lower entry. Resolved fresh on every stream open,
-                // so replugging a preferred mic takes effect on the next recording.
-                // Clamshell mode keeps precedence over the preference order.
-                let priority_pick = if use_clamshell_mic {
-                    None
-                } else {
-                    let names: Vec<&str> = devices.iter().map(|d| d.name.as_str()).collect();
-                    choose_priority_device_position(&names, &settings.audio.input_device_priority)
-                };
-                let chosen = if let Some(position) = priority_pick {
-                    Some(position)
-                } else if let Some(index) = selected_index {
-                    let found = devices
-                        .iter()
-                        .position(|device| device_matches_index(device, index));
-                    if found.is_none() {
-                        warn!(
-                            "[audio] selected microphone index {index} is unavailable; falling back to default input"
-                        );
-                        // Tell the renderer the queued index couldn't be opened so it
-                        // reverts the UI selection to "System default" and toasts. We
-                        // report fallback_index=None: the chosen fallback re-resolves
-                        // the OS default on every open, so pinning today's concrete
-                        // index would lie on the next device reshuffle.
-                        crate::winstt::commands::listen_events::emit_device_switch_failed(
-                            &self.app_handle,
-                            index,
-                            &format!("device #{index} is no longer available"),
-                            None,
-                        );
-                    }
-                    found.or_else(|| choose_default_device(&devices))
-                } else {
-                    // "Default" selected → honor the OS default input first…
-                    devices
-                        .iter()
-                        .position(|d| d.is_default && !is_likely_virtual(&d.name))
-                        // …only if the OS default is a known-silent virtual device do we
-                        // fall through to the first real physical input…
-                        .or_else(|| devices.iter().position(|d| !is_likely_virtual(&d.name)))
-                        // …and last resort: the OS default even if virtual (better than
-                        // nothing — keeps parity with cpal's own default fallback).
-                        .or_else(|| devices.iter().position(|d| d.is_default))
-                        .or_else(|| (!devices.is_empty()).then_some(0usize))
-                };
+                let rows: Vec<_> = devices
+                    .iter()
+                    .enumerate()
+                    .map(|(position, device)| {
+                        (position as i64, device.name.as_str(), device.is_default)
+                    })
+                    .collect();
+                if priority.is_empty()
+                    && let Some(index) = selected_index
+                    && !rows.iter().any(|device| device.0 == index)
+                {
+                    warn!(
+                        "[audio] selected microphone index {index} is unavailable; falling back to default input"
+                    );
+                    crate::winstt::commands::listen_events::emit_device_switch_failed(
+                        &self.app_handle,
+                        index,
+                        &format!("device #{index} is no longer available"),
+                        None,
+                    );
+                }
+                let chosen = choose_microphone_device_position(&rows, selected_index, priority);
                 chosen
-                    .and_then(|i| devices.into_iter().nth(i))
-                    .map(|d| d.device)
+                    .and_then(|position| devices.into_iter().nth(position))
+                    .map(|device| device.device)
             }
-            Err(e) => {
-                debug!("Failed to list devices, using default: {}", e);
+            Err(err) => {
+                debug!("Failed to list devices, using default: {err}");
                 None
             }
         }
@@ -853,6 +798,7 @@ impl AudioRecordingManager {
 
         // Get the selected device from settings, considering clamshell mode
         let selected_device = self.get_effective_microphone_device();
+        let selected_id = selected_device.as_ref().and_then(|device| device.id().ok());
 
         // Pre-flight check: if no device was selected/configured AND no devices
         // exist at all, fail early with a clear error instead of letting cpal
@@ -874,6 +820,8 @@ impl AudioRecordingManager {
         }
 
         *open_flag = true;
+        *self.opened_device_id.lock_recover() = selected_id;
+        self.device_refresh_pending.store(false, Ordering::SeqCst);
         // This timing covers through cpal's stream.play() returning — i.e. the
         // point cpal surfaces as "stream running." It does NOT guarantee the
         // host audio device is producing samples yet; the first input callback
@@ -918,6 +866,7 @@ impl AudioRecordingManager {
         crate::audio_feedback::release_prepared_audio_output();
 
         *open_flag = false;
+        *self.opened_device_id.lock_recover() = None;
         drop(open_flag);
 
         log::info!("Communications render and microphone stream stopped");
@@ -984,6 +933,12 @@ impl AudioRecordingManager {
         // Read the current state, then release it immediately.
         if !matches!(*self.state.lock_recover(), RecordingState::Idle) {
             return Err("Already recording".to_string());
+        }
+
+        if self.device_refresh_pending.load(Ordering::SeqCst) {
+            self.stop_microphone_stream();
+            self.start_microphone_stream()
+                .map_err(|err| err.to_string())?;
         }
 
         // Ensure microphone is open in on-demand mode
@@ -1058,10 +1013,28 @@ impl AudioRecordingManager {
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
-        // If currently open, restart the microphone stream to use the new device
-        if *self.is_open.lock_recover() {
+        let _lifecycle = self.stream_lifecycle.lock_recover();
+        self.device_refresh_pending.store(true, Ordering::SeqCst);
+        // Preserve the utterance already in progress. Its stop boundary (or
+        // the next start) applies the pending change while capture is idle.
+        if !matches!(*self.state.lock_recover(), RecordingState::Idle) {
+            return Ok(());
+        }
+        let is_open = *self.is_open.lock_recover();
+        if is_open {
+            let next_id = self
+                .get_effective_microphone_device()
+                .and_then(|device| device.id().ok());
+            if next_id.is_some() && next_id == *self.opened_device_id.lock_recover() {
+                self.device_refresh_pending.store(false, Ordering::SeqCst);
+                return Ok(());
+            }
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
+            self.start_microphone_stream()?;
+        } else if matches!(*self.mode.lock_recover(), MicrophoneMode::AlwaysOn)
+            || self.wakeword_mode_active()
+        {
             self.start_microphone_stream()?;
         }
         Ok(())
@@ -1131,7 +1104,19 @@ impl AudioRecordingManager {
                 // finalized samples; waiting for CPAL thread teardown here delays
                 // paste without improving transcription correctness.
                 if should_release_stream {
-                    self.schedule_release_after_stop();
+                    if self.device_refresh_pending.load(Ordering::SeqCst) {
+                        self.schedule_close_when_idle(Duration::ZERO);
+                    } else {
+                        self.schedule_release_after_stop();
+                    }
+                } else if self.device_refresh_pending.load(Ordering::SeqCst) {
+                    let app = self.app_handle.clone();
+                    std::thread::spawn(move || {
+                        let manager = app.state::<Arc<AudioRecordingManager>>();
+                        if let Err(err) = manager.update_selected_device() {
+                            warn!("[audio] deferred microphone switch failed: {err}");
+                        }
+                    });
                 }
 
                 // NO short-clip pad here: the capture layer must never lengthen audio. A
@@ -1324,6 +1309,56 @@ mod tests {
 
         // "AirPods Pro" is not connected → the next entry wins.
         assert_eq!(choose_priority_device_position(&names, &priority), Some(1));
+    }
+
+    #[test]
+    fn microphone_default_honors_virtual_os_input() {
+        let devices = [
+            (0, "Headset", false),
+            (1, "Microphone (WO Mic Device)", true),
+        ];
+        assert_eq!(
+            choose_microphone_device_position(&devices, None, &[]),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn microphone_priority_ignores_an_index_reused_by_another_device() {
+        let devices = [(0, "Default Mic", true), (1, "Another Mic", false)];
+        let priority = vec!["Disconnected Headset".into()];
+        assert_eq!(
+            choose_microphone_device_position(&devices, Some(1), &priority),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn microphone_priority_recovers_after_reconnect_and_renumbering() {
+        let devices = [(0, "Default Mic", true), (4, "  Sony Headset  ", false)];
+        let priority = vec!["sony headset".into()];
+        assert_eq!(
+            choose_microphone_device_position(&devices, Some(0), &priority),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn microphone_legacy_index_falls_back_only_to_os_default() {
+        let devices = [(0, "Headset", false), (1, "WO Mic", true)];
+        assert_eq!(
+            choose_microphone_device_position(&devices, Some(0), &[]),
+            Some(0)
+        );
+        assert_eq!(
+            choose_microphone_device_position(&devices, Some(42), &[]),
+            Some(1)
+        );
+        assert_eq!(
+            choose_microphone_device_position(&[(0, "Headset", false)], None, &[]),
+            None
+        );
+        assert_eq!(choose_microphone_device_position(&[], None, &[]), None);
     }
 
     #[test]

@@ -1,0 +1,47 @@
+[
+  {
+    "directory": "Handy",
+    "repository": "cjpais/Handy",
+    "focus": "Native inference, audio callback, paste delivery and release coverage"
+  },
+  {
+    "directory": "OpenWhispr",
+    "repository": "OpenWhispr/openwhispr",
+    "focus": "Dictation, meetings, assistant routing and transcript retrieval"
+  },
+  {
+    "directory": "VoiceInk",
+    "repository": "Beingpax/VoiceInk",
+    "focus": "Vocabulary portability, app modes and correction learning; GPL reference only"
+  },
+  {
+    "directory": "Voxtype",
+    "repository": "peteonrails/voxtype",
+    "focus": "Linux output, hardware-specific engines and streaming segment semantics"
+  },
+  {
+    "directory": "Epicenter",
+    "repository": "EpicenterHQ/epicenter",
+    "focus": "Current Whispering app, portable data and transformations; AGPL reference only"
+  },
+  {
+    "directory": "Hyprnote",
+    "repository": "fastrepl/anarlog",
+    "focus": "Current Anarlog community app, meeting notes, VAD boundaries and local storage"
+  },
+  {
+    "directory": "Wisper",
+    "repository": "hudsonbrendon/wisper",
+    "focus": "Small Tauri dictation loop and speech-versus-silence handling"
+  },
+  {
+    "directory": "Buzz",
+    "repository": "chidiwilliams/buzz",
+    "focus": "File transcription, subtitle editing, watch folders and speech separation"
+  },
+  {
+    "directory": "Superwhisper-CLI",
+    "repository": "superultrainc/superwhisper-cli-release",
+    "focus": "Public release documentation only; application and CLI source are private"
+  }
+]

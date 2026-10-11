@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "İçe aktar",
+    "export": "Dışa aktar",
+    "hint": "JSON, CSV veya kelime listesi içe aktarın. Mevcut kayıtlar korunur.",
+    "hintSnippets": "JSON veya CSV içe aktarın. Mevcut kayıtlar korunur.",
+    "imported": "{count} eklendi; {skipped} yinelenen kayıt atlandı.",
+    "limitError": "Dosya veya birleştirilmiş koleksiyon sınırları aşıyor.",
+    "importError": "Dosya içe aktarılamadı. Biçimi ve kayıtları kontrol edin.",
+    "exportError": "Dosya kaydedilemedi."
+  },
   "common": {
     "search": "Ara",
     "columns": "Sütunlar",
@@ -109,6 +119,7 @@
     "tabAbout": "Hakkında",
     "tabAboutTooltip": "Sürüm, güncellemeler, lisans, bildirimler ve başlangıç tercihleri.",
     "minimize": "Küçült",
+    "backToTop": "Başa dön",
     "close": "Kapat",
     "searchPlaceholder": "Ayarlarda ara…",
     "searchPlaceholderShort": "Ara…",

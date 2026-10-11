@@ -109,6 +109,7 @@ __pycache__/
 tools/out/
 
 # Local scratch / eval artifacts (not for commit)
+.tmp/
 .codex-remote-attachments/
 .tmp_ab_eval/
 .tmp_e2e/

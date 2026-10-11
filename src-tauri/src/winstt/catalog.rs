@@ -21,8 +21,7 @@
 //   * Canary/Cohere `<|startofcontext|>` prompt slot is UNTRAINED — no initial-prompt bias for
 //     them (handled in the engine slice, NOT here — noted for cross-reference).
 //
-// The const `STT_CATALOG` below has exactly 67 entries (whisper 15, moonshine 10, granite 2,
-// nemo 27, kaldi 4, gigaam 2, cohere 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2). Every entry is
+// The shipped `STT_CATALOG` has 84 entries; family counts are asserted in tests. Every entry is
 // preview-capable in WinSTT today; native streaming and final-reuse policy are derived from
 // `EngineKind`, not this legacy field.
 //

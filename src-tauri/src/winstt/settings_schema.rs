@@ -584,7 +584,8 @@ pub struct AudioSettings {
     /// Microphone preference order (cpal device NAMES, highest first). When
     /// non-empty, the first CONNECTED entry wins on every stream open,
     /// overriding `input_device_index` (which the renderer keeps re-pointed at
-    /// the same effective device). Empty = plain index selection. HOT-SWAP.
+    /// the same effective device). No connected preference = OS default, never
+    /// a stale index. Empty = legacy index selection or OS default. HOT-SWAP.
     /// Zod `.catch([])`.
     #[serde(default)]
     pub input_device_priority: Vec<String>,

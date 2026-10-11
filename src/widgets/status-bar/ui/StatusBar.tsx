@@ -94,7 +94,7 @@ export function StatusBar() {
 			: currentDeviceLabel;
 
 	// Same semantics as the settings picker: clicking promotes the device to
-	// the top of a non-empty preference order (so the click always wins);
+	// the top of the preference order (creating one for the first selection);
 	// "System default" clears the order.
 	const handleDeviceChange = (v: string) =>
 		applyDeviceSelection({
@@ -110,6 +110,7 @@ export function StatusBar() {
 			inputDevicePriority: priorityFromReorderedOptions(
 				deviceOptions,
 				orderedIds,
+				inputDevicePriority,
 			),
 		});
 

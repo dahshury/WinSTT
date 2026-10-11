@@ -190,7 +190,7 @@ impl WordAligner {
             language: None,
         };
 
-        match stt::build_engine(cfg) {
+        match stt::inference::load(cfg) {
             Ok(engine) => {
                 // Only keep it if the export actually exposes cross-attention (else the words it
                 // returns would always be empty — surface a clean "unavailable" instead).

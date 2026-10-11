@@ -637,7 +637,7 @@ impl SttBackend for WinsttSttBackend {
     fn build_resolved(&self, spec: ResolvedSpec) -> Result<(Box<dyn Transcriber>, String)> {
         let display_name = spec.display_name;
         let model_id = spec.model_id;
-        let engine = crate::winstt::stt::build_engine(spec.config)
+        let engine = crate::winstt::stt::inference::load(spec.config)
             .map_err(|e| anyhow::anyhow!("build WinSTT engine for {}: {}", model_id, e))?;
         Ok((engine, display_name))
     }

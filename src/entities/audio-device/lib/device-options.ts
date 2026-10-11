@@ -227,15 +227,30 @@ export function promoteDeviceNameToTop(
 export function priorityFromReorderedOptions(
 	options: readonly { id: string; label: string }[],
 	orderedIds: readonly string[],
+	previousPriority: readonly string[] = [],
 ): string[] {
 	const byId = new Map(options.map((o) => [o.id, o]));
-	return orderedIds
+	const reordered = orderedIds
 		.map((id) => byId.get(id))
 		.filter(
 			(o): o is { id: string; label: string } =>
 				o !== undefined && o.id !== "default",
 		)
 		.map((o) => o.label);
+	const connected = new Set(
+		options
+			.filter((o) => o.id !== "default")
+			.map((o) => deviceNameKey(o.label)),
+	);
+	// Keep disconnected preferences in their slots so sorting the available
+	// microphones does not forget a headset that will reconnect later.
+	let next = 0;
+	const priority = previousPriority.map((name) =>
+		connected.has(deviceNameKey(name)) ? reordered[next++] : name,
+	);
+	return [...priority, ...reordered.slice(next)].filter(
+		(name): name is string => name !== undefined,
+	);
 }
 
 /**
@@ -243,7 +258,8 @@ export function priorityFromReorderedOptions(
  * picker. Clicking is still an explicit "use this one", but it must not fight
  * the preference order: while a priority list exists, the effective mic is
  * always its top-most connected entry, so a click promotes the chosen device
- * to the top (and "System default" opts out by clearing the list).
+ * to the top (and "System default" opts out by clearing the list). The first
+ * explicit pick also saves its name, so enumeration changes cannot retarget it.
  */
 export function applyDeviceSelection({
 	id,
@@ -267,7 +283,7 @@ export function applyDeviceSelection({
 	}
 	onChange(Number.parseInt(id, 10));
 	const name = options.find((o) => o.id === id)?.label;
-	if (onPriorityChange && name && priority.length > 0) {
+	if (onPriorityChange && name) {
 		onPriorityChange(promoteDeviceNameToTop(priority, name));
 	}
 }
@@ -307,34 +323,37 @@ export function buildInputDeviceOptions(
 			label: defaultLabel,
 		},
 	];
-	const selectedName = resolveSelectedName(devices, inputDeviceIndex);
+	const priorityDevice = resolveEffectivePriorityDevice(
+		devices,
+		inputDevicePriority,
+	);
+	const canonicalIndex = priorityDevice?.index ?? inputDeviceIndex;
+	const selectedName = resolveSelectedName(devices, canonicalIndex);
 	opts.push(
 		...sortOptionsByPriority(
-			dedupeDevicesByName(devices, inputDeviceIndex, selectedName),
+			dedupeDevicesByName(devices, canonicalIndex, selectedName),
 			inputDevicePriority,
 		),
 	);
 
 	// EXACTLY ONE row is marked selected: the device the recorder will actually
-	// open, mirroring the backend chain (priority top-connected → explicit
-	// index → OS default). Deriving it here — instead of trusting the persisted
+	// open. A configured priority falls back to the OS default when none of its
+	// names are connected; only legacy settings without names use an index.
+	// Deriving it here — instead of trusting the persisted
 	// index — means a picker can never show a "selected" device that a
 	// higher-priority connected device would beat at recording time.
-	const priorityDevice = resolveEffectivePriorityDevice(
-		devices,
-		inputDevicePriority,
-	);
 	let currentDeviceId: string;
 	if (priorityDevice) {
-		// Look the row up by NAME: the dedup id can be the user's persisted
-		// index rather than the enumeration index for the same physical mic.
+		// Priority and deduplication share the same first matching device.
 		const key = deviceNameKey(priorityDevice.name);
 		currentDeviceId =
 			opts.find((o) => o.id !== "default" && deviceNameKey(o.label) === key)
 				?.id ?? "default";
 	} else {
 		currentDeviceId =
-			inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
+			inputDevicePriority.length === 0 && selectedName !== null
+				? String(inputDeviceIndex)
+				: "default";
 	}
 	const found = opts.find((o) => o.id === currentDeviceId);
 	return {

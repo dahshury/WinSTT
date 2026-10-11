@@ -46,7 +46,7 @@ const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
 
 // Capture mock-call records so each test can assert.
 const settingsSaveCalls: Array<{
-	audio?: { inputDeviceIndex: number | null };
+	audio?: { inputDeviceIndex: number | null; inputDevicePriority?: string[] };
 	general?: { loopbackDeviceIndex?: number | null; outputDeviceId?: string };
 }> = [];
 let onDeviceSwitchFailedCb:
@@ -54,6 +54,11 @@ let onDeviceSwitchFailedCb:
 			errorMessage: string;
 			fallbackIndex: number | null;
 			requestedIndex: number;
+	  }) => void)
+	| null = null;
+let onDevicesChangedCb:
+	| ((payload: {
+			devices: Array<{ index: number; name: string; isDefault: boolean }>;
 	  }) => void)
 	| null = null;
 let audioGetDevicesImpl: () => Promise<
@@ -91,6 +96,12 @@ function installNativeBridgeStub(): void {
 		},
 		secureInvoke: async () => undefined,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
+			if (channel === IPC.AUDIO_DEVICES_CHANGED) {
+				onDevicesChangedCb = (payload) => cb(payload);
+				return () => {
+					onDevicesChangedCb = null;
+				};
+			}
 			if (channel === IPC.STT_DEVICE_SWITCH_FAILED) {
 				onDeviceSwitchFailedCb = (payload) => cb(payload);
 				return () => {
@@ -129,11 +140,13 @@ beforeEach(() => {
 	audioGetDevicesImpl = async () => [];
 	outputEnumerateResult = [];
 	onDeviceSwitchFailedCb = null;
+	onDevicesChangedCb = null;
 	installNativeBridgeStub();
 	installMediaDevicesStub();
 	_resetInputDevicesCacheForTests();
 	_resetOutputDevicesCacheForTests();
 	useSettingsStore.setState({
+		isLoaded: true,
 		settings: {
 			...freshSettings(),
 			audio: { ...freshSettings().audio, inputDeviceIndex: 6 },
@@ -289,19 +302,23 @@ describe("useDeviceSwitchFeedback", () => {
 		expect(settingsSaveCalls.some((call) => call.general != null)).toBe(false);
 	});
 
-	test("does not touch the saved index when it matches a device in the live list", async () => {
+	test("upgrades a legacy numbered selection to a named preference", async () => {
 		audioGetDevicesImpl = async () => [
 			{ index: 6, name: "Microphone (Some Mic)", isDefault: true },
 			{ index: 9, name: "Microphone (Another)", isDefault: false },
 		];
 		renderHookWithProviders();
-		// Give the enumeration promise a chance to resolve and the reconcile
-		// effect a chance to fire — it should NOT fire because 6 is in the list.
-		await new Promise((r) => setTimeout(r, 20));
+		await waitFor(() => {
+			expect(
+				useSettingsStore.getState().settings.audio?.inputDevicePriority,
+			).toEqual(["Microphone (Some Mic)"]);
+		});
 		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
 			6,
 		);
-		expect(settingsSaveCalls.length).toBe(0);
+		expect(settingsSaveCalls.at(-1)?.audio?.inputDevicePriority).toEqual([
+			"Microphone (Some Mic)",
+		]);
 	});
 
 	test("re-points the saved index at the highest-priority connected device", async () => {
@@ -327,6 +344,100 @@ describe("useDeviceSwitchFeedback", () => {
 		});
 		// Persisted immediately so the backend's live-read sees it.
 		expect(settingsSaveCalls.at(-1)?.audio?.inputDeviceIndex).toBe(9);
+	});
+
+	test("falls back and reconnects by name when a different mic reuses the saved index", async () => {
+		audioGetDevicesImpl = async () => [
+			{ index: 0, name: "WO Mic", isDefault: true },
+			{ index: 1, name: "Sony Headset", isDefault: false },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: {
+					...freshSettings().audio,
+					inputDeviceIndex: 1,
+					inputDevicePriority: ["Sony Headset"],
+				},
+			},
+		});
+		renderHookWithProviders();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		act(() =>
+			onDevicesChangedCb?.({
+				devices: [{ index: 1, name: "WO Mic", isDefault: true }],
+			}),
+		);
+		await waitFor(() =>
+			expect(
+				useSettingsStore.getState().settings.audio?.inputDeviceIndex,
+			).toBeNull(),
+		);
+		expect(
+			useSettingsStore.getState().settings.audio?.inputDevicePriority,
+		).toEqual(["Sony Headset"]);
+		act(() =>
+			onDevicesChangedCb?.({
+				devices: [
+					{ index: 1, name: "WO Mic", isDefault: true },
+					{ index: 4, name: "Sony Headset", isDefault: false },
+				],
+			}),
+		);
+		await waitFor(() =>
+			expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+				4,
+			),
+		);
+		expect(settingsSaveCalls.at(-1)?.audio?.inputDeviceIndex).toBe(4);
+	});
+
+	test("system default stays automatic across Windows default changes", async () => {
+		audioGetDevicesImpl = async () => [
+			{ index: 0, name: "WO Mic", isDefault: true },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: {
+					...freshSettings().audio,
+					inputDeviceIndex: null,
+				},
+			},
+		});
+		renderHookWithProviders();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		act(() =>
+			onDevicesChangedCb?.({
+				devices: [
+					{ index: 0, name: "WO Mic", isDefault: false },
+					{ index: 1, name: "Sony Headset", isDefault: true },
+				],
+			}),
+		);
+		expect(
+			useSettingsStore.getState().settings.audio?.inputDeviceIndex,
+		).toBeNull();
+		expect(
+			useSettingsStore.getState().settings.audio?.inputDevicePriority,
+		).toEqual([]);
+		expect(settingsSaveCalls).toHaveLength(0);
+	});
+
+	test("waits for settings hydration before migrating a legacy selection", async () => {
+		audioGetDevicesImpl = async () => [
+			{ index: 6, name: "Sony Headset", isDefault: false },
+		];
+		useSettingsStore.setState({ isLoaded: false });
+		renderHookWithProviders();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(settingsSaveCalls).toHaveLength(0);
+		act(() => useSettingsStore.getState().setLoaded(true));
+		await waitFor(() =>
+			expect(settingsSaveCalls.at(-1)?.audio?.inputDevicePriority).toEqual([
+				"Sony Headset",
+			]),
+		);
 	});
 
 	test("leaves the index alone when the top-priority device is already selected", async () => {

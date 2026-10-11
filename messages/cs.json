@@ -1,4 +1,14 @@
 {
+  "vocabularyTransfer": {
+    "import": "Importovat",
+    "export": "Exportovat",
+    "hint": "Importujte JSON, CSV nebo seznam slov. Stávající položky se zachovají.",
+    "hintSnippets": "Importujte JSON nebo CSV. Stávající položky se zachovají.",
+    "imported": "Přidáno: {count}; přeskočené duplicity: {skipped}.",
+    "limitError": "Soubor nebo sloučená kolekce překračuje limity položek.",
+    "importError": "Soubor nelze importovat. Zkontrolujte formát a položky.",
+    "exportError": "Soubor nelze uložit."
+  },
   "common": {
     "search": "Hledat",
     "columns": "Sloupce",
@@ -109,6 +119,7 @@
     "tabAbout": "O aplikaci",
     "tabAboutTooltip": "Verze, aktualizace, licence, upozornění a předvolby spuštění.",
     "minimize": "Minimalizovat",
+    "backToTop": "Zpět nahoru",
     "close": "Zavřít",
     "searchPlaceholder": "Hledat nastavení…",
     "searchPlaceholderShort": "Hledat…",

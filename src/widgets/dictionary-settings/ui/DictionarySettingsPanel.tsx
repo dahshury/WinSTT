@@ -1,6 +1,7 @@
 import { BookOpenTextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { VocabularyTransfer } from "@/features/vocabulary-transfer";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 import { Badge } from "@/shared/ui/badge";
@@ -49,6 +50,7 @@ export function DictionarySettingsPanel() {
 			title={t("title")}
 		>
 			<div className="flex flex-col gap-3 py-2">
+				<VocabularyTransfer kind="dictionary" />
 				<AutoAddSuggestions
 					existingTerms={existingTerms}
 					onAccept={(term) => handleAdd({ term, autoAdded: true })}

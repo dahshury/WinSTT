@@ -1,6 +1,7 @@
 import { StickyNote01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { VocabularyTransfer } from "@/features/vocabulary-transfer";
 import { Badge } from "@/shared/ui/badge";
 import { SnippetsTable } from "./SnippetsTable";
 
@@ -27,7 +28,8 @@ export function SnippetsSettingsPanel() {
 			icon={StickyNote01Icon}
 			title={t("title")}
 		>
-			<div className="pt-2 pb-4">
+			<div className="flex flex-col gap-3 pt-2 pb-4">
+				<VocabularyTransfer kind="snippets" />
 				<SnippetsTable entries={snippets} onChange={updateSnippets} />
 			</div>
 		</SettingSection>

@@ -242,6 +242,9 @@ impl TranscriptionManager {
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::run_native_stream_finalize(&mut guard, &final_tail)
         }));
+        if let Some(LoadedEngine::Winstt(engine)) = guard.as_ref() {
+            self.set_active_engine_providers(Some(engine.active_providers().to_vec()));
+        }
         let text = match decoded {
             Ok(Some(Ok(text))) => text,
             Ok(Some(Err(err))) => {
@@ -321,6 +324,9 @@ impl TranscriptionManager {
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::run_native_stream_accept(&mut guard, new_samples)
         }));
+        if let Some(LoadedEngine::Winstt(engine)) = guard.as_ref() {
+            self.set_active_engine_providers(Some(engine.active_providers().to_vec()));
+        }
         let (outcome, did_decode, cache_text) = match decoded {
             Ok(Some(Ok(update))) => {
                 let text = update.text;
@@ -379,6 +385,9 @@ impl TranscriptionManager {
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::run_native_stream_accept(&mut guard, new_samples)
         }));
+        if let Some(LoadedEngine::Winstt(engine)) = guard.as_ref() {
+            self.set_active_engine_providers(Some(engine.active_providers().to_vec()));
+        }
         let (outcome, did_decode, cache_text) = match decoded {
             Ok(Some(Ok(update))) => {
                 let text = update.text;

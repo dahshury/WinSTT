@@ -634,7 +634,10 @@ fn paste_streaming_direct(
     input::edit_text_streaming(enigo, backspace_chars, text).map_err(ClipboardError::Input)
 }
 
-fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), ClipboardError> {
+pub(crate) fn send_return_key(
+    enigo: &mut Enigo,
+    key_type: AutoSubmitKey,
+) -> Result<(), ClipboardError> {
     match key_type {
         AutoSubmitKey::Enter => {
             enigo
@@ -876,6 +879,10 @@ fn paste_inner(
         std::thread::sleep(Duration::from_millis(50));
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    let mut receipt_paste = false;
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let receipt_paste = false;
     match paste_method {
         PasteMethod::None => unreachable!("PasteMethod::None returned before input synthesis"),
         PasteMethod::Direct => {
@@ -895,19 +902,42 @@ fn paste_inner(
             warn_if_slow_paste_phase("direct_paste", elapsed_ms);
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            match crate::paste_tx::try_reliable_paste(
+                &text,
+                &app_handle,
+                &paste_method,
+                &mut enigo,
+                !replace_mode && should_send_auto_submit(&settings, paste_method),
+                general_settings.auto_submit_key,
+                core_settings.clipboard_handling,
+                paste_delay_ms,
+            ) {
+                Ok(()) => receipt_paste = true,
+                Err(crate::paste_tx::PasteFailure::Input(error)) => {
+                    return Err(ClipboardError::Input(error));
+                }
+                Err(crate::paste_tx::PasteFailure::Setup(error)) => {
+                    log::warn!(
+                        "[clipboard] receipt paste unavailable; using clipboard fallback: {error}"
+                    );
+                }
+            }
             // CopyToClipboard means the transcription should END UP on the clipboard —
             // skip the snapshot/restore sandwich entirely instead of restoring the old
             // content only to overwrite it again below.
             let restore_original =
                 core_settings.clipboard_handling != ClipboardHandling::CopyToClipboard;
-            paste_via_clipboard(
-                &mut enigo,
-                &text,
-                &app_handle,
-                &paste_method,
-                paste_delay_ms,
-                restore_original,
-            )?
+            if !receipt_paste {
+                paste_via_clipboard(
+                    &mut enigo,
+                    &text,
+                    &app_handle,
+                    &paste_method,
+                    paste_delay_ms,
+                    restore_original,
+                )?;
+            }
         }
         PasteMethod::ExternalScript => {
             return Err(ClipboardError::Config(
@@ -919,7 +949,7 @@ fn paste_inner(
     // Auto-submit (Enter) is a DICTATION affordance — SKIPPED in replace mode so a Transforms
     // rewrite-in-place doesn't fire a spurious Enter (submitting the form / inserting a newline
     // the user never asked for).
-    if !replace_mode && should_send_auto_submit(&settings, paste_method) {
+    if !receipt_paste && !replace_mode && should_send_auto_submit(&settings, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         let phase_started = Instant::now();
         debug!(
@@ -932,7 +962,7 @@ fn paste_inner(
         warn_if_slow_paste_phase("auto_submit", elapsed_ms);
     }
 
-    if core_settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+    if !receipt_paste && core_settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         let clipboard = app_handle.clipboard();
         let phase_started = Instant::now();
         debug!(

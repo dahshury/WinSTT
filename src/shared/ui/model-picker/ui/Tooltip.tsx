@@ -2,6 +2,7 @@
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import type { ReactNode } from "react";
+import { useModelSelectorHoverDisabled } from "@/shared/lib/model-selector-hover";
 
 /**
  * Internal Tooltip wrappers used across the OpenRouter model selector widget.
@@ -25,8 +26,9 @@ export interface TooltipProps {
 }
 
 export function Tooltip({ children, disabled }: TooltipProps) {
+	const pickerOpen = useModelSelectorHoverDisabled();
 	return (
-		<TooltipPrimitive.Root disabled={disabled}>
+		<TooltipPrimitive.Root disabled={disabled || pickerOpen}>
 			{children}
 		</TooltipPrimitive.Root>
 	);

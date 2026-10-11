@@ -9,72 +9,81 @@ firmly in the second camp — and aims to be one of the most capable local-first
 
 <StatGrid>
   <Stat value="$0" label="one-time price (MIT)" />
-  <Stat value="70+" label="STT models, 11 families" />
+  <Stat value="84" label="local STT models" />
   <Stat value="0" label="bytes uploaded by default" />
   <Stat value="100%" label="works offline" />
 </StatGrid>
 
 <Callout type="success" title="Your voice stays on your machine">
-  WinSTT processes audio in memory on your own hardware and discards it — nothing is
-  uploaded and there are no usage analytics. Cloud dictation apps stream every utterance
-  to a vendor server and bill monthly. You can still opt into a cloud provider per-feature
-  if you want, but it's never required.
+  Local transcription runs on your own hardware. History and saved audio follow your
+  retention settings. Cloud transcription or cleanup sends the relevant input to your
+  selected provider when you enable it; neither is required for local dictation.
 </Callout>
 
 ## WinSTT vs. cloud dictation
 
-The biggest decision is local vs. cloud. Cloud services (Wispr Flow, superwhisper's cloud
-tier, and similar) are convenient but send your voice off-device and bill monthly.
+The biggest decision is where transcription and cleanup run. Superwhisper and OpenWhispr
+offer both local and cloud paths; compare the selected mode, not just the product name.
+Cloud processing sends audio or text to a provider and may involve a subscription or API charges.
 
 <ModelTable
   head={["", "WinSTT", "Typical cloud dictation app"]}
   rows={[
     ["Where audio is processed", "On your machine, in memory", "Uploaded to a server"],
     ["Works offline", "Yes — fully", "No"],
-    ["Price", "Free, forever (MIT)", "Subscription (~$10–15/mo)"],
-    ["Data ownership", "Never leaves your device", "Stored/processed by the vendor"],
-    ["Model choice", "70+ models, swap any time", "Whatever the vendor runs"],
+    ["Price", "Free local app (MIT); optional API charges", "Subscription or API charges vary"],
+    ["Local retention", "Your history and audio settings", "Provider-specific policies"],
+    ["Model choice", "84 local models, swap any time", "Provider-specific selection"],
     ["Source code", "Open — fully auditable", "Closed"],
     ["Telemetry", "None (opt-out crash reports only)", "Usage analytics typical"],
   ]}
-  caption="Cloud capabilities vary by vendor and change over time — check each product. WinSTT can also call ElevenLabs or OpenRouter as an opt-in cloud option if you want it."
+  caption="Cloud capabilities and retention policies vary by provider. WinSTT also offers optional cloud providers."
 />
 
 <Callout type="success" title="The economics of local">
-  A cloud dictation subscription runs roughly **$120–180 per year**. WinSTT is a one-time
-  free download with no account and no metering — the same hardware you already own does the
-  work. You can still opt into a cloud provider per-feature if you prefer, but you're never
-  required to.
+  WinSTT's local app requires no subscription, account, or usage metering. Your hardware
+  runs the models. Optional cloud providers have their own pricing and terms.
 </Callout>
 
 ## WinSTT vs. other local tools
 
-Open-source local STT tools share WinSTT's privacy stance; they differ in scope. Some focus
-on the smallest possible dictation loop; WinSTT focuses on a broader local voice toolkit
-across desktop platforms.
+Local tools differ in workflow as well as model choice. Several now include contextual
+cleanup, assistants, or meeting notes. These are useful alternatives, not interchangeable
+dictation utilities. The references below were reviewed on October 11, 2026.
 
 <ModelTable
-  head={["Capability", "WinSTT", "Minimal local tools"]}
+  head={["Product", "Workflow worth comparing"]}
   rows={[
-    ["Platforms", "Windows / macOS Apple Silicon / Linux", "Windows / macOS / Linux"],
-    ["STT models", "70+ across 11 families", "Whisper + Parakeet"],
-    ["Recording modes", "Push-to-talk, toggle, listen, wake word", "Push-to-talk, toggle"],
-    ["Listen mode (system audio)", "Yes — loopback capture + diarization", "No"],
-    ["LLM text cleanup", "Yes — Ollama / OpenRouter / Apple", "No"],
-    ["Text-to-speech", "Yes — Kokoro, 54 voices", "No"],
-    ["File transcription", "Yes — TXT / SRT", "Varies"],
-    ["Transcription history", "Yes — dashboard + heatmap + playback", "Basic"],
-    ["Dictionary & snippets", "Yes", "Dictionary"],
+    ["WinSTT", "Local streaming dictation, system-audio listening, diarization, cleanup, TTS and file transcription"],
+    ["Handy", "Focused offline dictation and straightforward model selection"],
+    ["OpenWhispr", "Dictation, meeting transcription, notes and an AI assistant"],
+    ["VoiceInk", "macOS dictation, contextual modes and portable vocabulary"],
+    ["Voxtype", "Linux dictation with hardware-specific engines and output drivers"],
+    ["Anarlog (formerly Hyprnote)", "Meeting transcripts, editable notes, summaries and chat"],
+    ["Buzz", "File transcription, subtitle editing, watch folders and speech separation"],
+    ["Superwhisper", "Local/cloud dictation, custom modes, specialized cleanup and CLI/MCP access to history"],
   ]}
-  caption="Feature sets as of 2026 — local tools move fast. If you want the smallest dictation loop, a minimal local tool may fit; if you want a broader local voice toolkit, that's WinSTT."
+  caption="This describes workflow scope. It is not a ranking of speed, recognition accuracy, or platform reliability."
 />
+
+Sources: [Handy](https://github.com/cjpais/Handy),
+[OpenWhispr](https://github.com/OpenWhispr/openwhispr),
+[VoiceInk](https://github.com/Beingpax/VoiceInk),
+[Voxtype](https://github.com/peteonrails/voxtype),
+[Anarlog](https://github.com/fastrepl/anarlog),
+[Buzz](https://github.com/chidiwilliams/buzz), and
+[Superwhisper's CLI announcement](https://superwhisper.com/blog/cli-mcp).
+
+WinSTT now imports dictionary and snippet JSON/CSV files and exports vocabulary-only JSON
+archives. Dictionary import also accepts VoiceInk's version 1 archive. Existing entries
+are kept when a file contains duplicate terms or triggers.
 
 ## Why local-first
 
 <BentoGrid cols={2}>
   <FeatureCard icon="privacy" title="Privacy by default">
-    Audio is transcribed in memory and discarded. Nothing is uploaded; there are no usage
-    analytics. The only outbound signal is opt-out crash reports.
+    Local transcription stays on-device. You control history retention and whether to
+    enable cloud transcription or cleanup. There are no usage analytics.
   </FeatureCard>
   <FeatureCard icon="cpu" title="No metering, no limits">
     Dictate all day. There's no per-minute billing, no monthly cap, and no account.
@@ -97,7 +106,7 @@ across desktop platforms.
     Download and dictate your first sentence in under two minutes.
   </Card>
   <Card title="Browse the models" href="/docs/models">
-    The 70+ models WinSTT can run, with accuracy and speed trade-offs.
+    The local models WinSTT can run, with accuracy and speed trade-offs.
   </Card>
   <Card title="Verify the download" href="/docs/verify-releases">
     Check the release signature and hashes so you know exactly what runs.
