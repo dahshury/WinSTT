@@ -151,7 +151,7 @@ globset = "0.4.18"               # STT resolver POSIX glob matching (`**`, `*`, 
 prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }  # DistilBERT + custom models
 sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for KWS keyword tokenization
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
+zip = { version = "9.0.1", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
 base64 = "0.23"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
