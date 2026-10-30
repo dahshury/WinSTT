@@ -543,7 +543,7 @@
     "languageTooltip": "Язык интерфейса (меню, настройки, подсказки). Не зависит от языка расшифровки.",
     "visualizerColorTooltip": "Акцентный цвет анимации аудиовизуализатора.",
     "soundFileTooltip": "Пользовательский файл .wav или .mp3, воспроизводимый при начале записи. Перетащите файл или нажмите «Обзор» для выбора.",
-    "fileTranscriptionFormatTooltip": "Форматы вывода для расшифрованных аудио- и видеофайлов. SRT, VTT и CSV используют времена сегментов по границам голосовой активности. JSON включает времена слов только для Whisper-экспортов с временными метками; иначе массивы слов пусты.",
+    "fileTranscriptionFormatTooltip": "Выберите форматы вывода. Временные метки сегментов и слов зависят от модели. При включённом определении говорящих сохраняются их метаданные; текстовые префиксы необязательны.",
     "startOnLoginTooltip": "Automatically launch WinSTT each time you sign in to Windows.",
     "startMinimizedTooltip": "При запуске скрываться в системном трее вместо открытия главного окна.",
     "minimizeToTrayTooltip": "Закрытие главного окна оставляет WinSTT работающим в системном трее вместо завершения.",
@@ -594,7 +594,11 @@
     "contextScreenOcrCaption": "Считывать текст на экране рядом с курсором как дополнительный контекст",
     "contextScreenOcrTooltip": "Когда учёт контекста не может прочитать активное поле напрямую, WinSTT переходит к распознаванию текста на экране (OCR) вокруг курсора, чтобы захватить ближайший текст. Это медленнее и менее точно, чем прямое чтение поля — отключите, чтобы пропустить этот запасной вариант.",
     "listenCaptureMicrophone": "Также распознавать мой микрофон",
-    "listenCaptureMicrophoneTooltip": "Подмешивает ваш микрофон в сессию прослушивания, чтобы расшифровка включала и то, что вы слышите, и то, что говорите."
+    "listenCaptureMicrophoneTooltip": "Подмешивает ваш микрофон в сессию прослушивания, чтобы расшифровка включала и то, что вы слышите, и то, что говорите.",
+    "fileDiarization": "Identify speakers",
+    "fileDiarizationHint": "Identify speakers in dropped files using Nemotron Transcribe. Other models report unsupported diarization. Files bypass dictation post-processing; explicit ASR prompts still apply.",
+    "fileSpeakerPrefixes": "Speaker prefixes",
+    "fileSpeakerPrefixesHint": "Add Speaker 1: prefixes to TXT, SRT and copied text. JSON/CSV retain speaker IDs and VTT uses voice tags whether prefixes are enabled or not."
   },
   "model": {
     "initialPrompt": "Начальный промпт",
@@ -1770,5 +1774,23 @@
     "pageOf": "Page {current} of {total}",
     "previousPage": "Previous page",
     "nextPage": "Next page"
+  },
+  "asrPrompt": {
+    "title": "Direct ASR prompting",
+    "off": "Off",
+    "custom": "Custom instruction",
+    "presets": "Use cleanup presets",
+    "hint": "Let the speech model perform cleanup directly. Reuse the active presets from Post-processing or write an instruction. A separate cleanup model is skipped by default.",
+    "taskHint": "This model supports transcription-task prompts, not general cleanup. Cleanup presets and skipping the separate cleanup pass are unavailable.",
+    "instruction": "Instruction to the speech model",
+    "additionalHint": "The separate cleanup model is skipped. You can enable it in Post-processing after confirming the extra pass.",
+    "additionalEnabled": "An additional cleanup model is enabled. This adds latency and can rewrite the result again.",
+    "configureCleanup": "Configure presets or separate cleanup",
+    "processingHint": "Your speech model handles cleanup directly. When Use cleanup presets is selected, the profiles and modifiers here supply its instructions. The dictation switch below adds a separate cleanup model.",
+    "optionalTextModel": "Optional model for an extra cleanup pass or text preview",
+    "warningTitle": "Run an additional cleanup pass?",
+    "warningBody": "The speech model already follows cleanup instructions. A separate cleanup model is not recommended: it adds latency and may rewrite already-cleaned text. Continue anyway?",
+    "continue": "Use separate cleanup anyway",
+    "cancel": "Cancel"
   }
 }

@@ -12,6 +12,16 @@ const modelUnloadTimeoutSchema = z
 	.catch("min15");
 
 export const modelSettingsSchema = z.object({
+	asrPromptSource: z
+		.enum(["off", "custom", "cleanupPresets"])
+		.default("off")
+		.catch("off"),
+	asrInstruction: z
+		.string()
+		.refine((value) => fitsRustText(value, 16_384))
+		.default(""),
+	asrPromptModel: z.string().default(""),
+	asrAllowSeparateCleanup: z.boolean().default(false),
 	// Bundled offline base model — see `project_offline_base_and_tts_pack`
 	// memory. tiny-q4 is vendored into the installer so first-run users
 	// transcribe with zero network traffic. "tiny" exists in every catalog

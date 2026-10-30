@@ -384,10 +384,16 @@ fn perform_atomic_model_switch(
         .quantization
         .as_deref()
         .unwrap_or(&previous.model.onnx_quantization);
-    next.model.onnx_quantization =
-        reconcile_persisted_quant(&load_model_id, requested_quantization);
-    if let Some(device) = request.device {
-        next.model.device = device;
+    let independent_companion = request.kind == SttSwitchKind::Realtime
+        && previous.general.recording_mode != crate::winstt::settings_schema::RecordingMode::Listen
+        && crate::winstt::catalog::find(&previous.model.model)
+            .is_some_and(|entry| !entry.supports_realtime);
+    if !independent_companion {
+        next.model.onnx_quantization =
+            reconcile_persisted_quant(&load_model_id, requested_quantization);
+        if let Some(device) = request.device {
+            next.model.device = device;
+        }
     }
     if let Some(realtime_model) = &requested_realtime_model {
         next.model.realtime_model.clone_from(realtime_model);
@@ -486,13 +492,19 @@ fn perform_atomic_model_switch(
                     || previous.model.device != next.model.device
             }
         };
-    if let Err(detail) = transcription.switch_model_blocking(
-        &load_model_id,
-        Some(&next.model.onnx_quantization),
-        Some(next.model.device),
-        Some(&next.model.realtime_model),
-        force_reload,
-    ) {
+    let independent_preview = preview_switch_keeps_main_engine(request.kind, &previous, &next);
+    let load_result = if independent_preview {
+        crate::winstt::managers::RealtimeManager::validate_companion_selection(app, &next)
+    } else {
+        transcription.switch_model_blocking(
+            &load_model_id,
+            Some(&next.model.onnx_quantization),
+            Some(next.model.device),
+            Some(&next.model.realtime_model),
+            force_reload,
+        )
+    };
+    if let Err(detail) = load_result {
         let result = switch_result(
             app,
             &request.request_id,
@@ -529,7 +541,9 @@ fn perform_atomic_model_switch(
         SttModelLifecyclePhase::Warming,
         None,
     );
-    transcription.wait_until_warm(&load_model_id, std::time::Duration::from_secs(120));
+    if !independent_preview {
+        transcription.wait_until_warm(&load_model_id, std::time::Duration::from_secs(120));
+    }
 
     // The load/warm may take minutes. Rebase the transaction-owned fields over the freshest model
     // section so a concurrent language/prompt edit is never replaced by the pre-load snapshot.
@@ -548,13 +562,17 @@ fn perform_atomic_model_switch(
         let before_rollback = model_snapshot(app);
         // The engine changed but the authoritative selection could not be committed. Best-effort
         // rollback keeps resident state aligned with the still-persisted settings.
-        let rollback = transcription.switch_model_blocking(
-            &previous.model.model,
-            Some(&previous.model.onnx_quantization),
-            Some(previous.model.device),
-            Some(&previous.model.realtime_model),
-            true,
-        );
+        let rollback = if independent_preview {
+            Ok(())
+        } else {
+            transcription.switch_model_blocking(
+                &previous.model.model,
+                Some(&previous.model.onnx_quantization),
+                Some(previous.model.device),
+                Some(&previous.model.realtime_model),
+                true,
+            )
+        };
         if rollback.is_err() {
             // Never leave the failed target resident under the previous persisted selection.
             // An unloaded engine is recoverable on next dictation; a mismatched resident engine is
@@ -745,6 +763,21 @@ fn model_snapshot(app: &AppHandle) -> SttModelSnapshot {
     }
 }
 
+/// A preview-only selection must not reload the resident final-only speech LLM.
+fn preview_switch_keeps_main_engine(
+    kind: SttSwitchKind,
+    previous: &crate::winstt::settings_schema::WinsttSettings,
+    next: &crate::winstt::settings_schema::WinsttSettings,
+) -> bool {
+    kind == SttSwitchKind::Realtime
+        && next.general.recording_mode != crate::winstt::settings_schema::RecordingMode::Listen
+        && crate::winstt::catalog::find(&next.model.model)
+            .is_some_and(|entry| !entry.supports_realtime)
+        && previous.model.model == next.model.model
+        && previous.model.device == next.model.device
+        && previous.model.onnx_quantization == next.model.onnx_quantization
+}
+
 /// Resolve the precision to persist for `model_id`, given the currently-persisted
 /// `current_quant`. The `""`/`auto` sentinels are universally valid (the loader
 /// re-resolves them per model); a concrete precision the target model doesn't ship
@@ -790,6 +823,31 @@ fn classify_swap_error(detail: &str) -> SwapFailedCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_a_preview_companion_keeps_the_final_speech_llm_resident() {
+        let mut previous = crate::winstt::settings_schema::WinsttSettings::default();
+        previous.model.model = crate::winstt::stt::prompting::NEMOTRON_TRANSCRIBE_ID.into();
+        previous.model.onnx_quantization = "q4".into();
+        let mut next = previous.clone();
+        next.model.realtime_model = "streaming-nemotron-3.5-multi-1120ms-int8".into();
+        assert!(preview_switch_keeps_main_engine(
+            SttSwitchKind::Realtime,
+            &previous,
+            &next
+        ));
+        assert!(!preview_switch_keeps_main_engine(
+            SttSwitchKind::Main,
+            &previous,
+            &next
+        ));
+        next.general.recording_mode = crate::winstt::settings_schema::RecordingMode::Listen;
+        assert!(!preview_switch_keeps_main_engine(
+            SttSwitchKind::Realtime,
+            &previous,
+            &next
+        ));
+    }
 
     #[test]
     fn category_strings_match_ts_union() {

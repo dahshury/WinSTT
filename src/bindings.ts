@@ -2820,7 +2820,7 @@ recordingSoundLibrary?: SoundLibraryEntry[];
 /**
  * Output formats for file transcription. HOT-SWAP.
  */
-fileTranscriptionFormats?: FileTranscriptionFormat[];
+fileTranscriptionFormats?: FileTranscriptionFormat[]; fileTranscriptionDiarization?: boolean; fileTranscriptionSpeakerPrefixes?: boolean;
 /**
  * `auto` = beside source, `ask` = save dialog. HOT-SWAP.
  */
@@ -3330,6 +3330,19 @@ state: string; downloaded_bytes: number; total_bytes: number;
  */
 progress: number }
 export type ModelSettings = {
+/**
+ * Direct ASR instruction source: off, custom, or cleanupPresets.
+ */
+asrPromptSource?: string; asrInstruction?: string;
+/**
+ * Prevent instructions carrying over to a different model with narrower
+ * task support. Blank means direct prompting has not been configured.
+ */
+asrPromptModel?: string;
+/**
+ * Explicit acknowledgement before stacking a separate text cleanup model.
+ */
+asrAllowSeparateCleanup?: boolean;
 /**
  * Catalog id (`tiny`…`large-v3-turbo`, onnx families) OR `<provider>:<id>`
  * for cloud (`openai:whisper-1`, `elevenlabs:...`) OR a custom-folder id.

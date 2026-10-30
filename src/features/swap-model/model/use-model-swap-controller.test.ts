@@ -476,6 +476,27 @@ describe("runHandleChange", () => {
 });
 
 describe("runIssueSwap", () => {
+	test("optional Nemotron Transcribe preserves the lightweight streaming companion", () => {
+		const main = {
+			id: "nemotron-3.5-transcribe-30b-a4b",
+			languages: ["en", "ar"],
+			nativeStreaming: false,
+			previewCapable: false,
+		};
+		const live = {
+			id: "streaming-nemotron-3.5-multi-1120ms-int8",
+			languages: ["en", "ar"],
+			nativeStreaming: true,
+			previewCapable: true,
+		};
+		expect(
+			t.realtimePatchForMainSwap(
+				main as never,
+				live.id,
+				(id) => (id === live.id ? live : main) as never,
+			),
+		).toBeNull();
+	});
 	test("main atomic: sends the companion realtime correction and leaves settings backend-owned", () => {
 		const atomicInvoker = mock(() => undefined);
 		t.runIssueSwap({

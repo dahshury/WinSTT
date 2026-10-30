@@ -263,7 +263,7 @@ pub trait SttBackend: Send + Sync {
         audio: &[f32],
         speech_mask: Option<&[bool]>,
         request_id: &str,
-    ) -> Result<String>;
+    ) -> Result<DictationDecode>;
 
     /// Decode a media file while retaining segment/word timings in the source timeline.
     /// This is intentionally separate from [`Self::decode`] so the latency-sensitive
@@ -273,6 +273,7 @@ pub trait SttBackend: Send + Sync {
         app: &AppHandle,
         engine: &mut dyn Transcriber,
         audio: &[f32],
+        diarization: bool,
         request_id: &str,
     ) -> Result<Transcription>;
 
@@ -309,6 +310,13 @@ pub trait SttBackend: Send + Sync {
 /// Zero-sized impl of [`SttBackend`]. Reaches all WinSTT state via the `&AppHandle` params
 /// (settings store, `CloudSttManager` managed state) — the same way the old inline core code did.
 pub struct WinsttSttBackend;
+
+/// A receipt for the decode that actually succeeded, including fallback paths.
+/// Settings alone must never suppress cleanup for a raw/reused transcript.
+pub struct DictationDecode {
+    pub text: String,
+    pub native_cleanup_applied: bool,
+}
 
 fn quantization_log_label(q: crate::winstt::stt::Quantization) -> &'static str {
     match q.suffix() {
@@ -517,7 +525,7 @@ impl SttBackend for WinsttSttBackend {
                 }
             }};
         }
-        let resolved = match block_on_resolve!(resolver::resolve(&req)) {
+        let mut resolved = match block_on_resolve!(resolver::resolve(&req)) {
             Ok(resolved) => resolved,
             Err(error) => {
                 let mut fallback = None;
@@ -592,6 +600,25 @@ impl SttBackend for WinsttSttBackend {
             providers = stt::providers_for_accelerator(primary);
         }
 
+        if kind == EngineKind::NemotronTranscribe {
+            // Resolution precedes unloading the outgoing engine. A reload of
+            // this same model frees its current footprint before native load.
+            let reclaimable = app
+                .try_state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>()
+                .filter(|manager| manager.get_current_model().as_deref() == Some(model_id))
+                .map_or(0, |_| {
+                    stt::runtime_footprint_bytes(entry.param_count, Quantization::Q4)
+                });
+            if available_ram.saturating_add(reclaimable) < 24 * 1024 * 1024 * 1024 {
+                return Err(anyhow::anyhow!(
+                    "Nemotron Transcribe IQ4 requires at least 24 GiB of currently available system RAM. Keep the lightweight streaming model on smaller machines."
+                ));
+            }
+            let root = app.path().app_cache_dir()?.join("native-runtimes");
+            let runtime = block_on_resolve!(stt::nemotron::runtime::ensure(&root))?;
+            resolved.files.insert("runtime".into(), runtime);
+        }
+
         let whisper_fp16_workaround =
             matches!(entry.family, crate::winstt::catalog::Family::Whisper)
                 && effective == Quantization::Fp16;
@@ -649,7 +676,7 @@ impl SttBackend for WinsttSttBackend {
         audio: &[f32],
         speech_mask: Option<&[bool]>,
         request_id: &str,
-    ) -> Result<String> {
+    ) -> Result<DictationDecode> {
         let decode_started = Instant::now();
         let model_id = engine.model_name().to_string();
         let kind = engine.kind();
@@ -680,7 +707,12 @@ impl SttBackend for WinsttSttBackend {
 
         // Read the WinSTT settings tree ONCE for this decode (picker is the source of truth).
         let settings_started = Instant::now();
-        let ws = crate::winstt::settings_store::read_settings_raw(app);
+        let mut ws = crate::winstt::settings_store::read_settings_raw(app);
+        if super::prompting::supports_cleanup(&model_id)
+            && ws.model.asr_prompt_source == "cleanupPresets"
+        {
+            crate::actions::apply_native_asr_profile(&mut ws);
+        }
         record_slow_backend_phase(
             app,
             &meta,
@@ -715,7 +747,13 @@ impl SttBackend for WinsttSttBackend {
             language_candidates =
                 crate::winstt::commands::catalog_data::languages_for(&ws.model.model);
         }
-        let translate_target = ws.model.translate_target_language.trim();
+        // This model's translation is explicitly controlled by ASR instructions
+        // or the reused Translate preset, not a hidden target carried from Whisper.
+        let translate_target = if engine.kind() == EngineKind::NemotronTranscribe {
+            ""
+        } else {
+            ws.model.translate_target_language.trim()
+        };
         let opts = TranscribeOptions {
             language,
             language_candidates,
@@ -723,6 +761,7 @@ impl SttBackend for WinsttSttBackend {
             translate_target_language: (!translate_target.is_empty())
                 .then(|| translate_target.to_string()),
             initial_prompt_text,
+            asr_instruction: super::prompting::instruction(&ws, engine.model_name()),
             ..Default::default()
         };
 
@@ -963,7 +1002,11 @@ impl SttBackend for WinsttSttBackend {
             decode_started.elapsed().as_millis(),
             final_text.chars().count()
         );
-        Ok(final_text)
+        Ok(DictationDecode {
+            text: final_text,
+            native_cleanup_applied: super::prompting::supports_cleanup(&model_id)
+                && opts.asr_instruction.is_some(),
+        })
     }
 
     fn decode_file(
@@ -971,35 +1014,34 @@ impl SttBackend for WinsttSttBackend {
         app: &AppHandle,
         engine: &mut dyn Transcriber,
         audio: &[f32],
+        diarization: bool,
         request_id: &str,
     ) -> Result<Transcription> {
-        let ws = crate::winstt::settings_store::read_settings_raw(app);
-        let initial_prompt_text = {
-            let prompt = ws.model.initial_prompt.trim();
-            (!prompt.is_empty()).then(|| prompt.to_string())
-        };
-        let (language, mut language_candidates) = model_language_options(&ws.model);
-        if language.is_none()
-            && language_candidates.is_empty()
-            && crate::winstt::catalog::find(&ws.model.model)
-                .is_some_and(|entry| matches!(entry.family, crate::winstt::catalog::Family::Cohere))
-        {
-            language_candidates =
-                crate::winstt::commands::catalog_data::languages_for(&ws.model.model);
+        if diarization && engine.kind() != EngineKind::NemotronTranscribe {
+            return Err(anyhow::anyhow!(
+                "File diarization currently requires Nemotron Transcribe. Disable speaker identification to use this model."
+            ));
         }
-        let translate_target = ws.model.translate_target_language.trim();
-        let opts = TranscribeOptions {
-            language,
-            language_candidates,
-            translate: !translate_target.is_empty(),
-            translate_target_language: (!translate_target.is_empty())
-                .then(|| translate_target.to_string()),
-            initial_prompt_text,
-            return_timestamps: true,
-            return_word_timestamps: engine.supports_word_timestamps(),
-            ..Default::default()
-        };
+        let ws = crate::winstt::settings_store::read_settings_raw(app);
+        let opts = file_decode_options(
+            &ws,
+            engine.model_name(),
+            engine.kind(),
+            engine.supports_word_timestamps(),
+            diarization,
+        );
         let conditioned = peak_normalize(audio);
+        // Preserve one speaker identity space and the original timeline.
+        if engine.kind() == EngineKind::NemotronTranscribe {
+            if audio.len() > 3600 * STT_SAMPLE_RATE {
+                return Err(anyhow::anyhow!(
+                    "Nemotron Transcribe supports files up to one hour. Split longer files before transcribing."
+                ));
+            }
+            return engine
+                .transcribe(&conditioned, &opts)
+                .map_err(|e| anyhow::anyhow!("WinSTT file transcription failed: {e}"));
+        }
         let max_chunk_s = engine.kind().max_chunk_seconds();
         let segmented = with_segmentation_vad(app, |vad| {
             vad_segment_decode_transcription(
@@ -1011,7 +1053,7 @@ impl SttBackend for WinsttSttBackend {
                 request_id,
             )
         });
-        let mut result = match segmented {
+        let result = match segmented {
             Ok(result) => result
                 .map_err(|error| anyhow::anyhow!("WinSTT file transcription failed: {error}"))?,
             Err(error) => {
@@ -1023,6 +1065,7 @@ impl SttBackend for WinsttSttBackend {
                 })?;
                 if result.segments.as_ref().is_none_or(Vec::is_empty) {
                     result.segments = Some(vec![Segment {
+                        speaker: None,
                         start: 0.0,
                         end: audio.len() as f32 / STT_SAMPLE_RATE as f32,
                         text: result.text.clone(),
@@ -1033,12 +1076,6 @@ impl SttBackend for WinsttSttBackend {
             }
         };
 
-        result.text = winstt_postprocess(&result.text, &ws);
-        if let Some(segments) = &mut result.segments {
-            for segment in segments {
-                segment.text = winstt_postprocess(&segment.text, &ws);
-            }
-        }
         Ok(result)
     }
 
@@ -1184,7 +1221,8 @@ pub(crate) fn engine_kind_for(
     // clean "no Rust engine yet" error instead of silent garbage.
     let validated = matches!(
         kind,
-        EngineKind::WhisperHf
+        EngineKind::NemotronTranscribe
+            | EngineKind::WhisperHf
             | EngineKind::Moonshine
             | EngineKind::MoonshineStreaming
             | EngineKind::SenseVoiceCtc
@@ -1240,7 +1278,7 @@ fn normalize_winstt_language_candidates(raw: &[String]) -> Vec<String> {
     out
 }
 
-fn model_language_options(
+pub(super) fn model_language_options(
     model: &crate::winstt::settings_schema::ModelSettings,
 ) -> (Option<String>, Vec<String>) {
     let normalized_candidates = normalize_winstt_language_candidates(&model.language_candidates);
@@ -1311,6 +1349,49 @@ pub(crate) fn with_segmentation_vad<R>(
     Ok(f(vad))
 }
 
+/// File decode options deliberately omit dictation formatting and cleanup-model
+/// state. Shared presets enter only through the explicitly selected ASR prompt.
+fn file_decode_options(
+    ws: &crate::winstt::settings_schema::WinsttSettings,
+    model: &str,
+    kind: EngineKind,
+    word_timestamps: bool,
+    diarization: bool,
+) -> TranscribeOptions {
+    let initial_prompt_text = {
+        let prompt = ws.model.initial_prompt.trim();
+        (!prompt.is_empty()).then(|| prompt.to_string())
+    };
+    let (language, mut language_candidates) = model_language_options(&ws.model);
+    if language.is_none()
+        && language_candidates.is_empty()
+        && crate::winstt::catalog::find(&ws.model.model)
+            .is_some_and(|entry| matches!(entry.family, crate::winstt::catalog::Family::Cohere))
+    {
+        language_candidates = crate::winstt::commands::catalog_data::languages_for(&ws.model.model);
+    }
+    // This model's translation is explicitly controlled by ASR instructions
+    // or the reused Translate preset, not a hidden target carried from Whisper.
+    let translate_target = if kind == EngineKind::NemotronTranscribe {
+        ""
+    } else {
+        ws.model.translate_target_language.trim()
+    };
+    TranscribeOptions {
+        language,
+        language_candidates,
+        translate: !translate_target.is_empty(),
+        translate_target_language: (!translate_target.is_empty())
+            .then(|| translate_target.to_string()),
+        initial_prompt_text,
+        asr_instruction: super::prompting::instruction(ws, model),
+        diarization,
+        return_timestamps: true,
+        return_word_timestamps: word_timestamps,
+        ..Default::default()
+    }
+}
+
 /// Apply the WinSTT-arm text post-processing — deterministic formatting — to an
 /// ALREADY-decoded transcript. Factored out of `decode` so the
 /// realtime-reuse fast path (the final paste reusing the realtime worker's last full-buffer
@@ -1339,6 +1420,49 @@ fn dictation_post_processing_enabled(ws: &crate::winstt::settings_schema::Winstt
 mod tests {
     use super::*;
     use crate::winstt::settings_schema::{DictionaryEntry, RecordingMode, WinsttSettings};
+
+    #[test]
+    fn file_prompts_ignore_dictation_cleanup_toggle_and_model_but_keep_explicit_presets() {
+        let mut ws = WinsttSettings::default();
+        ws.model.model = super::super::prompting::NEMOTRON_TRANSCRIBE_ID.into();
+        ws.model.asr_prompt_model = ws.model.model.clone();
+        ws.model.asr_prompt_source = "cleanupPresets".into();
+        ws.llm.dictation.enabled = false;
+        let before = file_decode_options(
+            &ws,
+            &ws.model.model,
+            EngineKind::NemotronTranscribe,
+            true,
+            true,
+        );
+        ws.llm.dictation.enabled = true;
+        ws.llm.local_model = "unrelated-text-model".into();
+        let after = file_decode_options(
+            &ws,
+            &ws.model.model,
+            EngineKind::NemotronTranscribe,
+            true,
+            true,
+        );
+        assert_eq!(
+            serde_json::to_value(&before).unwrap(),
+            serde_json::to_value(&after).unwrap()
+        );
+        assert!(before.asr_instruction.is_some());
+        assert!(before.diarization && before.return_timestamps);
+        ws.model.asr_prompt_source = "off".into();
+        assert!(
+            file_decode_options(
+                &ws,
+                &ws.model.model,
+                EngineKind::NemotronTranscribe,
+                true,
+                false
+            )
+            .asr_instruction
+            .is_none()
+        );
+    }
 
     #[test]
     fn winstt_language_normalizes_to_engine_wire_form() {

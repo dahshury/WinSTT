@@ -213,6 +213,18 @@ fn resolved_from_snapshot_dir(
 
     let mut files = BTreeMap::new();
     match kind {
+        EngineKind::NemotronTranscribe => {
+            insert_existing(
+                &mut files,
+                "decoder",
+                dir.join("NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf"),
+            )?;
+            insert_existing(
+                &mut files,
+                "encoder",
+                dir.join("NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf"),
+            )?;
+        }
         EngineKind::NemoRnnt | EngineKind::NemoTdt => {
             insert_existing(
                 &mut files,
@@ -339,6 +351,19 @@ fn family_slug_of(family: winstt_app_lib::winstt::catalog::Family) -> &'static s
 /// Catalog mode — exercises the EXACT path `TranscriptionManager::load_winstt_model` uses:
 /// `catalog::find(id)` → `resolver::resolve` (cache-only) → `build_engine` → `transcribe`.
 /// Proves the resolver wires the right files (incl. config-derived n_mels) for a real catalog id.
+fn nemotron_runtime() -> PathBuf {
+    std::env::var_os("STT_BENCH_NEMOTRON_RUNTIME").map_or_else(
+        || {
+            let rt = tokio::runtime::Runtime::new().expect("runtime");
+            rt.block_on(winstt_app_lib::winstt::stt::nemotron::runtime::ensure(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.tmp/bench-native-runtimes"),
+            ))
+            .expect("optional native runtime")
+        },
+        PathBuf::from,
+    )
+}
+
 fn run_catalog_mode(cat_id: &str) {
     use winstt_app_lib::winstt::catalog;
     use winstt_app_lib::winstt::stt::build_engine;
@@ -406,6 +431,10 @@ fn run_catalog_mode(cat_id: &str) {
             }
         }
     };
+    let mut resolved = resolved;
+    if kind == EngineKind::NemotronTranscribe {
+        resolved.files.insert("runtime".into(), nemotron_runtime());
+    }
     let mut keys: Vec<&String> = resolved.files.keys().collect();
     keys.sort();
     eprintln!("resolved   : {} files {:?}", resolved.files.len(), keys);
@@ -493,6 +522,27 @@ fn run_catalog_mode(cat_id: &str) {
     } else {
         None
     };
+    let asr_instruction = if std::env::var_os("STT_BENCH_ASR_PRESETS").is_some() {
+        let mut settings = winstt_app_lib::winstt::settings_schema::WinsttSettings::default();
+        settings.model.model = cat_id.into();
+        settings.model.asr_prompt_model = cat_id.into();
+        settings.model.asr_prompt_source = "cleanupPresets".into();
+        winstt_app_lib::winstt::stt::prompting::instruction(&settings, cat_id)
+    } else {
+        std::env::var("STT_BENCH_ASR_INSTRUCTION")
+            .ok()
+            .filter(|text| !text.trim().is_empty())
+    };
+    eprintln!(
+        "asr_prompt : {}",
+        if std::env::var_os("STT_BENCH_ASR_PRESETS").is_some() {
+            "cleanupPresets"
+        } else if asr_instruction.is_some() {
+            "custom"
+        } else {
+            "off"
+        }
+    );
     // cold pass (DML compiles kernels on first inference), then warm passes (steady-state).
     for pass in 0..bench_passes(2) {
         let label = match pass {
@@ -503,6 +553,10 @@ fn run_catalog_mode(cat_id: &str) {
         let t = Instant::now();
         let opts = TranscribeOptions {
             language: bench_language.clone(),
+            asr_instruction: asr_instruction.clone(),
+            diarization: std::env::var_os("STT_BENCH_DIARIZATION").is_some(),
+            return_timestamps: std::env::var_os("STT_BENCH_TIMESTAMPS").is_some(),
+            return_word_timestamps: std::env::var_os("STT_BENCH_TIMESTAMPS").is_some(),
             ..Default::default()
         };
         eprintln!("pass_start : pass={pass} label={label}");
@@ -537,7 +591,15 @@ fn run_catalog_mode(cat_id: &str) {
                 None => Err(SttError::Inference("segmentation VAD was not built".into())),
             }
         } else {
-            engine.transcribe(&audio, &opts).map(|out| out.text)
+            engine.transcribe(&audio, &opts).map(|out| {
+                if std::env::var_os("STT_BENCH_TRANSCRIPT_JSON").is_some() {
+                    println!(
+                        "TRANSCRIPTION_JSON {}",
+                        serde_json::to_string(&out).expect("transcription JSON")
+                    );
+                }
+                out.text
+            })
         };
         match text {
             Ok(text) => {
@@ -568,6 +630,14 @@ fn real_main() {
     ensure_hf_cache_env_for_bench();
 
     let args: Vec<String> = std::env::args().collect();
+
+    if args
+        .get(1)
+        .is_some_and(|s| s == "--prepare-nemotron-runtime")
+    {
+        println!("{}", nemotron_runtime().display());
+        return;
+    }
 
     // Catalog mode: `stt_decode_bench --catalog <catalog_id>` (verifies the resolver→engine path).
     if args.get(1).is_some_and(|s| s == "--catalog") {

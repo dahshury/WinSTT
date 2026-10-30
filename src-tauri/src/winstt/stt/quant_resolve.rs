@@ -233,6 +233,9 @@ pub fn override_dml_to_cpu_for_kind(
     kind: EngineKind,
     quant: Quantization,
 ) -> Vec<Accelerator> {
+    if kind == EngineKind::NemotronTranscribe {
+        return vec![Accelerator::Cpu];
+    }
     if !kind.is_dml_incompatible() && !kind.dml_slower_than_cpu(quant) {
         return providers;
     }

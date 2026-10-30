@@ -3,7 +3,7 @@ title: NVIDIA NeMo
 description: NVIDIA's Parakeet and Canary models — Conformer-based recognizers that run at 1800–6100× real-time on the same ONNX engine as everything else.
 ---
 
-NVIDIA's NeMo family pairs FastConformer encoders with three different decoders (CTC, RNN-T, TDT) to hit some of the highest accuracy-per-millisecond numbers in the catalog — Parakeet Ultra lands at **5.3 WER** while decoding at **~6100× real-time**. WinSTT runs every NeMo model on the same `onnx-asr` ONNX Runtime engine as Whisper and the rest; there is no separate backend to flip.
+NVIDIA's NeMo family pairs FastConformer encoders with three different decoders (CTC, RNN-T, TDT) to hit some of the highest accuracy-per-millisecond numbers in the catalog — Parakeet Ultra lands at **5.3 WER** while decoding at **~6100× real-time**. These models use WinSTT's ONNX Runtime backend. The optional Nemotron Transcribe speech LLM uses a separate supervised native runtime.
 
 <StatGrid>
   <Stat value="9" label="Models in the family" />
@@ -45,7 +45,20 @@ A pair of **FastConformer RU** models round out Russian coverage.
   caption="English WER/RTFx are the Open ASR Leaderboard averages (H200); the Russian pair's WER is the published Russian-benchmark figure, with RTFx estimated from the same-architecture English FastConformer twins. “—” is the default (un-suffixed) full-precision graph."
 />
 
-Every NeMo model supports the **live preview** (realtime transcription), so any of them can serve as both your main and realtime model.
+The models in this table support **live preview** (realtime transcription). For stateful streaming, WinSTT also retains the lightweight **Nemotron 3.5 ASR Streaming 0.6B** models.
+
+## Optional Nemotron Transcribe
+
+**Nemotron 3.5 Transcribe 30B A4B** is a final-only, instruction-following speech
+LLM. Its CPU IQ4 model download is approximately 21.35 GB and requires at least
+24 GiB of available system RAM at load time. Keep the lightweight streaming
+Nemotron selected for previews; the large model handles the final pass.
+
+It can apply custom ASR instructions or reuse the Processing tab's cleanup
+presets directly against the audio. A separate cleanup model is off by default
+for this mode and requires an explicit warning confirmation when enabled.
+See [Direct ASR prompting](/docs/settings/model#direct-asr-prompting) for setup
+and the optional nightly runtime requirements.
 
 ## CTC vs RNN-T vs TDT
 

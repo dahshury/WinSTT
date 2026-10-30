@@ -411,8 +411,14 @@ function dispatchFit(
  * renderer treats both sources identically. */
 export function assessDictationFitClient(
 	candidateId: string,
-	ctx: AssessContext,
+	context: AssessContext,
 ): FitAssessmentEntry {
+	// The optional speech LLM uses a RAM-backed IQ4 runtime even on a GPU PC.
+	// Assessing it against 12 GB of VRAM would incorrectly rule out this path.
+	const ctx: AssessContext =
+		candidateId === "nemotron-3.5-transcribe-30b-a4b"
+			? { ...context, requestedDevice: "cpu" }
+			: context;
 	const entry = ctx.statesById[candidateId];
 	if (!entry || entry.estimated_bytes <= 0) {
 		return unknownFootprintFit(

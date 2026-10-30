@@ -273,6 +273,17 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
         optional: true,
     };
     match kind {
+        EngineKind::NemotronTranscribe => vec![
+            g(
+                "decoder",
+                "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf".into(),
+            ),
+            g(
+                "encoder",
+                "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf".into(),
+            ),
+            go("license", "LICENSE".into()),
+        ],
         EngineKind::WhisperHf => vec![
             g("encoder", format!("**/encoder_model{s}.onnx")),
             g("decoder", format!("**/decoder_model_merged{s}.onnx")),

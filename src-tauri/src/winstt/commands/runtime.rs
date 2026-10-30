@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::catalog::{self as catalog, Accelerator};
@@ -188,7 +188,16 @@ pub fn runtime_info_snapshot(
     // enabled for the current settings AND a SEPARATE model is used (not the main
     // model). Reporting it whenever the setting is non-empty made the footer chip
     // / model-footprint show a "LIVE" realtime model the user had disabled.
-    let realtime_model = if effective_realtime(&settings)
+    let companion = app
+        .try_state::<Arc<crate::winstt::managers::RealtimeManager>>()
+        .and_then(|manager| manager.loaded_companion_model());
+    let final_only = crate::winstt::catalog::find(&settings.model.model)
+        .is_some_and(|entry| !entry.supports_realtime);
+    let realtime_model = if final_only
+        && settings.general.recording_mode != crate::winstt::settings_schema::RecordingMode::Listen
+    {
+        companion
+    } else if effective_realtime(&settings)
         && !settings.quality.use_main_model_for_realtime
         && !realtime_id.is_empty()
     {

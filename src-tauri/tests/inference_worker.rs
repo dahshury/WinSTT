@@ -9,6 +9,82 @@ use winstt_app_lib::winstt::stt::{
 // Cancellation is intentionally process-wide, so these cases run sequentially.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+fn process_alive(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    if std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .is_some_and(|stat| {
+            stat.rsplit_once(") ")
+                .is_some_and(|(_, fields)| fields.starts_with("Z "))
+        })
+    {
+        // An orphan may await PID 1's reaper, but it has already exited.
+        return false;
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        };
+        let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else {
+            return false;
+        };
+        let alive = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+        let _ = CloseHandle(handle);
+        alive
+    }
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(pid as i32, 0) == 0
+    }
+}
+
+#[test]
+fn native_descendants_die_when_the_worker_aborts_or_is_dropped() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    for abort in [false, true] {
+        let mut settings = config("descendant");
+        settings.providers = vec![Accelerator::Cpu]; // no retry may hide the failure
+        let mut engine = inference::load(settings).unwrap();
+        let pid: u32 = engine
+            .transcribe(&[0.5], &TranscribeOptions::default())
+            .unwrap()
+            .text
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+        if abort {
+            let opts = TranscribeOptions {
+                initial_prompt_text: Some("abort-parent".into()),
+                ..Default::default()
+            };
+            assert!(engine.transcribe(&[0.5], &opts).is_err());
+        } else {
+            // Dropping an idle worker must also reap its descendants.
+            drop(engine);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while process_alive(pid) {
+                assert!(
+                    Instant::now() < deadline,
+                    "native descendant survived worker drop"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            continue;
+        }
+        drop(engine);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while process_alive(pid) {
+            assert!(
+                Instant::now() < deadline,
+                "native descendant {pid} survived worker termination"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
 fn config(name: &str) -> EngineConfig {
     EngineConfig {
         model_name: name.into(),

@@ -4,10 +4,13 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
+import { useSeparateCleanupConfirmation } from "@/features/asr-prompting";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
 import { FormControl } from "@/shared/ui/form-control";
 import { Toggle } from "@/shared/ui/toggle";
+import { nativeAsrCleanupActive } from "@/shared/lib/asr-prompting";
 import { ownsWarmupBanner } from "../lib/warmup-banner-helpers";
 import type { AssignableFeature } from "../model/configuration-assignment";
 import { useConfigurationWorkbench } from "../model/use-configuration-workbench";
@@ -47,6 +50,16 @@ export function LlmSettingsPanel() {
 	const workbench = useConfigurationWorkbench();
 	const toggles = useFeatureToggles(model, workbench);
 	const [editorOpen, setEditorOpen] = useState(false);
+	const separateCleanup = useSeparateCleanupConfirmation();
+	const nativeCleanup = useSettingsStore((s) =>
+		nativeAsrCleanupActive(s.settings),
+	);
+	const nativePresets = useSettingsStore(
+		(s) =>
+			nativeAsrCleanupActive(s.settings) &&
+			s.settings.model.asrPromptSource === "cleanupPresets",
+	);
+	const tAsr = useTranslations("asrPrompt");
 	const isListenMode = useSettingsStore(
 		(s) => (s.settings.general?.recordingMode ?? "ptt") === "listen",
 	);
@@ -83,11 +96,17 @@ export function LlmSettingsPanel() {
 
 	return (
 		<>
+			{separateCleanup.dialog}
 			<SettingSection boxed icon={BrainCircuitIcon} title={t("title")}>
 				{/* Provider connection inputs (Ollama endpoint, OpenRouter API key)
 				    live in the dedicated Integrations tab — every profile reads the
 				    same shared values. */}
 				<div className="flex flex-col py-1.5">
+					{nativeCleanup && (
+						<p className="mb-3 text-xs text-foreground-muted">
+							{tAsr("processingHint")}
+						</p>
+					)}
 					{/* Hairlines between the rows, so three independent switches read as
 					    three items rather than one contiguous mode strip. */}
 					<div className="flex flex-col divide-y divide-divider">
@@ -108,7 +127,13 @@ export function LlmSettingsPanel() {
 									// Always through the controller: it runs the model preflight
 									// on the way on and arms the warm/unload spinner. A direct
 									// `enabled` write would skip both.
-									void toggles[row.feature].toggle(next);
+									if (row.feature === "dictation" && next) {
+										separateCleanup.request(() => {
+											void toggles.dictation.toggle(true);
+										});
+									} else {
+										void toggles[row.feature].toggle(next);
+									}
 								}}
 								pending={toggles[row.feature].pending}
 								t={t}
@@ -161,7 +186,7 @@ export function LlmSettingsPanel() {
 						</Button>
 					</div>
 					<AppProfileRulesSection
-						enabled={workbench.anyEnabled && !isListenMode}
+						enabled={(workbench.anyEnabled || nativePresets) && !isListenMode}
 					/>
 					{showLocalModelPolicy ? (
 						// Last, and labelled as such: a machine-wide memory policy is not

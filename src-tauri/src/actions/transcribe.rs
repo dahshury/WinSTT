@@ -507,7 +507,7 @@ impl ShortcutAction for TranscribeAction {
                                 tm_for_decode.clear_realtime_reuse();
                                 return (
                                     false,
-                                    tm_for_decode.transcribe_with_mask(&samples_for_decode, mask),
+                                    tm_for_decode.transcribe_with_mask_receipt(&samples_for_decode, mask),
                                 );
                             }
 
@@ -516,18 +516,18 @@ impl ShortcutAction for TranscribeAction {
                                 &samples_for_decode,
                                 mask,
                             ) {
-                                (true, Ok(reused))
+                                (true, Ok((reused, false)))
                             } else {
                                 (
                                     false,
-                                    tm_for_decode.transcribe_with_mask(&samples_for_decode, mask),
+                                    tm_for_decode.transcribe_with_mask_receipt(&samples_for_decode, mask),
                                 )
                             }
                         })
                         .await
                         {
                             Ok((reused_realtime, result)) => {
-                                if reused_realtime && let Ok(text) = &result {
+                                if reused_realtime && let Ok((text, _)) = &result {
                                     debug!(
                                         "Reused finalized realtime stream for final transcription ({} chars)",
                                         text.len()
@@ -543,7 +543,7 @@ impl ShortcutAction for TranscribeAction {
                     }
 
                     match transcription_result {
-                        Ok(transcription) => {
+                        Ok((transcription, native_cleanup_applied)) => {
                             let stt_processing_ms = transcription_time
                                 .elapsed()
                                 .as_millis()
@@ -573,8 +573,13 @@ impl ShortcutAction for TranscribeAction {
                                 "[stt-ui] post_process_start session_id={session_id} raw_chars={}",
                                 transcription.chars().count()
                             );
-                            let processed =
-                                process_transcription_output(&ah, &transcription, session_id).await;
+                            let processed = process_transcription_output(
+                                &ah,
+                                &transcription,
+                                session_id,
+                                native_cleanup_applied,
+                            )
+                            .await;
                             drop(skip_guard);
                             debug!(
                                 "[stt-ui] post_process_complete session_id={session_id} duration_ms={} final_chars={} post_processed={}",

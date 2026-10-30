@@ -43,11 +43,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_84() {
+    fn catalog_total_count_is_85() {
         assert_eq!(
             STT_CATALOG.len(),
-            84,
-            "catalog.json ships exactly 84 STT models"
+            85,
+            "catalog.json ships exactly 85 STT models"
         );
     }
 
@@ -56,7 +56,7 @@ mod tests {
         let count = |f: Family| STT_CATALOG.iter().filter(|m| m.family == f).count();
         assert_eq!(count(Family::Whisper), 16, "whisper count");
         assert_eq!(count(Family::Moonshine), 17, "moonshine count");
-        assert_eq!(count(Family::Nemo), 30, "nemo count");
+        assert_eq!(count(Family::Nemo), 31, "nemo count");
         assert_eq!(count(Family::Kaldi), 5, "kaldi count");
         assert_eq!(count(Family::GigaAm), 2, "gigaam count");
         assert_eq!(count(Family::Cohere), 2, "cohere count");
@@ -73,7 +73,7 @@ mod tests {
             "custom never appears in the shipped catalog"
         );
         // The family counts must sum to the catalog total.
-        let summed = 16 + 17 + 30 + 5 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 4;
+        let summed = 16 + 17 + 31 + 5 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 4;
         assert_eq!(summed, STT_CATALOG.len());
     }
 
@@ -242,13 +242,12 @@ mod tests {
     }
 
     #[test]
-    fn all_shipped_models_are_preview_capable() {
-        // WinSTT ships every catalog row with supports_realtime=true as the legacy
-        // preview-capable flag. Native streaming is a separate EngineKind capability.
+    fn heavyweight_speech_llm_is_final_only_and_keeps_preview_models_available() {
         for m in STT_CATALOG {
-            assert!(
+            assert_eq!(
                 m.supports_realtime,
-                "{} unexpectedly not preview-capable",
+                m.id != crate::winstt::stt::prompting::NEMOTRON_TRANSCRIBE_ID,
+                "{} preview capability",
                 m.id
             );
         }

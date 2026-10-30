@@ -17,6 +17,16 @@ mod pinned_foreground;
 mod post_process;
 mod transcribe;
 
+/// Reuse the profile pinned for this dictation when composing audio-native
+/// cleanup. File transcription intentionally uses the global preset stack.
+pub(crate) fn apply_native_asr_profile(
+    settings: &mut crate::winstt::settings_schema::WinsttSettings,
+) {
+    if let Some(profile) = app_profile::take_resolved(Duration::from_millis(1500)) {
+        crate::winstt::app_profiles::apply_profile_to_settings(settings, &profile.config);
+    }
+}
+
 use misc_actions::{
     CancelAction, PostProcessingProfileSwapAction, ReadAloudAction, RepasteAction,
     SkipPostProcessingAction, TransformAction,

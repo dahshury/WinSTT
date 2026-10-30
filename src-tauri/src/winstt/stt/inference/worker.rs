@@ -14,10 +14,10 @@ pub(super) fn run() -> i32 {
             match protocol::read::<Request>(&mut stdin) {
                 Ok(request) => {
                     if sender.send(request).is_err() {
-                        std::process::exit(0);
+                        super::process_tree::exit();
                     }
                 }
-                _ => std::process::exit(0),
+                _ => super::process_tree::exit(),
             }
         }
     });
@@ -98,6 +98,7 @@ mod test_engine {
         providers: Vec<String>,
         samples: Vec<f32>,
         feeds: usize,
+        descendant: Option<std::process::Child>,
     }
 
     impl Engine {
@@ -111,6 +112,7 @@ mod test_engine {
                 providers: vec![if gpu { "GPU" } else { "CPU" }.into()],
                 samples: vec![],
                 feeds: 0,
+                descendant: None,
             }
         }
 
@@ -158,6 +160,31 @@ mod test_engine {
             audio: &[f32],
             options: &TranscribeOptions,
         ) -> SttResult<Transcription> {
+            if self.config.model_name == "descendant" {
+                if options.initial_prompt_text.as_deref() == Some("abort-parent") {
+                    std::process::abort();
+                }
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                command
+                    .arg("--winstt-inference-worker")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    command.creation_flags(0x0800_0000);
+                }
+                let child = command.spawn().unwrap();
+                let pid = child.id();
+                // Keep stdin open. Only process-tree containment, not EOF or a
+                // Rust destructor, can stop this child after the parent aborts.
+                self.descendant = Some(child);
+                return Ok(Transcription {
+                    text: pid.to_string(),
+                    ..Default::default()
+                });
+            }
             self.fault();
             if options.initial_prompt_text.as_deref() == Some("domain-error") {
                 return Err(SttError::DegenerateDecode("fixture".into()));
@@ -165,11 +192,13 @@ mod test_engine {
             Ok(Transcription {
                 text: format!("{:?}", audio),
                 segments: Some(vec![Segment {
+                    speaker: None,
                     text: "segment".into(),
                     start: 1.0,
                     end: 2.0,
                 }]),
                 words: Some(vec![WordResult {
+                    speaker: None,
                     text: "word".into(),
                     start: 1.0,
                     end: 2.0,

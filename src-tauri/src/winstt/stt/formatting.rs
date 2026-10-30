@@ -66,6 +66,12 @@ static MULTISPACE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"[ \t]{2,}"));
 static NEWLINE_SPACE_RE: Lazy<Regex> = Lazy::new(|| static_regex(r"[ \t]*\n[ \t]*"));
 
 pub(crate) fn model_has_native_basic_formatting(model_id: &str) -> bool {
+    if model_id == super::prompting::NEMOTRON_TRANSCRIBE_ID {
+        return true;
+    }
+    if model_id == "granite-speech-4.1-2b-plus" {
+        return false;
+    }
     let Some(entry) = find(model_id) else {
         return false;
     };
@@ -336,5 +342,15 @@ mod tests {
             apply_deterministic_formatting("hello world", &whisper),
             "hello world"
         );
+    }
+
+    #[test]
+    fn instruction_following_and_task_only_models_have_distinct_formatting_contracts() {
+        assert!(model_has_native_basic_formatting(
+            super::super::prompting::NEMOTRON_TRANSCRIBE_ID
+        ));
+        assert!(!model_has_native_basic_formatting(
+            "granite-speech-4.1-2b-plus"
+        ));
     }
 }

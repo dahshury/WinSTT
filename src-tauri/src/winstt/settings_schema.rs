@@ -361,6 +361,18 @@ pub struct CustomModifier {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelSettings {
+    /// Direct ASR instruction source: off, custom, or cleanupPresets.
+    #[serde(default = "ModelSettings::default_asr_prompt_source")]
+    pub asr_prompt_source: String,
+    #[serde(default)]
+    pub asr_instruction: String,
+    /// Prevent instructions carrying over to a different model with narrower
+    /// task support. Blank means direct prompting has not been configured.
+    #[serde(default)]
+    pub asr_prompt_model: String,
+    /// Explicit acknowledgement before stacking a separate text cleanup model.
+    #[serde(default)]
+    pub asr_allow_separate_cleanup: bool,
     /// Catalog id (`tiny`…`large-v3-turbo`, onnx families) OR `<provider>:<id>`
     /// for cloud (`openai:whisper-1`, `elevenlabs:...`) OR a custom-folder id.
     /// HOT-SWAP (in-place engine swap).
@@ -416,6 +428,9 @@ pub struct ModelSettings {
 pub const DEFAULT_STT_MODEL_ID: &str = "tiny";
 
 impl ModelSettings {
+    fn default_asr_prompt_source() -> String {
+        "off".into()
+    }
     fn default_model() -> String {
         DEFAULT_STT_MODEL_ID.to_string()
     }
@@ -444,6 +459,10 @@ impl Default for ModelUnloadTimeout {
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
+            asr_prompt_source: Self::default_asr_prompt_source(),
+            asr_instruction: String::new(),
+            asr_prompt_model: String::new(),
+            asr_allow_separate_cleanup: false,
             model: Self::default_model(),
             realtime_model: Self::default_realtime_model(),
             realtime_language: String::new(),
@@ -721,6 +740,10 @@ pub struct GeneralSettings {
     /// Output formats for file transcription. HOT-SWAP.
     #[serde(default = "GeneralSettings::default_file_transcription_formats")]
     pub file_transcription_formats: Vec<FileTranscriptionFormat>,
+    #[serde(default)]
+    pub file_transcription_diarization: bool,
+    #[serde(default)]
+    pub file_transcription_speaker_prefixes: bool,
     /// `auto` = beside source, `ask` = save dialog. HOT-SWAP.
     #[serde(default)]
     pub file_transcription_save_location: FileSaveLocation,
@@ -1085,6 +1108,8 @@ impl Default for GeneralSettings {
             recording_sound_path: String::new(),
             recording_sound_library: Vec::new(),
             file_transcription_formats: Self::default_file_transcription_formats(),
+            file_transcription_diarization: false,
+            file_transcription_speaker_prefixes: false,
             file_transcription_save_location: FileSaveLocation::default(),
             recording_mode: RecordingMode::default(),
             manual_toggle_stop: false,

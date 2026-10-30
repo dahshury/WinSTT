@@ -1,4 +1,4 @@
-// The static STT catalog: the `ModelEntry` row shape + the verbatim 84-row `STT_CATALOG`
+// The static STT catalog: the `ModelEntry` row shape + the 85-row `STT_CATALOG`
 // const ported from `catalog.json`. Pure data, no policy. The precision/EP resolution policy
 // that consumes these rows lives in the sibling `policy` module.
 
@@ -25,16 +25,25 @@ pub struct ModelEntry {
     /// Approximate parameter count. Drives the fp16-auto threshold (>= 500M) and the
     /// hardware-fitness estimate. `0` means "unknown" (custom models).
     pub param_count: u64,
-    /// `true` for every shipped catalog entry today (kept per-row so it can diverge later).
+    /// Whether this model is suitable for live previews (separate from native streaming).
     pub supports_realtime: bool,
 }
 
-/// The full STT catalog: 84 shipped models. Verbatim from `catalog.json` (id / display_name /
+/// The full STT catalog: 85 shipped models. Verbatim from `catalog.json` (id / display_name /
 /// family / onnx_model_name / available_quantizations / param_count / supports_realtime).
 ///
-/// Counts (asserted in tests): whisper 16, moonshine 17, nemo 30, kaldi 5, gigaam 2,
+/// Counts (asserted in tests): whisper 16, moonshine 17, nemo 31, kaldi 5, gigaam 2,
 /// cohere 2, granite 2, sense_voice 1, t-one 1, dolphin 1, qwen3 2, vibevoice 1, audio8 4.
 pub const STT_CATALOG: &[ModelEntry] = &[
+    ModelEntry {
+        id: "nemotron-3.5-transcribe-30b-a4b",
+        display_name: "Nemotron 3.5 Transcribe 30B A4B",
+        family: Family::Nemo,
+        onnx_model_name: "AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+        available_quantizations: &["q4"],
+        param_count: 34_000_000_000,
+        supports_realtime: false,
+    },
     // ── Whisper family (16) ──────────────────────────────────────────────────────────────
     ModelEntry {
         id: "tiny",

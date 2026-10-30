@@ -543,7 +543,7 @@
     "languageTooltip": "Idioma usado para la interfaz (menús, ajustes, descripciones). Independiente del idioma de transcripción.",
     "visualizerColorTooltip": "Color de acento usado por la animación del visualizador de audio.",
     "soundFileTooltip": "Archivo .wav o .mp3 personalizado que suena al iniciar la grabación. Arrastra un archivo o usa el explorador para seleccionarlo.",
-    "fileTranscriptionFormatTooltip": "Formatos de salida para archivos de audio/vídeo transcritos. SRT, VTT y CSV usan tiempos de segmento basados en los límites de actividad de voz. JSON incluye tiempos por palabra solo con exportaciones Whisper con marcas de tiempo; de lo contrario, las listas de palabras están vacías.",
+    "fileTranscriptionFormatTooltip": "Elige los formatos de salida. Los tiempos de segmentos y palabras dependen del modelo. La identificación de hablantes conserva sus metadatos; los prefijos de texto son opcionales.",
     "startOnLoginTooltip": "Inicia WinSTT automáticamente minimizado en la bandeja del sistema cada vez que inicias sesión en Windows.",
     "startMinimizedTooltip": "Al iniciarse, comienza oculto en la bandeja del sistema en lugar de abrir la ventana principal.",
     "minimizeToTrayTooltip": "Cerrar la ventana principal mantiene WinSTT en ejecución en la bandeja del sistema en lugar de salir.",
@@ -594,7 +594,11 @@
     "contextScreenOcrCaption": "Lee el texto en pantalla cerca del cursor como contexto adicional",
     "contextScreenOcrTooltip": "Cuando el reconocimiento de contexto no puede leer directamente el campo enfocado, WinSTT recurre a leer (OCR) el área de la pantalla alrededor del cursor para captar el texto cercano. Es más lento y menos preciso que una lectura directa del campo; desactívalo para omitir esta alternativa.",
     "listenCaptureMicrophone": "Transcribir también mi micrófono",
-    "listenCaptureMicrophoneTooltip": "Mezcla tu micrófono en la sesión de escucha para que la transcripción incluya tanto lo que oyes como lo que dices."
+    "listenCaptureMicrophoneTooltip": "Mezcla tu micrófono en la sesión de escucha para que la transcripción incluya tanto lo que oyes como lo que dices.",
+    "fileDiarization": "Identify speakers",
+    "fileDiarizationHint": "Identify speakers in dropped files using Nemotron Transcribe. Other models report unsupported diarization. Files bypass dictation post-processing; explicit ASR prompts still apply.",
+    "fileSpeakerPrefixes": "Speaker prefixes",
+    "fileSpeakerPrefixesHint": "Add Speaker 1: prefixes to TXT, SRT and copied text. JSON/CSV retain speaker IDs and VTT uses voice tags whether prefixes are enabled or not."
   },
   "model": {
     "initialPrompt": "Prompt inicial",
@@ -1770,5 +1774,23 @@
     "pageOf": "Page {current} of {total}",
     "previousPage": "Previous page",
     "nextPage": "Next page"
+  },
+  "asrPrompt": {
+    "title": "Direct ASR prompting",
+    "off": "Off",
+    "custom": "Custom instruction",
+    "presets": "Use cleanup presets",
+    "hint": "Let the speech model perform cleanup directly. Reuse the active presets from Post-processing or write an instruction. A separate cleanup model is skipped by default.",
+    "taskHint": "This model supports transcription-task prompts, not general cleanup. Cleanup presets and skipping the separate cleanup pass are unavailable.",
+    "instruction": "Instruction to the speech model",
+    "additionalHint": "The separate cleanup model is skipped. You can enable it in Post-processing after confirming the extra pass.",
+    "additionalEnabled": "An additional cleanup model is enabled. This adds latency and can rewrite the result again.",
+    "configureCleanup": "Configure presets or separate cleanup",
+    "processingHint": "Your speech model handles cleanup directly. When Use cleanup presets is selected, the profiles and modifiers here supply its instructions. The dictation switch below adds a separate cleanup model.",
+    "optionalTextModel": "Optional model for an extra cleanup pass or text preview",
+    "warningTitle": "Run an additional cleanup pass?",
+    "warningBody": "The speech model already follows cleanup instructions. A separate cleanup model is not recommended: it adds latency and may rewrite already-cleaned text. Continue anyway?",
+    "continue": "Use separate cleanup anyway",
+    "cancel": "Cancel"
   }
 }

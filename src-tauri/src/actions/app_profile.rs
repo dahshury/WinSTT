@@ -72,6 +72,20 @@ fn resolve(
     resolve_rule(rules, identity, openrouter_key_present).map(|rule| resolved(rule, identity))
 }
 
+fn resolve_for_mode(
+    rules: &[AppProfileRule],
+    identity: &AppIdentity,
+    key_present: bool,
+    native_presets: bool,
+) -> Option<ResolvedAppProfile> {
+    if native_presets {
+        crate::winstt::app_profiles::resolve_preset_rule(rules, identity)
+            .map(|rule| resolved(rule, identity))
+    } else {
+        resolve(rules, identity, key_present)
+    }
+}
+
 fn begin_resolution(state: SlotState) -> u64 {
     let mut slot = ACTIVE
         .0
@@ -121,8 +135,10 @@ fn set_ready(app: &AppHandle, generation: u64, profile: Option<ResolvedAppProfil
 /// performed on a background thread so recording startup is never delayed.
 pub(super) fn resolve_at_start(app: &AppHandle, pinned_hwnd: Option<u64>) {
     let settings = crate::winstt::commands::settings::read_settings(app);
+    let native_presets = crate::winstt::stt::prompting::cleanup_active(&settings)
+        && settings.model.asr_prompt_source == "cleanupPresets";
     let rules = settings.llm.app_profiles.rules;
-    if !settings.llm.dictation.enabled
+    if (!settings.llm.dictation.enabled && !native_presets)
         || settings.general.recording_mode == RecordingMode::Listen
         || rules.is_empty()
     {
@@ -147,7 +163,7 @@ pub(super) fn resolve_at_start(app: &AppHandle, pinned_hwnd: Option<u64>) {
             set_ready(
                 app,
                 generation,
-                resolve(&rules, &identity, openrouter_key_present),
+                resolve_for_mode(&rules, &identity, openrouter_key_present, native_presets),
             );
             return;
         }
@@ -159,7 +175,7 @@ pub(super) fn resolve_at_start(app: &AppHandle, pinned_hwnd: Option<u64>) {
             set_ready(
                 app,
                 generation,
-                resolve(&rules, &identity, openrouter_key_present),
+                resolve_for_mode(&rules, &identity, openrouter_key_present, native_presets),
             );
             return;
         };
@@ -173,7 +189,7 @@ pub(super) fn resolve_at_start(app: &AppHandle, pinned_hwnd: Option<u64>) {
             set_ready(
                 &app,
                 generation,
-                resolve(&rules, &identity, openrouter_key_present),
+                resolve_for_mode(&rules, &identity, openrouter_key_present, native_presets),
             );
         });
     }
@@ -198,7 +214,7 @@ pub(super) fn resolve_at_start(app: &AppHandle, pinned_hwnd: Option<u64>) {
             set_ready(
                 &app,
                 generation,
-                resolve(&rules, &identity, openrouter_key_present),
+                resolve_for_mode(&rules, &identity, openrouter_key_present, native_presets),
             );
         });
     }

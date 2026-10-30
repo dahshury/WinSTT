@@ -87,6 +87,10 @@ async function openSettings(page: Page): Promise<void> {
 }
 
 async function selectTab(page: Page, tab: ManifestTab): Promise<void> {
+	// The sidebar mounts before settings hydration and the window reveal complete.
+	await expect(page.locator(".settings-window-shell")).toHaveClass(
+		/\bis-open\b/,
+	);
 	const tabButton = page.getByRole("tab", { exact: true, name: tab.label });
 	await tabButton.click();
 	await expect(tabButton).toHaveAttribute("aria-selected", "true");
@@ -197,4 +201,101 @@ test("a safe appearance setting persists through the dev bridge and reload", asy
 	expect(leaks.externalRequests).toEqual([]);
 	expect(leaks.pageErrors).toEqual([]);
 	expect(leaks.consoleErrors).toEqual([]);
+});
+
+test("native ASR presets can be configured without a separate cleanup model", async ({
+	page,
+}) => {
+	const leaks = await installRuntimeLeakGuards(page);
+	const snapshotResponse = await page.request.get("/__winstt/settings");
+	const snapshot = await snapshotResponse.json();
+	const seed = await page.request.patch("/__winstt/settings", {
+		data: {
+			baseRevision: snapshot.revision,
+			settings: {
+				model: {
+					...snapshot.settings.model,
+					model: "nemotron-3.5-transcribe-30b-a4b",
+					onnxQuantization: "q4",
+					asrPromptSource: "off",
+					asrPromptModel: "",
+					asrInstruction: "",
+					asrAllowSeparateCleanup: false,
+				},
+			},
+		},
+	});
+	expect(seed.ok()).toBe(true);
+	await openSettings(page);
+	await selectTab(
+		page,
+		manifest.tabs.find((tab) => tab.id === "model") as ManifestTab,
+	);
+	await page
+		.getByRole("button", { name: "Use cleanup presets", exact: true })
+		.click();
+	await expect
+		.poll(async () => {
+			const state = await (await page.request.get("/__winstt/settings")).json();
+			return state.settings.model.asrPromptSource;
+		})
+		.toBe("cleanupPresets");
+	await selectTab(
+		page,
+		manifest.tabs.find((tab) => tab.id === "processing") as ManifestTab,
+	);
+	await expect(
+		page.getByText("Your speech model handles cleanup directly.", {
+			exact: false,
+		}),
+	).toBeVisible();
+	await page.getByRole("button", { name: "Manage profiles" }).click();
+	const tone = page.getByText("Tone", { exact: true });
+	await expect(tone).toBeVisible();
+	expect(
+		await tone.evaluate(
+			(element) => element.closest('[aria-disabled="true"]') === null,
+		),
+	).toBe(true);
+	await page.screenshot({
+		path: test.info().outputPath("native-asr-presets.png"),
+	});
+	expect(leaks.pageErrors).toEqual([]);
+	expect(leaks.externalRequests).toEqual([]);
+});
+
+test("file speaker options persist through reload", async ({ page }) => {
+	const leaks = await installRuntimeLeakGuards(page);
+	await openSettings(page);
+	const output = manifest.tabs.find((tab) => tab.id === "output");
+	expect(output).toBeDefined();
+	await selectTab(page, output as ManifestTab);
+	const diarization = page.getByRole("switch", {
+		name: "Identify speakers",
+		exact: true,
+	});
+	const prefixes = page.getByRole("switch", {
+		name: "Speaker prefixes",
+		exact: true,
+	});
+	await expect(prefixes).toBeDisabled();
+	await diarization.click();
+	await expect(prefixes).toBeEnabled();
+	await prefixes.click();
+	await expect(prefixes).toBeChecked();
+	await expect
+		.poll(async () => {
+			const response = await page.request.get("/__winstt/settings");
+			return (await response.json()).settings.general
+				?.fileTranscriptionSpeakerPrefixes;
+		})
+		.toBe(true);
+	const before = await (await page.request.get("/__winstt/settings")).json();
+	expect(before.settings.general.fileTranscriptionDiarization).toBe(true);
+	await page.reload({ waitUntil: "domcontentloaded" });
+	await selectTab(page, output as ManifestTab);
+	await expect(diarization).toBeChecked();
+	await expect(prefixes).toBeChecked();
+	expect(leaks.pageErrors).toEqual([]);
+	expect(leaks.externalRequests).toEqual([]);
 });

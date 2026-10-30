@@ -167,8 +167,15 @@ fn dictation_post_processing_enabled(settings: &WinsttSettings) -> bool {
     settings.llm.dictation.enabled && settings.general.recording_mode != RecordingMode::Listen
 }
 
+fn post_processing_after_decode(settings: &WinsttSettings, native_cleanup_applied: bool) -> bool {
+    dictation_post_processing_enabled(settings)
+        && (!native_cleanup_applied || settings.model.asr_allow_separate_cleanup)
+}
+
 fn should_run_winstt_dictation_llm(settings: &WinsttSettings) -> bool {
-    dictation_post_processing_enabled(settings) && has_winstt_dictation_model(settings)
+    dictation_post_processing_enabled(settings)
+        && has_winstt_dictation_model(settings)
+        && !crate::winstt::stt::prompting::skip_separate_cleanup(settings)
 }
 
 pub(super) fn should_run_winstt_dictation_llm_from_app(app: &AppHandle) -> bool {
@@ -644,6 +651,7 @@ pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     session_id: u64,
+    native_cleanup_applied: bool,
 ) -> ProcessedTranscription {
     if transcription.trim().is_empty() {
         return raw_transcription_output("");
@@ -660,8 +668,10 @@ pub(crate) async fn process_transcription_output(
             &profile.config,
         );
     }
-    let dictation_post_processing = dictation_post_processing_enabled(&winstt_settings);
-    let winstt_dictation_llm = should_run_winstt_dictation_llm(&winstt_settings);
+    let dictation_post_processing =
+        post_processing_after_decode(&winstt_settings, native_cleanup_applied);
+    let winstt_dictation_llm =
+        dictation_post_processing && has_winstt_dictation_model(&winstt_settings);
     let post_process_requested = winstt_dictation_llm;
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
@@ -1004,6 +1014,20 @@ mod tests {
         settings.general.recording_mode = RecordingMode::Listen;
         assert!(!dictation_post_processing_enabled(&settings));
         assert!(!should_run_winstt_dictation_llm(&settings));
+    }
+
+    #[test]
+    fn cleanup_requires_the_successful_decode_receipt_before_skipping_a_pass() {
+        let mut settings = settings_with_dictation_model(true);
+        settings.model.model = crate::winstt::stt::prompting::NEMOTRON_TRANSCRIBE_ID.into();
+        settings.model.asr_prompt_model = settings.model.model.clone();
+        settings.model.asr_prompt_source = "cleanupPresets".into();
+        assert!(post_processing_after_decode(&settings, false)); // raw preview / fallback
+        assert!(!post_processing_after_decode(&settings, true));
+        settings.model.asr_allow_separate_cleanup = true;
+        assert!(post_processing_after_decode(&settings, true));
+        settings.general.recording_mode = RecordingMode::Listen;
+        assert!(!post_processing_after_decode(&settings, true));
     }
 
     #[test]

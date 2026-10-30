@@ -141,20 +141,36 @@ impl TranscriptionManager {
         audio: &[f32],
         speech_mask: Option<&[bool]>,
     ) -> Result<String> {
+        self.transcribe_with_mask_receipt(audio, speech_mask)
+            .map(|(text, _)| text)
+    }
+
+    pub(crate) fn transcribe_with_mask_receipt(
+        &self,
+        audio: &[f32],
+        speech_mask: Option<&[bool]>,
+    ) -> Result<(String, bool)> {
         let desired = self.desired_model_id();
-        self.transcribe_with_selected_model(&desired, audio, speech_mask, false)
-            .map(|result| result.text)
+        let mut cleaned = false;
+        let result = self.transcribe_with_selected_model(
+            &desired,
+            audio,
+            speech_mask,
+            None,
+            Some(&mut cleaned),
+        )?;
+        Ok((result.text, cleaned))
     }
 
     /// File-only rich decode preserving segment and optional word timestamps.
-    pub fn transcribe_file(&self, audio: &[f32]) -> Result<Transcription> {
+    pub fn transcribe_file(&self, audio: &[f32], diarization: bool) -> Result<Transcription> {
         let desired = self.desired_model_id();
-        self.transcribe_with_selected_model(&desired, audio, None, true)
+        self.transcribe_with_selected_model(&desired, audio, None, Some(diarization), None)
     }
 
     pub fn transcribe_with_model(&self, model_id: &str, audio: &[f32]) -> Result<String> {
         let desired = crate::winstt::catalog::canonical_model_id(model_id).to_string();
-        self.transcribe_with_selected_model(&desired, audio, None, false)
+        self.transcribe_with_selected_model(&desired, audio, None, None, None)
             .map(|result| result.text)
     }
 
@@ -163,7 +179,8 @@ impl TranscriptionManager {
         desired: &str,
         audio: &[f32],
         speech_mask: Option<&[bool]>,
-        file_mode: bool,
+        file_mode: Option<bool>,
+        mut native_cleanup_applied: Option<&mut bool>,
     ) -> Result<Transcription> {
         let request_id = next_transcription_request_id();
 
@@ -223,6 +240,11 @@ impl TranscriptionManager {
         // decides to take the cloud path here — BEFORE the engine lock, since cloud ids have no
         // LoadedEngine — and unloads any resident local engine after.
         if self.backend.route_of(desired) == BackendRoute::Cloud {
+            if file_mode == Some(true) {
+                return Err(anyhow::anyhow!(
+                    "File diarization currently requires Nemotron Transcribe. Disable speaker identification to use a cloud model."
+                ));
+            }
             let filtered = match self.backend.cloud_transcribe(
                 &self.app_handle,
                 desired,
@@ -255,6 +277,7 @@ impl TranscriptionManager {
                                 audio,
                                 speech_mask,
                                 file_mode,
+                                native_cleanup_applied,
                             );
                         }
                         // No local model to fall back to — tell the overlay so it can show an
@@ -284,14 +307,15 @@ impl TranscriptionManager {
             self.maybe_unload_immediately("cloud transcription");
             return Ok(Transcription {
                 text: filtered.clone(),
-                segments: file_mode.then(|| {
+                segments: file_mode.is_some().then(|| {
                     vec![Segment {
+                        speaker: None,
                         start: 0.0,
                         end: audio.len() as f32 / TRANSCRIPTION_SAMPLE_RATE as f32,
                         text: filtered,
                     }]
                 }),
-                words: file_mode.then(Vec::new),
+                words: file_mode.is_some().then(Vec::new),
             });
         }
 
@@ -398,11 +422,12 @@ impl TranscriptionManager {
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<Transcription> {
                 match &mut engine {
                     LoadedEngine::Winstt(winstt_engine) => {
-                        if file_mode {
+                        if let Some(diarization) = file_mode {
                             backend.decode_file(
                                 &app_handle,
                                 winstt_engine.as_mut(),
                                 audio,
+                                diarization,
                                 &request_id,
                             )
                         } else {
@@ -414,9 +439,14 @@ impl TranscriptionManager {
                                     speech_mask,
                                     &request_id,
                                 )
-                                .map(|text| Transcription {
-                                    text,
-                                    ..Default::default()
+                                .map(|decoded| {
+                                    if let Some(receipt) = native_cleanup_applied.as_deref_mut() {
+                                        *receipt = decoded.native_cleanup_applied;
+                                    }
+                                    Transcription {
+                                        text: decoded.text,
+                                        ..Default::default()
+                                    }
                                 })
                         }
                     }

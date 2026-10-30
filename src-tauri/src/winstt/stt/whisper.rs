@@ -1090,6 +1090,7 @@ impl WhisperEngine {
             Ok(timings) => timings
                 .into_iter()
                 .map(|t| WordResult {
+                    speaker: None,
                     text: t.word,
                     start: t.start as f32,
                     end: t.end as f32,
@@ -1291,7 +1292,12 @@ impl WhisperEngine {
         self.tokenizer
             .extract_segments(tokens)
             .into_iter()
-            .map(|(start, end, text)| Segment { start, end, text })
+            .map(|(start, end, text)| Segment {
+                speaker: None,
+                start,
+                end,
+                text,
+            })
             .collect()
     }
 }

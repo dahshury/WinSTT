@@ -3,7 +3,8 @@
 // Encoder → audio embeds; build a `USER: <|audio|>… \n ASSISTANT:` prompt, splice the audio embeds
 // into the `<|audio|>` slots, run `prompt_encode` once, then greedily decode token-by-token with the
 // `decode_step` graph carrying past/present KV. `<|startofcontext|>` is UNTRAINED → no prompt
-// injection (enforced by EngineKind::supports_initial_prompt()==false upstream).
+// context injection (enforced by EngineKind::supports_initial_prompt()==false upstream).
+// Documented task instructions instead belong in the user turn after the audio slots.
 //
 // PERF: the greedy KV-cache loop binds the carried KV **device-resident** via ort's IoBinding
 // (mirrors whisper.rs). `prompt_encode` emits the initial `present.*` KV bound to the device; every
@@ -117,14 +118,23 @@ impl GraniteArEngine {
         Ok((audio_embeds, audio_len.min(max_audio_len)))
     }
 
-    fn build_prompt_ids(&self, audio_len: usize) -> SttResult<Vec<i64>> {
+    fn build_prompt_ids(&self, audio_len: usize, instruction: Option<&str>) -> SttResult<Vec<i64>> {
         let prefix = self
             .tokenizer
             .encode("USER: ", false)
             .map_err(|e| SttError::Tokenizer(format!("granite prompt prefix: {e}")))?;
         let suffix = self
             .tokenizer
-            .encode("\n ASSISTANT:", false)
+            .encode(
+                format!(
+                    "{}\n ASSISTANT:",
+                    instruction
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| format!(" {s}"))
+                        .unwrap_or_default()
+                ),
+                false,
+            )
             .map_err(|e| SttError::Tokenizer(format!("granite prompt suffix: {e}")))?;
         let mut ids = Vec::with_capacity(prefix.len() + audio_len + suffix.len());
         ids.extend(prefix.get_ids().iter().map(|&i| i as i64));
@@ -365,7 +375,7 @@ impl Transcriber for GraniteArEngine {
         &self.providers
     }
 
-    fn transcribe(&mut self, audio: &[f32], _opts: &TranscribeOptions) -> SttResult<Transcription> {
+    fn transcribe(&mut self, audio: &[f32], opts: &TranscribeOptions) -> SttResult<Transcription> {
         if audio.is_empty() {
             return Ok(Transcription::default());
         }
@@ -373,13 +383,22 @@ impl Transcriber for GraniteArEngine {
         if audio_len == 0 {
             return Ok(Transcription::default());
         }
-        let prompt_ids = self.build_prompt_ids(audio_len)?;
+        let prompt_ids = self.build_prompt_ids(audio_len, opts.asr_instruction.as_deref())?;
         let prompt_len = prompt_ids.len();
         let inputs_embeds = self.splice_audio_embeds(&prompt_ids, &audio_embeds, audio_len)?;
         let (mut current, mut state) = self.run_prompt(inputs_embeds)?;
         let mut generated = Vec::new();
 
-        for past_len in (prompt_len..).take(self.max_decode_length) {
+        // Rich task prompts can emit a timestamp after every word. IBM's
+        // documented budget is up to 48 tokens/s for that mode, exceeding the
+        // plain-ASR 1024-token cap for a 28-second chunk.
+        let decode_budget = if opts.asr_instruction.is_some() {
+            self.max_decode_length
+                .max((audio.len().saturating_mul(48) / 16_000).min(8192))
+        } else {
+            self.max_decode_length
+        };
+        for past_len in (prompt_len..).take(decode_budget) {
             if current == self.eos_token_id {
                 break;
             }

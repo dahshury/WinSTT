@@ -25,6 +25,12 @@ export function modelHasNativeBasicFormatting(
 	if (!model) {
 		return false;
 	}
+	if (model.id === "granite-speech-4.1-2b-plus") {
+		return false;
+	}
+	if (model.id === "nemotron-3.5-transcribe-30b-a4b") {
+		return true;
+	}
 	if (
 		model.family === "whisper" ||
 		model.family === "lite-whisper" ||

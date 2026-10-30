@@ -918,6 +918,7 @@ fn ensure_timed_result(
     let mut segments = result.segments.take().unwrap_or_default();
     if segments.is_empty() {
         segments.push(Segment {
+            speaker: None,
             start: offset,
             end: chunk_end,
             text: result.text.clone(),
@@ -1300,11 +1301,13 @@ mod tests {
             Transcription {
                 text: "timed".into(),
                 segments: Some(vec![Segment {
+                    speaker: None,
                     start: 0.25,
                     end: 1.0,
                     text: "timed".into(),
                 }]),
                 words: Some(vec![WordResult {
+                    speaker: None,
                     text: "timed".into(),
                     start: 0.3,
                     end: 0.8,

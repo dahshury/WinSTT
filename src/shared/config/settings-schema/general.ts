@@ -38,6 +38,8 @@ export const generalSettingsSchema = z.object({
 		.array(z.enum(["txt", "srt", "vtt", "json", "csv"]))
 		.min(1)
 		.default(["txt"]),
+	fileTranscriptionDiarization: z.boolean().default(false),
+	fileTranscriptionSpeakerPrefixes: z.boolean().default(false),
 	fileTranscriptionSaveLocation: z.enum(["auto", "ask"]).default("auto"),
 	recordingMode: z.enum(["ptt", "toggle", "listen", "wakeword"]).default("ptt"),
 	// True manual toggle: in `toggle` mode, recording runs continuously from

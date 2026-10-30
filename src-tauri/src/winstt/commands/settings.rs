@@ -1105,6 +1105,18 @@ const MAX_OUTPUT_TOKENS: i64 = 200_000;
 const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &["marimba_start.wav"];
 
 fn validate_model_settings(model: &ModelSettings) -> Result<(), String> {
+    validate_model_id("model.asrPromptModel", &model.asr_prompt_model, false)?;
+    if !matches!(
+        model.asr_prompt_source.as_str(),
+        "off" | "custom" | "cleanupPresets"
+    ) {
+        return Err("model.asrPromptSource must be off, custom or cleanupPresets".into());
+    }
+    if model.asr_instruction.len() > 16_384 || model.asr_instruction.contains('\0') {
+        return Err(
+            "model.asrInstruction must be at most 16384 UTF-8 bytes and contain no NUL".into(),
+        );
+    }
     validate_model_id("model.model", &model.model, true)?;
     // `realtimeModel` is OPTIONAL: `""` is the "no live-preview model" state.
     // The renderer's swap logic clears it whenever the chosen main model has no

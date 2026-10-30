@@ -39,6 +39,8 @@ pub struct ExportWord {
     pub end: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 impl TranscriptDocument {
@@ -57,6 +59,7 @@ impl TranscriptDocument {
             .filter(|segments| !segments.is_empty())
             .unwrap_or_else(|| {
                 vec![Segment {
+                    speaker: None,
                     start: 0.0,
                     end: duration_seconds.max(0.001) as f32,
                     text: transcription.text.clone(),
@@ -76,7 +79,7 @@ impl TranscriptDocument {
                     start: f64::from(segment.start.max(0.0)),
                     end: f64::from(segment.end.max(segment.start)),
                     text: segment.text,
-                    speaker: None,
+                    speaker: segment.speaker,
                     words: segment_words,
                 }
             })
@@ -100,7 +103,7 @@ fn words_for_segment<'a>(words: &'a [WordResult], segment: &Segment) -> Vec<&'a 
         .iter()
         .filter(|word| {
             let midpoint = (word.start + word.end) / 2.0;
-            midpoint >= segment.start && midpoint <= segment.end
+            midpoint >= segment.start && midpoint <= segment.end && word.speaker == segment.speaker
         })
         .collect()
 }
@@ -111,6 +114,60 @@ fn export_word(word: &WordResult) -> ExportWord {
         start: f64::from(word.start.max(0.0)),
         end: f64::from(word.end.max(word.start)),
         confidence: None,
+        speaker: word.speaker.clone(),
+    }
+}
+
+pub fn speaker_label(id: &str) -> String {
+    id.strip_prefix("spk:")
+        .and_then(|n| n.parse::<u32>().ok())
+        .map_or_else(
+            || id.to_string(),
+            |n| format!("Speaker {}", n.saturating_add(1)),
+        )
+}
+
+pub fn plain_text(transcription: &Transcription, prefixes: bool) -> String {
+    if prefixes
+        && let Some(segments) = &transcription.segments
+        && segments.iter().any(|s| s.speaker.is_some())
+    {
+        return segments
+            .iter()
+            .map(|s| prefixed(&s.text, s.speaker.as_deref(), true))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    transcription.text.clone()
+}
+
+fn prefixed(text: &str, speaker: Option<&str>, prefixes: bool) -> String {
+    if prefixes && let Some(speaker) = speaker {
+        return format!("{}: {}", speaker_label(speaker), text.trim());
+    }
+    text.trim().to_string()
+}
+
+pub fn serialize_with_speaker_prefixes(
+    format: FileTranscriptionFormat,
+    doc: &TranscriptDocument,
+    prefixes: bool,
+) -> String {
+    match format {
+        FileTranscriptionFormat::Txt
+            if prefixes && doc.segments.iter().any(|s| s.speaker.is_some()) =>
+        {
+            let mut output = doc
+                .segments
+                .iter()
+                .map(|s| prefixed(&s.text, s.speaker.as_deref(), true))
+                .collect::<Vec<_>>()
+                .join("\n");
+            output.push('\n');
+            output
+        }
+        FileTranscriptionFormat::Srt if prefixes => serialize_srt_with_prefixes(doc, true),
+        _ => serialize(format, doc),
     }
 }
 
@@ -131,6 +188,10 @@ pub fn serialize_txt(doc: &TranscriptDocument) -> String {
 }
 
 pub fn serialize_srt(doc: &TranscriptDocument) -> String {
+    serialize_srt_with_prefixes(doc, false)
+}
+
+fn serialize_srt_with_prefixes(doc: &TranscriptDocument, prefixes: bool) -> String {
     let mut output = String::new();
     for (index, segment) in doc.segments.iter().enumerate() {
         let (start, end) = cue_bounds(segment.start, segment.end);
@@ -139,7 +200,7 @@ pub fn serialize_srt(doc: &TranscriptDocument) -> String {
             index + 1,
             format_srt_timestamp(start),
             format_srt_timestamp(end),
-            segment.text.trim()
+            prefixed(&segment.text, segment.speaker.as_deref(), prefixes)
         ));
     }
     output
@@ -158,7 +219,10 @@ pub fn serialize_vtt(doc: &TranscriptDocument) -> String {
         ));
         let text = vtt_escape(segment.text.trim());
         if let Some(speaker) = segment.speaker.as_deref() {
-            output.push_str(&format!("<v {}>{text}", vtt_escape(speaker)));
+            output.push_str(&format!(
+                "<v {}>{text}",
+                vtt_escape(&speaker_label(speaker))
+            ));
         } else {
             output.push_str(&text);
         }
@@ -254,6 +318,7 @@ mod tests {
                         start: 0.0,
                         end: 0.5,
                         confidence: None,
+                        speaker: None,
                     }],
                 },
                 ExportSegment {
@@ -274,6 +339,85 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn diarized_exports_preserve_metadata_and_only_prefix_requested_plain_formats() {
+        let transcription = Transcription {
+            text: "Hello. Hi!".into(),
+            segments: Some(vec![
+                Segment {
+                    speaker: Some("spk:0".into()),
+                    start: 0.0,
+                    end: 1.0,
+                    text: "Hello.".into(),
+                },
+                Segment {
+                    speaker: Some("spk:1".into()),
+                    start: 0.5,
+                    end: 1.5,
+                    text: "Hi!".into(),
+                },
+            ]),
+            words: Some(vec![
+                WordResult {
+                    speaker: Some("spk:0".into()),
+                    start: 0.0,
+                    end: 1.0,
+                    text: "Hello.".into(),
+                },
+                WordResult {
+                    speaker: Some("spk:1".into()),
+                    start: 0.5,
+                    end: 1.5,
+                    text: "Hi!".into(),
+                },
+            ]),
+        };
+        let doc = TranscriptDocument::from_transcription(
+            &transcription,
+            "now".into(),
+            "native".into(),
+            None,
+            2.0,
+            "talk.wav".into(),
+        );
+        assert_eq!(doc.segments[0].words.len(), 1);
+        // An unassigned overlapping turn must not absorb another speaker's words.
+        let unknown = Segment {
+            speaker: None,
+            start: 0.3,
+            end: 0.9,
+            text: "Unknown".into(),
+        };
+        assert!(words_for_segment(transcription.words.as_deref().unwrap(), &unknown).is_empty());
+        assert_eq!(doc.segments[0].words[0].speaker.as_deref(), Some("spk:0"));
+        assert_eq!(
+            serialize_with_speaker_prefixes(FileTranscriptionFormat::Txt, &doc, false),
+            "Hello. Hi!\n"
+        );
+        assert_eq!(
+            serialize_with_speaker_prefixes(FileTranscriptionFormat::Txt, &doc, true),
+            "Speaker 1: Hello.\nSpeaker 2: Hi!\n"
+        );
+        assert!(
+            serialize_with_speaker_prefixes(FileTranscriptionFormat::Srt, &doc, true)
+                .contains("Speaker 2: Hi!")
+        );
+        assert!(
+            !serialize_with_speaker_prefixes(FileTranscriptionFormat::Srt, &doc, false)
+                .contains("Speaker 2:")
+        );
+        assert!(serialize_vtt(&doc).contains("<v Speaker 2>Hi!"));
+        assert!(serialize_csv(&doc).contains(",spk:1,Hi!"));
+        let json = serialize_json(&doc);
+        assert!(json.contains("\"speaker\": \"spk:1\""));
+        assert!(!json.contains("Speaker 2:"));
+        assert_eq!(
+            plain_text(&transcription, true),
+            "Speaker 1: Hello.\nSpeaker 2: Hi!"
+        );
+        assert_eq!(plain_text(&transcription, false), transcription.text);
     }
 
     #[test]
@@ -408,11 +552,13 @@ mod tests {
             text: "one two".into(),
             segments: Some(vec![
                 Segment {
+                    speaker: None,
                     start: 0.0,
                     end: 1.0,
                     text: "one".into(),
                 },
                 Segment {
+                    speaker: None,
                     start: 1.0,
                     end: 2.0,
                     text: "two".into(),
@@ -420,11 +566,13 @@ mod tests {
             ]),
             words: Some(vec![
                 WordResult {
+                    speaker: None,
                     text: "one".into(),
                     start: 0.1,
                     end: 0.5,
                 },
                 WordResult {
+                    speaker: None,
                     text: "two".into(),
                     start: 1.2,
                     end: 1.6,

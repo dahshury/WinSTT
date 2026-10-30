@@ -39,6 +39,8 @@ pub mod mel;
 pub mod moonshine;
 /// Moonshine v2 streaming engine (5-graph frontend/encoder/adapter/cross-KV/decoder, native stream).
 pub mod moonshine_streaming;
+pub mod nemotron;
+pub mod prompting;
 /// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
 pub mod resolver;
 /// Startup reconciliation of the persisted STT selection against the weights actually on disk
@@ -154,6 +156,7 @@ impl EngineKind {
     /// both the CJK and the English (~3.5 words/s) worst case.
     pub fn max_chunk_seconds(&self) -> f32 {
         match self {
+            EngineKind::NemotronTranscribe => 3600.0,
             EngineKind::Moonshine => 14.0,
             EngineKind::Audio8Asr => 24.0,
             // Native streaming with a constant-memory rolling cache: a file decodes as ONE stream
@@ -176,6 +179,13 @@ impl EngineKind {
 /// `initial_prompt_text`; etc.).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct TranscribeOptions {
+    /// Instruction for explicitly instruction-trained audio models. This is
+    /// deliberately separate from recognition/context bias in initial_prompt_text.
+    #[serde(default)]
+    pub asr_instruction: Option<String>,
+    /// File-only speaker alignment; never inferred by a text cleanup model.
+    #[serde(default)]
+    pub diarization: bool,
     /// Whisper/NeMo/SenseVoice language hint (`"en"`, `"ru"`, `""` = auto).
     pub language: Option<String>,
     /// Candidate language hints used when `language` is None. Empty means unconstrained auto.
@@ -202,6 +212,8 @@ pub struct TranscribeOptions {
 /// One word with start/end seconds (cross-attention DTW result).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WordResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
     pub text: String,
     pub start: f32,
     pub end: f32,
@@ -210,6 +222,8 @@ pub struct WordResult {
 /// One `(start_s, end_s, text)` Whisper segment.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Segment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
     pub start: f32,
     pub end: f32,
     pub text: String,
@@ -367,6 +381,7 @@ pub struct EngineConfig {
 /// are owned by their respective slices and land as they're ported.
 pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
     match cfg.kind {
+        EngineKind::NemotronTranscribe => Ok(Box::new(nemotron::NemotronEngine::load(&cfg)?)),
         // Whisper family (whisper / lite-whisper / distil / crisper) — proven via the STT benchmark.
         EngineKind::WhisperHf => Ok(Box::new(whisper::WhisperEngine::load(&cfg)?)),
         // Own engine files not yet ported.

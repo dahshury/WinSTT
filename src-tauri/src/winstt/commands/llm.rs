@@ -48,6 +48,10 @@ use super::ollama_pull::{clear_pull_cancel, pull_cancel_token};
 use super::settings::read_settings;
 
 use conversions::{dictation_presets, openrouter_options, to_llm_effort, transforms_presets};
+
+pub(crate) fn asr_cleanup_prompt(settings: &WinsttSettings) -> String {
+    llm::build_asr_cleanup_prompt(&dictation_presets(settings))
+}
 use ollama_proc::{emit_pull_progress, validate_model_name};
 use verify::{VerifyProbe, probe_verify, resolve_verify_api_key};
 

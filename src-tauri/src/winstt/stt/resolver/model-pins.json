@@ -1,4 +1,20 @@
 {
+  "AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF": {
+    "files": {
+      "LICENSE": {
+        "size": 2694
+      },
+      "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf": {
+        "sha256": "0c47d4ab6c783e7606ec03714b354fab0b2052027a7ea1991e7e2d3009c345ad",
+        "size": 19678656672
+      },
+      "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf": {
+        "sha256": "4221029c8a565c4a80c507ffa760c716e595acf663f9f4273ce69910050e7ba2",
+        "size": 1670410080
+      }
+    },
+    "revision": "dbd06c5cad7a2f33c8e06be2fb3ef814dbd9aa59"
+  },
   "Edge0/Audio8-ASR-0.1B-onnx-runtime": {
     "files": {
       ".gitattributes": {

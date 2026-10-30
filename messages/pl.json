@@ -543,7 +543,7 @@
     "languageTooltip": "Język używany w interfejsie (menu, ustawienia, podpowiedzi). Niezależny od języka transkrypcji.",
     "visualizerColorTooltip": "Kolor akcentu używany przez animację wizualizatora audio.",
     "soundFileTooltip": "Niestandardowy plik .wav lub .mp3 odtwarzany przy rozpoczęciu nagrywania. Upuść plik lub przeglądaj, aby wybrać.",
-    "fileTranscriptionFormatTooltip": "Formaty wyjściowe transkrybowanych plików audio/wideo. SRT, VTT i CSV używają czasów segmentów z granic aktywności głosu. JSON zawiera czasy słów tylko dla eksportów Whisper ze znacznikami czasu; w pozostałych przypadkach tablice słów są puste.",
+    "fileTranscriptionFormatTooltip": "Wybierz formaty wyjściowe. Czasy segmentów i słów zależą od modelu. Identyfikacja mówców zachowuje ich metadane; prefiksy tekstowe są opcjonalne.",
     "startOnLoginTooltip": "Automatically launch WinSTT each time you sign in to Windows.",
     "startMinimizedTooltip": "Po uruchomieniu startuje ukryty w zasobniku systemowym zamiast otwierać główne okno.",
     "minimizeToTrayTooltip": "Zamknięcie głównego okna pozostawia WinSTT działający w zasobniku systemowym zamiast kończyć program.",
@@ -594,7 +594,11 @@
     "contextScreenOcrCaption": "Odczytuj tekst na ekranie w pobliżu kursora jako dodatkowy kontekst",
     "contextScreenOcrTooltip": "Gdy świadomość kontekstu nie może odczytać aktywnego pola bezpośrednio, WinSTT korzysta z odczytu (OCR) obszaru ekranu wokół kursora, aby wychwycić pobliski tekst. Jest to wolniejsze i mniej dokładne niż bezpośredni odczyt pola — wyłącz, aby pominąć tę metodę awaryjną.",
     "listenCaptureMicrophone": "Transkrybuj także mój mikrofon",
-    "listenCaptureMicrophoneTooltip": "Miesza twój mikrofon z sesją słuchania, dzięki czemu transkrypcja obejmuje zarówno to, co słyszysz, jak i to, co mówisz."
+    "listenCaptureMicrophoneTooltip": "Miesza twój mikrofon z sesją słuchania, dzięki czemu transkrypcja obejmuje zarówno to, co słyszysz, jak i to, co mówisz.",
+    "fileDiarization": "Identify speakers",
+    "fileDiarizationHint": "Identify speakers in dropped files using Nemotron Transcribe. Other models report unsupported diarization. Files bypass dictation post-processing; explicit ASR prompts still apply.",
+    "fileSpeakerPrefixes": "Speaker prefixes",
+    "fileSpeakerPrefixesHint": "Add Speaker 1: prefixes to TXT, SRT and copied text. JSON/CSV retain speaker IDs and VTT uses voice tags whether prefixes are enabled or not."
   },
   "model": {
     "initialPrompt": "Początkowy prompt",
@@ -1770,5 +1774,23 @@
     "pageOf": "Page {current} of {total}",
     "previousPage": "Previous page",
     "nextPage": "Next page"
+  },
+  "asrPrompt": {
+    "title": "Direct ASR prompting",
+    "off": "Off",
+    "custom": "Custom instruction",
+    "presets": "Use cleanup presets",
+    "hint": "Let the speech model perform cleanup directly. Reuse the active presets from Post-processing or write an instruction. A separate cleanup model is skipped by default.",
+    "taskHint": "This model supports transcription-task prompts, not general cleanup. Cleanup presets and skipping the separate cleanup pass are unavailable.",
+    "instruction": "Instruction to the speech model",
+    "additionalHint": "The separate cleanup model is skipped. You can enable it in Post-processing after confirming the extra pass.",
+    "additionalEnabled": "An additional cleanup model is enabled. This adds latency and can rewrite the result again.",
+    "configureCleanup": "Configure presets or separate cleanup",
+    "processingHint": "Your speech model handles cleanup directly. When Use cleanup presets is selected, the profiles and modifiers here supply its instructions. The dictation switch below adds a separate cleanup model.",
+    "optionalTextModel": "Optional model for an extra cleanup pass or text preview",
+    "warningTitle": "Run an additional cleanup pass?",
+    "warningBody": "The speech model already follows cleanup instructions. A separate cleanup model is not recommended: it adds latency and may rewrite already-cleaned text. Continue anyway?",
+    "continue": "Use separate cleanup anyway",
+    "cancel": "Cancel"
   }
 }

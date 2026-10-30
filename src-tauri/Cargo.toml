@@ -1,6 +1,6 @@
 [package]
 name = "winstt"
-version = "0.1.3-beta.1"
+version = "0.1.3-beta.2"
 description = "WinSTT — local-first speech-to-text"
 authors = ["WinSTT contributors"]
 edition = "2024"
@@ -121,7 +121,7 @@ enigo = "0.6.1"
 # (commands/sound.rs), so keep just those decoders. "dither" keeps bit-depth
 # conversion behavior identical to the old default build.
 rodio = { version = "0.22.2", default-features = false, features = ["playback", "wav", "mp3", "dither"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "multipart", "rustls"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "multipart", "rustls", "blocking"] }
 futures-util = "0.3"
 # Multi-provider cloud LLM transport (OpenAI/OpenRouter/Anthropic-native/Groq/Z.AI/Bedrock/…).
 # Replaces the hand-rolled OpenAI-compat client for the CLOUD post-process + dictation/transform
@@ -169,6 +169,7 @@ ferrous-opencc = "0.2.3"
 # there is NO per-sentence subprocess spawn (the CLI shell-out was slower on
 # short sentences). Already in the dep graph (transitive); pinned direct.
 libloading = "0.8"
+getrandom = "0.3"
 clap = { version = "4", features = ["derive"] }
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
@@ -200,6 +201,7 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Variant",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",
+  "Win32_System_JobObjects",
   "Win32_System_Power",
   "Win32_System_SystemServices",
   "Win32_System_LibraryLoader",
@@ -236,6 +238,7 @@ winreg = "0.55"
 # D-Bus Secret Service; `crypto-rust` uses a pure-Rust AES impl so we don't need a
 # system libcrypto at link time; `apple-native` uses the macOS Keychain Services API.
 [target.'cfg(not(target_os = "windows"))'.dependencies]
+libc = "0.2"
 keyring = { version = "3", features = ["apple-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -31,6 +31,18 @@ function model(overrides: Partial<ModelInfo>): ModelInfo {
 }
 
 describe("model native formatting policy", () => {
+	test("distinguishes promptable speech models by their actual formatting training", () => {
+		expect(
+			modelHasNativeBasicFormatting(
+				model({ family: "nemo", id: "nemotron-3.5-transcribe-30b-a4b" }),
+			),
+		).toBe(true);
+		expect(
+			modelHasNativeBasicFormatting(
+				model({ family: "granite", id: "granite-speech-4.1-2b-plus" }),
+			),
+		).toBe(false);
+	});
 	test("treats dictation-ready generative models as already formatted", () => {
 		for (const family of [
 			"whisper",

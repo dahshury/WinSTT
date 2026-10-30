@@ -227,6 +227,15 @@ pub fn build_system_prompt(presets: &[PresetEntry]) -> String {
     build_system_prompt_tiered(presets, false)
 }
 
+/// Same modifier composition, with plaintext output instead of the text-model
+/// JSON envelope. The caller sends this instruction alongside the audio.
+pub fn build_asr_cleanup_prompt(presets: &[PresetEntry]) -> String {
+    build_system_prompt(presets).replace(
+        OUTPUT_CONTRACT,
+        "Return only the resulting transcript text.",
+    )
+}
+
 /// Kept for caller compatibility. Caveman-v2 is compact for every model tier.
 pub fn build_system_prompt_tiered(presets: &[PresetEntry], lite: bool) -> String {
     let _ = lite;

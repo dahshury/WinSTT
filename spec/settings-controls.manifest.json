@@ -17,6 +17,10 @@
   ],
   "nonInteractivePaths": [
     {
+      "path": "model.asrPromptModel",
+      "reason": "Internal model identity bound when selecting direct ASR instructions; prevents instructions carrying between models."
+    },
+    {
       "path": "llm.timeout",
       "reason": "Runtime request deadline; no settings-window control is exposed."
     },
@@ -296,6 +300,19 @@
       "smokeSelectors": [{ "role": "heading", "name": "Main Model" }],
       "items": [
         {
+          "id": "asr-instructions",
+          "kind": "control",
+          "label": "Direct ASR prompting",
+          "selector": {
+            "role": "button",
+            "name": "Use cleanup presets"
+          },
+          "settingsPaths": ["model.asrPromptSource", "model.asrInstruction"],
+          "availability": "instruction-capable-asr-model",
+          "safety": "local-setting",
+          "source": "src/features/asr-prompting/ui/AsrPromptControls.tsx"
+        },
+        {
           "id": "stt-source",
           "kind": "control",
           "label": "Source",
@@ -443,6 +460,71 @@
       "rawControlBaseline": { "observed": 21, "minimum": 14 },
       "smokeSelectors": [{ "role": "heading", "name": "LLM Post-Processing" }],
       "items": [
+        {
+          "id": "asr-separate-cleanup-confirmation",
+          "kind": "control",
+          "label": "Additional ASR cleanup pass",
+          "selector": {
+            "role": "button",
+            "name": "Use separate cleanup anyway"
+          },
+          "settingsPaths": ["model.asrAllowSeparateCleanup"],
+          "availability": "native-asr-cleanup-enabled-dialog",
+          "safety": "local-setting",
+          "source": "src/features/asr-prompting/ui/use-separate-cleanup-confirmation.tsx"
+        },
+        {
+          "id": "feature-profile-assignments",
+          "kind": "control",
+          "label": "Feature processing profiles",
+          "selector": {
+            "role": "combobox",
+            "name": "Profile"
+          },
+          "settingsPaths": [
+            "llm.dictation.configurationId",
+            "llm.transforms.configurationId",
+            "llm.readAloud.configurationId"
+          ],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/FeatureRow.tsx"
+        },
+        {
+          "id": "read-aloud-model-profile",
+          "kind": "control",
+          "label": "Read aloud profile model and tuning",
+          "selector": {
+            "role": "combobox",
+            "name": "Model"
+          },
+          "settingsPaths": [
+            "llm.readAloud.provider",
+            "llm.readAloud.model",
+            "llm.readAloud.openrouterModel",
+            "llm.readAloud.openrouterFallbackModel",
+            "llm.readAloud.reasoningEffort",
+            "llm.readAloud.thinkingEffort",
+            "llm.readAloud.verbosity",
+            "llm.readAloud.maxOutputTokens"
+          ],
+          "availability": "profile-editor",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/playground-modal.tsx"
+        },
+        {
+          "id": "shared-local-model-policy",
+          "kind": "control",
+          "label": "Shared local model policy",
+          "selector": {
+            "role": "switch",
+            "name": "Allow multiple local models"
+          },
+          "settingsPaths": ["llm.allowMultipleLocalModels", "llm.localModel"],
+          "availability": "local-processing-profile",
+          "safety": "local-setting",
+          "source": "src/widgets/llm-settings/ui/LlmSettingsPanel.tsx"
+        },
         {
           "id": "post-processing",
           "kind": "control",
@@ -595,8 +677,7 @@
           "selector": { "role": "checkbox", "name": "Modifiers" },
           "settingsPaths": [
             "llm.transforms.presets",
-            "llm.transforms.customModifiers",
-            "llm.transforms.prompts"
+            "llm.transforms.customModifiers"
           ],
           "availability": "transforms-enabled",
           "safety": "local-setting",
@@ -910,6 +991,32 @@
           "selector": { "role": "combobox", "name": "Format" },
           "settingsPaths": ["general.fileTranscriptionFormats"],
           "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "fileTranscriptionDiarization",
+          "kind": "control",
+          "label": "Identify speakers",
+          "selector": {
+            "role": "switch",
+            "name": "Identify speakers"
+          },
+          "settingsPaths": ["general.fileTranscriptionDiarization"],
+          "availability": "default",
+          "safety": "local-setting",
+          "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
+        },
+        {
+          "id": "fileTranscriptionSpeakerPrefixes",
+          "kind": "control",
+          "label": "Speaker prefixes",
+          "selector": {
+            "role": "switch",
+            "name": "Speaker prefixes"
+          },
+          "settingsPaths": ["general.fileTranscriptionSpeakerPrefixes"],
+          "availability": "diarization-enabled",
           "safety": "local-setting",
           "source": "src/widgets/output-settings/ui/OutputSettingsPanel.tsx"
         },
@@ -1485,8 +1592,8 @@
       "label": "Integrations",
       "rawControlBaseline": { "observed": 16, "minimum": 11 },
       "smokeSelectors": [
-        { "role": "heading", "name": "Language Models (LLM)" },
-        { "role": "heading", "name": "Cloud Speech-to-Text" }
+        { "role": "heading", "name": "External Integrations" },
+        { "role": "heading", "name": "OpenRouter" }
       ],
       "items": [
         {
@@ -1572,7 +1679,7 @@
       "smokeSelectors": [
         { "role": "heading", "name": "WinSTT" },
         { "role": "heading", "name": "Diagnostics" },
-        { "role": "heading", "name": "Reset settings" }
+        { "role": "heading", "name": "Settings backup" }
       ],
       "items": [
         {

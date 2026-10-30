@@ -67,6 +67,59 @@ gets pasted. Everything in this section configures it.
   multilingual models transcribe and translate in one pass without an LLM round-trip.
 </SettingRow>
 
+### Direct ASR prompting
+
+**Nemotron 3.5 Transcribe 30B A4B** is an optional, final-only speech LLM. Keep a
+lightweight streaming model selected for live previews. Its preview runs in a
+separate supervised worker, preferring the companion's CPU INT8 export independently
+of the main model's IQ4 weights. Changing the preview selection keeps the final
+model resident. Under the speech LLM's model settings,
+choose **Custom instruction** or **Use cleanup presets**. The latter reuses the
+Processing tab's dictation presets, levels, translation and enabled custom modifiers
+directly against the audio. Those presets remain editable with the separate
+dictation cleanup model switched off. App-specific profile presets also apply.
+
+The successful final decode records whether native cleanup was applied. That
+receipt suppresses the separate cleanup pass by default. To deliberately run a
+second model, enable dictation processing in Processing and confirm the warning
+about extra latency and possible over-editing. Listen mode continues to avoid
+the separate cleanup pass.
+
+For this final-only model, provisional text appears in the live preview and the
+paste waits for the final decode. The preview's words are never promoted to the
+final result or typed through word-by-word pasting. Lightweight streaming main
+models retain their existing incremental paste behavior.
+
+For Nemotron Transcribe, translation comes from the ASR instruction or the reused
+Translate preset. A hidden translation target left over from another model does
+not override those instructions.
+
+**Granite Speech 4.1 2B Plus** exposes custom task instructions for its documented
+recognition modes and keyword biasing. It does not expose cleanup presets or
+replace the cleanup pass. Whisper context prompts also remain context hints.
+
+The optional Nemotron IQ4 download is approximately **21.35 GB** and loads into
+system RAM through NVIDIA's NeMo Speech CPU runtime, including on older NVIDIA
+GPUs that cannot use NVFP4. Loading requires at least **24 GiB of available RAM**;
+CPU decoding can be slow. SALM currently requires NVIDIA's nightly runtime: WinSTT
+checks its published SHA-256 digest at installation and retains the verified
+build locally for offline use. It does not install Python or send recordings to
+a transcription service. The model weights are pinned to an immutable revision
+of a community GGUF conversion of NVIDIA's weights.
+
+On the development machine (i9-12900KF, 64 GB RAM, RTX 3080 Ti 12 GB), the
+CPU IQ4 model loaded in **21–22 seconds** and transcribed an 8-second synthetic
+speech sample in **6–6.5 seconds** with a short custom cleanup instruction, or
+**12–13.4 seconds** with WinSTT's default cleanup presets. Both removed verbal
+fillers without a separate text model. The native process peaked at **34.75 GiB
+resident memory**, so **64 GB system RAM is recommended**; download size is not
+its runtime memory requirement. These are a short English smoke test, not a
+multilingual accuracy or long-recording benchmark.
+
+See the official [Nemotron model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B),
+[Granite Plus model card](https://huggingface.co/ibm-granite/granite-speech-4.1-2b-plus)
+and [native runtime documentation](https://github.com/NVIDIA/NeMo-Speech.cpp/tree/main/docs/salm).
+
 ### The model picker
 
 Opening the selector reveals the full catalog. Models are grouped by maker, each row

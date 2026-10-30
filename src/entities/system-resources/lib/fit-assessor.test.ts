@@ -55,6 +55,27 @@ function entryOf(
 }
 
 describe("assessDictationFitClient", () => {
+	test("Nemotron's CPU IQ4 runtime uses system RAM on a 12 GB GPU machine", () => {
+		const id = "nemotron-3.5-transcribe-30b-a4b";
+		const result = assessDictationFitClient(id, {
+			statesById: { [id]: entryOf({ id, estimated_bytes: 34e9 * 4 }) },
+			candidateQuant: "q4",
+			requestedDevice: "gpu",
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
+			live: liveOf({
+				ram_total_bytes: 64 * GB,
+				ram_available_bytes: 32 * GB,
+				gpus: [gpuOf({ total: 12 * GB })],
+			}),
+		});
+		expect(result.target).toBe("cpu");
+		expect(result.severity).not.toBe("critical");
+	});
 	test("unknown model returns ok + unknown_footprint", () => {
 		const result = assessDictationFitClient("missing", {
 			statesById: {},

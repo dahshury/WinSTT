@@ -20,10 +20,11 @@
 //   `publish_fresh` are agnostic to the unit — they only require fps and frame counts to
 //   agree, which they do here.
 //
-// SINGLE ENGINE: there is deliberately NO separate realtime engine in this port. The
-// worker reuses the MAIN TranscriptionManager engine via `transcribe_realtime` (a
-// non-blocking try_lock peek that bails the instant a batch decode wants the engine).
-// Do not wire a second engine.
+// Normally previews share the main TranscriptionManager engine. Final-only speech
+// LLMs instead use the selected lightweight native-streaming companion, supervised
+// independently so live previews cannot contend with the final decode.
+
+mod companion;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -183,6 +184,7 @@ fn stable_word_boundary_prefix<'a>(previous: &str, latest: &'a str) -> &'a str {
 /// `RealtimeAccumulator` per worker lifetime + the per-loop markers reset on each recording's
 /// rising edge. Threaded `&mut` through `process_tick` so the hot loop allocates nothing per tick.
 struct RealtimeLoopState {
+    companion: companion::Companion,
     acc: RealtimeAccumulator,
     /// Set on the recording rising edge; `None` while idle.
     recording_seen_at: Option<Instant>,
@@ -205,6 +207,7 @@ struct RealtimeLoopState {
 impl RealtimeLoopState {
     fn new() -> Self {
         Self {
+            companion: companion::Companion::default(),
             acc: RealtimeAccumulator::new(),
             recording_seen_at: None,
             last_transcription: Instant::now(),
@@ -233,6 +236,7 @@ enum WorkerWait {
 /// The realtime live-preview daemon. `start()` spawns one background thread and
 /// [`shutdown`](Self::shutdown) wakes and joins it during graceful exit.
 pub struct RealtimeManager {
+    companion_model: Mutex<Option<String>>,
     app: AppHandle,
     transcription: Arc<TranscriptionManager>,
     audio: Arc<AudioRecordingManager>,
@@ -250,6 +254,7 @@ impl RealtimeManager {
         audio: Arc<AudioRecordingManager>,
     ) -> Self {
         Self {
+            companion_model: Mutex::new(None),
             app,
             transcription,
             audio,
@@ -268,6 +273,27 @@ impl RealtimeManager {
     pub fn notify_external_conditions_changed(&self) {
         self.transcription.notify_realtime_conditions_changed();
         self.audio.notify_realtime_audio_waiters();
+    }
+
+    pub fn loaded_companion_model(&self) -> Option<String> {
+        self.companion_model
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn publish_companion_model(&self, companion: &companion::Companion) {
+        *self
+            .companion_model
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = companion.model();
+    }
+
+    pub(crate) fn validate_companion_selection(
+        app: &AppHandle,
+        settings: &crate::winstt::settings_schema::WinsttSettings,
+    ) -> Result<(), String> {
+        companion::validate_selection(app, settings)
     }
 
     fn maybe_word_by_word_paste(
@@ -376,6 +402,7 @@ impl RealtimeManager {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.shutdown.store(true, Ordering::Release);
+        crate::winstt::stt::inference::cancel_active();
         self.notify_external_conditions_changed();
 
         let handle = self
@@ -392,6 +419,10 @@ impl RealtimeManager {
             let _ = handle.join();
         }
         self.started.store(false, Ordering::Release);
+        *self
+            .companion_model
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// The realtime worker loop (port of `_realtime_worker` → `_realtime_step`). One owned
@@ -452,6 +483,9 @@ impl RealtimeManager {
         // ── not recording: reset accumulator (keep last text), await the next recorder edge ──
         // Mirrors _realtime_idle_reset: reset(clear_last=False), clear per-loop markers.
         if !self.audio.is_recording() {
+            let settings = read_settings_raw(&self.app);
+            let companion_idle = state.companion.idle(&settings);
+            self.publish_companion_model(&state.companion);
             state.acc.reset(false);
             state.recording_seen_at = None;
             state.last_processed_len = -1;
@@ -460,14 +494,14 @@ impl RealtimeManager {
             self.audio.set_realtime_enabled(false);
             return WorkerWait::Conditions {
                 observed: observed_conditions,
-                timeout: None,
+                timeout: companion_idle,
             };
         }
 
         // Use the secret-agnostic `read_settings_raw` here (NOT `read_settings`): this is
         // the hot recording loop and none of the fields it reads are secrets, so we must not
         // trigger per-tick secret decryption (reg.exe spawns) on the live path.
-        let settings = read_settings_raw(&self.app);
+        let mut settings = read_settings_raw(&self.app);
         // Whether the live preview is actually SHOWN this tick. The in-app preview panel
         // lives inside the main WinSTT window, so it's only visible when one of our windows
         // holds focus; the pill overlay (in-pill/both with the overlay shown) and
@@ -482,6 +516,31 @@ impl RealtimeManager {
                 timeout: None,
             };
         };
+
+        if companion::final_only(&settings) {
+            // The companion is preview-only. Never type its provisional words or
+            // cache them for final reuse: the final speech LLM owns the paste.
+            settings.general.word_by_word_pasting = false;
+            if !effective_realtime_with_focus(&settings, any_window_focused(&self.app)) {
+                self.audio.set_realtime_enabled(false);
+                // Pausing visibility mid-recording must retain the decoder's
+                // state; the mirror catches up from fed_len when focus returns.
+                if state.companion.changed(&settings) {
+                    state.companion.clear();
+                    self.publish_companion_model(&state.companion);
+                }
+                return WorkerWait::Conditions {
+                    observed: observed_conditions,
+                    timeout: None,
+                };
+            }
+            self.audio.set_realtime_enabled(true);
+            return self.process_companion_tick(state, &settings, generation, observed_audio);
+        }
+        if state.companion.has_selection() {
+            state.companion.clear();
+            self.publish_companion_model(&state.companion);
+        }
 
         // ── NATIVE-STREAMING resolution (T-One / sherpa Zipformer+NeMo) ──
         // Resolve once per recording, BEFORE the preview gate: a native-streaming MAIN engine
@@ -587,6 +646,52 @@ impl RealtimeManager {
             state.fed_len = 0;
             state.last_native_emit_text.clear();
         }
+    }
+
+    fn process_companion_tick(
+        &self,
+        state: &mut RealtimeLoopState,
+        settings: &crate::winstt::settings_schema::WinsttSettings,
+        generation: u64,
+        observed_audio: u64,
+    ) -> WorkerWait {
+        if state.companion.changed(settings) {
+            state.fed_len = 0;
+            state.last_native_emit_text.clear();
+        }
+        let (total_len, pcm) = self.audio.snapshot_audio_from(state.fed_len);
+        if pcm.is_empty() {
+            return WorkerWait::RealtimeAudio {
+                offset: total_len,
+                observed: observed_audio,
+            };
+        }
+        let result = state
+            .companion
+            .accept(&self.app, settings, generation, &pcm);
+        self.publish_companion_model(&state.companion);
+        state.fed_len = total_len;
+        match result {
+            Ok(Some(update))
+                if self.audio.is_recording() && self.audio.recording_generation() == generation =>
+            {
+                self.audio.set_latest_endpoint_text(&update.text);
+                if update.is_final || update.text != state.last_native_emit_text {
+                    state.last_native_emit_text = update.text.clone();
+                    SttEvents::realtime_stabilized_with_final(
+                        &self.app,
+                        &update.text,
+                        update.is_final,
+                    );
+                    SttEvents::realtime_text_with_final(&self.app, &update.text, update.is_final);
+                }
+            }
+            Err(error) => log::warn!(
+                "[realtime] preview companion failed; final model remains available: {error}"
+            ),
+            _ => {}
+        }
+        WorkerWait::Continue
     }
 
     /// Native-streaming fast path (T-One / sherpa Zipformer+NeMo). Feeds only the new samples past

@@ -2,6 +2,7 @@ import { AiMicIcon } from "@hugeicons/core-free-icons";
 import { SttModelSelector } from "@/features/select-local-stt-model";
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
+import { AsrPromptControls } from "@/features/asr-prompting";
 import {
 	providerOf,
 	useOpenRouterSttCatalogStore,
@@ -679,6 +680,7 @@ export function MainModelSection({
 					t={t}
 					tIntegrations={tIntegrations}
 				/>
+				<AsrPromptControls disabled={disabled} />
 				{sections.language && (
 					<LanguageArea
 						disabled={disabled}

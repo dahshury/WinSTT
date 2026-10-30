@@ -145,6 +145,7 @@ impl WordAligner {
         mapped
             .into_iter()
             .map(|m| WordResult {
+                speaker: None,
                 text: m.text,
                 start: m.start as f32,
                 end: m.end as f32,
@@ -227,11 +228,13 @@ mod tests {
         // "test that" timed → known "test this": "test" keeps its window, "this" inherits "that"'s.
         let timed = vec![
             WordResult {
+                speaker: None,
                 text: "test".into(),
                 start: 0.0,
                 end: 0.5,
             },
             WordResult {
+                speaker: None,
                 text: "that".into(),
                 start: 0.5,
                 end: 1.0,
@@ -250,6 +253,7 @@ mod tests {
     #[test]
     fn map_known_text_empty_known_is_empty() {
         let timed = vec![WordResult {
+            speaker: None,
             text: "a".into(),
             start: 0.0,
             end: 0.1,

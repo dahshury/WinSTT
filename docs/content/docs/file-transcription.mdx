@@ -74,8 +74,33 @@ One setting, in the **Output** tab, decides what gets written.
     ["JSON", "Schema-tagged segments and optional word timings", "Automation and downstream processing"],
     ["CSV", "One row per segment", "Spreadsheets and data analysis"],
   ]}
-  caption="The selected formats apply to every file you transcribe until you change them. SRT, VTT, and CSV use segment timings. JSON includes word timings when the selected timestamp-capable Whisper export provides them; otherwise each segment has an empty words array."
+  caption="The selected formats apply to every file you transcribe until you change them. SRT, VTT, and CSV use segment timings. JSON includes word timings when the selected model and runtime provide them; otherwise each segment has an empty words array."
 />
+
+## Speakers and ASR instructions
+
+In **Output → File Transcription**, enable **Identify speakers** to get speaker
+turns from **Nemotron Transcribe**. Speaker IDs are consistent within one file
+and do not identify people by name. Unsupported models report an error rather
+than generating guessed labels. Nemotron files are processed as one recording,
+up to one hour, so speaker identities do not reset at voice-activity boundaries.
+
+**Speaker prefixes** adds `Speaker 1: …` labels to TXT, SRT, and copied text.
+With prefixes off, those outputs contain plain text. JSON and CSV always retain
+speaker IDs (`spk:0`, `spk:1`, …) when available, including speaker IDs on JSON
+words. VTT uses native voice tags regardless of the prefix setting. Overlapping
+speakers retain overlapping times and their own words. Prefixes and speaker
+identification are captured when a file is queued.
+
+Files follow the selected model's **ASR instructions**, including explicitly
+selected cleanup presets. They never run the separate dictation cleanup model
+or apply dictation's deterministic capitalization and spoken-punctuation pass.
+Changing the dictation cleanup toggle or its model does not change file output.
+Speaker identification adds the speaker-tag instruction to the ASR prompt.
+
+Speaker timestamps need alignable speech. Translation or extensive rewriting
+may prevent alignment; WinSTT reports unavailable alignment instead of inventing
+speaker labels or timestamps. Use a verbatim prompt when that happens.
 
 ## Where files land
 
@@ -98,10 +123,10 @@ file is written depends on one setting.
   does live.
 </Callout>
 
-<Callout type="warn" title="The server must be running">
-  Transcription is dispatched to the local STT server over the WebSocket. If the
-  server is still starting up or disconnected, the request is refused with a
-  connection error — wait for the app to show **connected**, then retry.
+<Callout type="info" title="Local inference">
+  On-device models run in WinSTT's supervised inference worker. No separate STT
+  server is required. Selecting a cloud STT provider sends audio to that provider;
+  the file speaker-identification option currently requires local Nemotron Transcribe.
 </Callout>
 
 ## Related

@@ -94,13 +94,29 @@ pub fn resolve_rule<'a>(
     identity: &AppIdentity,
     openrouter_key_present: bool,
 ) -> Option<&'a AppProfileRule> {
+    resolve_rule_matching(rules, identity, |rule| match rule.config.base.provider {
+        LlmProvider::Openrouter => openrouter_key_present,
+        LlmProvider::AppleIntelligence => true,
+        LlmProvider::Ollama => !rule.config.base.model.trim().is_empty(),
+    })
+}
+
+/// Native ASR consumes the profile's presets without contacting its text-model provider.
+pub fn resolve_preset_rule<'a>(
+    rules: &'a [AppProfileRule],
+    identity: &AppIdentity,
+) -> Option<&'a AppProfileRule> {
+    resolve_rule_matching(rules, identity, |_| true)
+}
+
+fn resolve_rule_matching<'a>(
+    rules: &'a [AppProfileRule],
+    identity: &AppIdentity,
+    provider_available: impl Fn(&AppProfileRule) -> bool,
+) -> Option<&'a AppProfileRule> {
     rules
         .iter()
-        .filter(|rule| match rule.config.base.provider {
-            LlmProvider::Openrouter => openrouter_key_present,
-            LlmProvider::AppleIntelligence => true,
-            LlmProvider::Ollama => !rule.config.base.model.trim().is_empty(),
-        })
+        .filter(|rule| provider_available(rule))
         .filter_map(|rule| rule_matches(rule, identity).map(|score| (score, rule)))
         // `max_by_key` returns the last maximum, but table order wins ties. A
         // manual fold retains the first maximum.
@@ -142,6 +158,19 @@ mod tests {
             "chrome"
         );
         assert_eq!(normalize_exe("chrome"), "chrome");
+    }
+
+    #[test]
+    fn native_asr_can_reuse_presets_without_the_separate_provider_being_configured() {
+        let mut profile = rule("editor", "", "");
+        profile.config.base.provider = LlmProvider::Openrouter;
+        let rules = [profile];
+        let identity = AppIdentity {
+            app_exe: "editor".into(),
+            ..Default::default()
+        };
+        assert!(resolve_rule(&rules, &identity, false).is_none());
+        assert!(resolve_preset_rule(&rules, &identity).is_some());
     }
 
     #[test]

@@ -9,6 +9,14 @@ const model = (
 ) => ({ id, family, languages, supportsLanguageDetection }) as never;
 
 describe("resolveLanguageControlMode", () => {
+	test("Nemotron Transcribe exposes multilingual auto detection", () => {
+		expect(
+			resolveLanguageControlMode(
+				model("nemotron-3.5-transcribe-30b-a4b", "nemo", ["en", "ar"], true),
+				false,
+			),
+		).toBe("auto");
+	});
 	test("language-prompted models without auto-detect get the single-language picker", () => {
 		expect(
 			resolveLanguageControlMode(

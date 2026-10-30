@@ -124,7 +124,8 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
                 "resolved streaming model is missing the expected native ORT graph files".into(),
             ));
         }
-        EngineKind::WhisperHf
+        EngineKind::NemotronTranscribe
+        | EngineKind::WhisperHf
         | EngineKind::WhisperOrt
         | EngineKind::Moonshine
         | EngineKind::MoonshineStreaming => {

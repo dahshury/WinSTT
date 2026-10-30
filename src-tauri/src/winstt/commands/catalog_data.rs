@@ -366,7 +366,10 @@ fn family_quants_for(entry: &RawCatalogEntry, accel: Accelerator) -> Vec<String>
         .map(String::as_str)
         .collect();
     let kind = engine_kind_for(entry);
-    if accel.is_cuda() && !kind.supports_native_streaming() {
+    if accel.is_cuda()
+        && !kind.supports_native_streaming()
+        && kind != crate::winstt::stt::EngineKind::NemotronTranscribe
+    {
         avail
             .into_iter()
             .filter(|q| catalog::GPU_COMPATIBLE_QUANTIZATIONS.contains(q))
@@ -716,11 +719,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_84_rows() {
+    fn catalog_parses_85_rows() {
         assert_eq!(
             raw_catalog().len(),
-            84,
-            "embedded catalog must carry all 84 shipped models"
+            85,
+            "embedded catalog must carry all 85 shipped models"
         );
     }
 
@@ -989,6 +992,11 @@ mod tests {
     fn cuda_filters_sub_fp16_quants() {
         let rows = catalog_rows(Accelerator::Cuda);
         for r in &rows {
+            if r.id == crate::winstt::stt::prompting::NEMOTRON_TRANSCRIBE_ID {
+                assert_eq!(r.available_quantizations, ["q4"]);
+                assert!(!r.native_streaming);
+                continue; // this independent native runtime is always CPU-backed
+            }
             for q in &r.available_quantizations {
                 assert!(
                     r.native_streaming || q.is_empty() || q == "fp16" || q == "fp16w",

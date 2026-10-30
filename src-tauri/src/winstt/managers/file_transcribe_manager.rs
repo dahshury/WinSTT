@@ -41,7 +41,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::managers::transcode::{TARGET_SAMPLE_RATE, decode_audio_to_pcm};
 use crate::winstt::managers::transcript_export::{
-    TranscriptDocument, serialize as serialize_transcript,
+    TranscriptDocument, serialize_with_speaker_prefixes as serialize_transcript,
 };
 use crate::winstt::observability::IssueBuilder;
 use crate::winstt::settings_schema::{FileSaveLocation, FileTranscriptionFormat};
@@ -73,6 +73,8 @@ struct QueueItem {
     /// decode into segment-dependent subtitle serialization halfway through).
     output_formats: Vec<FileTranscriptionFormat>,
     save_location: FileSaveLocation,
+    diarization: bool,
+    speaker_prefixes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +242,8 @@ impl FileTranscribeManager {
                     paused_by_user: false,
                     output_formats: output_formats.clone(),
                     save_location,
+                    diarization: enqueue_settings.general.file_transcription_diarization,
+                    speaker_prefixes: enqueue_settings.general.file_transcription_speaker_prefixes,
                 });
                 added = true;
             }
@@ -558,16 +562,7 @@ impl FileTranscribeManager {
         // Mid-file progress tick so the bar moves before the (blocking) transcribe.
         self.tick_progress(&item.id, 0.5, "transcribing");
 
-        let result = if !output_formats_require_segments(&item.output_formats) {
-            self.transcription
-                .transcribe(&audio)
-                .map(|text| Transcription {
-                    text,
-                    ..Default::default()
-                })
-        } else {
-            self.transcription.transcribe_file(&audio)
-        };
+        let result = self.transcription.transcribe_file(&audio, item.diarization);
 
         match result {
             Ok(transcription) => self.finish(
@@ -633,24 +628,11 @@ impl FileTranscribeManager {
                 st.items
                     .iter()
                     .find(|it| it.id == id && it.status != QueueStatus::Canceled)
-                    .map(|it| {
-                        (
-                            it.file_path.clone(),
-                            it.file_name.clone(),
-                            it.output_formats.clone(),
-                            it.save_location,
-                        )
-                    })
+                    .cloned()
             };
-            if let Some((source_path, file_name, formats, save_location)) = output_target
-                && let Err(e) = self.write_transcript_file(
-                    &source_path,
-                    &file_name,
-                    transcription,
-                    duration_secs.unwrap_or(0.0),
-                    &formats,
-                    save_location,
-                )
+            if let Some(item) = output_target
+                && let Err(e) =
+                    self.write_transcript_file(&item, transcription, duration_secs.unwrap_or(0.0))
             {
                 status = QueueStatus::Error;
                 error_message = Some(e);
@@ -671,7 +653,12 @@ impl FileTranscribeManager {
                         QueueStatus::Complete => {
                             it.progress = 1.0;
                             it.stage = "complete".into();
-                            it.text = transcription.map(|result| result.text.clone());
+                            it.text = transcription.map(|result| {
+                                crate::winstt::managers::transcript_export::plain_text(
+                                    result,
+                                    it.speaker_prefixes,
+                                )
+                            });
                         }
                         QueueStatus::Error => {
                             it.stage = "error".into();
@@ -774,12 +761,9 @@ impl FileTranscribeManager {
 
     fn write_transcript_file(
         &self,
-        source_path: &Path,
-        file_name: &str,
+        item: &QueueItem,
         transcription: &Transcription,
         duration_secs: f64,
-        formats: &[FileTranscriptionFormat],
-        save_location: FileSaveLocation,
     ) -> Result<Vec<PathBuf>, String> {
         let settings = crate::winstt::settings_store::read_settings_raw(&self.app);
         let language = settings.model.language.trim();
@@ -791,12 +775,16 @@ impl FileTranscribeManager {
             settings.model.model.clone(),
             language,
             duration_secs,
-            file_name.to_string(),
+            item.file_name.clone(),
         );
-        let output_paths =
-            self.resolve_transcript_output_paths(source_path, file_name, formats, save_location)?;
-        for (format, output_path) in formats.iter().copied().zip(&output_paths) {
-            let body = serialize_transcript(format, &document);
+        let output_paths = self.resolve_transcript_output_paths(
+            &item.file_path,
+            &item.file_name,
+            &item.output_formats,
+            item.save_location,
+        )?;
+        for (format, output_path) in item.output_formats.iter().copied().zip(&output_paths) {
+            let body = serialize_transcript(format, &document, item.speaker_prefixes);
             std::fs::write(output_path, body)
                 .map_err(|e| format!("Failed to write {}: {e}", output_path.display()))?;
         }
@@ -894,10 +882,6 @@ fn transcript_extension(format: FileTranscriptionFormat) -> &'static str {
     }
 }
 
-fn output_formats_require_segments(formats: &[FileTranscriptionFormat]) -> bool {
-    formats != [FileTranscriptionFormat::Txt]
-}
-
 fn transcript_filter_name(format: FileTranscriptionFormat) -> &'static str {
     match format {
         FileTranscriptionFormat::Txt => "Text",
@@ -984,6 +968,8 @@ mod tests {
                 text: None,
                 paused_by_user: status == QueueStatus::Paused,
                 output_formats: vec![FileTranscriptionFormat::Txt],
+                diarization: false,
+                speaker_prefixes: false,
                 save_location: FileSaveLocation::Auto,
             }],
             ..QueueState::default()
@@ -1017,19 +1003,5 @@ mod tests {
         // Late cleanup from the retired thread must not clear the replacement.
         retire_worker_slot(&mut state, first);
         assert_eq!(state.active_worker, Some(replacement));
-    }
-
-    #[test]
-    fn enqueued_output_snapshot_selects_the_required_decode_shape() {
-        assert!(!output_formats_require_segments(&[
-            FileTranscriptionFormat::Txt
-        ]));
-        assert!(output_formats_require_segments(&[
-            FileTranscriptionFormat::Srt
-        ]));
-        assert!(output_formats_require_segments(&[
-            FileTranscriptionFormat::Txt,
-            FileTranscriptionFormat::Json,
-        ]));
     }
 }

@@ -679,6 +679,34 @@ describe("LlmSettingsPanel", () => {
 		expect(screen.getAllByText("Tone")).toHaveLength(1);
 	});
 
+	test("native ASR presets remain editable without configuring a separate language model", () => {
+		seedConfigurations({
+			provider: "openrouter",
+			openrouterModel: "",
+			model: "",
+		});
+		const state = useSettingsStore.getState().settings;
+		useSettingsStore.setState({
+			settings: {
+				...state,
+				model: {
+					...state.model,
+					model: "nemotron-3.5-transcribe-30b-a4b",
+					asrPromptModel: "nemotron-3.5-transcribe-30b-a4b",
+					asrPromptSource: "cleanupPresets",
+				},
+			},
+		});
+		renderPanel();
+		fireEvent.click(screen.getByRole("button", { name: "Manage profiles" }));
+		expect(
+			screen.getByText("Tone").closest('[aria-disabled="true"]'),
+		).toBeNull();
+		expect(
+			screen.getByRole("button", { name: "Run" }).hasAttribute("disabled"),
+		).toBe(true);
+	});
+
 	// Configure-then-enable is a normal order of operations, so an OFF feature's
 	// picker stays live: the row dims its identity only, and the write lands.
 	// Hiding the picker until the feature was on forced the reverse order.

@@ -36,8 +36,10 @@
     "customWakeWords": [],
     "dictionaryContextChars": 220,
     "encoderDictionaryEnabled": true,
+    "fileTranscriptionDiarization": false,
     "fileTranscriptionFormats": ["txt"],
     "fileTranscriptionSaveLocation": "auto",
+    "fileTranscriptionSpeakerPrefixes": false,
     "historyEnabled": true,
     "historyMaxEntries": 1000,
     "listenCaptureMicrophone": false,
@@ -167,6 +169,10 @@
     }
   },
   "model": {
+    "asrAllowSeparateCleanup": false,
+    "asrInstruction": "",
+    "asrPromptModel": "",
+    "asrPromptSource": "off",
     "autoDetectLanguage": false,
     "device": "auto",
     "initialPrompt": "",

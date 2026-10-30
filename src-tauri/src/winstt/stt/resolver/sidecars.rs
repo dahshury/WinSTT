@@ -142,6 +142,9 @@ pub fn slug_model_id(model_name: &str, quant: Quantization) -> String {
 /// form (a fp16 model whose weights are `model.onnx_data_1` is still fp16 — the suffix is on the
 /// `.onnx` stem, not the sidecar). Returns `Quantization::Default` for an unsuffixed export.
 pub fn file_quantization(onnx_filename: &str) -> Quantization {
+    if onnx_filename.ends_with("-AD-IQ4_NL.gguf") {
+        return Quantization::parse("q4").expect("q4 is a supported precision");
+    }
     // Strip a trailing `.onnx` (the only thing past the quant tag for the graph file).
     let stem = onnx_filename.strip_suffix(".onnx").unwrap_or(onnx_filename);
     // The quant tag is the last `_`- or `.`-delimited component if it parses to a known quant.

@@ -543,7 +543,7 @@
     "languageTooltip": "Ngôn ngữ dùng cho giao diện (menu, cài đặt, chú thích). Độc lập với ngôn ngữ chuyển đổi.",
     "visualizerColorTooltip": "Màu nhấn được dùng bởi hoạt ảnh bộ hiển thị âm thanh.",
     "soundFileTooltip": "Tệp .wav hoặc .mp3 tùy chỉnh phát khi bắt đầu ghi. Kéo thả tệp hoặc duyệt để chọn.",
-    "fileTranscriptionFormatTooltip": "Định dạng đầu ra cho tệp âm thanh/video đã chép lời. SRT, VTT và CSV dùng thời gian phân đoạn theo ranh giới hoạt động giọng nói. JSON chỉ gồm thời gian từng từ với bản xuất Whisper có dấu thời gian; nếu không, mảng từ sẽ rỗng.",
+    "fileTranscriptionFormatTooltip": "Chọn định dạng đầu ra. Thời gian của đoạn và từ phụ thuộc vào mô hình. Khi bật nhận diện người nói, siêu dữ liệu người nói được giữ lại; tiền tố văn bản là tùy chọn.",
     "startOnLoginTooltip": "Automatically launch WinSTT each time you sign in to Windows.",
     "startMinimizedTooltip": "Khi khởi chạy, ẩn vào khay hệ thống thay vì mở cửa sổ chính.",
     "minimizeToTrayTooltip": "Đóng cửa sổ chính giữ WinSTT chạy trong khay hệ thống thay vì thoát.",
@@ -594,7 +594,11 @@
     "contextScreenOcrCaption": "Đọc văn bản trên màn hình gần con trỏ để làm ngữ cảnh bổ sung",
     "contextScreenOcrTooltip": "Khi tính năng nhận biết ngữ cảnh không thể đọc trực tiếp trường đang focus, WinSTT sẽ chuyển sang đọc (OCR) vùng màn hình quanh con trỏ để lấy văn bản lân cận. Cách này chậm hơn và kém chính xác hơn so với đọc trực tiếp trường — tắt để bỏ qua phương án dự phòng này.",
     "listenCaptureMicrophone": "Cũng phiên âm micrô của tôi",
-    "listenCaptureMicrophoneTooltip": "Trộn micrô của bạn vào phiên nghe để bản ghi bao gồm cả những gì bạn nghe và những gì bạn nói."
+    "listenCaptureMicrophoneTooltip": "Trộn micrô của bạn vào phiên nghe để bản ghi bao gồm cả những gì bạn nghe và những gì bạn nói.",
+    "fileDiarization": "Identify speakers",
+    "fileDiarizationHint": "Identify speakers in dropped files using Nemotron Transcribe. Other models report unsupported diarization. Files bypass dictation post-processing; explicit ASR prompts still apply.",
+    "fileSpeakerPrefixes": "Speaker prefixes",
+    "fileSpeakerPrefixesHint": "Add Speaker 1: prefixes to TXT, SRT and copied text. JSON/CSV retain speaker IDs and VTT uses voice tags whether prefixes are enabled or not."
   },
   "model": {
     "initialPrompt": "Prompt ban đầu",
@@ -1770,5 +1774,23 @@
     "pageOf": "Page {current} of {total}",
     "previousPage": "Previous page",
     "nextPage": "Next page"
+  },
+  "asrPrompt": {
+    "title": "Direct ASR prompting",
+    "off": "Off",
+    "custom": "Custom instruction",
+    "presets": "Use cleanup presets",
+    "hint": "Let the speech model perform cleanup directly. Reuse the active presets from Post-processing or write an instruction. A separate cleanup model is skipped by default.",
+    "taskHint": "This model supports transcription-task prompts, not general cleanup. Cleanup presets and skipping the separate cleanup pass are unavailable.",
+    "instruction": "Instruction to the speech model",
+    "additionalHint": "The separate cleanup model is skipped. You can enable it in Post-processing after confirming the extra pass.",
+    "additionalEnabled": "An additional cleanup model is enabled. This adds latency and can rewrite the result again.",
+    "configureCleanup": "Configure presets or separate cleanup",
+    "processingHint": "Your speech model handles cleanup directly. When Use cleanup presets is selected, the profiles and modifiers here supply its instructions. The dictation switch below adds a separate cleanup model.",
+    "optionalTextModel": "Optional model for an extra cleanup pass or text preview",
+    "warningTitle": "Run an additional cleanup pass?",
+    "warningBody": "The speech model already follows cleanup instructions. A separate cleanup model is not recommended: it adds latency and may rewrite already-cleaned text. Continue anyway?",
+    "continue": "Use separate cleanup anyway",
+    "cancel": "Cancel"
   }
 }

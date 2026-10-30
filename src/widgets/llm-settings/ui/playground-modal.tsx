@@ -3,11 +3,13 @@ import {
 	SlidersHorizontalIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useSettingsStore } from "@/entities/setting";
 import { computeModelExclusionConfig } from "@/shared/ui/model-picker/lib/model-exclusion";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { type LlmPreviewConfig, runLlmPreview } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
+import { nativeAsrCleanupActive } from "@/shared/lib/asr-prompting";
 import { useMountEffect } from "@/shared/lib/use-mount-effect";
 import {
 	CreatableCombobox,
@@ -378,6 +380,12 @@ function PlaygroundModalBody({
 	onClose: () => void;
 }) {
 	const { t, tc } = model;
+	const tAsr = useTranslations("asrPrompt");
+	const nativePresets = useSettingsStore(
+		(s) =>
+			nativeAsrCleanupActive(s.settings) &&
+			s.settings.model.asrPromptSource === "cleanupPresets",
+	);
 	// Saved configurations come from the shared store so the Playground and the
 	// per-feature tone-row comboboxes all read/write ONE live list. Selection +
 	// draft seed once (lazy initializer) from whatever's saved at open.
@@ -440,6 +448,9 @@ function PlaygroundModalBody({
 	// intent: re-firing on draft.provider / catalog-state changes would re-scan
 	// on every interaction. Provider switches do their own scan in `handleProvider`.
 	useMountEffect(() => {
+		if (nativePresets) {
+			return;
+		}
 		if (draft.provider === "ollama" && !model.ollamaCatalogState.isLoaded) {
 			model.ollamaCatalogState.scanModels();
 		} else if (
@@ -477,6 +488,7 @@ function PlaygroundModalBody({
 	// explicit override regardless). So the only gate is having a usable model
 	// for the chosen provider; once that's set, typing a sample enables Run.
 	const hasModel = playgroundHasModel(draft, model.openrouterApiKey);
+	const canEditPresets = hasModel || nativePresets;
 	const runDisabled = !hasModel;
 	const disabledReason = hasModel ? undefined : t("playgroundNoModel");
 
@@ -530,22 +542,52 @@ function PlaygroundModalBody({
 				    sections is what does the grouping. The run surface DOES get a
 				    heading — it is the one block that stops being configuration. */}
 				<DialogSection divided={false}>
-					<PlaygroundModelPicker
-						draft={draft}
-						model={model}
-						onChange={update}
-					/>
+					{nativePresets ? (
+						<details
+							onToggle={(event) => {
+								if (
+									event.currentTarget.open &&
+									draft.provider === "ollama" &&
+									!model.ollamaCatalogState.isLoaded
+								) {
+									model.ollamaCatalogState.scanModels();
+								} else if (
+									event.currentTarget.open &&
+									draft.provider === "openrouter" &&
+									model.openrouterApiKey.trim().length > 0 &&
+									!model.openrouterCatalogState.isLoaded
+								) {
+									model.openrouterCatalogState.scanModels();
+								}
+							}}
+						>
+							<summary className="cursor-pointer text-xs text-foreground-muted">
+								{tAsr("optionalTextModel")}
+							</summary>
+							<div className="pt-3">
+								<PlaygroundModelPicker
+									draft={draft}
+									model={model}
+									onChange={update}
+								/>
+							</div>
+						</details>
+					) : (
+						<PlaygroundModelPicker
+							draft={draft}
+							model={model}
+							onChange={update}
+						/>
+					)}
 				</DialogSection>
-				{/* Everything below the model selection — tone/modifiers and the run
-				    surface — is inert until a usable model is configured for the
-				    chosen provider: there's nothing to tune or test without one. The
-				    Playground's own `disabled` still surfaces the reason. */}
+				{/* Native ASR can consume presets without a separate text model.
+				    Text-sample testing still requires the playground's own model. */}
 				<div
-					aria-disabled={!hasModel || undefined}
+					aria-disabled={!canEditPresets || undefined}
 					className={cn(
 						// settings-dim (not opacity-40) so the divide-y hairlines
 						// stay crisp while the group greys out.
-						!hasModel && "settings-dim pointer-events-none",
+						!canEditPresets && "settings-dim pointer-events-none",
 					)}
 				>
 					<DialogSection>

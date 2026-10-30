@@ -114,6 +114,7 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
                 EngineKind::GigaamCtc
             }
         }
+        "nemo" if has("nemotron-3.5-transcribe") => EngineKind::NemotronTranscribe,
         "nemo" => {
             if has("canary") {
                 EngineKind::NemoAed
@@ -143,7 +144,7 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
 // 2. Per-quant cache attribution over a set of cached file names
 // ---------------------------------------------------------------------------
 
-/// The graph (`.onnx`) globs a quant requires — i.e. `file_globs` minus the always-present
+/// The weight (`.onnx` / `.gguf`) globs a quant requires — i.e. `file_globs` minus the always-present
 /// vocab/tokenizer/config text files (those are shared across quants, so they don't tell us
 /// whether THIS quant's weights are present), AND minus OPTIONAL graphs. An optional graph (e.g.
 /// the Cohere `decoder_dyn` CPU-fallback, or the NeMo AED KV fast-path exports) is one the loader
@@ -152,10 +153,10 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
 /// REQUIRED graphs are present. Including the optional here left such a quant stuck at `Partial`
 /// forever (the "1% / can't finish" badge). A quant is "cached" iff every REQUIRED `.onnx` graph it
 /// needs is present and external-data-complete.
-fn required_onnx_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
+fn required_weight_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
     resolver::file_globs(model_id, kind, quant)
         .into_iter()
-        .filter(|fg| !fg.optional && fg.glob.ends_with(".onnx"))
+        .filter(|fg| !fg.optional && (fg.glob.ends_with(".onnx") || fg.glob.ends_with(".gguf")))
         .collect()
 }
 
@@ -173,7 +174,7 @@ fn quant_state(
     quant: Quantization,
     cached: &[(String, u64, bool)],
 ) -> (CacheState, u64) {
-    let globs = required_onnx_globs(model_id, kind, quant);
+    let globs = required_weight_globs(model_id, kind, quant);
     if globs.is_empty() {
         // No graph files for this archetype (shouldn't happen) → can't attribute → not cached.
         return (CacheState::NotCached, 0);
@@ -859,5 +860,43 @@ mod tests {
         );
         assert_eq!(state, CacheState::Cached);
         assert_eq!(bytes, 999);
+    }
+
+    #[test]
+    fn optional_speech_llm_requires_both_gguf_weights_and_counts_their_bytes() {
+        let model = super::super::prompting::NEMOTRON_TRANSCRIBE_ID;
+        let decoder = (
+            "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf".into(),
+            19_678_656_672,
+            true,
+        );
+        let encoder = (
+            "NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf".into(),
+            1_670_410_080,
+            true,
+        );
+        assert_eq!(
+            quant_state(model, EngineKind::NemotronTranscribe, Quantization::Q4, &[]).0,
+            CacheState::NotCached
+        );
+        assert_eq!(
+            quant_state(
+                model,
+                EngineKind::NemotronTranscribe,
+                Quantization::Q4,
+                std::slice::from_ref(&decoder)
+            )
+            .0,
+            CacheState::Partial
+        );
+        assert_eq!(
+            quant_state(
+                model,
+                EngineKind::NemotronTranscribe,
+                Quantization::Q4,
+                &[decoder, encoder]
+            ),
+            (CacheState::Cached, 21_349_066_752)
+        );
     }
 }

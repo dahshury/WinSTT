@@ -3451,6 +3451,66 @@
     "": 262977606,
     "int8": 72705392
    }
+  },
+  {
+   "id": "nemotron-3.5-transcribe-30b-a4b",
+   "display_name": "Nemotron 3.5 Transcribe 30B A4B",
+   "family": "nemo",
+   "languages": [
+    "ar",
+    "bg",
+    "bn",
+    "cs",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "et",
+    "fi",
+    "fr",
+    "he",
+    "hi",
+    "hr",
+    "hu",
+    "id",
+    "it",
+    "ja",
+    "ko",
+    "lt",
+    "lv",
+    "mr",
+    "mt",
+    "nl",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sk",
+    "sl",
+    "sv",
+    "ta",
+    "te",
+    "th",
+    "tl",
+    "tr",
+    "uk",
+    "vi",
+    "zh"
+   ],
+   "supports_language_detection": true,
+   "supports_realtime": false,
+   "onnx_model_name": "AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF",
+   "description": "Optional instruction-following speech LLM for transcription, audio-native cleanup, translation and word timestamps. CPU IQ4_NL runtime; about 21.35 GB download and at least 24 GiB currently available RAM. Slow on CPU; keep Nemotron 0.6B for live streaming. Community GGUF conversion of NVIDIA weights.",
+   "param_count": 34000000000,
+   "wer": 0,
+   "rtfx": 0,
+   "available_quantizations": [
+    "q4"
+   ],
+   "size_bytes_by_quantization": {
+    "q4": 21349066752
+   }
   }
  ]
 }

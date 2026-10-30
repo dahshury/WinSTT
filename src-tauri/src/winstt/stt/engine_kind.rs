@@ -16,6 +16,8 @@ use super::Quantization;
 /// engine kind; catalog `family` remains input metadata for model resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EngineKind {
+    /// Optional CPU GGUF speech LLM, supervised by the native inference worker.
+    NemotronTranscribe,
     /// Optimum split encoder + `decoder_model_merged.onnx` with `use_cache_branch`
     /// and IoBinding KV-cache. Covers whisper-*, lite-whisper-*, distil-whisper-*,
     /// breeze-asr-25. Word timestamps when the export exposes `cross_attentions.*`.
@@ -330,7 +332,8 @@ impl EngineKind {
     pub fn needs_past_context(self) -> bool {
         matches!(
             self,
-            EngineKind::WhisperHf
+            EngineKind::NemotronTranscribe
+                | EngineKind::WhisperHf
                 | EngineKind::WhisperOrt
                 | EngineKind::NemoAed
                 | EngineKind::CohereAsr

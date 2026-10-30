@@ -429,6 +429,45 @@ export function OutputSettingsPanel(): ReactNode {
 					title={tg("fileTranscription")}
 				>
 					<SettingField
+						label={tg("fileDiarization")}
+						tooltip={tg("fileDiarizationHint")}
+						value={general.fileTranscriptionDiarization}
+						defaultValue={DEFAULT_SETTINGS.general.fileTranscriptionDiarization}
+						onReset={() =>
+							updateGeneral({ fileTranscriptionDiarization: false })
+						}
+						labelAddon={
+							<Toggle
+								aria-label={tg("fileDiarization")}
+								checked={general.fileTranscriptionDiarization}
+								onCheckedChange={(value) =>
+									updateGeneral({ fileTranscriptionDiarization: value })
+								}
+							/>
+						}
+					/>
+					<SettingField
+						label={tg("fileSpeakerPrefixes")}
+						tooltip={tg("fileSpeakerPrefixesHint")}
+						value={general.fileTranscriptionSpeakerPrefixes}
+						defaultValue={
+							DEFAULT_SETTINGS.general.fileTranscriptionSpeakerPrefixes
+						}
+						onReset={() =>
+							updateGeneral({ fileTranscriptionSpeakerPrefixes: false })
+						}
+						labelAddon={
+							<Toggle
+								aria-label={tg("fileSpeakerPrefixes")}
+								checked={general.fileTranscriptionSpeakerPrefixes}
+								disabled={!general.fileTranscriptionDiarization}
+								onCheckedChange={(value) =>
+									updateGeneral({ fileTranscriptionSpeakerPrefixes: value })
+								}
+							/>
+						}
+					/>
+					<SettingField
 						isDefault={transcriptionFormatsEqual(
 							selectedTranscriptionFormats,
 							defaultTranscriptionFormats,

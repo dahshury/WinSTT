@@ -3,6 +3,7 @@
 //! Audio conditioning, model resolution, dictionaries, and UI events stay in the app.
 //! Native STT sessions and their carried streaming state live only in the worker.
 //! Pipe I/O runs off-thread so even a worker that stops reading has a bounded deadline.
+mod process_tree;
 mod protocol;
 mod replay;
 mod worker;
@@ -33,6 +34,10 @@ pub fn is_worker_invocation() -> bool {
 }
 
 pub fn run_worker() -> i32 {
+    if let Err(error) = process_tree::contain_descendants() {
+        eprintln!("STT worker child containment failed: {error}");
+        return 1;
+    }
     // The larger stack is also required by some native decoder implementations.
     match std::thread::Builder::new()
         .name("stt-worker".into())
@@ -73,7 +78,7 @@ impl ProcessControl {
     fn kill(&self) {
         let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(child) = child.as_mut() {
-            let _ = child.kill();
+            process_tree::kill(child);
         }
         // Reap asynchronously: process teardown must not block an overlay cancel/quit.
     }
@@ -89,7 +94,7 @@ impl Drop for ProcessControl {
         else {
             return;
         };
-        let _ = child.kill();
+        process_tree::kill(&mut child);
         if let Ok(Some(_)) = child.try_wait() {
             return;
         }
@@ -144,6 +149,11 @@ impl Session {
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
         }
         let mut child = command
             .spawn()

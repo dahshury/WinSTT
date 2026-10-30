@@ -192,7 +192,9 @@ function canConstrainAutoDetection(model: ModelInfo): boolean {
 
 function canAutoDetectWithoutCandidateConstraints(model: ModelInfo): boolean {
 	return (
-		(model.family === "sense_voice" || model.family === "cohere") &&
+		(model.family === "sense_voice" ||
+			model.family === "cohere" ||
+			model.id === "nemotron-3.5-transcribe-30b-a4b") &&
 		model.supportsLanguageDetection
 	);
 }
