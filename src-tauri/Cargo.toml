@@ -109,7 +109,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "2.0.0"
-tokio = "1.43.0"
+tokio = "1.53.3"
 # Awaitable, latching cancellation for racing in-flight reqwest/genai futures
 # (cloud LLM/STT/TTS abort). Already in the tree transitively; `rt` gates the
 # `sync::CancellationToken` we use. Dropping the raced future aborts the request.
@@ -151,7 +151,7 @@ globset = "0.4.18"               # STT resolver POSIX glob matching (`**`, `*`, 
 prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }  # DistilBERT + custom models
 sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for KWS keyword tokenization
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
+zip = { version = "9.1.3", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
 base64 = "0.23"                  # base64-encode the WAV body for OpenRouter's JSON /audio/transcriptions endpoint
@@ -182,7 +182,7 @@ signal-hook = "0.3"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-global-shortcut = "2.3.1"
 tauri-plugin-single-instance = "2.3.2"
-tauri-plugin-updater = "2.10.0"
+tauri-plugin-updater = "2.14.1"
 
 [target.'cfg(windows)'.dependencies]
 ort = { version = "=2.0.0-rc.13", features = ["directml"] }

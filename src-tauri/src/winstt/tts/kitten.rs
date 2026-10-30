@@ -185,7 +185,10 @@ impl KittenVoices {
             let mut entry = zip
                 .by_index(i)
                 .map_err(|e| KittenError::Voice(e.to_string()))?;
-            let name = entry.name().to_string();
+            let name = entry
+                .name()
+                .map_err(|e| KittenError::Voice(format!("invalid voice archive entry name: {e}")))?
+                .into_owned();
             let id = name.strip_suffix(".npy").unwrap_or(&name).to_string();
             let mut bytes = Vec::with_capacity(entry.size() as usize);
             entry

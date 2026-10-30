@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { IPC } from "@test/mocks/legacy-ipc";
+import { commands } from "@/bindings";
 import type { PaginatedHistory } from "../model/transcription-history";
 import {
 	deleteHistoryRow,
@@ -9,10 +10,10 @@ import {
 } from "./client";
 
 // ── nativeBridge harness ───────────────────────────────────────────────
-// The adapter routes every call through `window.nativeBridge.invoke`. The
-// preload installs a canonical mock; capture it so afterEach can restore it
-// (bun:test shares one happy-dom window across files — leaking a per-test
-// override poisons later files that route the REAL ipc-client through it).
+// Cover both generated commands and the legacy fake used by some suites.
+// Bun shares one module cache across files, so selecting just one transport
+// makes the tests depend on filesystem order and other suites' module mocks.
+// Every per-test override is restored after the test.
 const originalNativeBridge = window.nativeBridge;
 
 interface InvokeCall {
@@ -21,17 +22,30 @@ interface InvokeCall {
 }
 
 let invokeCalls: InvokeCall[] = [];
+let restoreCommands: (() => void)[] = [];
 let invokeImpl: (channel: string, ...args: unknown[]) => Promise<unknown> =
 	async () => undefined;
+
+async function recordInvoke(
+	channel: string,
+	...args: unknown[]
+): Promise<unknown> {
+	invokeCalls.push({ channel, args });
+	return invokeImpl(channel, ...args);
+}
+
+async function commandResult<T>(
+	channel: string,
+	...args: unknown[]
+): Promise<{ status: "ok"; data: T }> {
+	return { status: "ok", data: (await recordInvoke(channel, ...args)) as T };
+}
 
 function installFakeBridge(): void {
 	invokeCalls = [];
 	window.nativeBridge = {
 		...originalNativeBridge,
-		invoke: (channel: string, ...args: unknown[]) => {
-			invokeCalls.push({ channel, args });
-			return invokeImpl(channel, ...args);
-		},
+		invoke: recordInvoke,
 	};
 }
 
@@ -45,9 +59,29 @@ function removeNativeBridge(): void {
 beforeEach(() => {
 	installFakeBridge();
 	invokeImpl = async () => undefined;
+	// Cover both the real generated-command transport and the faithful legacy
+	// fake. Bun's process-global module mocks otherwise make this order-dependent.
+	restoreCommands = [
+		spyOn(commands, "historyList").mockImplementation((offset, limit) =>
+			commandResult(IPC.HISTORY_LIST, { offset, limit }),
+		),
+		spyOn(commands, "historyDeleteRow").mockImplementation((id) =>
+			commandResult(IPC.HISTORY_DELETE_ROW, { id }),
+		),
+		spyOn(commands, "historyToggle").mockImplementation((id) =>
+			commandResult(IPC.HISTORY_TOGGLE, { id }),
+		),
+		spyOn(commands, "historyLoadAudioByRow").mockImplementation((id) =>
+			commandResult(IPC.HISTORY_LOAD_AUDIO_BY_ROW, { id }),
+		),
+	].map((spy) => () => spy.mockRestore());
 });
 
 afterEach(() => {
+	for (const restore of restoreCommands) {
+		restore();
+	}
+	restoreCommands = [];
 	window.nativeBridge = originalNativeBridge;
 });
 
