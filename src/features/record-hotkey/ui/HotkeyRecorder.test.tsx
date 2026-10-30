@@ -41,6 +41,7 @@ function tauriInternals(): TauriInternals {
 }
 let savedTauriInvoke: TauriInternals["invoke"];
 let savedChangeBinding: typeof commands.changeBinding;
+let savedStartRecording: typeof commands.hotkeyStartRecording;
 
 function fireListener(channel: string, ...args: unknown[]): void {
 	for (const cb of listeners.get(channel) ?? []) {
@@ -52,6 +53,13 @@ beforeEach(() => {
 	savedApi = window.nativeBridge;
 	savedTauriInvoke = tauriInternals().invoke;
 	savedChangeBinding = commands.changeBinding;
+	savedStartRecording = commands.hotkeyStartRecording;
+	// A process-global core mock can bypass __TAURI_INTERNALS__ entirely.
+	// Observe the generated command directly, like changeBinding below.
+	commands.hotkeyStartRecording = async () => {
+		startCalls.push(1);
+		return false;
+	};
 	startCalls.length = 0;
 	stopCalls.length = 0;
 	changeBindingCalls.length = 0;
@@ -117,6 +125,7 @@ afterEach(() => {
 	window.nativeBridge = savedApi;
 	tauriInternals().invoke = savedTauriInvoke;
 	commands.changeBinding = savedChangeBinding;
+	commands.hotkeyStartRecording = savedStartRecording;
 });
 
 function renderIt(
@@ -197,7 +206,7 @@ describe("HotkeyRecorder", () => {
 		expect(recBtn.className).not.toMatch(/\bbg-surface-/);
 	});
 
-	test("clicking the record button calls hotkeyStartRecording (via the typed __TAURI_INTERNALS__.invoke seam)", () => {
+	test("clicking the record button calls the generated hotkeyStartRecording command", () => {
 		renderIt();
 		const recBtn = screen.getByRole("button", { name: /record/i });
 		fireEvent.click(recBtn);
