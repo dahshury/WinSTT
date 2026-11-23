@@ -140,7 +140,7 @@ flate2 = "1.0"
 bzip2 = "0.4.4"
 sha2 = "0.10"
 # WinSTT unified ONNX STT engine.
-ort = { version = "=2.0.0-rc.13", features = ["ndarray", "half"] }
+ort = { version = "=2.0.0-rc.15", features = ["ndarray", "half"] }
 ndarray = "0.17.2"
 num_cpus = "1"  # physical-core count for the STT intra-op thread pick (matches onnx-asr's default)
 rayon = "1"     # parallel per-frame fbank/mel feature extraction (long-audio throughput)
